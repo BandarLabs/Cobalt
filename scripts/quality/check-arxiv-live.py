@@ -239,14 +239,22 @@ def main():
                         or "Remove from library" in text, seconds=60):
                     raise RuntimeError("the abstract never came back")
                 drive("tap Back", timeout=60, soft=True)
+                # The simulator's store persists between runs, so a subject
+                # followed on an earlier run stays followed on this one; the
+                # tap is for the first run, the state is for all of them.
                 if not wait_until(
-                        lambda text: "Follow this subject" in text,
+                        lambda text: "Follow this subject" in text
+                        or "Stop following" in text,
                         seconds=60, advance_clock=True):
-                    raise RuntimeError("the listing never came back")
-                drive("tap Follow this subject", timeout=60, soft=True)
-                if not wait_until(lambda text: "Stop following" in text,
-                                  seconds=60):
-                    raise RuntimeError("the follow never landed")
+                    capture("arxiv-live-walkback")
+                    raise RuntimeError(
+                        "the listing never came back; on screen:\n"
+                        + "\n".join(screen_text().splitlines()[:40]))
+                if "Follow this subject" in screen_text():
+                    drive("tap Follow this subject", timeout=60, soft=True)
+                    if not wait_until(lambda text: "Stop following" in text,
+                                      seconds=60):
+                        raise RuntimeError("the follow never landed")
                 capture("arxiv-live-followed")
                 result["checks"].append(dict(
                     name="live follow marks the subject", status="passed",
@@ -270,7 +278,10 @@ def main():
                 if not wait_until(lambda text: len(rows(text)) >= 1,
                                   seconds=120, advance_clock=True):
                     raise RuntimeError("the typed search never listed")
-                drive("tap Save this search", timeout=60, soft=True)
+                # Same persistence: a search saved on an earlier run is not
+                # offered again.
+                if "Save this search" in screen_text():
+                    drive("tap Save this search", timeout=60, soft=True)
                 drive("tap Back", timeout=60, soft=True)
                 if not wait_until(lambda text: "Search arXiv" in text,
                                   seconds=60):
