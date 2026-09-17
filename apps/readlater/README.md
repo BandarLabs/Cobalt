@@ -20,9 +20,13 @@ is not yet a complete offline Wallabag client.
 
 ![Read Later setup on the Clara BW simulator](screenshots/readlater-setup.png)
 
-Configure an HTTPS server in Settings and install its daemon-owned credential:
-`kobo secret set wallabag`. The app only names that credential; it never puts a
-password, client secret, or token in a request body.
+Sign in from a computer with `kobo readlater login`: it completes Wallabag's
+OAuth exchange and delivers the session to the reader, and the app renews the
+token itself when it expires. The token is installed as a server-bound account,
+so it can only ever be sent to your own Wallabag host. The app only ever names
+the `wallabag` credential; it never puts a password, client secret, or token in
+a request body. Without the companion CLI, a bearer token installed with
+`kobo secret set wallabag` and an HTTPS server in Settings also work.
 
 ## Dependencies
 
@@ -31,9 +35,9 @@ password, client secret, or token in a request body.
 | [Wallabag](https://wallabag.org/) | MIT | Remote read-later service; not vendored |
 | `kobo-sdk`, `kobo-html`, `kobo-json` | Platform | Device UI, storage, rendering and parsing |
 
-`drive.kobo` exercises the setup and offline surface. Wallabag OAuth
-password-grant exchange requires kobod's `oauth2-password` credential kind;
-this MVP expects that runtime credential and cannot provision it itself.
+`drive.kobo` exercises the setup and offline surface. Archives and stars are
+written to an acknowledged outbox and replayed to Wallabag on the next sync;
+the reading list is split into Unread, Starred and Archive tabs.
 
 
 ![Refresh failure retains the current reading list, rendered from an original fixture](../../docs/quality/evidence/readlater-refresh/refresh-failed.png)

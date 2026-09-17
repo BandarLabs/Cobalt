@@ -12,13 +12,27 @@ pub struct Entry {
     pub reading_time: u64,
     pub content: String,
     pub position: usize,
+    pub starred: bool,
+    pub archived: bool,
 }
 
-pub fn queue_url(server: &str, depth: u16) -> String {
+/// The reading list for one tab: unread, starred, or archived articles.
+pub fn queue_url(server: &str, depth: u16, starred: bool, archived: bool) -> String {
     format!(
-        "{}/api/entries.json?detail=metadata&perPage={depth}&page=1&archive=0",
-        server.trim_end_matches('/')
+        "{}/api/entries.json?detail=metadata&perPage={depth}&page=1&archive={}&starred={}",
+        server.trim_end_matches('/'),
+        u8::from(archived),
+        u8::from(starred),
     )
+}
+
+/// The outbox writes Wallabag understands on an entry document.
+pub fn archive_body(archived: bool) -> String {
+    format!("{{\"archive\":{}}}", u8::from(archived))
+}
+
+pub fn star_body(starred: bool) -> String {
+    format!("{{\"star\":{}}}", u8::from(starred))
 }
 
 pub fn entry_url(server: &str, id: u64) -> String {
@@ -72,13 +86,21 @@ pub fn parse_entry(value: &Value) -> Option<Entry> {
         )
         .unwrap_or(0),
         position: 0,
-        content: kobo_html::to_text(
+        starred: flag(value, "is_starred"),
+        archived: flag(value, "is_archived"),
+        content: kobo_html::to_text_within(
             value
                 .get("content")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
+            // Whole articles, not excerpts: the reader is the offline copy.
+            256 * 1024,
         ),
     })
+}
+
+fn flag(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_i64) == Some(1)
 }
 
 fn text(value: &Value, key: &str, fallback: &str) -> String {
@@ -101,9 +123,11 @@ mod tests {
     #[test]
     fn queue_is_bounded_and_credential_never_enters_a_body() {
         assert_eq!(
-            queue_url("https://bag.example/", 50),
-            "https://bag.example/api/entries.json?detail=metadata&perPage=50&page=1&archive=0"
+            queue_url("https://bag.example/", 50, false, false),
+            "https://bag.example/api/entries.json?detail=metadata&perPage=50&page=1&archive=0&starred=0"
         );
+        assert!(queue_url("https://bag.example/", 20, true, false).contains("starred=1"));
+        assert!(queue_url("https://bag.example/", 100, false, true).contains("archive=1"));
         let Task::Post {
             body, credential, ..
         } = archive("https://bag.example", "wallabag", 9)
@@ -148,6 +172,18 @@ mod tests {
             entry_url("https://bag.example/", 7),
             "https://bag.example/api/entries/7.json"
         );
+    }
+
+    #[test]
+    fn flags_and_outbox_bodies_match_the_api() {
+        let entry = parse_entry(
+            &kobo_json::parse(r#"{"id":9,"title":"t","is_starred":1,"is_archived":0}"#).unwrap(),
+        )
+        .unwrap();
+        assert!(entry.starred);
+        assert!(!entry.archived);
+        assert_eq!(archive_body(true), r#"{"archive":1}"#);
+        assert_eq!(star_body(false), r#"{"star":0}"#);
     }
 
     #[test]
