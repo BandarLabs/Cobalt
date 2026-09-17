@@ -292,12 +292,12 @@
     },
     {
       "protocol_version": 14,
-      "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately.",
+      "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately; a selected board square's row and column clues are now marked with a chip sized to their numbers instead of a key field spanning the whole gutter, with clue data, actions and full-strip tap targets unchanged. Applications whose own sources changed are versioned separately.",
       "files": [
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ee95176aef1432bdd0f9374f86eb313ae47a88aa",
-          "compatible_blob": "d9bdea2f409157d3f5b3c598afeb8c47120fb94a"
+          "compatible_blob": "d46130d5165ea080b605015b76b644d08217b5dc"
         }
       ]
     },
