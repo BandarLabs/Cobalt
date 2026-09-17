@@ -424,7 +424,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Pub Quiz
 
-- [ ] **QUIZ-01** Allow player names and count.
+- [x] **QUIZ-01** Allow player names and count.
 - [ ] **QUIZ-02** Provide categories and difficulty.
 - [ ] **QUIZ-03** Show pack source and freshness.
 - [ ] **QUIZ-04** Clarify pass-device and answer-reveal screens.

@@ -2,8 +2,10 @@
 
 use kobo_json::Value;
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
-    Task, TaskId, TaskOutcome,
+    action_id,
+    keyboard::{TextEntry, Typing},
+    ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, Task,
+    TaskId, TaskOutcome,
 };
 use std::fmt::Write;
 use std::process::ExitCode;
@@ -17,6 +19,7 @@ const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Home,
+    Players,
     Question,
     Choices,
     Pass,
@@ -116,6 +119,10 @@ struct Quiz {
     view: View,
     party: bool,
     player: usize,
+    players: usize,
+    names: [String; 4],
+    renaming: usize,
+    entry: TextEntry,
     question: usize,
     answer: Option<usize>,
     scores: [u8; 4],
@@ -134,6 +141,10 @@ impl Default for Quiz {
             view: View::Home,
             party: true,
             player: 0,
+            players: 4,
+            names: ["Ada", "Bert", "Cleo", "Dev"].map(String::from),
+            renaming: 0,
+            entry: TextEntry::new(),
             question: 0,
             answer: None,
             scores: [0; 4],
@@ -149,13 +160,31 @@ impl Default for Quiz {
     }
 }
 impl Quiz {
-    fn player_name(&self) -> &'static str {
-        ["Ada", "Bert", "Cleo", "Dev"][self.player]
+    fn player_name(&self) -> &str {
+        if self.party {
+            &self.names[self.player]
+        } else {
+            "You"
+        }
+    }
+    fn name_for(&self, index: usize) -> &str {
+        if self.party {
+            &self.names[index]
+        } else {
+            "You"
+        }
     }
     fn save(&self, context: &mut Context) {
         context.store().save(
             STATE,
-            format!("{}|{}", self.packs, self.rounds).into_bytes(),
+            format!(
+                "{}|{}|{}|{}",
+                self.packs,
+                self.rounds,
+                self.players,
+                self.names.join(",")
+            )
+            .into_bytes(),
         );
     }
     fn begin(&mut self, party: bool) {
@@ -418,9 +447,95 @@ fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
 }
 
 #[allow(clippy::too_many_lines)]
+/// A typed player name: trimmed, free of the state file's separators, and
+/// short enough to fit a podium row.
+fn clean_name(name: &str) -> Option<String> {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == ' ')
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(12)
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn players_screen(quiz: &Quiz) -> Screen {
+    ScreenBuilder::new("pubquiz-players")
+        .top_bar("Pub Quiz")
+        .heading("Pass-around players")
+        .secondary(format!("{} players take turns.", quiz.players))
+        .buttons([("count-2", "2"), ("count-3", "3"), ("count-4", "4")])
+        .rows((0..quiz.players).map(|i| {
+            (
+                format!("rename-{i}"),
+                quiz.names[i].as_str(),
+                "Rename",
+                Glyph::Person,
+            )
+        }))
+        .primary_button("start", "Start round")
+        .build()
+}
+
+fn reveal_screen(quiz: &Quiz, question: &Question) -> Screen {
+    let right = quiz.answer == Some(question.correct);
+    let mut builder = ScreenBuilder::new("pubquiz-reveal")
+        .top_bar("Round result")
+        .heading(if right { "Correct" } else { "Not this time" })
+        .secondary(format!(
+            "{} · {}",
+            question.category, question.answers[question.correct]
+        ));
+    if !right {
+        if let Some(chosen) = quiz.answer {
+            let who = if quiz.party {
+                quiz.player_name()
+            } else {
+                "You"
+            };
+            builder = builder.text(format!("{who} chose {}", question.answers[chosen]));
+        }
+    }
+    let players = if quiz.party { quiz.players } else { 1 };
+    // Nobody has scored yet: four rows of zeroes say nothing, so the
+    // scoreboard stays away until the first point exists.
+    if quiz.scores[..players].iter().all(|&score| score == 0) {
+        if quiz.party {
+            builder = builder.text("No points yet.");
+        }
+    } else {
+        builder = builder
+            .facts((0..players).map(|i| (quiz.name_for(i), format!("{} points", quiz.scores[i]))));
+    }
+    builder
+        .primary_button(
+            "continue",
+            if quiz.question + 1 == 10 {
+                "See podium"
+            } else {
+                "Next question"
+            },
+        )
+        .build()
+}
+
 fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
+    if quiz.entry.is_open() {
+        return ScreenBuilder::new("pubquiz-rename")
+            .top_bar("Pub Quiz")
+            .secondary("Letters and digits, twelve characters or fewer.")
+            .text_entry(&quiz.entry, "Player name", "Done")
+            .build();
+    }
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     match quiz.view {
+        View::Players => players_screen(quiz),
         View::Home => {
             let mut b = ScreenBuilder::new("pubquiz-home")
                 .top_bar("Pub Quiz")
@@ -451,7 +566,7 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
         View::Question => question_screen(quiz, context),
         View::Choices => choices_screen(quiz, context),
         View::Pass => {
-            let next = ["Ada", "Bert", "Cleo", "Dev"][(quiz.player + 1) % 4];
+            let next = quiz.name_for((quiz.player + 1) % quiz.players).to_owned();
             ScreenBuilder::new("pubquiz-pass")
                 .top_bar("Pass it on")
                 .heading("Answer locked")
@@ -462,57 +577,9 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                 .primary_button("reveal", "Show result")
                 .build()
         }
-        View::Reveal => {
-            let right = quiz.answer == Some(question.correct);
-            let mut builder = ScreenBuilder::new("pubquiz-reveal")
-                .top_bar("Round result")
-                .heading(if right { "Correct" } else { "Not this time" })
-                .secondary(format!(
-                    "{} · {}",
-                    question.category, question.answers[question.correct]
-                ));
-            if !right {
-                if let Some(chosen) = quiz.answer {
-                    let who = if quiz.party {
-                        quiz.player_name()
-                    } else {
-                        "You"
-                    };
-                    builder = builder.text(format!("{who} chose {}", question.answers[chosen]));
-                }
-            }
-            let players = if quiz.party { 4 } else { 1 };
-            // Nobody has scored yet: four rows of zeroes say nothing, so the
-            // scoreboard stays away until the first point exists.
-            if quiz.scores[..players].iter().all(|&score| score == 0) {
-                if quiz.party {
-                    builder = builder.text("No points yet.");
-                }
-            } else {
-                builder = builder.facts((0..players).map(|i| {
-                    (
-                        if quiz.party {
-                            ["Ada", "Bert", "Cleo", "Dev"][i]
-                        } else {
-                            "You"
-                        },
-                        format!("{} points", quiz.scores[i]),
-                    )
-                }));
-            }
-            builder
-                .primary_button(
-                    "continue",
-                    if quiz.question + 1 == 10 {
-                        "See podium"
-                    } else {
-                        "Next question"
-                    },
-                )
-                .build()
-        }
+        View::Reveal => reveal_screen(quiz, question),
         View::Podium => {
-            let count = if quiz.party { 4 } else { 1 };
+            let count = if quiz.party { quiz.players } else { 1 };
             let mut order: Vec<usize> = (0..count).collect();
             order.sort_by_key(|&i| std::cmp::Reverse(quiz.scores[i]));
             ScreenBuilder::new("pubquiz-podium")
@@ -521,11 +588,7 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                 .rows(order.into_iter().map(|i| {
                     (
                         format!("player-{i}"),
-                        if quiz.party {
-                            ["Ada", "Bert", "Cleo", "Dev"][i]
-                        } else {
-                            "You"
-                        },
+                        quiz.name_for(i),
                         format!("{} points", quiz.scores[i]),
                         Glyph::Person,
                     )
@@ -568,6 +631,16 @@ impl KoboApp for Quiz {
                         let p: Vec<_> = s.split('|').collect();
                         self.packs = p.first().and_then(|x| x.parse().ok()).unwrap_or(0);
                         self.rounds = p.get(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+                        if let Some(players) = p.get(2).and_then(|x| x.parse().ok()) {
+                            self.players = players;
+                        }
+                        if let Some(names) = p.get(3) {
+                            for (slot, name) in self.names.iter_mut().zip(names.split(',')) {
+                                if let Some(name) = clean_name(name) {
+                                    *slot = name;
+                                }
+                            }
+                        }
                     }
                 }
             } else if key == PACK && !self.pack_synced {
@@ -617,6 +690,16 @@ impl KoboApp for Quiz {
         self.show(context);
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if let Some(event) = self.entry.handle(action) {
+            if let Typing::Submitted(name) = event {
+                if let Some(name) = clean_name(&name) {
+                    self.names[self.renaming] = name;
+                    self.save(context);
+                }
+            }
+            self.show(context);
+            return;
+        }
         if action == action_id("choose") && self.view == View::Question {
             self.view = View::Choices;
             self.page = 0;
@@ -635,7 +718,25 @@ impl KoboApp for Quiz {
         {
             self.page = self.page.saturating_sub(1);
         } else if action == action_id("party") && self.view == View::Home {
+            self.view = View::Players;
+        } else if self.view == View::Players && action == action_id("start") {
             self.begin(true);
+        } else if self.view == View::Players && action == action_id("count-2") {
+            self.players = 2;
+            self.save(context);
+        } else if self.view == View::Players && action == action_id("count-3") {
+            self.players = 3;
+            self.save(context);
+        } else if self.view == View::Players && action == action_id("count-4") {
+            self.players = 4;
+            self.save(context);
+        } else if self.view == View::Players {
+            if let Some(index) =
+                (0..self.players).find(|i| action == action_id(&format!("rename-{i}")))
+            {
+                self.renaming = index;
+                self.entry.open();
+            }
         } else if action == action_id("solo") && self.view == View::Home {
             self.begin(false);
         } else if action == action_id("sync") && self.view == View::Home {
@@ -658,7 +759,11 @@ impl KoboApp for Quiz {
             self.view = View::Reveal;
         } else if action == action_id("continue") && self.view == View::Reveal {
             self.question += 1;
-            self.player = if self.party { (self.player + 1) % 4 } else { 0 };
+            self.player = if self.party {
+                (self.player + 1) % self.players
+            } else {
+                0
+            };
             self.page = 0;
             self.answer = None;
             if self.question >= 10 {
@@ -764,6 +869,8 @@ mod tests {
         assert_eq!(runner.app().view, View::About);
         runner.action(action_id("home"));
         runner.action(action_id("party"));
+        assert_eq!(runner.app().view, View::Players);
+        runner.action(action_id("start"));
         assert_eq!(runner.app().view, View::Question);
         runner.action(action_id(&choice(0)));
         assert_eq!(runner.app().view, View::Pass);
@@ -812,10 +919,71 @@ mod regression_tests {
     }
 
     #[test]
+    fn pass_around_renames_and_counts_players() {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("party"));
+        runner.action(action_id("count-2"));
+        assert_eq!(runner.app().players, 2);
+        runner.action(action_id("rename-0"));
+        // Shift, s, a, m, then accept.
+        for key in ["kb.shift", "kb.r1c1", "kb.r1c0", "kb.r2c6", "kb.enter"] {
+            runner.action(action_id(key));
+        }
+        assert_eq!(runner.app().names[0], "Sam");
+        assert!(!runner.app().entry.is_open());
+        runner.action(action_id("start"));
+        let correct = runner.app().round_questions[0].correct;
+        runner.action(action_id(&choice(correct)));
+        let pass = format!("{:?}", screen(runner.app()));
+        assert!(pass.contains("Sam answered. Hand the Kobo to Bert"));
+        runner.action(action_id("reveal"));
+        runner.action(action_id("continue"));
+        let correct = runner.app().round_questions[1].correct;
+        runner.action(action_id(&choice(correct)));
+        let pass = format!("{:?}", screen(runner.app()));
+        // Two players: the turn comes back to Sam, never to Cleo or Dev.
+        assert!(pass.contains("Hand the Kobo to Sam"));
+        assert!(!pass.contains("Cleo"));
+    }
+
+    #[test]
+    fn saved_state_carries_names_and_player_count() {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(b"1|2|3|Sam,Bo,Cleo,Dev".to_vec()),
+        });
+        assert_eq!(runner.app().players, 3);
+        assert_eq!(runner.app().names[0], "Sam");
+        assert_eq!(runner.app().names[1], "Bo");
+        // The pre-names format still loads, with defaults where it has nothing.
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(b"1|5".to_vec()),
+        });
+        assert_eq!(runner.app().rounds, 5);
+        assert_eq!(runner.app().players, 3);
+    }
+
+    #[test]
+    fn player_names_stay_short_and_separator_free() {
+        assert_eq!(clean_name("  Sam "), Some("Sam".to_owned()));
+        assert_eq!(
+            clean_name("averylongnameindeed"),
+            Some("averylongnam".to_owned())
+        );
+        assert_eq!(clean_name("a|b,c"), Some("abc".to_owned()));
+        assert_eq!(clean_name(" | "), None);
+    }
+
+    #[test]
     fn zero_scoreboard_condenses_until_the_first_point() {
         let mut runner = AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("party"));
+        runner.action(action_id("start"));
         let correct = runner.app().round_questions[0].correct;
         let wrong = (correct + 1) % 4;
         runner.action(action_id(&choice(wrong)));
