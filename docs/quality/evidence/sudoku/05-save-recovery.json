@@ -38,7 +38,7 @@
   "paints": "6",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 963802,
+    "dirtyPixelsSinceClean": 1101251,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "7",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1552",
+      "finishedAtMillis": "2389",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "7",
-      "submittedAtMillis": "1534",
+      "submittedAtMillis": "2344",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -122,15 +122,15 @@
     "touch": {
       "display": {
         "x": 866,
-        "y": 1341
+        "y": 1284
       },
       "raw": {
-        "x": 1341,
+        "x": 1284,
         "y": 205
       }
     },
     "transition": {
-      "dirty": 963802,
+      "dirty": 1101251,
       "full": false,
       "refresh": 7,
       "region": {
@@ -163,11 +163,11 @@
     }
   },
   "source": {
-    "binarySha256": "cc153a15d60cd7a23484142076b43c135ba705c06d2a1e9f160ed42b19672a91",
-    "dirty": true,
+    "binarySha256": "c879608d339dc7288130029a4273abbd8e230376995c0ac5672163a57398f81d",
+    "dirty": false,
     "fixture": "original-sudoku-pack",
     "requestedSeed": "0",
-    "revision": "a83c2f5c35069e5ac4a857dad80c1089f4607fba"
+    "revision": "a2b2b1ee3c1f9cf9646b9d4d9f6ae7fb39b80dae"
   },
   "version": 1
 }

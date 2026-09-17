@@ -1,28 +1,28 @@
 {
-  "paints": 6,
+  "paints": 15,
   "nodes": [
     {
       "kind": "StatusBand",
-      "x": 0,
+      "x": 1013,
       "y": 0,
-      "width": 1072,
-      "height": 59,
+      "width": 59,
+      "height": 1448,
       "centre": {
-        "x": 536,
-        "y": 29
+        "x": 1042,
+        "y": 724
       },
       "action": null,
       "lines": []
     },
     {
       "kind": "StatusClock",
-      "x": 47,
-      "y": 0,
-      "width": 112,
-      "height": 59,
+      "x": 1013,
+      "y": 47,
+      "width": 59,
+      "height": 112,
       "centre": {
-        "x": 103,
-        "y": 29
+        "x": 1042,
+        "y": 103
       },
       "action": null,
       "lines": [
@@ -31,78 +31,78 @@
     },
     {
       "kind": "StatusBattery(Some(Percent(72)), false)",
-      "x": 955,
-      "y": 12,
-      "width": 70,
-      "height": 35,
+      "x": 1025,
+      "y": 1331,
+      "width": 35,
+      "height": 70,
       "centre": {
-        "x": 990,
-        "y": 29
+        "x": 1042,
+        "y": 1366
       },
       "action": null,
       "lines": []
     },
     {
       "kind": "StatusSignal(Strong)",
-      "x": 896,
-      "y": 12,
+      "x": 1025,
+      "y": 1272,
       "width": 35,
       "height": 35,
       "centre": {
-        "x": 913,
-        "y": 29
+        "x": 1042,
+        "y": 1289
       },
       "action": null,
       "lines": []
     },
     {
       "kind": "StatusBluetooth",
-      "x": 837,
-      "y": 12,
+      "x": 1025,
+      "y": 1213,
       "width": 35,
       "height": 35,
       "centre": {
-        "x": 854,
-        "y": 29
+        "x": 1042,
+        "y": 1230
       },
       "action": null,
       "lines": []
     },
     {
       "kind": "TopBar",
-      "x": 0,
-      "y": 59,
-      "width": 1072,
-      "height": 100,
+      "x": 913,
+      "y": 0,
+      "width": 100,
+      "height": 1448,
       "centre": {
-        "x": 536,
-        "y": 109
+        "x": 963,
+        "y": 724
       },
       "action": null,
       "lines": []
     },
     {
       "kind": "Back",
-      "x": 47,
-      "y": 59,
+      "x": 913,
+      "y": 47,
       "width": 100,
       "height": 100,
       "centre": {
-        "x": 97,
-        "y": 109
+        "x": 963,
+        "y": 97
       },
       "action": 4294967295,
       "lines": []
     },
     {
       "kind": "TopBarTitle",
-      "x": 171,
-      "y": 77,
-      "width": 854,
-      "height": 64,
+      "x": 931,
+      "y": 171,
+      "width": 64,
+      "height": 1230,
       "centre": {
-        "x": 598,
-        "y": 109
+        "x": 963,
+        "y": 786
       },
       "action": null,
       "lines": [
@@ -111,54 +111,67 @@
     },
     {
       "kind": "Divider",
-      "x": 0,
-      "y": 159,
-      "width": 1072,
-      "height": 4,
+      "x": 909,
+      "y": 0,
+      "width": 4,
+      "height": 1448,
       "centre": {
-        "x": 536,
-        "y": 161
+        "x": 911,
+        "y": 724
       },
       "action": null,
       "lines": []
     },
     {
       "kind": "Secondary",
-      "x": 47,
-      "y": 175,
-      "width": 978,
-      "height": 50,
+      "x": 847,
+      "y": 104,
+      "width": 50,
+      "height": 1240,
       "centre": {
-        "x": 536,
-        "y": 200
+        "x": 872,
+        "y": 724
       },
       "action": null,
       "lines": [
-        "Choose a square \u00b7 53 left"
+        "53 left \u00b7 Given"
       ]
     },
     {
-      "kind": "Spacer",
-      "x": 113,
-      "y": 237,
-      "width": 846,
-      "height": 846,
+      "kind": "Band",
+      "x": 52,
+      "y": 47,
+      "width": 783,
+      "height": 1354,
       "centre": {
-        "x": 536,
-        "y": 660
+        "x": 443,
+        "y": 724
+      },
+      "action": 103857925,
+      "lines": []
+    },
+    {
+      "kind": "Spacer",
+      "x": 52,
+      "y": 89,
+      "width": 783,
+      "height": 783,
+      "centre": {
+        "x": 443,
+        "y": 480
       },
       "action": 53525068,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(508360168), Plain, false)",
-      "x": 113,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 284
+        "x": 791,
+        "y": 132
       },
       "action": 508360168,
       "lines": [
@@ -167,26 +180,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 3)",
-      "x": 113,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 284
+        "x": 791,
+        "y": 132
       },
       "action": 508360168,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(525137787), Plain, false)",
-      "x": 207,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 284
+        "x": 791,
+        "y": 219
       },
       "action": 525137787,
       "lines": [
@@ -195,26 +208,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 8, given: true }, false, false, 1)",
-      "x": 207,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 284
+        "x": 791,
+        "y": 219
       },
       "action": 525137787,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 215,
-      "y": 245,
-      "width": 78,
-      "height": 78,
+      "x": 756,
+      "y": 184,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 254,
-        "y": 284
+        "x": 791,
+        "y": 219
       },
       "action": 525137787,
       "lines": [
@@ -223,13 +236,13 @@
     },
     {
       "kind": "Cell(ActionId(541915406), Plain, false)",
-      "x": 301,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 284
+        "x": 791,
+        "y": 306
       },
       "action": 541915406,
       "lines": [
@@ -238,26 +251,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 3, given: true }, false, false, 1)",
-      "x": 301,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 284
+        "x": 791,
+        "y": 306
       },
       "action": 541915406,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 309,
-      "y": 245,
-      "width": 78,
-      "height": 78,
+      "x": 756,
+      "y": 271,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 348,
-        "y": 284
+        "x": 791,
+        "y": 306
       },
       "action": 541915406,
       "lines": [
@@ -266,13 +279,13 @@
     },
     {
       "kind": "Cell(ActionId(558693025), Plain, false)",
-      "x": 395,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 284
+        "x": 791,
+        "y": 393
       },
       "action": 558693025,
       "lines": [
@@ -281,26 +294,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 3)",
-      "x": 395,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 284
+        "x": 791,
+        "y": 393
       },
       "action": 558693025,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(575470644), Plain, false)",
-      "x": 489,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 284
+        "x": 791,
+        "y": 480
       },
       "action": 575470644,
       "lines": [
@@ -309,26 +322,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 489,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 284
+        "x": 791,
+        "y": 480
       },
       "action": 575470644,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(592248263), Plain, false)",
-      "x": 583,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 284
+        "x": 791,
+        "y": 567
       },
       "action": 592248263,
       "lines": [
@@ -337,26 +350,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 583,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 284
+        "x": 791,
+        "y": 567
       },
       "action": 592248263,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(609025882), Plain, false)",
-      "x": 677,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 284
+        "x": 791,
+        "y": 654
       },
       "action": 609025882,
       "lines": [
@@ -365,26 +378,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 3)",
-      "x": 677,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 284
+        "x": 791,
+        "y": 654
       },
       "action": 609025882,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(625803501), Plain, false)",
-      "x": 771,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 284
+        "x": 791,
+        "y": 741
       },
       "action": 625803501,
       "lines": [
@@ -393,26 +406,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 771,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 284
+        "x": 791,
+        "y": 741
       },
       "action": 625803501,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(374139216), Plain, false)",
-      "x": 865,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "x": 748,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 284
+        "x": 791,
+        "y": 828
       },
       "action": 374139216,
       "lines": [
@@ -420,27 +433,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 4, given: true }, false, false, 9)",
-      "x": 865,
-      "y": 237,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 4, given: true }, false, true, 9)",
+      "x": 748,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 284
+        "x": 791,
+        "y": 828
       },
       "action": 374139216,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 873,
-      "y": 245,
-      "width": 78,
-      "height": 78,
+      "x": 756,
+      "y": 793,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 912,
-        "y": 284
+        "x": 791,
+        "y": 828
       },
       "action": 374139216,
       "lines": [
@@ -449,13 +462,13 @@
     },
     {
       "kind": "Cell(ActionId(390916835), Plain, false)",
-      "x": 113,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 378
+        "x": 704,
+        "y": 132
       },
       "action": 390916835,
       "lines": [
@@ -464,26 +477,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 1, given: true }, false, false, 2)",
-      "x": 113,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 378
+        "x": 704,
+        "y": 132
       },
       "action": 390916835,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 121,
-      "y": 339,
-      "width": 78,
-      "height": 78,
+      "x": 669,
+      "y": 97,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 160,
-        "y": 378
+        "x": 704,
+        "y": 132
       },
       "action": 390916835,
       "lines": [
@@ -492,13 +505,13 @@
     },
     {
       "kind": "Cell(ActionId(2435402513), Plain, false)",
-      "x": 207,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 378
+        "x": 704,
+        "y": 219
       },
       "action": 2435402513,
       "lines": [
@@ -507,26 +520,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 6, given: true }, false, false, 0)",
-      "x": 207,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 378
+        "x": 704,
+        "y": 219
       },
       "action": 2435402513,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 215,
-      "y": 339,
-      "width": 78,
-      "height": 78,
+      "x": 669,
+      "y": 184,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 254,
-        "y": 378
+        "x": 704,
+        "y": 219
       },
       "action": 2435402513,
       "lines": [
@@ -535,13 +548,13 @@
     },
     {
       "kind": "Cell(ActionId(2418624894), Plain, false)",
-      "x": 301,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 378
+        "x": 704,
+        "y": 306
       },
       "action": 2418624894,
       "lines": [
@@ -550,26 +563,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 301,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 378
+        "x": 704,
+        "y": 306
       },
       "action": 2418624894,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2401847275), Plain, false)",
-      "x": 395,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 378
+        "x": 704,
+        "y": 393
       },
       "action": 2401847275,
       "lines": [
@@ -578,26 +591,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 395,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 378
+        "x": 704,
+        "y": 393
       },
       "action": 2401847275,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2385069656), Plain, false)",
-      "x": 489,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 378
+        "x": 704,
+        "y": 480
       },
       "action": 2385069656,
       "lines": [
@@ -606,26 +619,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 7, given: true }, false, false, 0)",
-      "x": 489,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 378
+        "x": 704,
+        "y": 480
       },
       "action": 2385069656,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 497,
-      "y": 339,
-      "width": 78,
-      "height": 78,
+      "x": 669,
+      "y": 445,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 536,
-        "y": 378
+        "x": 704,
+        "y": 480
       },
       "action": 2385069656,
       "lines": [
@@ -634,13 +647,13 @@
     },
     {
       "kind": "Cell(ActionId(2502512989), Plain, false)",
-      "x": 583,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 378
+        "x": 704,
+        "y": 567
       },
       "action": 2502512989,
       "lines": [
@@ -649,26 +662,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 583,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 378
+        "x": 704,
+        "y": 567
       },
       "action": 2502512989,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2485735370), Plain, false)",
-      "x": 677,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 378
+        "x": 704,
+        "y": 654
       },
       "action": 2485735370,
       "lines": [
@@ -677,26 +690,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 677,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 378
+        "x": 704,
+        "y": 654
       },
       "action": 2485735370,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2468957751), Plain, false)",
-      "x": 771,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 378
+        "x": 704,
+        "y": 741
       },
       "action": 2468957751,
       "lines": [
@@ -705,26 +718,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 771,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 378
+        "x": 704,
+        "y": 741
       },
       "action": 2468957751,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2452180132), Plain, false)",
-      "x": 865,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "x": 661,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 378
+        "x": 704,
+        "y": 828
       },
       "action": 2452180132,
       "lines": [
@@ -732,27 +745,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 8)",
-      "x": 865,
-      "y": 331,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 8)",
+      "x": 661,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 378
+        "x": 704,
+        "y": 828
       },
       "action": 2452180132,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2301181561), Plain, false)",
-      "x": 113,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 472
+        "x": 617,
+        "y": 132
       },
       "action": 2301181561,
       "lines": [
@@ -761,26 +774,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 9, given: true }, false, false, 2)",
-      "x": 113,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 472
+        "x": 617,
+        "y": 132
       },
       "action": 2301181561,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 121,
-      "y": 433,
-      "width": 78,
-      "height": 78,
+      "x": 582,
+      "y": 97,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 160,
-        "y": 472
+        "x": 617,
+        "y": 132
       },
       "action": 2301181561,
       "lines": [
@@ -789,13 +802,13 @@
     },
     {
       "kind": "Cell(ActionId(2284403942), Plain, false)",
-      "x": 207,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 472
+        "x": 617,
+        "y": 219
       },
       "action": 2284403942,
       "lines": [
@@ -804,26 +817,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 207,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 472
+        "x": 617,
+        "y": 219
       },
       "action": 2284403942,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(388783258), Plain, false)",
-      "x": 301,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 472
+        "x": 617,
+        "y": 306
       },
       "action": 388783258,
       "lines": [
@@ -832,26 +845,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 301,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 472
+        "x": 617,
+        "y": 306
       },
       "action": 388783258,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(405560877), Plain, false)",
-      "x": 395,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 472
+        "x": 617,
+        "y": 393
       },
       "action": 405560877,
       "lines": [
@@ -860,26 +873,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 4, given: true }, false, false, 2)",
-      "x": 395,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 472
+        "x": 617,
+        "y": 393
       },
       "action": 405560877,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 403,
-      "y": 433,
-      "width": 78,
-      "height": 78,
+      "x": 582,
+      "y": 358,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 442,
-        "y": 472
+        "x": 617,
+        "y": 393
       },
       "action": 405560877,
       "lines": [
@@ -888,13 +901,13 @@
     },
     {
       "kind": "Cell(ActionId(355228020), Plain, false)",
-      "x": 489,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 472
+        "x": 617,
+        "y": 480
       },
       "action": 355228020,
       "lines": [
@@ -903,26 +916,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 489,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 472
+        "x": 617,
+        "y": 480
       },
       "action": 355228020,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(372005639), Plain, false)",
-      "x": 583,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 472
+        "x": 617,
+        "y": 567
       },
       "action": 372005639,
       "lines": [
@@ -931,26 +944,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 583,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 472
+        "x": 617,
+        "y": 567
       },
       "action": 372005639,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(321672782), Plain, false)",
-      "x": 677,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 472
+        "x": 617,
+        "y": 654
       },
       "action": 321672782,
       "lines": [
@@ -959,26 +972,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 677,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 472
+        "x": 617,
+        "y": 654
       },
       "action": 321672782,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(338450401), Plain, false)",
-      "x": 771,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 472
+        "x": 617,
+        "y": 741
       },
       "action": 338450401,
       "lines": [
@@ -987,26 +1000,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 3, given: true }, false, false, 0)",
-      "x": 771,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 472
+        "x": 617,
+        "y": 741
       },
       "action": 338450401,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 779,
-      "y": 433,
-      "width": 78,
-      "height": 78,
+      "x": 582,
+      "y": 706,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 818,
-        "y": 472
+        "x": 617,
+        "y": 741
       },
       "action": 338450401,
       "lines": [
@@ -1015,13 +1028,13 @@
     },
     {
       "kind": "Cell(ActionId(288117544), Plain, false)",
-      "x": 865,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "x": 574,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 472
+        "x": 617,
+        "y": 828
       },
       "action": 288117544,
       "lines": [
@@ -1029,27 +1042,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 7, given: true }, false, false, 8)",
-      "x": 865,
-      "y": 425,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 7, given: true }, false, true, 8)",
+      "x": 574,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 472
+        "x": 617,
+        "y": 828
       },
       "action": 288117544,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 873,
-      "y": 433,
-      "width": 78,
-      "height": 78,
+      "x": 582,
+      "y": 793,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 912,
-        "y": 472
+        "x": 617,
+        "y": 828
       },
       "action": 288117544,
       "lines": [
@@ -1058,13 +1071,13 @@
     },
     {
       "kind": "Cell(ActionId(304895163), Plain, false)",
-      "x": 113,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 566
+        "x": 530,
+        "y": 132
       },
       "action": 304895163,
       "lines": [
@@ -1073,26 +1086,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 4, given: true }, false, false, 3)",
-      "x": 113,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 566
+        "x": 530,
+        "y": 132
       },
       "action": 304895163,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 121,
-      "y": 527,
-      "width": 78,
-      "height": 78,
+      "x": 495,
+      "y": 97,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 160,
-        "y": 566
+        "x": 530,
+        "y": 132
       },
       "action": 304895163,
       "lines": [
@@ -1101,13 +1114,13 @@
     },
     {
       "kind": "Cell(ActionId(254562306), Plain, false)",
-      "x": 207,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 566
+        "x": 530,
+        "y": 219
       },
       "action": 254562306,
       "lines": [
@@ -1116,26 +1129,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 207,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 566
+        "x": 530,
+        "y": 219
       },
       "action": 254562306,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(271339925), Plain, false)",
-      "x": 301,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 566
+        "x": 530,
+        "y": 306
       },
       "action": 271339925,
       "lines": [
@@ -1144,26 +1157,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 2, given: true }, false, false, 1)",
-      "x": 301,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 566
+        "x": 530,
+        "y": 306
       },
       "action": 271339925,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 309,
-      "y": 527,
-      "width": 78,
-      "height": 78,
+      "x": 495,
+      "y": 271,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 348,
-        "y": 566
+        "x": 530,
+        "y": 306
       },
       "action": 271339925,
       "lines": [
@@ -1172,13 +1185,13 @@
     },
     {
       "kind": "Cell(ActionId(4247679555), Plain, false)",
-      "x": 395,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 566
+        "x": 530,
+        "y": 393
       },
       "action": 4247679555,
       "lines": [
@@ -1187,26 +1200,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 6, given: true }, false, false, 3)",
-      "x": 395,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 566
+        "x": 530,
+        "y": 393
       },
       "action": 4247679555,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 403,
-      "y": 527,
-      "width": 78,
-      "height": 78,
+      "x": 495,
+      "y": 358,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 442,
-        "y": 566
+        "x": 530,
+        "y": 393
       },
       "action": 4247679555,
       "lines": [
@@ -1215,13 +1228,13 @@
     },
     {
       "kind": "Cell(ActionId(4230901936), Plain, false)",
-      "x": 489,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 566
+        "x": 530,
+        "y": 480
       },
       "action": 4230901936,
       "lines": [
@@ -1230,26 +1243,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 489,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 566
+        "x": 530,
+        "y": 480
       },
       "action": 4230901936,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(4281234793), Plain, false)",
-      "x": 583,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 566
+        "x": 530,
+        "y": 567
       },
       "action": 4281234793,
       "lines": [
@@ -1258,26 +1271,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 583,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 566
+        "x": 530,
+        "y": 567
       },
       "action": 4281234793,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(4264457174), Plain, false)",
-      "x": 677,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 566
+        "x": 530,
+        "y": 654
       },
       "action": 4264457174,
       "lines": [
@@ -1286,26 +1299,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 3)",
-      "x": 677,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 566
+        "x": 530,
+        "y": 654
       },
       "action": 4264457174,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(19822735), Plain, false)",
-      "x": 771,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 566
+        "x": 530,
+        "y": 741
       },
       "action": 19822735,
       "lines": [
@@ -1314,26 +1327,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 771,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 566
+        "x": 530,
+        "y": 741
       },
       "action": 19822735,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(3045116), Plain, false)",
-      "x": 865,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "x": 487,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 566
+        "x": 530,
+        "y": 828
       },
       "action": 3045116,
       "lines": [
@@ -1341,27 +1354,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 3, given: true }, false, false, 9)",
-      "x": 865,
-      "y": 519,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 3, given: true }, false, true, 9)",
+      "x": 487,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 566
+        "x": 530,
+        "y": 828
       },
       "action": 3045116,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 873,
-      "y": 527,
-      "width": 78,
-      "height": 78,
+      "x": 495,
+      "y": 793,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 912,
-        "y": 566
+        "x": 530,
+        "y": 828
       },
       "action": 3045116,
       "lines": [
@@ -1370,13 +1383,13 @@
     },
     {
       "kind": "Cell(ActionId(53377973), Plain, false)",
-      "x": 113,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 660
+        "x": 443,
+        "y": 132
       },
       "action": 53377973,
       "lines": [
@@ -1385,26 +1398,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 8, given: true }, false, false, 2)",
-      "x": 113,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 660
+        "x": 443,
+        "y": 132
       },
       "action": 53377973,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 121,
-      "y": 621,
-      "width": 78,
-      "height": 78,
+      "x": 408,
+      "y": 97,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 160,
-        "y": 660
+        "x": 443,
+        "y": 132
       },
       "action": 53377973,
       "lines": [
@@ -1413,13 +1426,13 @@
     },
     {
       "kind": "Cell(ActionId(36600354), Plain, false)",
-      "x": 207,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 660
+        "x": 443,
+        "y": 219
       },
       "action": 36600354,
       "lines": [
@@ -1428,26 +1441,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 207,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 660
+        "x": 443,
+        "y": 219
       },
       "action": 36600354,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(86933211), Plain, false)",
-      "x": 301,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 660
+        "x": 443,
+        "y": 306
       },
       "action": 86933211,
       "lines": [
@@ -1456,26 +1469,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 301,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 660
+        "x": 443,
+        "y": 306
       },
       "action": 86933211,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(70155592), Plain, false)",
-      "x": 395,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 660
+        "x": 443,
+        "y": 393
       },
       "action": 70155592,
       "lines": [
@@ -1484,26 +1497,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 7, given: true }, false, false, 2)",
-      "x": 395,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 660
+        "x": 443,
+        "y": 393
       },
       "action": 70155592,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 403,
-      "y": 621,
-      "width": 78,
-      "height": 78,
+      "x": 408,
+      "y": 358,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 442,
-        "y": 660
+        "x": 443,
+        "y": 393
       },
       "action": 70155592,
       "lines": [
@@ -1512,13 +1525,13 @@
     },
     {
       "kind": "Cell(ActionId(53525068), Plain, false)",
-      "x": 489,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 660
+        "x": 443,
+        "y": 480
       },
       "action": 53525068,
       "lines": [
@@ -1527,26 +1540,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 489,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 660
+        "x": 443,
+        "y": 480
       },
       "action": 53525068,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(70302687), Plain, false)",
-      "x": 583,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 660
+        "x": 443,
+        "y": 567
       },
       "action": 70302687,
       "lines": [
@@ -1555,26 +1568,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 583,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 660
+        "x": 443,
+        "y": 567
       },
       "action": 70302687,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(87080306), Plain, false)",
-      "x": 677,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 660
+        "x": 443,
+        "y": 654
       },
       "action": 87080306,
       "lines": [
@@ -1583,26 +1596,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 9, given: true }, false, false, 2)",
-      "x": 677,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 660
+        "x": 443,
+        "y": 654
       },
       "action": 87080306,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 685,
-      "y": 621,
-      "width": 78,
-      "height": 78,
+      "x": 408,
+      "y": 619,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 724,
-        "y": 660
+        "x": 443,
+        "y": 654
       },
       "action": 87080306,
       "lines": [
@@ -1611,13 +1624,13 @@
     },
     {
       "kind": "Cell(ActionId(103857925), Plain, false)",
-      "x": 771,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 660
+        "x": 443,
+        "y": 741
       },
       "action": 103857925,
       "lines": [
@@ -1626,26 +1639,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 771,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 660
+        "x": 443,
+        "y": 741
       },
       "action": 103857925,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(4281381888), Plain, false)",
-      "x": 865,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "x": 400,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 660
+        "x": 443,
+        "y": 828
       },
       "action": 4281381888,
       "lines": [
@@ -1653,27 +1666,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 8)",
-      "x": 865,
-      "y": 613,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 8)",
+      "x": 400,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 660
+        "x": 443,
+        "y": 828
       },
       "action": 4281381888,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(3192211), Plain, false)",
-      "x": 113,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 754
+        "x": 356,
+        "y": 132
       },
       "action": 3192211,
       "lines": [
@@ -1682,26 +1695,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 113,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 754
+        "x": 356,
+        "y": 132
       },
       "action": 3192211,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(19969830), Plain, false)",
-      "x": 207,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 754
+        "x": 356,
+        "y": 219
       },
       "action": 19969830,
       "lines": [
@@ -1710,26 +1723,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 207,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 754
+        "x": 356,
+        "y": 219
       },
       "action": 19969830,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(36747449), Plain, false)",
-      "x": 301,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 754
+        "x": 356,
+        "y": 306
       },
       "action": 36747449,
       "lines": [
@@ -1738,26 +1751,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 301,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 754
+        "x": 356,
+        "y": 306
       },
       "action": 36747449,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(187746020), Plain, false)",
-      "x": 395,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 754
+        "x": 356,
+        "y": 393
       },
       "action": 187746020,
       "lines": [
@@ -1766,26 +1779,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 395,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 754
+        "x": 356,
+        "y": 393
       },
       "action": 187746020,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(204523639), Plain, false)",
-      "x": 489,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 754
+        "x": 356,
+        "y": 480
       },
       "action": 204523639,
       "lines": [
@@ -1794,26 +1807,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 9, given: true }, false, false, 0)",
-      "x": 489,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 754
+        "x": 356,
+        "y": 480
       },
       "action": 204523639,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 497,
-      "y": 715,
-      "width": 78,
-      "height": 78,
+      "x": 321,
+      "y": 445,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 536,
-        "y": 754
+        "x": 356,
+        "y": 480
       },
       "action": 204523639,
       "lines": [
@@ -1822,13 +1835,13 @@
     },
     {
       "kind": "Cell(ActionId(2301873109), Plain, false)",
-      "x": 583,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 754
+        "x": 356,
+        "y": 567
       },
       "action": 2301873109,
       "lines": [
@@ -1837,26 +1850,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 4, given: true }, false, false, 0)",
-      "x": 583,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 754
+        "x": 356,
+        "y": 567
       },
       "action": 2301873109,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 591,
-      "y": 715,
-      "width": 78,
-      "height": 78,
+      "x": 321,
+      "y": 532,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 630,
-        "y": 754
+        "x": 356,
+        "y": 567
       },
       "action": 2301873109,
       "lines": [
@@ -1865,13 +1878,13 @@
     },
     {
       "kind": "Cell(ActionId(2285095490), Plain, false)",
-      "x": 677,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 754
+        "x": 356,
+        "y": 654
       },
       "action": 2285095490,
       "lines": [
@@ -1880,26 +1893,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 677,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 754
+        "x": 356,
+        "y": 654
       },
       "action": 2285095490,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2268317871), Plain, false)",
-      "x": 771,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 754
+        "x": 356,
+        "y": 741
       },
       "action": 2268317871,
       "lines": [
@@ -1908,26 +1921,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 771,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 754
+        "x": 356,
+        "y": 741
       },
       "action": 2268317871,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2251540252), Plain, false)",
-      "x": 865,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "x": 313,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 754
+        "x": 356,
+        "y": 828
       },
       "action": 2251540252,
       "lines": [
@@ -1935,27 +1948,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 8)",
-      "x": 865,
-      "y": 707,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 8)",
+      "x": 313,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 754
+        "x": 356,
+        "y": 828
       },
       "action": 2251540252,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2234762633), Plain, false)",
-      "x": 113,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 848
+        "x": 269,
+        "y": 132
       },
       "action": 2234762633,
       "lines": [
@@ -1964,26 +1977,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 3)",
-      "x": 113,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 848
+        "x": 269,
+        "y": 132
       },
       "action": 2234762633,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2217985014), Plain, false)",
-      "x": 207,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 848
+        "x": 269,
+        "y": 219
       },
       "action": 2217985014,
       "lines": [
@@ -1992,26 +2005,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 207,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 848
+        "x": 269,
+        "y": 219
       },
       "action": 2217985014,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2201207395), Plain, false)",
-      "x": 301,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 848
+        "x": 269,
+        "y": 306
       },
       "action": 2201207395,
       "lines": [
@@ -2020,26 +2033,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 301,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 848
+        "x": 269,
+        "y": 306
       },
       "action": 2201207395,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2184429776), Plain, false)",
-      "x": 395,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 848
+        "x": 269,
+        "y": 393
       },
       "action": 2184429776,
       "lines": [
@@ -2048,26 +2061,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 1, given: true }, false, false, 3)",
-      "x": 395,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 848
+        "x": 269,
+        "y": 393
       },
       "action": 2184429776,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 403,
-      "y": 809,
-      "width": 78,
-      "height": 78,
+      "x": 234,
+      "y": 358,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 442,
-        "y": 848
+        "x": 269,
+        "y": 393
       },
       "action": 2184429776,
       "lines": [
@@ -2076,13 +2089,13 @@
     },
     {
       "kind": "Cell(ActionId(2436094061), Plain, false)",
-      "x": 489,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 848
+        "x": 269,
+        "y": 480
       },
       "action": 2436094061,
       "lines": [
@@ -2091,26 +2104,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 489,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 848
+        "x": 269,
+        "y": 480
       },
       "action": 2436094061,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2419316442), Plain, false)",
-      "x": 583,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 848
+        "x": 269,
+        "y": 567
       },
       "action": 2419316442,
       "lines": [
@@ -2119,26 +2132,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 1)",
-      "x": 583,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 848
+        "x": 269,
+        "y": 567
       },
       "action": 2419316442,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2402685918), Plain, false)",
-      "x": 677,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 848
+        "x": 269,
+        "y": 654
       },
       "action": 2402685918,
       "lines": [
@@ -2146,27 +2159,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 5, given: true }, false, false, 3)",
-      "x": 677,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 5, given: true }, false, true, 3)",
+      "x": 226,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 848
+        "x": 269,
+        "y": 654
       },
       "action": 2402685918,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 685,
-      "y": 809,
-      "width": 78,
-      "height": 78,
+      "x": 234,
+      "y": 619,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 724,
-        "y": 848
+        "x": 269,
+        "y": 654
       },
       "action": 2402685918,
       "lines": [
@@ -2175,13 +2188,13 @@
     },
     {
       "kind": "Cell(ActionId(2419463537), Plain, false)",
-      "x": 771,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 848
+        "x": 269,
+        "y": 741
       },
       "action": 2419463537,
       "lines": [
@@ -2189,27 +2202,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 8, given: true }, false, false, 1)",
-      "x": 771,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 8, given: true }, false, true, 1)",
+      "x": 226,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 848
+        "x": 269,
+        "y": 741
       },
       "action": 2419463537,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 779,
-      "y": 809,
-      "width": 78,
-      "height": 78,
+      "x": 234,
+      "y": 706,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 818,
-        "y": 848
+        "x": 269,
+        "y": 741
       },
       "action": 2419463537,
       "lines": [
@@ -2218,13 +2231,13 @@
     },
     {
       "kind": "Cell(ActionId(2369130680), Plain, false)",
-      "x": 865,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "x": 226,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 848
+        "x": 269,
+        "y": 828
       },
       "action": 2369130680,
       "lines": [
@@ -2232,27 +2245,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 9)",
-      "x": 865,
-      "y": 801,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 9)",
+      "x": 226,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 848
+        "x": 269,
+        "y": 828
       },
       "action": 2369130680,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2385908299), Plain, false)",
-      "x": 113,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 942
+        "x": 182,
+        "y": 132
       },
       "action": 2385908299,
       "lines": [
@@ -2261,26 +2274,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 113,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 942
+        "x": 182,
+        "y": 132
       },
       "action": 2385908299,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2469796394), Plain, false)",
-      "x": 207,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 942
+        "x": 182,
+        "y": 219
       },
       "action": 2469796394,
       "lines": [
@@ -2289,26 +2302,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 1, given: true }, false, false, 0)",
-      "x": 207,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 942
+        "x": 182,
+        "y": 219
       },
       "action": 2469796394,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 215,
-      "y": 903,
-      "width": 78,
-      "height": 78,
+      "x": 147,
+      "y": 184,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 254,
-        "y": 942
+        "x": 182,
+        "y": 219
       },
       "action": 2469796394,
       "lines": [
@@ -2317,13 +2330,13 @@
     },
     {
       "kind": "Cell(ActionId(2486574013), Plain, false)",
-      "x": 301,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 942
+        "x": 182,
+        "y": 306
       },
       "action": 2486574013,
       "lines": [
@@ -2332,26 +2345,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 8, given: true }, false, false, 0)",
-      "x": 301,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 942
+        "x": 182,
+        "y": 306
       },
       "action": 2486574013,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 309,
-      "y": 903,
-      "width": 78,
-      "height": 78,
+      "x": 147,
+      "y": 271,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 348,
-        "y": 942
+        "x": 182,
+        "y": 306
       },
       "action": 2486574013,
       "lines": [
@@ -2360,13 +2373,13 @@
     },
     {
       "kind": "Cell(ActionId(2436241156), Plain, false)",
-      "x": 395,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 942
+        "x": 182,
+        "y": 393
       },
       "action": 2436241156,
       "lines": [
@@ -2375,26 +2388,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 2)",
-      "x": 395,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 942
+        "x": 182,
+        "y": 393
       },
       "action": 2436241156,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2453018775), Plain, false)",
-      "x": 489,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 942
+        "x": 182,
+        "y": 480
       },
       "action": 2453018775,
       "lines": [
@@ -2403,26 +2416,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 489,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 942
+        "x": 182,
+        "y": 480
       },
       "action": 2453018775,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2268464966), Plain, false)",
-      "x": 583,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 942
+        "x": 182,
+        "y": 567
       },
       "action": 2268464966,
       "lines": [
@@ -2431,26 +2444,26 @@
     },
     {
       "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 583,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 942
+        "x": 182,
+        "y": 567
       },
       "action": 2268464966,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2285242585), Plain, false)",
-      "x": 677,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 942
+        "x": 182,
+        "y": 654
       },
       "action": 2285242585,
       "lines": [
@@ -2458,27 +2471,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 3, given: true }, false, false, 2)",
-      "x": 677,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 3, given: true }, false, true, 2)",
+      "x": 139,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 942
+        "x": 182,
+        "y": 654
       },
       "action": 2285242585,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 685,
-      "y": 903,
-      "width": 78,
-      "height": 78,
+      "x": 147,
+      "y": 619,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 724,
-        "y": 942
+        "x": 182,
+        "y": 654
       },
       "action": 2285242585,
       "lines": [
@@ -2487,13 +2500,13 @@
     },
     {
       "kind": "Cell(ActionId(2503498727), Plain, false)",
-      "x": 771,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 942
+        "x": 182,
+        "y": 741
       },
       "action": 2503498727,
       "lines": [
@@ -2501,27 +2514,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 0)",
-      "x": 771,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 0)",
+      "x": 139,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 942
+        "x": 182,
+        "y": 741
       },
       "action": 2503498727,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2486721108), Plain, false)",
-      "x": 865,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "x": 139,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 942
+        "x": 182,
+        "y": 828
       },
       "action": 2486721108,
       "lines": [
@@ -2529,27 +2542,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 8)",
-      "x": 865,
-      "y": 895,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 8)",
+      "x": 139,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 942
+        "x": 182,
+        "y": 828
       },
       "action": 2486721108,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2537053965), Plain, false)",
-      "x": 113,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 1036
+        "x": 95,
+        "y": 132
       },
       "action": 2537053965,
       "lines": [
@@ -2557,27 +2570,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 6)",
-      "x": 113,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 6)",
+      "x": 52,
+      "y": 89,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 160,
-        "y": 1036
+        "x": 95,
+        "y": 132
       },
       "action": 2537053965,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2520276346), Plain, false)",
-      "x": 207,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 1036
+        "x": 95,
+        "y": 219
       },
       "action": 2520276346,
       "lines": [
@@ -2585,27 +2598,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 4)",
-      "x": 207,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 4)",
+      "x": 52,
+      "y": 176,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 254,
-        "y": 1036
+        "x": 95,
+        "y": 219
       },
       "action": 2520276346,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2436388251), Plain, false)",
-      "x": 301,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 1036
+        "x": 95,
+        "y": 306
       },
       "action": 2436388251,
       "lines": [
@@ -2613,27 +2626,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 4)",
-      "x": 301,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 4)",
+      "x": 52,
+      "y": 263,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 348,
-        "y": 1036
+        "x": 95,
+        "y": 306
       },
       "action": 2436388251,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2419610632), Plain, false)",
-      "x": 395,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 1036
+        "x": 95,
+        "y": 393
       },
       "action": 2419610632,
       "lines": [
@@ -2641,27 +2654,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 5, given: true }, false, false, 6)",
-      "x": 395,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 5, given: true }, false, true, 6)",
+      "x": 52,
+      "y": 350,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 442,
-        "y": 1036
+        "x": 95,
+        "y": 393
       },
       "action": 2419610632,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 403,
-      "y": 997,
-      "width": 78,
-      "height": 78,
+      "x": 60,
+      "y": 358,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 442,
-        "y": 1036
+        "x": 95,
+        "y": 393
       },
       "action": 2419610632,
       "lines": [
@@ -2670,13 +2683,13 @@
     },
     {
       "kind": "Cell(ActionId(2469943489), Plain, false)",
-      "x": 489,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 1036
+        "x": 95,
+        "y": 480
       },
       "action": 2469943489,
       "lines": [
@@ -2684,27 +2697,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 8, given: true }, false, false, 4)",
-      "x": 489,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 8, given: true }, false, true, 4)",
+      "x": 52,
+      "y": 437,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 536,
-        "y": 1036
+        "x": 95,
+        "y": 480
       },
       "action": 2469943489,
       "lines": []
     },
     {
       "kind": "PencilNumber(false)",
-      "x": 497,
-      "y": 997,
-      "width": 78,
-      "height": 78,
+      "x": 60,
+      "y": 445,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 536,
-        "y": 1036
+        "x": 95,
+        "y": 480
       },
       "action": 2469943489,
       "lines": [
@@ -2713,13 +2726,13 @@
     },
     {
       "kind": "Cell(ActionId(2453165870), Plain, false)",
-      "x": 583,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 1036
+        "x": 95,
+        "y": 567
       },
       "action": 2453165870,
       "lines": [
@@ -2727,27 +2740,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 4)",
-      "x": 583,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 4)",
+      "x": 52,
+      "y": 524,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 630,
-        "y": 1036
+        "x": 95,
+        "y": 567
       },
       "action": 2453165870,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2369277775), Plain, false)",
-      "x": 677,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 1036
+        "x": 95,
+        "y": 654
       },
       "action": 2369277775,
       "lines": [
@@ -2755,27 +2768,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 6)",
-      "x": 677,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 6)",
+      "x": 52,
+      "y": 611,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 724,
-        "y": 1036
+        "x": 95,
+        "y": 654
       },
       "action": 2369277775,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2352500156), Plain, false)",
-      "x": 771,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "x": 52,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 1036
+        "x": 95,
+        "y": 741
       },
       "action": 2352500156,
       "lines": [
@@ -2783,27 +2796,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 0, given: false }, false, false, 4)",
-      "x": 771,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 0, given: false }, false, true, 4)",
+      "x": 52,
+      "y": 698,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 818,
-        "y": 1036
+        "x": 95,
+        "y": 741
       },
       "action": 2352500156,
       "lines": []
     },
     {
-      "kind": "Cell(ActionId(2064867872), Plain, false)",
-      "x": 865,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "Cell(ActionId(2064867872), Plain, true)",
+      "x": 52,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 1036
+        "x": 95,
+        "y": 828
       },
       "action": 2064867872,
       "lines": [
@@ -2811,27 +2824,27 @@
       ]
     },
     {
-      "kind": "PencilMark(Digit { value: 1, given: true }, false, false, 12)",
-      "x": 865,
-      "y": 989,
-      "width": 94,
-      "height": 94,
+      "kind": "PencilMark(Digit { value: 1, given: true }, true, false, 12)",
+      "x": 52,
+      "y": 785,
+      "width": 87,
+      "height": 87,
       "centre": {
-        "x": 912,
-        "y": 1036
+        "x": 95,
+        "y": 828
       },
       "action": 2064867872,
       "lines": []
     },
     {
-      "kind": "PencilNumber(false)",
-      "x": 873,
-      "y": 997,
-      "width": 78,
-      "height": 78,
+      "kind": "PencilNumber(true)",
+      "x": 60,
+      "y": 793,
+      "width": 71,
+      "height": 71,
       "centre": {
-        "x": 912,
-        "y": 1036
+        "x": 95,
+        "y": 828
       },
       "action": 2064867872,
       "lines": [
@@ -2840,39 +2853,39 @@
     },
     {
       "kind": "Spacer",
-      "x": 47,
-      "y": 1095,
-      "width": 978,
-      "height": 118,
+      "x": 587,
+      "y": 938,
+      "width": 248,
+      "height": 463,
       "centre": {
-        "x": 536,
-        "y": 1154
+        "x": 711,
+        "y": 1169
       },
-      "action": 1374246396,
+      "action": null,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(1307135920), Key, false)",
-      "x": 47,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 938,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 96,
-        "y": 1154
+        "x": 776,
+        "y": 979
       },
       "action": 1307135920,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 47,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 938,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 96,
-        "y": 1154
+        "x": 776,
+        "y": 979
       },
       "action": 1307135920,
       "lines": [
@@ -2881,26 +2894,26 @@
     },
     {
       "kind": "Cell(ActionId(1357468777), Key, false)",
-      "x": 157,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1033,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 206,
-        "y": 1154
+        "x": 776,
+        "y": 1074
       },
       "action": 1357468777,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 157,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1033,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 206,
-        "y": 1154
+        "x": 776,
+        "y": 1074
       },
       "action": 1357468777,
       "lines": [
@@ -2909,26 +2922,26 @@
     },
     {
       "kind": "Cell(ActionId(1340691158), Key, false)",
-      "x": 267,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1128,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 316,
-        "y": 1154
+        "x": 776,
+        "y": 1169
       },
       "action": 1340691158,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 267,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1128,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 316,
-        "y": 1154
+        "x": 776,
+        "y": 1169
       },
       "action": 1340691158,
       "lines": [
@@ -2937,26 +2950,26 @@
     },
     {
       "kind": "Cell(ActionId(1391024015), Key, false)",
-      "x": 377,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 426,
-        "y": 1154
+        "x": 776,
+        "y": 1264
       },
       "action": 1391024015,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 377,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 426,
-        "y": 1154
+        "x": 776,
+        "y": 1264
       },
       "action": 1391024015,
       "lines": [
@@ -2965,26 +2978,26 @@
     },
     {
       "kind": "Cell(ActionId(1374246396), Key, false)",
-      "x": 487,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 536,
-        "y": 1154
+        "x": 776,
+        "y": 1359
       },
       "action": 1374246396,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 487,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 717,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 536,
-        "y": 1154
+        "x": 776,
+        "y": 1359
       },
       "action": 1374246396,
       "lines": [
@@ -2993,26 +3006,26 @@
     },
     {
       "kind": "Cell(ActionId(1424579253), Key, false)",
-      "x": 597,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 938,
+      "width": 118,
+      "height": 83,
       "centre": {
         "x": 646,
-        "y": 1154
+        "y": 979
       },
       "action": 1424579253,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 597,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 938,
+      "width": 118,
+      "height": 83,
       "centre": {
         "x": 646,
-        "y": 1154
+        "y": 979
       },
       "action": 1424579253,
       "lines": [
@@ -3021,26 +3034,26 @@
     },
     {
       "kind": "Cell(ActionId(1407801634), Key, false)",
-      "x": 707,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 1033,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 756,
-        "y": 1154
+        "x": 646,
+        "y": 1074
       },
       "action": 1407801634,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 707,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 1033,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 756,
-        "y": 1154
+        "x": 646,
+        "y": 1074
       },
       "action": 1407801634,
       "lines": [
@@ -3049,26 +3062,26 @@
     },
     {
       "kind": "Cell(ActionId(1458134491), Key, false)",
-      "x": 817,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 1128,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 866,
-        "y": 1154
+        "x": 646,
+        "y": 1169
       },
       "action": 1458134491,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 817,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 1128,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 866,
-        "y": 1154
+        "x": 646,
+        "y": 1169
       },
       "action": 1458134491,
       "lines": [
@@ -3077,26 +3090,26 @@
     },
     {
       "kind": "Cell(ActionId(1441356872), Key, false)",
-      "x": 927,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 976,
-        "y": 1154
+        "x": 646,
+        "y": 1264
       },
       "action": 1441356872,
       "lines": []
     },
     {
       "kind": "CellLabel(false)",
-      "x": 927,
-      "y": 1095,
-      "width": 98,
-      "height": 118,
+      "x": 587,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
       "centre": {
-        "x": 976,
-        "y": 1154
+        "x": 646,
+        "y": 1264
       },
       "action": 1441356872,
       "lines": [
@@ -3104,40 +3117,14 @@
       ]
     },
     {
-      "kind": "Spacer",
-      "x": 47,
-      "y": 1225,
-      "width": 978,
-      "height": 118,
+      "kind": "Button(ActionId(2019719684), Enabled, Normal)",
+      "x": 469,
+      "y": 1057,
+      "width": 118,
+      "height": 225,
       "centre": {
-        "x": 536,
-        "y": 1284
-      },
-      "action": 4057005743,
-      "lines": []
-    },
-    {
-      "kind": "Cell(ActionId(2019719684), Key, false)",
-      "x": 47,
-      "y": 1225,
-      "width": 318,
-      "height": 118,
-      "centre": {
-        "x": 206,
-        "y": 1284
-      },
-      "action": 2019719684,
-      "lines": []
-    },
-    {
-      "kind": "CellLabel(false)",
-      "x": 47,
-      "y": 1225,
-      "width": 318,
-      "height": 118,
-      "centre": {
-        "x": 206,
-        "y": 1284
+        "x": 528,
+        "y": 1169
       },
       "action": 2019719684,
       "lines": [
@@ -3145,55 +3132,29 @@
       ]
     },
     {
-      "kind": "Cell(ActionId(4057005743), Key, false)",
-      "x": 377,
-      "y": 1225,
-      "width": 318,
-      "height": 118,
+      "kind": "Button(ActionId(4057005743), Disabled, Normal)",
+      "x": 351,
+      "y": 1062,
+      "width": 118,
+      "height": 214,
       "centre": {
-        "x": 536,
-        "y": 1284
+        "x": 410,
+        "y": 1169
       },
-      "action": 4057005743,
-      "lines": []
-    },
-    {
-      "kind": "CellLabel(false)",
-      "x": 377,
-      "y": 1225,
-      "width": 318,
-      "height": 118,
-      "centre": {
-        "x": 536,
-        "y": 1284
-      },
-      "action": 4057005743,
+      "action": null,
       "lines": [
         "Undo"
       ]
     },
     {
-      "kind": "Cell(ActionId(3897901536), Key, false)",
-      "x": 707,
-      "y": 1225,
-      "width": 318,
-      "height": 118,
+      "kind": "Button(ActionId(3897901536), Enabled, Normal)",
+      "x": 233,
+      "y": 1065,
+      "width": 118,
+      "height": 209,
       "centre": {
-        "x": 866,
-        "y": 1284
-      },
-      "action": 3897901536,
-      "lines": []
-    },
-    {
-      "kind": "CellLabel(false)",
-      "x": 707,
-      "y": 1225,
-      "width": 318,
-      "height": 118,
-      "centre": {
-        "x": 866,
-        "y": 1284
+        "x": 292,
+        "y": 1169
       },
       "action": 3897901536,
       "lines": [

@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "339da679752fd6a8b59a265d709f284a10600e3f31749903faa7c0c4f430339b",
+    "sha256": "ab8a89015a790e7b462d7216ae1f78f3264f0bba24c987adf9186239a01aa948",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "26",
+  "paints": "23",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 4752810,
+    "dirtyPixelsSinceClean": 5404790,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "29",
+      "completed": "26",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "5698",
+      "finishedAtMillis": "9186",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "29",
-      "submittedAtMillis": "5681",
+      "submitted": "26",
+      "submittedAtMillis": "9142",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 29,
+    "refreshCount": 26,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,11 +130,11 @@
       }
     },
     "transition": {
-      "dirty": 4752810,
+      "dirty": 5404790,
       "full": false,
-      "refresh": 29,
+      "refresh": 26,
       "region": {
-        "height": 1312,
+        "height": 1304,
         "width": 1072,
         "x": 0,
         "y": 88
@@ -143,7 +143,7 @@
         {
           "region": {
             "height": 48,
-            "width": 160,
+            "width": 128,
             "x": 352,
             "y": 88
           },
@@ -151,19 +151,37 @@
         },
         {
           "region": {
-            "height": 648,
-            "width": 968,
-            "x": 40,
+            "height": 40,
+            "width": 16,
+            "x": 496,
+            "y": 88
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 1160,
+            "width": 1072,
+            "x": 0,
             "y": 184
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 552,
-            "width": 1072,
-            "x": 0,
-            "y": 848
+            "height": 32,
+            "width": 152,
+            "x": 192,
+            "y": 1360
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 32,
+            "width": 88,
+            "x": 760,
+            "y": 1360
           },
           "waveform": "GL16"
         }
@@ -172,11 +190,11 @@
     }
   },
   "source": {
-    "binarySha256": "cc153a15d60cd7a23484142076b43c135ba705c06d2a1e9f160ed42b19672a91",
-    "dirty": true,
+    "binarySha256": "c879608d339dc7288130029a4273abbd8e230376995c0ac5672163a57398f81d",
+    "dirty": false,
     "fixture": "original-sudoku-pack",
     "requestedSeed": "0",
-    "revision": "a83c2f5c35069e5ac4a857dad80c1089f4607fba"
+    "revision": "a2b2b1ee3c1f9cf9646b9d4d9f6ae7fb39b80dae"
   },
   "version": 1
 }

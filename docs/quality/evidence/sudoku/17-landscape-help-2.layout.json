@@ -168,8 +168,8 @@
       },
       "action": null,
       "lines": [
-        "Landscape shows rows 1\u20136 or 4\u20139. Use the range",
-        "button to move between them."
+        "Landscape shows the whole board with the digits",
+        "beside it."
       ]
     },
     {
