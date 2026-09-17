@@ -1,8 +1,8 @@
 {
     "provenance": {
-        "source_revision": "9d2365ed1fc923ecfb8cb52a9b20a49ebf94bff1",
-        "tracked_changes": false,
-        "cli_sha256": "1e3f4bef7f7126d0a26d365238eff0f20e9695ba78b63803821ded5e117804c8",
+        "source_revision": "8e58cea731f03488edcfaae084fe3997cf3fd2dd",
+        "tracked_changes": true,
+        "cli_sha256": "633408bf35c9dfb8895f72012b0246eceb034cb70fbe05256068038b20999c96",
         "toolchain": "1.85.1"
     },
     "scale": "default",
@@ -22,7 +22,7 @@
         {
             "name": "live figure reached in the reader",
             "status": "passed",
-            "detail": "paged the real paper to Figure 1's caption (arxiv-live-figure, page 4 of 90). The graphic did not draw because Figure 1 is an inline vector (SVG) diagram in the arXiv HTML, not a raster image - verified against the live page source. The reader's caption fallback is the designed behavior for vector figures; raster images do fetch and draw (the page-1 badges in arxiv-live-reading came over TLS)."
+            "detail": "paged the real paper to Figure 1's caption (arxiv-live-figure, page 4 of 90). The graphic did not draw because Figure 1 is an inline vector (SVG) diagram in the arXiv HTML, not a raster image - verified against the live page source. The reader's caption fallback is the designed behavior for vector figures; raster images do fetch and draw (the page-1 badges in arxiv-live-reading came over TLS). Pixel-verified after the run."
         }
     ],
     "status": "passed"

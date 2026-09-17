@@ -193,7 +193,10 @@ def main():
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")).resolve()
-    cli, provenance = build_cli(ROOT, target)
+    cli, provenance = build_cli(ROOT, target, ignore_prefix=(
+        os.path.relpath(out, ROOT)
+        if not os.path.relpath(out, ROOT).startswith("..")
+        else None))
     verify_cli(cli, provenance)
 
     with tempfile.TemporaryDirectory(prefix="cobalt-arxiv-", dir="/tmp") as temporary:
