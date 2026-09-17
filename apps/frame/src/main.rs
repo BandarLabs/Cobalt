@@ -4,12 +4,13 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Heartbeat, KoboApp, PictureHandle, Screen,
     ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, TaskId, TaskOutcome, TilePicture,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 use std::time::Duration;
 
 const MANIFEST: &str = "manifest.v1";
 const FIT_MANIFEST: &str = "fit.v1";
+const DIGEST_MANIFEST: &str = "digests.v1";
 const STATE: &str = "frame-state-v1";
 const PHOTO: PictureHandle = PictureHandle(1);
 const MAX_PHOTOS: usize = 500;
@@ -109,6 +110,8 @@ struct Frame {
     unreadable: BTreeSet<String>,
     verified: BTreeSet<String>,
     fit_load: Option<ShelfDownload>,
+    digest_load: Option<ShelfDownload>,
+    digests: BTreeMap<String, String>,
     overlay: bool,
     settings_open: bool,
     clock: Option<Heartbeat>,
@@ -403,13 +406,15 @@ impl Frame {
     fn accept_picture(&mut self, context: &mut Context, id: &str, bytes: &[u8]) {
         self.stop_load_watch(context);
         let expected = self.photos.iter().find(|photo| photo.id == id);
-        if let Some(photo) = expected {
+        // The manifest digest identifies the source photo; the transfer
+        // check runs against the pushed bytes recorded in the sidecar.
+        if let Some(expected_digest) = self.digests.get(id) {
             let digest = blake3::hash(bytes).to_hex().to_string();
-            if digest != photo.digest {
+            if &digest != expected_digest {
                 self.skip_unreadable(
                     context,
                     id,
-                    "A photo does not match the transfer manifest and was skipped. Re-push it from your computer.".to_owned(),
+                    "A photo does not match the transfer record and was skipped. Re-push it from your computer.".to_owned(),
                 );
                 return;
             }
@@ -512,6 +517,25 @@ impl Frame {
         }
     }
 
+    fn advance_digest_map(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.digest_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self.digest_load.take().expect("active digest map").take();
+                self.digests = decode_digest_map(&bytes);
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                self.digest_load = None;
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+        }
+    }
+
     fn advance_photo(&mut self, context: &mut Context, result: &StoreResult) -> bool {
         let Some(load) = &mut self.photo_load else {
             return false;
@@ -558,6 +582,9 @@ impl KoboApp for Frame {
         let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
         manifest.start(context);
         self.manifest_load = Some(manifest);
+        let mut digests = ShelfDownload::new(DIGEST_MANIFEST).at_most(MAX_MANIFEST);
+        digests.start(context);
+        self.digest_load = Some(digests);
         let mut fits = ShelfDownload::new(FIT_MANIFEST).at_most(MAX_MANIFEST);
         fits.start(context);
         self.fit_load = Some(fits);
@@ -567,6 +594,7 @@ impl KoboApp for Frame {
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if self.advance_manifest(context, &result)
             || self.advance_fit_map(context, &result)
+            || self.advance_digest_map(context, &result)
             || self.advance_photo(context, &result)
         {
             self.start_when_ready(context);
@@ -743,6 +771,19 @@ fn decode_fit_map(bytes: &[u8]) -> Vec<(String, FitChoice)> {
                     },
                 )
             })
+        })
+        .collect()
+}
+
+fn decode_digest_map(bytes: &[u8]) -> BTreeMap<String, String> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, digest) = line.split_once('\t')?;
+            (valid_id(id) && digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+                .then(|| (id.to_owned(), digest.to_owned()))
         })
         .collect()
 }
@@ -987,12 +1028,23 @@ mod tests {
         };
         let mut context = Context::default();
         let png = kobo_image::encode_png_grey(32, 24, &vec![180_u8; 32 * 24]).expect("png");
-        frame.photos[0].digest = blake3::hash(&png).to_hex().to_string();
+        frame.digests.insert(
+            "photo-aaaaaaaaaaaaaaaa".to_owned(),
+            blake3::hash(&png).to_hex().to_string(),
+        );
         frame.accept_picture(&mut context, "photo-aaaaaaaaaaaaaaaa", &png);
         assert!(frame.picture.is_some());
         assert!(frame.unreadable.is_empty());
         assert!(frame.notice.is_none());
         assert!(frame.verified.contains("photo-aaaaaaaaaaaaaaaa"));
+    }
+
+    #[test]
+    fn digest_map_decodes_only_well_formed_entries() {
+        let good = "a".repeat(64);
+        let text = format!("photo-one\t{good}\n../bad\t{good}\nphoto-two\tshort\n");
+        let map = decode_digest_map(text.as_bytes());
+        assert_eq!(map, BTreeMap::from([("photo-one".to_owned(), good)]));
     }
 
     #[test]
@@ -1024,8 +1076,11 @@ mod tests {
             panel_height: 16,
             ..Frame::default()
         };
+        // The transfer sidecar records a digest real bytes cannot match.
+        frame
+            .digests
+            .insert("photo-aaaaaaaaaaaaaaaa".to_owned(), "b".repeat(64));
         let mut context = Context::default();
-        // The manifest digest ("aaaa...") cannot match real bytes.
         frame.accept_picture(&mut context, "photo-aaaaaaaaaaaaaaaa", b"not the photo");
         assert!(frame.picture.is_none());
         assert!(frame.unreadable.contains("photo-aaaaaaaaaaaaaaaa"));
@@ -1055,7 +1110,9 @@ mod tests {
         assert_eq!(runner.app().view, View::Home);
         assert_eq!(runner.app().photos.len(), 1);
         assert!(runner.app().loading_selected());
-        // No fit sidecar on this shelf: the pending fit.v1 read resolves as missing.
+        // No sidecars on this shelf: the pending fit.v1 and digests.v1 reads
+        // each resolve as missing.
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.action(action_id(MENU));
         assert!(runner.app().settings_open);
@@ -1070,7 +1127,10 @@ mod tests {
         assert_eq!(runner.app().view, View::Home);
         assert!(!runner.app().loading_selected());
         let png = kobo_image::encode_png_grey(16, 16, &vec![200_u8; 16 * 16]).expect("png");
-        runner.app_mut().photos[0].digest = blake3::hash(&png).to_hex().to_string();
+        runner.app_mut().digests.insert(
+            "photo-aaaaaaaaaaaaaaaa".to_owned(),
+            blake3::hash(&png).to_hex().to_string(),
+        );
         runner.app_mut().unreadable.clear();
         runner.app_mut().notice = None;
         runner.action(action_id(SHOW));
