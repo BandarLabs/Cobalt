@@ -32,6 +32,7 @@ mod needles;
 mod nonograms;
 mod owner_start;
 mod package;
+mod panels;
 mod post;
 mod readlater;
 mod runtime_dev;
@@ -530,6 +531,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
+        "panels" => panels::command(&arguments[1..]),
         "shot" => shot_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "tap" => tap_command(&arguments[1..]),

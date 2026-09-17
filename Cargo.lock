@@ -920,6 +920,7 @@ version = "0.3.17"
 dependencies = [
  "kobo-app-store",
  "kobo-catalog",
+ "kobo-comic",
  "kobo-doc",
  "kobo-frame-host",
  "kobo-html",

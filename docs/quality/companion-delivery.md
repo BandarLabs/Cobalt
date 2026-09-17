@@ -363,3 +363,24 @@ helper run executed the CLI-configured harmless action and returned its exact
 output through the helper API, but the running app's long-poll state did not
 refresh to the finished acknowledgement during the attempted journey. No
 physical-reader behavior is claimed.
+
+### Panels CBZ preview and app-driven import
+
+`kobo panels inspect|preview|push` uses the same bounded `kobo-comic` archive
+inspection as Panels. It reports page count, cover and reading direction,
+renders a real cover preview, and atomically targets simulator, output file or
+reader. Genuine RAR/CBR bytes are refused with a direct instruction to make a
+CBZ copy without changing page images.
+
+The side-by-side run used *Pepper & Carrot*, Episode 1 by David Revoy (CC BY
+4.0), downloaded from the public Pepper & Carrot OPDS catalog. The third-party
+CBZ generator put all five JPEGs under a hidden `.workdir` path, which Panels
+correctly excludes, so the proof copy flattened the five unchanged JPEG bytes
+and re-zipped them. Both original and normalized hashes are recorded in
+`evidence/panels-companion-real-cbz/source.json`.
+
+The actual CLI changed the simulator shelf. The already-running app previewed
+the real cover, saved the import receipt, and opened page 1 of 5. The host
+preview plus app preview, receipt and reader frames were pixel-inspected: the
+cover and first comic page are sharp and readable with no clipping or overlap.
+MISSINGCLI-03 is complete. Physical-reader transfer remains unverified.

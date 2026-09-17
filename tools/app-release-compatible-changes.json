@@ -303,12 +303,12 @@
   },
   {
    "protocol_version": 14,
-   "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion, then to 0.3.17 so the corrected Birds transfer and update feed reach readers. Store apps keep their existing messages and dependency resolution; the patched stack reaches readers in the next platform package.",
+   "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion, then to 0.3.17 so the corrected Birds transfer and update feed reach readers, then to 0.3.18 for the protocol that lets a screen hide its top bar. Store apps keep their existing messages and dependency resolution; the patched stack reaches readers in the next platform package.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-     "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
     }
    ]
   },
@@ -319,7 +319,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-     "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
     }
    ]
   },
@@ -330,7 +330,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
     }
    ]
   },
@@ -341,7 +341,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f929b097fe08ec583597e91c14c86ffff189b200",
-     "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
     }
    ]
   },
@@ -352,18 +352,18 @@
     {
      "path": "Cargo.lock",
      "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
     }
    ]
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-music-host, kobo-vault-host, and kobo-zstory workspace members for the companion CLIs, with their kobo-html and pulldown-cmark edges. Host tooling only: no package identity a published Store app resolves moved, and no app crate gains a dependency.",
+   "reason": "Add the kobo-music-host, kobo-vault-host, kobo-zstory, and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. Host tooling only: no package identity a published Store app resolves moved, and no app crate gains a dependency.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "d606f3c0410e817b8f1ebc2e612c85c1d5e6f996"
+     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
     }
    ]
   }
