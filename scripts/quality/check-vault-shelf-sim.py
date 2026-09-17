@@ -37,7 +37,11 @@ def main():
         env = dict(os.environ, TMPDIR=str(private), RUSTUP_TOOLCHAIN="1.85.1",
                    CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_DEBUG="0",
                    CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="1",
-                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391")
+                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391",
+                   # A frozen clock keeps the chrome's minute tick from
+                   # overpainting mid-capture; 11:11 also keeps every digit
+                   # off the interface font's slashed zero.
+                   KOBO_SIM_CLOCK_MILLIS="1767265860000")
         env.pop("KOBO_SIM_OFFLINE", None)
 
         # The shelves are prepared by the real companion CLI, exactly as an
