@@ -35,7 +35,7 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
   <title>ArXiv Query</title>
   <id>http://arxiv.org/api/query</id>
   <updated>2026-09-16T00:00:00-05:00</updated>
-  <opensearch:totalResults>2</opensearch:totalResults>
+  <opensearch:totalResults>3</opensearch:totalResults>
   <entry>
     <id>http://arxiv.org/abs/2609.00042v2</id>
     <updated>2026-09-14T18:00:00Z</updated>
@@ -59,6 +59,14 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
     <author><name>Grace Hopper</name></author>
     <category term="cs.SE" scheme="http://arxiv.org/schemas/atom"/>
   </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2609.00077v1</id>
+    <published>2026-09-03T09:30:00Z</published>
+    <title>A Fixture of Formulas and Tables</title>
+    <summary>A short fixture summary.</summary>
+    <author><name>Maria Gauss</name></author>
+    <category term="math.CO" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
 </feed>"""
 
 
@@ -69,12 +77,67 @@ PAPER_HTML = "<html><body><article><h2>1 Introduction</h2>" + "".join(
 ) + "</article></body></html>"
 
 
+# A second paper carrying the structures a wall of text would lose: a
+# displayed formula with its LaTeX behind it, a columnar table, and a figure
+# fetched from beside the paper.
+PAPER_RICH_HTML = (
+    "<html><body><article>"
+    "<h2>1 A Fixture of Formulas and Tables</h2>"
+    "<p>The union of every set in the family, written as mathematics.</p>"
+    '<math display="block" alttext="\\bigcup_{i=1}^{n} A_i">'
+    "<mo>\u22c3</mo></math>"
+    + "".join(
+        f"<p>Result paragraph {n} between the formula and the table.</p>"
+        for n in range(18)
+    )
+    + "<table><tr><th>Model</th><th>Accuracy</th><th>Latency</th></tr>"
+    "<tr><td>Fixture A</td><td>91.2</td><td>4 ms</td></tr>"
+    "<tr><td>Fixture B</td><td>88.7</td><td>6 ms</td></tr></table>"
+    + "".join(
+        f"<p>Discussion paragraph {n} between the table and the figure.</p>"
+        for n in range(18)
+    )
+    + '<figure><img src="2609.00077v1/x1.png" alt="A fixture plot">'
+    "<figcaption>Figure 1: A fixture plot.</figcaption></figure>"
+    "</article></body></html>"
+)
+
+
+def fixture_png():
+    """A small grayscale gradient PNG, built by hand so the fixture has a
+    figure to serve without checking a binary into the repository."""
+    import struct
+    import zlib
+
+    width, height = 64, 64
+    raw = b"".join(
+        b"\x00" + bytes((x * 4) % 256 for x in range(width))
+        for _ in range(height)
+    )
+
+    def chunk(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+FIGURE_PNG = fixture_png()
+
+
 class Archive:
     """The fixture API, and everything it was asked to do."""
 
     def __init__(self):
         self.feeds = 0
         self.htmls = 0
+        self.pngs = 0
 
 
 def handler_for(archive):
@@ -99,6 +162,14 @@ def handler_for(archive):
             if re.fullmatch(r"/2609\.00042v2", path):
                 archive.htmls += 1
                 self._send(200, PAPER_HTML.encode(), "text/html; charset=utf-8")
+                return
+            if re.fullmatch(r"/2609\.00077v1", path):
+                archive.htmls += 1
+                self._send(200, PAPER_RICH_HTML.encode(), "text/html; charset=utf-8")
+                return
+            if re.fullmatch(r"/2609\.00077v1/x1\.png", path):
+                archive.pngs += 1
+                self._send(200, FIGURE_PNG, "image/png")
                 return
             self._send(404, b"not found", "text/plain")
 
@@ -182,6 +253,32 @@ def main():
             def capture(name):
                 drive("clean", "shot " + name)
 
+            def screen_text():
+                probe = subprocess.run(
+                    [str(cli), "drive", "--address", address, "--ideal",
+                     "--step", "dump"],
+                    cwd=ROOT, env=env, capture_output=True, text=True,
+                    timeout=60)
+                if probe.returncode != 0:
+                    raise RuntimeError("dump step failed; see simulator.log")
+                return probe.stdout
+
+            def turn_until(anchor, shot_name, max_turns=10, settle=2):
+                # One page at a time with the clock advancing past the pacing
+                # sleeps, until the anchor is on the panel. The picture under
+                # it arrives a pass at a time (fetch, decode, dither), each
+                # carried by a task the manual clock has to let run, so the
+                # clock advances a few times more before the shot.
+                for _ in range(max_turns):
+                    if anchor in screen_text():
+                        for _ in range(settle):
+                            drive("clock advance 1500", "wait-idle")
+                        capture(shot_name)
+                        return
+                    drive("input gpio 1 194 1", "input gpio 1 194 0",
+                          "clock advance 1500", "wait-idle")
+                raise AssertionError(f"{anchor!r} never came onto the panel")
+
             try:
                 start()
                 # The subject list is the way in; a tap fetches the listing.
@@ -191,14 +288,15 @@ def main():
                       timeout=300)
                 drive("tap Artificial Intelligence", "clock advance 1500",
                       "wait-for Attention Reconsidered",
-                      "wait-for A Second Fixture Paper", "wait-idle",
-                      timeout=300)
+                      "wait-for A Second Fixture Paper",
+                      "wait-for A Fixture of Formulas and Tables",
+                      "wait-idle", timeout=300)
                 capture("arxiv-listing")
                 assert archive.feeds == 1, "the listing feed was fetched once"
                 result["checks"].append(dict(
                     name="subject listing over TLS", status="passed",
                     detail="tapping a subject fetched the fixture feed over TLS "
-                           "and both parsed papers rendered as rows"))
+                           "and all three parsed papers rendered as rows"))
 
                 # Opening a paper needs no network: the abstract was in the
                 # feed. The first page carries the title as a heading, each
@@ -268,10 +366,37 @@ def main():
                     detail="the kept row carries the size and a reading "
                            "percentage recorded when the reader saved the "
                            "place on the way out"))
+                # A paper carrying a displayed formula, a table and a
+                # figure keeps all three in the reader: the formula is
+                # typeset from its LaTeX, the table stays columnar, and the
+                # figure is fetched from beside the paper and drawn.
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+                drive("tap Artificial Intelligence", "clock advance 1500",
+                      "wait-for A Fixture of Formulas and Tables",
+                      "wait-idle", timeout=300)
+                assert archive.feeds == 2, "reopening the subject refetched"
+                drive("tap A Fixture of Formulas and Tables",
+                      "wait-for A short fixture summary.", "wait-idle",
+                      timeout=300)
+                drive("tap Full text", "clock advance 1500",
+                      "wait-for The union", "clock advance 1500",
+                      "wait-idle", timeout=300)
+                turn_until("The union", "arxiv-formula")
+                turn_until("Fixture A", "arxiv-table")
+                turn_until("Figure 1", "arxiv-figure", settle=4)
+                assert archive.pngs == 1, "the figure was fetched once"
+                result["checks"].append(dict(
+                    name="formulas, tables and figures survive", status="passed",
+                    detail="a paper with a displayed formula, a columnar table "
+                           "and a figure kept all three: the formula typeset "
+                           "from its LaTeX, the table read as rows and the "
+                           "figure fetched over TLS and drawn (panel shots "
+                           "arxiv-formula/-table/-figure)"))
                 result["status"] = "passed"
             finally:
                 stop()
-                print(f"fixture served feeds={archive.feeds} htmls={archive.htmls}", flush=True)
+                print(f"fixture served feeds={archive.feeds} htmls={archive.htmls} pngs={archive.pngs}", flush=True)
         (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2))
 

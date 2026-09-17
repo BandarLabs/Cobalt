@@ -60,7 +60,7 @@
       "unixMillis": "1767265863000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 716705,
+    "dirtyPixelsSinceClean": 732904,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "6",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "2393",
+      "finishedAtMillis": "2333",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "6",
-      "submittedAtMillis": "2357",
+      "submittedAtMillis": "2300",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -136,7 +136,7 @@
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "df9cbf17059b98cb2cbe39da9d9a0a9fe102db7d"
+    "revision": "ed3e75351e9f4c4e600dfe8088a7d80dd31d83e9"
   },
   "version": 1
 }

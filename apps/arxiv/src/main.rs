@@ -1584,7 +1584,9 @@ mod tests {
     use crate::atom::Paper;
     use kobo_read::Memory;
     use kobo_sdk::StoreResult;
-    use kobo_sdk::{action_id, is_valid_key, ActionId, AppRunner, Command, Task, TaskOutcome};
+    use kobo_sdk::{
+        action_id, is_valid_key, ActionId, AppRunner, Command, Task, TaskId, TaskOutcome,
+    };
 
     fn paper() -> Paper {
         Paper {
@@ -1919,6 +1921,90 @@ mod tests {
         assert!(
             reader.pictures_wanted().contains(&"x1.png"),
             "the figure was dropped rather than drawn"
+        );
+    }
+
+    /// A long paper keeps its structure the whole way through: tables stay
+    /// tables, a displayed formula is typeset and handed to the panel as a
+    /// picture of itself, and a figure is fetched rather than dropped.
+    ///
+    /// The parser hands a formula over as its LaTeX source and the book view
+    /// typesets it a pass at a time after the first page is already showing,
+    /// so the test answers the runtime's wake tasks the way the runtime would
+    /// until the pipeline runs dry.
+    #[test]
+    fn a_long_paper_keeps_its_formulas_tables_and_figures() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let mut commands = opened_on(
+            &mut runner,
+            "<article><h2>1 Introduction</h2><p>The union over every set.</p>             <math display=\"block\" alttext=\"\\bigcup_{i=1}^{n} A_i\"><mo>\u{22c3}</mo></math>             <table><tr><th>Model</th><th>Accuracy</th></tr>             <tr><td>Fixture A</td><td>91.2</td></tr></table>             <figure><img src=\"2609.00077v1/x1.png\" alt=\"A fixture plot\">             <figcaption>Figure 1.</figcaption></figure></article>",
+        );
+        let fetched: Vec<String> = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut pictures_put = 0;
+        for _ in 0..16 {
+            let wakes: Vec<TaskId> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    Command::Spawn {
+                        task,
+                        work: Task::Sleep { .. },
+                    } => Some(*task),
+                    _ => None,
+                })
+                .collect();
+            if wakes.is_empty() {
+                break;
+            }
+            commands = wakes
+                .into_iter()
+                .flat_map(|wake| runner.task_outcome(wake, TaskOutcome::Completed(Vec::new())))
+                .collect();
+            pictures_put += commands
+                .iter()
+                .filter(|command| matches!(command, Command::PutPicture { .. }))
+                .count();
+        }
+        let reader = runner.app().book.reader().expect("the paper is not open");
+        let blocks = &reader.document().blocks;
+
+        assert!(
+            blocks
+                .iter()
+                .any(|block| matches!(block, kobo_doc::Block::Row { header: true, .. })),
+            "the table's heading row was flattened into prose"
+        );
+        assert!(
+            blocks.iter().any(|block| matches!(
+                block,
+                kobo_doc::Block::Row { cells, .. } if cells.iter().any(|cell| cell == "Fixture A")
+            )),
+            "the table's body was flattened into prose"
+        );
+        assert!(
+            blocks.iter().any(|block| matches!(
+                block,
+                kobo_doc::Block::Picture { name, .. } if name == "formula:0"
+            )),
+            "the displayed formula lost its place in the text"
+        );
+        assert!(
+            pictures_put > 0,
+            "the displayed formula was never typeset and handed to the panel"
+        );
+        assert!(
+            fetched
+                .iter()
+                .any(|url| url == "https://arxiv.org/html/2609.00077v1/x1.png"),
+            "the figure was not fetched from beside its paper: {fetched:?}"
         );
     }
 

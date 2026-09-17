@@ -984,8 +984,10 @@
     "pr": 3,
     "group": "arXiv",
     "task": "Validate long HTML, formulas, figures and tables",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Long-HTML structure validated end-to-end in the simulator against a local TLS fixture (scripts/quality/check-arxiv-sim.py, third fixture paper 2609.00077v1): a displayed formula was typeset from its LaTeX and drawn on the page (pixel-verified: union symbol with its limits set above and beneath), a three-column table kept its header row, rule and columnar alignment, and the figure was fetched over TLS from beside the paper and drawn above its caption - the fixture logged exactly one PNG fetch. Panel shots: docs/quality/evidence/arxiv/arxiv-formula.png, arxiv-table.png, arxiv-figure.png (result.json, simulator.log alongside). Unit-level: a_long_paper_keeps_its_formulas_tables_and_figures drives the real open pipeline and asserts the table survives as rows, the formula holds its place as a named picture and is typeset and handed to the panel (a PutPicture command), and the figure is fetched from the paper's own address (49/49 kobo-arxiv tests)."
+    ]
   },
   {
     "id": "ARXIV-05",

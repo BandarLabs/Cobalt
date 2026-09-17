@@ -1,7 +1,7 @@
 {
   "provenance": {
-    "source_revision": "df9cbf17059b98cb2cbe39da9d9a0a9fe102db7d",
-    "tracked_changes": false,
+    "source_revision": "ed3e75351e9f4c4e600dfe8088a7d80dd31d83e9",
+    "tracked_changes": true,
     "cli_sha256": "58dbf88b976639a05c7ad2c01df72cf428fcb02ea39329f04fa2f891676dc21d",
     "toolchain": "1.85.1"
   },
@@ -11,7 +11,7 @@
     {
       "name": "subject listing over TLS",
       "status": "passed",
-      "detail": "tapping a subject fetched the fixture feed over TLS and both parsed papers rendered as rows"
+      "detail": "tapping a subject fetched the fixture feed over TLS and all three parsed papers rendered as rows"
     },
     {
       "name": "abstract separates title, facts and prose",
@@ -32,6 +32,11 @@
       "name": "library shows reading progress",
       "status": "passed",
       "detail": "the kept row carries the size and a reading percentage recorded when the reader saved the place on the way out"
+    },
+    {
+      "name": "formulas, tables and figures survive",
+      "status": "passed",
+      "detail": "a paper with a displayed formula, a columnar table and a figure kept all three: the formula typeset from its LaTeX, the table read as rows and the figure fetched over TLS and drawn (panel shots arxiv-formula/-table/-figure)"
     }
   ],
   "status": "passed"
