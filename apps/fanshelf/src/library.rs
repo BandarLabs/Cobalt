@@ -764,7 +764,10 @@ mod tests {
         };
         assert_eq!(work.title, "The Lantern Library");
         assert_eq!(work.author, "River Quill");
-        assert_eq!(work.fandom, "Public Domain Fairy Tales, Whispered Cartographies");
+        assert_eq!(
+            work.fandom,
+            "Public Domain Fairy Tales, Whispered Cartographies"
+        );
         assert_eq!(work.rating, "Teen And Up Audiences");
         assert_eq!(work.warnings, "No Archive Warnings Apply");
         assert_eq!(work.chapters_label(), "12/? WIP");
