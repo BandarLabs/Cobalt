@@ -9832,8 +9832,11 @@ mod tests {
             let (cc, ar) = write_zig_device_wrappers(&volume.path).expect("wrappers");
             let cc_body = std::fs::read_to_string(&cc).expect("cc wrapper");
             assert!(cc_body.contains("-target arm-linux-musleabihf"));
-            assert!(cc_body.contains(""));
+            assert!(cc_body.contains("-fno-sanitize=undefined"));
+            #[cfg(unix)]
             assert!(cc_body.contains("--target=*)"));
+            #[cfg(windows)]
+            assert!(cc_body.contains("\"--target=\""));
             assert!(std::fs::read_to_string(&ar)
                 .expect("ar wrapper")
                 .contains("zig ar"));
