@@ -6,6 +6,10 @@ clean
 shot pubquiz-help
 tap Play
 tap Start pass-around
+expect Pass-around players
+clean
+shot players
+tap Start round
 expect Ada answers
 clean
 shot question
