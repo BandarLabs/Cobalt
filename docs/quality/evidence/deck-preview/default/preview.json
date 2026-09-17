@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "6a4883b25e16f0e0840ef01dbd5e9a81b9d044514481bf626890b67a6bde6823",
+    "sha256": "c51273a8567ad70c182b0af2523dca36b701ce560ea56c139ec40e7a8154b91f",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -38,7 +38,7 @@
   "paints": "3",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.14",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-12",
+      "date": "2026-09-17",
       "mode": "real",
-      "monotonicMillis": "1375",
-      "unixMillis": "1789218873052",
+      "monotonicMillis": "1046",
+      "unixMillis": "1789676705140",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 144421,
+    "dirtyPixelsSinceClean": 17162,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "3",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "385",
+      "finishedAtMillis": "656",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "3",
-      "submittedAtMillis": "384",
+      "submittedAtMillis": "654",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -121,7 +121,7 @@
     "scenario": "normal",
     "touch": null,
     "transition": {
-      "dirty": 144421,
+      "dirty": 17162,
       "full": false,
       "refresh": 3,
       "region": {
@@ -154,11 +154,11 @@
     }
   },
   "source": {
-    "binarySha256": "1bcbf8cad8bb134a15c2b3dd339254045622d5016a5e0fc6160b3bd05ff88e43",
+    "binarySha256": "6e4b613a631efc34c11473cf89254229e7a57f3e1d1a0cb709ab98ef05ae3a0e",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "40c8df07fdef63f16c57f98f8538e8f4a3580204"
+    "revision": "8f52e123ebbd9c91e75267cb8a1a9ad97eeeabeb"
   },
   "version": 1
 }

@@ -1,7 +1,8 @@
 {
   "status": "passed",
   "scale": "default",
-  "cli_sha256": "6bee0c1f2dc5a7a1b09a2e3b6e9bb1032b6b15a90495f4495bfd908ba54ff154",
+  "pads": 1,
+  "cli_sha256": "19afe86ee50a5befe41f39d28ffea16ead950dc6c637d2c9c0681a48233e374e",
   "checks": [
     "fresh simulator opens static preview",
     "preview tap does not claim execution",

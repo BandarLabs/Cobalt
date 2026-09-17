@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "1c5d1f8fbf378446ca5e4d579b2516aa20ac31d7f145017c3907ac8275f0b46b",
+    "sha256": "c8dd0c4e96be0990f3beda0b025989968a608a6bc6b0eaecea44a1066e9dae4b",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -38,7 +38,7 @@
   "paints": "4",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.14",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-12",
+      "date": "2026-09-17",
       "mode": "real",
-      "monotonicMillis": "1668",
-      "unixMillis": "1789218873345",
+      "monotonicMillis": "1383",
+      "unixMillis": "1789676705478",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 417366,
+    "dirtyPixelsSinceClean": 127447,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "4",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "707",
+      "finishedAtMillis": "1004",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "4",
-      "submittedAtMillis": "693",
+      "submittedAtMillis": "991",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,11 +130,11 @@
       }
     },
     "transition": {
-      "dirty": 417366,
+      "dirty": 127447,
       "full": false,
       "refresh": 4,
       "region": {
-        "height": 736,
+        "height": 336,
         "width": 992,
         "x": 40,
         "y": 168
@@ -142,19 +142,10 @@
       "regions": [
         {
           "region": {
-            "height": 488,
+            "height": 336,
             "width": 992,
             "x": 40,
             "y": 168
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 232,
-            "width": 976,
-            "x": 48,
-            "y": 672
           },
           "waveform": "GL16"
         }
@@ -163,11 +154,11 @@
     }
   },
   "source": {
-    "binarySha256": "1bcbf8cad8bb134a15c2b3dd339254045622d5016a5e0fc6160b3bd05ff88e43",
+    "binarySha256": "6e4b613a631efc34c11473cf89254229e7a57f3e1d1a0cb709ab98ef05ae3a0e",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "40c8df07fdef63f16c57f98f8538e8f4a3580204"
+    "revision": "8f52e123ebbd9c91e75267cb8a1a9ad97eeeabeb"
   },
   "version": 1
 }

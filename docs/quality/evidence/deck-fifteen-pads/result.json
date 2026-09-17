@@ -2,7 +2,7 @@
   "status": "passed",
   "scale": "170",
   "pads": 15,
-  "cli_sha256": "7045edc0e0c1b5a6908a75d5a8e5d24647cbcc0682713f4c276e1449429a774d",
+  "cli_sha256": "19afe86ee50a5befe41f39d28ffea16ead950dc6c637d2c9c0681a48233e374e",
   "checks": [
     "fresh simulator opens static preview",
     "preview tap does not claim execution",

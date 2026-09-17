@@ -6,6 +6,8 @@ visible when the computer is off the air.
 
 <img width="300" src="screenshots/deck.png" alt="Deck on a Clara BW showing a 3 by 5 grid of square command pads">
 
+![A command finishes and the deck shows its result](screenshots/run-finished.png)
+
 ## What the panel says
 
 The bar carries the name of the page showing, because a deck with a Build page
