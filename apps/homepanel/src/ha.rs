@@ -9,6 +9,14 @@ pub struct Entity {
     pub state: String,
 }
 
+/// What a climate entity reports: the room temperature and the temperature
+/// it is holding, when Home Assistant publishes them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Climate {
+    pub current: Option<f64>,
+    pub target: Option<f64>,
+}
+
 pub fn endpoint(base: &str, path: &str) -> String {
     format!(
         "{}/{}",
@@ -36,7 +44,8 @@ pub fn poll(base: &str, ids: &[String]) -> Task {
     let template = format!(
         "[{{% for e in [{names}] %}}\
 {{\"id\":\"{{{{e}}}}\",\"s\":\"{{{{states(e)}}}}\",\
-\"a\":{{{{{{'brightness':state_attr(e,'brightness'),'unit':state_attr(e,'unit_of_measurement')}}|tojson}}}}\
+\"a\":{{{{{{'brightness':state_attr(e,'brightness'),'unit':state_attr(e,'unit_of_measurement'),\
+'ct':state_attr(e,'current_temperature'),'t':state_attr(e,'temperature')}}|tojson}}}}\
 }}{{{{',' if not loop.last}}}}{{% endfor %}}]"
     );
     Task::Post {
@@ -76,6 +85,17 @@ pub fn service(base: &str, entity: &str) -> Task {
     }
 }
 
+pub fn set_temperature(base: &str, entity: &str, value: f64) -> Task {
+    Task::Post {
+        url: endpoint(base, "/api/services/climate/set_temperature"),
+        body: format!(r#"{{"entity_id":"{entity}","temperature":{value}}}"#),
+        content_type: "application/json".to_owned(),
+        credential: Some(Credential::bearer(SECRET)),
+        headers: Vec::new(),
+        max_bytes: 4096,
+    }
+}
+
 pub fn state_rows(bytes: &[u8]) -> Vec<(String, String)> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Vec::new();
@@ -90,6 +110,27 @@ pub fn state_rows(bytes: &[u8]) -> Vec<(String, String)> {
                 let id = item.get("id")?.as_str()?.to_owned();
                 let state = item.get("s")?.as_str()?.to_owned();
                 Some((id, state))
+            })
+            .collect()
+    })
+}
+
+pub fn climate_rows(bytes: &[u8]) -> Vec<(String, Climate)> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let Ok(items) = kobo_json::parse(text) else {
+        return Vec::new();
+    };
+    items.as_array().map_or_else(Vec::new, |items| {
+        items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?.to_owned();
+                let attrs = item.get("a")?;
+                let current = attrs.get("ct").and_then(kobo_json::Value::as_f64);
+                let target = attrs.get("t").and_then(kobo_json::Value::as_f64);
+                Some((id, Climate { current, target }))
             })
             .collect()
     })
@@ -157,6 +198,52 @@ mod tests {
         assert_eq!(
             state_rows(br#"[{"id":"light.desk","s":"on","a":{}}]"#),
             vec![("light.desk".into(), "on".into())]
+        );
+    }
+
+    #[test]
+    fn climate_answer_reads_room_and_target_temperatures() {
+        let rows = climate_rows(
+            br#"[
+                {"id":"climate.bedroom","s":"heat","a":{"ct":19.5,"t":21}},
+                {"id":"light.desk","s":"on","a":{"ct":null,"t":null}}
+            ]"#,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "climate.bedroom".to_owned(),
+                    Climate {
+                        current: Some(19.5),
+                        target: Some(21.0),
+                    },
+                ),
+                (
+                    "light.desk".to_owned(),
+                    Climate {
+                        current: None,
+                        target: None,
+                    },
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn set_temperature_posts_the_named_target() {
+        let Task::Post { url, body, .. } =
+            set_temperature("https://ha.example", "climate.bedroom", 21.5)
+        else {
+            panic!("a post")
+        };
+        assert_eq!(
+            url,
+            "https://ha.example/api/services/climate/set_temperature"
+        );
+        assert_eq!(
+            body,
+            r#"{"entity_id":"climate.bedroom","temperature":21.5}"#
         );
     }
 
