@@ -230,6 +230,60 @@ def main():
                         detail="no figure caption appeared within twelve page "
                                "turns of the opened paper; the reading shots "
                                "are real but carry no figure"))
+                # Follow the subject from its own listing, save a typed
+                # search from its live results, and see both in Saved. Back
+                # out of the reader to the listing first.
+                drive("tap Back", timeout=60, soft=True)
+                wait_until(lambda text: "Back" in text, seconds=60)
+                drive("tap Back", timeout=60, soft=True)
+                if not wait_until(
+                        lambda text: "Follow this subject" in text,
+                        seconds=60, advance_clock=True):
+                    raise RuntimeError("the listing never came back")
+                drive("tap Follow this subject", timeout=60, soft=True)
+                if not wait_until(lambda text: "Stop following" in text,
+                                  seconds=60):
+                    raise RuntimeError("the follow never landed")
+                capture("arxiv-live-followed")
+                result["checks"].append(dict(
+                    name="live follow marks the subject", status="passed",
+                    detail="the live listing offered Follow this subject and "
+                           "then said Stop following (panel shot "
+                           "arxiv-live-followed)"))
+
+                drive("tap Back", timeout=60, soft=True)
+                if not wait_until(lambda text: "Search arXiv" in text,
+                                  seconds=60):
+                    raise RuntimeError("the subject list never came back")
+                drive("tap Search arXiv", timeout=60, soft=True)
+                if not wait_until(
+                        lambda text: "A phrase, an author, a title" in text,
+                        seconds=60):
+                    raise RuntimeError("the search screen never opened")
+                drive("type attention is all you need", timeout=180)
+                drive("tap Search", timeout=60, soft=True)
+                drive("clock advance 1500", "wait-idle", timeout=60,
+                      soft=True)
+                if not wait_until(lambda text: len(rows(text)) >= 1,
+                                  seconds=120, advance_clock=True):
+                    raise RuntimeError("the typed search never listed")
+                drive("tap Save this search", timeout=60, soft=True)
+                drive("tap Back", timeout=60, soft=True)
+                if not wait_until(lambda text: "Search arXiv" in text,
+                                  seconds=60):
+                    raise RuntimeError("the subject list never came back")
+                drive("tap Saved", timeout=60, soft=True)
+                if not wait_until(
+                        lambda text: "attention is all you need" in text
+                        and SUBJECT in text, seconds=60):
+                    raise RuntimeError("Saved never listed the search")
+                capture("arxiv-live-saved")
+                result["checks"].append(dict(
+                    name="Saved lists the live search and subject",
+                    status="passed",
+                    detail="the typed search saved from its live results and "
+                           "the followed subject are listed together in "
+                           "Saved (panel shot arxiv-live-saved)"))
                 result["status"] = "passed"
             finally:
                 stop()
