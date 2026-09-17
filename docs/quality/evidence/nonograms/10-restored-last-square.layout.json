@@ -134,7 +134,7 @@
       },
       "action": null,
       "lines": [
-        "Row 25 \u00b7 Column 25 \u00b7 Free"
+        "Row 25 \u00b7 Column 25 \u00b7 1/625"
       ]
     },
     {
@@ -913,7 +913,7 @@
       ]
     },
     {
-      "kind": "Cell(ActionId(1585907423), Key, true)",
+      "kind": "Cell(ActionId(1585907423), Plain, true)",
       "x": 95,
       "y": 795,
       "width": 118,
@@ -926,6 +926,19 @@
       "lines": [
         "Row 25 clue: 0"
       ]
+    },
+    {
+      "kind": "BoardClueChip",
+      "x": 129,
+      "y": 820,
+      "width": 50,
+      "height": 74,
+      "centre": {
+        "x": 154,
+        "y": 857
+      },
+      "action": 1585907423,
+      "lines": []
     },
     {
       "kind": "BoardClue",
@@ -1103,7 +1116,7 @@
       ]
     },
     {
-      "kind": "Cell(ActionId(3565786335), Key, true)",
+      "kind": "Cell(ActionId(3565786335), Plain, true)",
       "x": 853,
       "y": 237,
       "width": 124,
@@ -1116,6 +1129,19 @@
       "lines": [
         "Column 25 clue: 2 2 2 3 2"
       ]
+    },
+    {
+      "kind": "BoardClueChip",
+      "x": 889,
+      "y": 237,
+      "width": 52,
+      "height": 174,
+      "centre": {
+        "x": 915,
+        "y": 324
+      },
+      "action": 3565786335,
+      "lines": []
     },
     {
       "kind": "BoardClue",
@@ -1148,18 +1174,18 @@
       "lines": []
     },
     {
-      "kind": "Button(ActionId(3432850038), Enabled, Normal)",
-      "x": 111,
+      "kind": "Button(ActionId(1580944473), Disabled, Normal)",
+      "x": 139,
       "y": 931,
-      "width": 181,
+      "width": 125,
       "height": 118,
       "centre": {
         "x": 201,
         "y": 990
       },
-      "action": 3432850038,
+      "action": null,
       "lines": [
-        "Left"
+        "\u2212"
       ]
     },
     {
@@ -1178,18 +1204,18 @@
       ]
     },
     {
-      "kind": "Button(ActionId(3400916651), Disabled, Normal)",
-      "x": 763,
+      "kind": "Button(ActionId(1241633656), Enabled, Normal)",
+      "x": 807,
       "y": 931,
-      "width": 213,
+      "width": 125,
       "height": 118,
       "centre": {
         "x": 869,
         "y": 990
       },
-      "action": null,
+      "action": 1241633656,
       "lines": [
-        "Right"
+        "+"
       ]
     },
     {
@@ -1206,18 +1232,18 @@
       "lines": []
     },
     {
-      "kind": "Button(ActionId(1580944473), Disabled, Normal)",
-      "x": 139,
+      "kind": "Button(ActionId(3432850038), Enabled, Normal)",
+      "x": 111,
       "y": 1061,
-      "width": 125,
+      "width": 181,
       "height": 118,
       "centre": {
         "x": 201,
         "y": 1120
       },
-      "action": null,
+      "action": 3432850038,
       "lines": [
-        "\u2212"
+        "Left"
       ]
     },
     {
@@ -1236,18 +1262,18 @@
       ]
     },
     {
-      "kind": "Button(ActionId(1241633656), Enabled, Normal)",
-      "x": 807,
+      "kind": "Button(ActionId(3400916651), Disabled, Normal)",
+      "x": 763,
       "y": 1061,
-      "width": 125,
+      "width": 213,
       "height": 118,
       "centre": {
         "x": 869,
         "y": 1120
       },
-      "action": 1241633656,
+      "action": null,
       "lines": [
-        "+"
+        "Right"
       ]
     },
     {

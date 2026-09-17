@@ -10,7 +10,7 @@ Tap a square to cycle **blank → filled → crossed out**. A cross records a sq
 
 The selected square has an ink outline. Its row and column clues also have a shaded field and outline. Tap a clue to read its complete sequence; **…** means more numbers than the gutter can show. Back returns to the same board window. A zero clue means the line is empty.
 
-**Left, Up, Right and Down** move the window with an overlap. **−** and **+** change square size. Disabled controls keep their positions. Panning keeps absolute cell identities; an edit to row 25, column 25 never becomes an edit to the first visible square. The header identifies the selected square or the panned range when that square is offscreen. Wide displays use two rows of controls; portrait uses three.
+**Left, Up, Right and Down** move the window with an overlap. **−** and **+** change square size. Disabled controls keep their positions. Panning keeps absolute cell identities; an edit to row 25, column 25 never becomes an edit to the first visible square. The header identifies the selected square (or the panned range when that square is offscreen) and counts the marks made so far; the selected square’s row and column clues carry a compact chip. Wide displays use two rows of controls; portrait uses three.
 
 ## Help, undo and checking
 
