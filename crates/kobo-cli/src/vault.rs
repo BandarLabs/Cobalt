@@ -141,17 +141,17 @@ fn init(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-struct Walk {
-    offered: Vec<IncomingNote>,
-    excluded: Vec<(String, String)>,
-    failures: Vec<ImportFailure>,
+pub(crate) struct Walk {
+    pub(crate) offered: Vec<IncomingNote>,
+    pub(crate) excluded: Vec<(String, String)>,
+    pub(crate) failures: Vec<ImportFailure>,
 }
 
 /// Walk the vault folder into offers: Markdown files become notes keyed by
 /// their vault-relative path, dot-directories and the usual tooling folders
 /// are skipped, and each --exclude text removes its matches loudly so a plan
 /// shows exactly what was left out and why.
-fn walk(folder: &Path, excludes: &[String]) -> Result<Walk, String> {
+pub(crate) fn walk(folder: &Path, excludes: &[String]) -> Result<Walk, String> {
     let metadata = fs::metadata(folder)
         .map_err(|error| format!("could not read {}: {error}", folder.display()))?;
     if !metadata.is_dir() {
@@ -388,7 +388,7 @@ fn publish_local_named(push: &Push, manifest_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn print_plan(push: &Push, walk: &Walk) {
+pub(crate) fn print_plan(push: &Push, walk: &Walk) {
     let fresh = push.notes.len();
     for note in &push.manifest.notes {
         let state = if push.renamed.iter().any(|rename| rename.id == note.id) {
