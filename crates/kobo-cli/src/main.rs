@@ -32,6 +32,7 @@ mod needles;
 mod nonograms;
 mod owner_start;
 mod package;
+mod readlater;
 mod runtime_dev;
 mod stream_demo;
 mod vault;
@@ -517,6 +518,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
         "musicstand" => musicstand::command(&arguments[1..]),
+        "readlater" => readlater::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
