@@ -22,6 +22,31 @@
           "code": "CANG",
           "common": "Canada Goose",
           "scientific": "Branta canadensis"
+        },
+        {
+          "code": "BUFF",
+          "common": "Bufflehead",
+          "scientific": "Bucephala albeola"
+        },
+        {
+          "code": "WEGU",
+          "common": "Western Gull",
+          "scientific": "Larus occidentalis"
+        },
+        {
+          "code": "GBHE",
+          "common": "Great Blue Heron",
+          "scientific": "Ardea herodias"
+        },
+        {
+          "code": "BRAN",
+          "common": "Brant",
+          "scientific": "Branta bernicla"
+        },
+        {
+          "code": "MALL",
+          "common": "Mallard",
+          "scientific": "Anas platyrhynchos"
         }
       ]
     },

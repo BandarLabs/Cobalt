@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "source_revision": "985301116fd15873d90e0862a97a6a57daac98d2",
+    "source_revision": "4d420982a9b82d6376b3b40813e8279518a6428a",
     "tracked_changes": true,
     "cli_sha256": "c4916eb80543cb5efa41281cdf292d5725ecdbbbb1136e66ba204dee2b97e2f2",
     "toolchain": "1.85.1"
@@ -10,7 +10,7 @@
   "checks": [
     {
       "name": "fieldbook journey",
-      "detail": "pack shelf decoded, pack scoped search, keyboard location naming, tally, delete+undo, life list, eBird CSV export verified on disk, state proven across a restart",
+      "detail": "pack shelf decoded, pack scoped search, keyboard location naming, tally, delete+undo, log-from-search beyond the six-row tally cap, life list, eBird CSV export verified on disk, state proven across a restart",
       "status": "passed"
     }
   ],

@@ -89,7 +89,7 @@ def main():
 
             try:
                 start()
-                drive("wait-for 2 packs, 5 species.")
+                drive("wait-for 2 packs, 10 species.")
                 capture("fieldbook-home")
 
                 # Pack list shows both packs and the honest import failure.
@@ -124,6 +124,21 @@ def main():
                 drive("tap American Robin ×2", "wait-for Sighting deleted.",
                       "tap Undo delete", "wait-for American Robin ×2")
 
+                # Log from search while the outing is open: a species beyond
+                # the six-row tally cap (Bufflehead is row 7 of the pack) is
+                # found by name and logged through its detail page.
+                drive("tap back", "tap Resume tally", "wait-for lake merced")
+                drive("tap Type a species", "wait-for Search packs")
+                drive("type bufflehead", "tap Find", "wait-for Bufflehead")
+                drive("tap Bufflehead", "wait-for Bucephala albeola")
+                capture("fieldbook-search-detail")
+                drive("tap Log in the open outing", "wait-for 2 species, 3 birds")
+                capture("fieldbook-log-from-search")
+
+                # The logged bird is on the outing and in the export.
+                drive("tap Review sightings", "wait-for Bufflehead")
+                capture("fieldbook-search-sighting")
+
                 # Finish the outing; the life list keeps the species.
                 drive("tap back", "tap Finish outing", "wait-for Fieldbook")
                 drive("tap Life list", "wait-for AMRO", "wait-for 2 birds")
@@ -144,6 +159,8 @@ def main():
                 assert csv[11] == ",,Y", f"reported row: {csv[11]!r}"
                 assert "American Robin,Turdus migratorius,2" in csv, \
                     f"species row missing: {csv}"
+                assert "Bufflehead,Bucephala albeola,1" in csv, \
+                    f"logged-from-search row missing: {csv}"
 
                 # State survives a restart: the finished outing is on Today.
                 stop()
@@ -154,8 +171,9 @@ def main():
                 result["checks"].append(dict(
                     name="fieldbook journey",
                     detail="pack shelf decoded, pack scoped search, keyboard location "
-                           "naming, tally, delete+undo, life list, eBird CSV export "
-                           "verified on disk, state proven across a restart",
+                           "naming, tally, delete+undo, log-from-search beyond the "
+                           "six-row tally cap, life list, eBird CSV export verified "
+                           "on disk, state proven across a restart",
                     status="passed"))
                 result["status"] = "passed"
             finally:

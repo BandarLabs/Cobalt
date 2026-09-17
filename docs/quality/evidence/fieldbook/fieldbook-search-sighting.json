@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "a1dd8e3599b373773cd687a9564c6d66043cd033dabb0908b749a118b2407ff3",
+    "sha256": "5f86f06aa24b756eea59d21a7a368f5b24423f2aa80a772b9f9d34de80100360",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "29",
+  "paints": "48",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.18",
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-09-17",
       "mode": "real",
-      "monotonicMillis": "6566",
-      "unixMillis": "1789683518548",
+      "monotonicMillis": "10275",
+      "unixMillis": "1789683522257",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 2291953,
+    "dirtyPixelsSinceClean": 3826554,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "196",
+      "rawEvents": "329",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "28",
+      "completed": "47",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "6217",
+      "finishedAtMillis": "9917",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "28",
-      "submittedAtMillis": "6178",
+      "submitted": "47",
+      "submittedAtMillis": "9881",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 28,
+    "refreshCount": 47,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 2291953,
+      "dirty": 3826554,
       "full": false,
-      "refresh": 28,
+      "refresh": 47,
       "region": {
         "height": 1160,
         "width": 992,

@@ -1,4 +1,4 @@
-Kobo app simulator: http://127.0.0.1:39261
+Kobo app simulator: http://127.0.0.1:42519
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-home.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
@@ -26,12 +26,24 @@ drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evide
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-search-detail.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-log-from-search.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-search-sighting.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-life.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-export.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
-Kobo app simulator: http://127.0.0.1:38509
+Kobo app simulator: http://127.0.0.1:33193
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-home-restored.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
