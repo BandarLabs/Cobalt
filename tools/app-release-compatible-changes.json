@@ -303,7 +303,7 @@
   },
   {
    "protocol_version": 14,
-   "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion. Re-pinned over the Windows host support: the lock also gains the kobo-sdk to kobo-abi edge and Windows-target packages for the CLI, sidekickd, and wifi-trace, none of which resolves differently for a Unix build. Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
+   "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion, then through 0.3.17 to 0.3.18 for the protocol that lets a screen hide its top bar. Re-pinned over the Windows host support: the lock also gains the kobo-sdk to kobo-abi edge and Windows-target packages for the CLI, sidekickd, and wifi-trace, none of which resolves differently for a Unix build. Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
    "files": [
     {
      "path": "Cargo.lock",
@@ -313,12 +313,12 @@
    ]
   },
   {
-   "protocol_version": 14,
-   "reason": "Windows host support for the CLI and simulator. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected.",
+   "protocol_version": 15,
+   "reason": "Windows host support for the CLI and simulator. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected. Re-pinned at protocol 15 after the beta merge: the 0.3.18 bump and the Windows host additions still move no package identity a Store app resolves.",
    "files": [
     {
      "path": "Cargo.lock",
-     "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
+     "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
      "compatible_blob": "162b0526e69377ac6fdd825e45146f037c473052"
     },
     {
@@ -368,8 +368,8 @@
     },
     {
      "path": "crates/kobo-protocol/src/lib.rs",
-     "base_blob": "5e43bf13fba972a7f395001e7f093ea6064474b0",
-     "compatible_blob": "3db27fcef9b1c2ac45b81d36e6866412a980e09e"
+     "base_blob": "e68b7d0c48c34c62784efcc725272f55ec1ed693",
+     "compatible_blob": "af6df4786153fd6a96dc022e6025cc0b1997ce9b"
     },
     {
      "path": "crates/kobo-sdk/Cargo.toml",
