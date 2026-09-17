@@ -33,13 +33,15 @@ Corrupt, oversized or future records stay untouched. Retry reads them again; Puz
 
 ## Photo puzzles
 
-The current computer companion sends 5×5, 7×7 or 9×9 photo puzzles:
+The computer companion sends photo puzzles:
 
 ```sh
 kobo nonograms push IMAGE --size N --device READER
 ```
 
-Choose the same size in **Photos**, then **Open**. The app’s Help screen explains the placeholders. Companion preview, simulator targeting and broader import support are tracked separately in PR 3.
+Choose the same size in **Photos**, then **Import**. Grid sizes from 5×5 to 25×25 are accepted. To send several at once, the push writes an `imported.txt` list beside the photos, one line per puzzle with the file name, puzzle name and grid size. Each listed photo arrives as a named puzzle. Reimporting an unchanged photo keeps its saved progress, and photos a push no longer names leave the shelf.
+
+![Imported photo puzzles listed by name](screenshots/imported-puzzles.png)
 
 The app accepts an image-derived puzzle only when repeated row/column deductions determine its entire answer. Ambiguous or unsupported inputs are refused. The displayed solver rating is **Easy** for one productive pass, **Medium** for two or three and **Hard** for more. This repeatable guide describes solver work, not measured human difficulty. The earlier study pack remains available for existing games. The new collection uses 18 distinct original drawings; every answer is determined by the line solver.
 
