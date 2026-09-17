@@ -683,7 +683,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Missing companion workflows
 
-- [ ] **MISSINGCLI-01** Implement scores import/push with real score conversion.
+- [x] **MISSINGCLI-01** Implement scores import/push with real score conversion.
 - [ ] **MISSINGCLI-02** Implement Fieldbook pack import and checklist export.
 - [ ] **MISSINGCLI-03** Provide Panels CBZ import with page/cover preview and clear CBR guidance.
 - [ ] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
