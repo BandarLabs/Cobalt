@@ -238,7 +238,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **FRAME-03** Provide an original multi-photo demo.
 - [ ] **FRAME-04** Show verified transfer status.
 - [ ] **FRAME-05** Integrate shared fit/crop behavior.
-- [ ] **FRAME-06** Prepare sleep ownership and energy validation.
+- [x] **FRAME-06** Prepare sleep ownership and energy validation.
 
 ## PR 2 · Components reference
 

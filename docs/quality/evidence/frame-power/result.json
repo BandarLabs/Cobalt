@@ -1,0 +1,17 @@
+{
+  "provenance": {
+    "source_revision": "143aa6703e44cb36c80bb59d8fa9c6b63ef3d61c",
+    "tracked_changes": false,
+    "cli_sha256": "329b093ea06b857049d462863b268272b4e1a81042dfd3ce7856e8148f9bacfc",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "checks": [
+    "frame mode holds the wake lock for the interval",
+    "slow slideshow releases the hold and schedules a real wake",
+    "a clock crossing fires the scheduled wake, advances the photo and reschedules",
+    "switching back to frame mode cancels the scheduled wake",
+    "a restart re-applies the saved power policy and position"
+  ],
+  "status": "passed"
+}

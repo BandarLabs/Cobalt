@@ -2,7 +2,7 @@
   {
     "id": "SIM-01",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Apply interface and reading scales consistently to rendering",
     "status": "done",
     "evidence": [
@@ -12,7 +12,7 @@
   {
     "id": "SIM-02",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Apply the same scale context to measurement, diagnostics and hit testing",
     "status": "done",
     "evidence": [
@@ -23,7 +23,7 @@
   {
     "id": "SIM-03",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Restore ambient scales after rendering to prevent cross-request leakage",
     "status": "done",
     "evidence": [
@@ -33,7 +33,7 @@
   {
     "id": "SIM-04",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Share runtime Back/chrome composition with browser simulation",
     "status": "done",
     "evidence": [
@@ -43,7 +43,7 @@
   {
     "id": "SIM-05",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Route shell Back and app-owned Back consistently",
     "status": "done",
     "evidence": [
@@ -53,7 +53,7 @@
   {
     "id": "SIM-06",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Use declared app capabilities instead of granting every capability",
     "status": "done",
     "evidence": [
@@ -63,7 +63,7 @@
   {
     "id": "SIM-07",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Respect device-supported service backends in simulation",
     "status": "done",
     "evidence": [
@@ -73,7 +73,7 @@
   {
     "id": "SIM-08",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Inject missing credentials for all credentialed network tasks",
     "status": "done",
     "evidence": [
@@ -83,7 +83,7 @@
   {
     "id": "SIM-09",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Return production-equivalent failure reasons",
     "status": "done",
     "evidence": [
@@ -96,7 +96,7 @@
   {
     "id": "SIM-10",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Cover streaming requests with offline and timeout injection",
     "status": "done",
     "evidence": [
@@ -106,7 +106,7 @@
   {
     "id": "SIM-11",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Cover shelf/chunked writes with storage-full injection",
     "status": "done",
     "evidence": [
@@ -116,7 +116,7 @@
   {
     "id": "SIM-12",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Commit panel transitions when screens arrive rather than when screenshots are requested",
     "status": "done",
     "evidence": [
@@ -126,7 +126,7 @@
   {
     "id": "SIM-13",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Make screenshot endpoints read-only",
     "status": "done",
     "evidence": [
@@ -136,7 +136,7 @@
   {
     "id": "SIM-14",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Record bounded screen, input and refresh event histories",
     "status": "done",
     "evidence": [
@@ -146,7 +146,7 @@
   {
     "id": "SIM-15",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Generate simulator Store fixtures from the catalog registry",
     "status": "done",
     "evidence": [
@@ -156,7 +156,7 @@
   {
     "id": "SIM-16",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Exercise actual launcher/app transitions in full-runtime mode",
     "status": "done",
     "evidence": [
@@ -166,7 +166,7 @@
   {
     "id": "SIM-17",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Exercise signed install, update and remove against local fixture packages",
     "status": "done",
     "evidence": [
@@ -176,7 +176,7 @@
   {
     "id": "SIM-18",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Add deterministic virtual clock controls",
     "status": "done",
     "evidence": [
@@ -186,7 +186,7 @@
   {
     "id": "SIM-19",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Replay raw touch down, move, up, hold and page-button events through the HAL",
     "status": "done",
     "evidence": [
@@ -196,7 +196,7 @@
   {
     "id": "SIM-20",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Model panel submission, busy state, completion and failure",
     "status": "done",
     "evidence": [
@@ -206,7 +206,7 @@
   {
     "id": "SIM-21",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Expose battery, charging, frontlight, cover and orientation controls",
     "status": "done",
     "evidence": [
@@ -216,7 +216,7 @@
   {
     "id": "SIM-22",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Inject app kill, lifecycle change and transfer interruption",
     "status": "done",
     "evidence": [
@@ -226,7 +226,7 @@
   {
     "id": "SIM-23",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Keep ideal and approximate panel output distinct",
     "status": "done",
     "evidence": [
@@ -236,7 +236,7 @@
   {
     "id": "SIM-24",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Add color output and label uncalibrated appearance clearly",
     "status": "done",
     "evidence": [
@@ -246,7 +246,7 @@
   {
     "id": "SIM-25",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Reject invalid profile and scale arguments",
     "status": "done",
     "evidence": [
@@ -256,7 +256,7 @@
   {
     "id": "SIM-26",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Stamp captures with source, app, mode, profile, pose, fonts, scales, fixture and seed",
     "status": "done",
     "evidence": [
@@ -266,7 +266,7 @@
   {
     "id": "SIM-27",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Assert serious diagnostics at every drive transition",
     "status": "done",
     "evidence": [
@@ -276,7 +276,7 @@
   {
     "id": "SIM-28",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Add semantic state/network-effect assertions to drive",
     "status": "done",
     "evidence": [
@@ -286,7 +286,7 @@
   {
     "id": "SIM-29",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Use stable control IDs and bounded wait-for-idle in routes",
     "status": "done",
     "evidence": [
@@ -296,7 +296,7 @@
   {
     "id": "SIM-30",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Keep refresh results invariant under screenshot sampling cadence",
     "status": "done",
     "evidence": [
@@ -878,7 +878,7 @@
     "task": "Provide shared comic page fit, width, zoom and pan controls",
     "status": "done",
     "evidence": [
-      "Shared ComicView exposes fit page, fit width, 100\u2013400% zoom and normalized pan. Cropping happens before enlargement. All profile/scale/orientation layout and reachable-action checks pass."
+      "Shared ComicView exposes fit page, fit width, 100–400% zoom and normalized pan. Cropping happens before enlargement. All profile/scale/orientation layout and reachable-action checks pass."
     ]
   },
   {
@@ -978,7 +978,7 @@
     "task": "Show downloading, available offline and reading progress",
     "status": "done",
     "evidence": [
-      "Downloading, offline and reading-progress states validated end-to-end in the simulator against a local TLS fixture (scripts/quality/check-arxiv-sim.py): the full text fetched over TLS and opened in the reader; three page-turn buttons moved through it; leaving saved the place; Keep for offline re-fetched the rendering, wrote it to the shelf and reopened the paper AT THE SAVED PLACE (page 4 of 5, not page 1); the listing row then carried the ' \u00b7 offline' badge and the library row showed '2609.00042v2 \u00b7 Ada Lovelace, Alan Turing \u00b7 3 KB \u00b7 74%' - progress recorded as a percentage of the paper's blocks each time the reader saves a place, so type-size changes never move it. The catalogue's tab-separated encoding gained a fifth field; pre-upgrade catalogues still decode (unit-tested). The fetching activity state is unit-tested (the fixture answers within one drive step, too fast to film). Pixel-verified: docs/quality/evidence/arxiv/arxiv-listing-offline.png, arxiv-library.png, arxiv-reopened.png (result.json, simulator.log alongside). The harness also caught a real bug this row fixed: the bottom band holds ONE control, so 'Keep for offline' and 'Older papers' were silently replaced by 'Full text'/'Any time' and unreachable - Keep/Remove moved to the paper screen's top bar, Older papers to the listing's top bar, with regression tests asserting both stay reachable."
+      "Downloading, offline and reading-progress states validated end-to-end in the simulator against a local TLS fixture (scripts/quality/check-arxiv-sim.py): the full text fetched over TLS and opened in the reader; three page-turn buttons moved through it; leaving saved the place; Keep for offline re-fetched the rendering, wrote it to the shelf and reopened the paper AT THE SAVED PLACE (page 4 of 5, not page 1); the listing row then carried the ' · offline' badge and the library row showed '2609.00042v2 · Ada Lovelace, Alan Turing · 3 KB · 74%' - progress recorded as a percentage of the paper's blocks each time the reader saves a place, so type-size changes never move it. The catalogue's tab-separated encoding gained a fifth field; pre-upgrade catalogues still decode (unit-tested). The fetching activity state is unit-tested (the fixture answers within one drive step, too fast to film). Pixel-verified: docs/quality/evidence/arxiv/arxiv-listing-offline.png, arxiv-library.png, arxiv-reopened.png (result.json, simulator.log alongside). The harness also caught a real bug this row fixed: the bottom band holds ONE control, so 'Keep for offline' and 'Older papers' were silently replaced by 'Full text'/'Any time' and unreachable - Keep/Remove moved to the paper screen's top bar, Older papers to the listing's top bar, with regression tests asserting both stay reachable."
     ]
   },
   {
@@ -1276,7 +1276,7 @@
     "task": "Add puzzle corpus/import and difficulty",
     "status": "done",
     "evidence": [
-      "Four bounded offline puzzles have editorial Starter/Easy/Medium guides: one original blocked mini with ten distinct crossing answers of at least three letters, plus three word squares. The prior 5\u00d75 answer remains unchanged. No import is advertised; the old test-only .puz header parser is removed. Corpus crossing, numbering and complete-solve tests pass."
+      "Four bounded offline puzzles have editorial Starter/Easy/Medium guides: one original blocked mini with ten distinct crossing answers of at least three letters, plus three word squares. The prior 5×5 answer remains unchanged. No import is advertised; the old test-only .puz header parser is removed. Corpus crossing, numbering and complete-solve tests pass."
     ]
   },
   {
@@ -1561,7 +1561,7 @@
     "task": "Show album, date and count clearly",
     "status": "done",
     "evidence": [
-      "apps/frame Home shows the position count (1 of 6) and the selected photo's name, album and formatted taken date; shelf-driven sim journey scripts/quality/check-frame-shelf-sim.py, evidence frame-home.png pixel-verified (birds-on-a-wire.jpg \u00b7 Demo Album \u00b7 5 Nov 2024)."
+      "apps/frame Home shows the position count (1 of 6) and the selected photo's name, album and formatted taken date; shelf-driven sim journey scripts/quality/check-frame-shelf-sim.py, evidence frame-home.png pixel-verified (birds-on-a-wire.jpg · Demo Album · 5 Nov 2024)."
     ]
   },
   {
@@ -1599,8 +1599,12 @@
     "pr": 3,
     "group": "Frame app",
     "task": "Prepare sleep ownership and energy validation",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Simulator proves the ownership contract end to end: frame mode holds the wake lock for interval+60s with nothing scheduled; slow slideshow releases the hold and schedules a real wake exactly one interval out; a manual-clock crossing fires the wake, advances the photo and reschedules; switching modes cancels the other policy; a restart restores the saved mode, position and policy. Five checks pass at 143aa670 with clean provenance, pixel-inspected captures in docs/quality/evidence/frame-power.",
+      "The simulator needed two additions, now committed: GET /power reports wake holds and scheduled wakes, and a clock crossing delivers a due scheduled wake to the app that requested it.",
+      "Energy consumption is prepared, not claimed: docs/quality/frame-sleep-energy.md sets the measurement method (external current logger or charge counter), the three comparison windows (idle baseline, hourly slow-slideshow wake, 15-minute frame-mode hold plus refresh) and the hardware checks still owed (wake surviving real suspend, advance completing before re-sleep)."
+    ]
   },
   {
     "id": "GALLERY-01",
@@ -2459,7 +2463,7 @@
     "task": "Distinguish unsupported sizes before play",
     "status": "done",
     "evidence": [
-      "The browser identifies larger boards as Pan to play; 5\u201325 grids are supported and other sizes are refused. Photo selector advertises only the current companion sizes 5, 7 and 9. The size gate and instructions fit the tested scales/profiles/orientations.",
+      "The browser identifies larger boards as Pan to play; 5–25 grids are supported and other sizes are refused. Photo selector advertises only the current companion sizes 5, 7 and 9. The size gate and instructions fit the tested scales/profiles/orientations.",
       "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
     ]
   },
@@ -2482,7 +2486,7 @@
     "status": "done",
     "evidence": [
       "The visual acceptance pass found the legacy 60-entry pack uses repeated horizontal stroke patterns. Current play/recovery improvements retain its identities; a varied replacement needs explicit saved-game migration. Added during implementation review on 9 September 2026.",
-      "18 distinct original picture puzzles now form the default collection, with sizes 5\u201325. The original pixel masters and reproducible independent line-solver generator are included. Rust verifies every shipped answer and distinctness. Earlier retains all 60 original IDs/answers and save keys. The actual SDK simulator restores a new picture, completes House, and proves the earlier save bytes stay unchanged. See evidence/nonogram-pictures/result.json and validation.md."
+      "18 distinct original picture puzzles now form the default collection, with sizes 5–25. The original pixel masters and reproducible independent line-solver generator are included. Rust verifies every shipped answer and distinctness. Earlier retains all 60 original IDs/answers and save keys. The actual SDK simulator restores a new picture, completes House, and proves the earlier save bytes stay unchanged. See evidence/nonogram-pictures/result.json and validation.md."
     ]
   },
   {
@@ -2949,7 +2953,7 @@
     "task": "Provide working original or public starter feeds",
     "status": "done",
     "evidence": [
-      "BBC Science & Environment and NASA Science starter feeds were fetched successfully on 9 September 2026. Browse requires explicit preview and subscription; default/170% simulator evidence rss-offline captures 20\u201321 verifies no request on browsing and no subscription on failed preview."
+      "BBC Science & Environment and NASA Science starter feeds were fetched successfully on 9 September 2026. Browse requires explicit preview and subscription; default/170% simulator evidence rss-offline captures 20–21 verifies no request on browsing and no subscription on failed preview."
     ]
   },
   {
@@ -3912,7 +3916,7 @@
     "task": "Unify 15-pad configuration and UI limits",
     "status": "done",
     "evidence": [
-      "Helper validation now accepts 1\u201315 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
+      "Helper validation now accepts 1–15 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
       "Eight CLI Deck tests and all 53 helper tests passed, including explicit 15/16-pad boundaries. Strict all-target CLI/helper Clippy passed.",
       "docs/quality/evidence/deck-fifteen-pads/result.json and preview.png: actual CLI assigns all 15 pads; 170% simulator screenshot visibly includes Pad 15 and passes layout diagnostics."
     ]
@@ -4637,7 +4641,7 @@
     "id": "OWNERQA-11",
     "pr": 4,
     "group": "Owner experience and final validation",
-    "task": "Prepare 6\u20138-person nontechnical usability protocol including assistive technology",
+    "task": "Prepare 6–8-person nontechnical usability protocol including assistive technology",
     "status": "todo",
     "evidence": []
   },
