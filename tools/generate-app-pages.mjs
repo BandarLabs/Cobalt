@@ -48,7 +48,7 @@ const screenshots = {
   gutenbird: ["gutenbird.png", "A shelf of books from an OPDS library on a Kobo"],
   habits: ["habits.png", "Habits today screen on a Kobo Clara BW, with daily and weekday streak tasks."],
   hn: ["hackernews.png", "A ranked list of Hacker News stories on a Kobo"],
-  homepanel: ["homepanel.png", "Home Panel connection screen with HTTPS Home Assistant URL entry and named-secret instructions."],
+  homepanel: ["homepanel.png", "Home Panel tile grid on a Kobo showing four Home Assistant tiles with the last refresh time."],
   inkling: ["inkling.png", "A solved Inkling five-letter daily puzzle with grayscale shape feedback."],
   kitchencard: ["kitchencard.png", "Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."],
   lichess: ["lichess.png", "Lichess on Kobo showing Puzzle and Play tiles, a daily puzzle row, and puzzle difficulty."],
