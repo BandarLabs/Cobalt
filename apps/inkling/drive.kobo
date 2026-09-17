@@ -1,4 +1,4 @@
-# Simulator recorders pin this day; the answer is caper.
+# Simulator recorders pin this day; the answer is gravy.
 expect Inkling
 tap How to play
 expect Find the five-letter word
@@ -7,8 +7,26 @@ clean
 shot inkling-help
 tap Play
 tap Enter guess
-type caper
+type crane
+tap Guess
+expect 1 of 6
+tap Enter guess
+expect Placed: _RA__
+clean
+shot inkling-knowledge
+type gravy
 tap Guess
 expect Solved
 clean
 shot inkling-solved
+tap Stats
+expect Played 1. Won 1.
+clean
+shot inkling-stats
+tap Play
+tap Archive
+expect August 31, 2026
+tap August 31, 2026
+expect Archive puzzle
+clean
+shot inkling-archive

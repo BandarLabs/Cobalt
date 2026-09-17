@@ -1,0 +1,18 @@
+{
+  "provenance": {
+    "source_revision": "bd9c122ca232693c144159cd56290249bc250882",
+    "tracked_changes": true,
+    "cli_sha256": "f9c023b40c47e7a235660d19d39a255a995d71f451afb085afb9a011ad1c7de0",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "pinned_day": "2026-09-01",
+  "checks": [
+    {
+      "name": "inkling journey",
+      "detail": "real date title, help, first-guess empty knowledge, typing letter knowledge, uppercase shape-marked solve, statistics with distribution, export verified on disk, archive solve with statistics untouched, daily game and statistics proven across a restart",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

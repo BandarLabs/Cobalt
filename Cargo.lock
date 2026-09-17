@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-inkling"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
