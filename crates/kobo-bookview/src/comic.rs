@@ -185,7 +185,23 @@ impl ComicView {
             u32::try_from(self.metrics.height.max(1)).unwrap_or(1),
         )
     }
+    /// Whether the reader has asked for the page to have the panel to itself.
+    ///
+    /// Kept with the comic's own reading position rather than shared with the
+    /// prose reader: the two keep separate records, and a page of art and a
+    /// page of prose are not obliged to want the same thing.
+    fn full_page(&self) -> bool {
+        self.reader.memory().full_page
+    }
+
     fn target(&self) -> (u32, u32) {
+        // Decoded for the panel, not for the panel less a bar. A page fitted
+        // under a header and then drawn without one is not bigger, it is the
+        // same page with the header's height as white space beneath it: the
+        // layout never scales a picture up to fill the room it is given.
+        if self.full_page() {
+            return self.target_without_header();
+        }
         let mut header = self.page_header();
         if self.mode == Mode::Pan {
             header = header
@@ -226,7 +242,11 @@ impl ComicView {
                                 * 10),
                     )
                     .unwrap_or(u16::MAX);
-                    screen = screen.unframed_picture(picture, max_mm);
+                    screen = if self.full_page() {
+                        screen.full_bleed_picture(picture, max_mm)
+                    } else {
+                        screen.unframed_picture(picture, max_mm)
+                    };
                 } else {
                     screen = screen.text(self.notice.as_deref().unwrap_or(
                         "This page could not be shown. Use Reading to choose another page.",
@@ -244,7 +264,10 @@ impl ComicView {
                 } else {
                     ("comic-previous", "comic-next")
                 };
-                screen.page_turns(previous, next).build()
+                screen
+                    .page_turns(previous, next)
+                    .build()
+                    .with_auto_hidden_top_bar(self.full_page())
             }
             Mode::Controls => {
                 let memory = self.reader.memory();
@@ -308,6 +331,14 @@ impl ComicView {
                         "Two-page spreads"
                     } else {
                         "Single pages"
+                    },
+                )
+                .button(
+                    "comic-full-page",
+                    if self.reader.memory().full_page {
+                        "Page with a bar"
+                    } else {
+                        "Page on its own"
                     },
                 )
                 .button("comic-rotate", "Rotate page")
@@ -542,6 +573,9 @@ impl ComicView {
                 self.reader.memory_mut().right_to_left = !self.reader.memory().right_to_left;
             }
             "comic-spreads" => self.reader.memory_mut().spreads = !self.reader.memory().spreads,
+            "comic-full-page" => {
+                self.reader.memory_mut().full_page = !self.reader.memory().full_page;
+            }
             "comic-next" => {
                 self.turn(context, true);
                 return Outcome::Changed;

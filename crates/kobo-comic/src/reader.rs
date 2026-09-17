@@ -17,6 +17,9 @@ pub struct Memory {
     pub page: usize,
     pub right_to_left: bool,
     pub spreads: bool,
+    /// Whether the page has the panel to itself, with the bar waiting at the
+    /// top edge rather than sitting above the art.
+    pub full_page: bool,
     pub viewport: Viewport,
 }
 impl Memory {
@@ -26,6 +29,7 @@ impl Memory {
             page: 0,
             right_to_left: comic.metadata.right_to_left.unwrap_or(false),
             spreads: false,
+            full_page: false,
             viewport: Viewport::default(),
         }
     }
@@ -49,6 +53,7 @@ impl Memory {
             .set("anchor", anchor.as_str())
             .set("rtl", self.right_to_left)
             .set("spreads", self.spreads)
+            .set("full", self.full_page)
             .set(
                 "fit",
                 match self.viewport.fit {
@@ -99,6 +104,7 @@ impl Memory {
             page: 0,
             right_to_left: false,
             spreads: false,
+            full_page: false,
             viewport: Viewport::default(),
         };
         Ok(Self::decode_saved(bytes, &default)?.map(|(memory, _)| memory.page.min(pages - 1)))
@@ -165,6 +171,12 @@ impl Memory {
                 page,
                 right_to_left: boolean("rtl")?,
                 spreads: boolean("spreads")?,
+                // Read without insisting on it. Every position saved before
+                // this setting existed has no such key, and `boolean` treats a
+                // missing key as a record it cannot understand, so requiring
+                // it here would lose the reader's place in every comic they
+                // had open.
+                full_page: value.get("full").and_then(Value::as_bool).unwrap_or(false),
                 viewport: Viewport::new(
                     fit,
                     u16::try_from(zoom).map_err(|_| "Invalid zoom.")?,
@@ -331,6 +343,39 @@ impl Reader {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+    #[test]
+    fn a_position_saved_before_the_full_page_setting_still_opens() {
+        // The decoder treats a missing key as a record it cannot understand,
+        // so a setting read the same way as the others would have thrown away
+        // the reader's place in every comic they already had open. This one is
+        // read without insisting on it.
+        let comic = Comic {
+            pages: vec!["one.png".into(), "two.png".into()],
+            metadata: crate::Metadata::default(),
+        };
+        let mut memory = Memory::new(&comic);
+        memory.page = 1;
+        let saved = String::from_utf8(memory.encode(&comic).unwrap()).unwrap();
+        let older = saved.replace("\"full\":false,", "");
+        assert!(
+            !older.contains("\"full\""),
+            "the fixture must be a record from before the setting existed"
+        );
+        let (restored, _) = Memory::decode_saved(Some(older.as_bytes()), &memory)
+            .expect("an older record still opens")
+            .expect("and carries its page");
+        assert_eq!(restored.page, 1, "the reader keeps their place");
+        assert!(!restored.full_page, "and the setting starts off");
+
+        // A record written now carries it, and carries it back.
+        memory.full_page = true;
+        let bytes = memory.encode(&comic).unwrap();
+        let (restored, _) = Memory::decode_saved(Some(&bytes), &memory)
+            .unwrap()
+            .unwrap();
+        assert!(restored.full_page);
+    }
+
     #[test]
     fn saved_page_uses_the_readers_validation_and_preserves_missing_state() {
         let comic = Comic {
