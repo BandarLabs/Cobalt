@@ -24,7 +24,9 @@ stored cadence, and `status` reports the latest runtime status.
 
 ![A running window with bytes remaining and peers online](../../docs/quality/evidence/syncthing/sync-running.png)
 
-![Conflicts are distinct and name the retry path](../../docs/quality/evidence/syncthing/sync-conflict.png) The supervisor
+![Conflicts are distinct and name the retry path](../../docs/quality/evidence/syncthing/sync-conflict.png)
+
+The supervisor
 generates configuration in `/var/lib/cobalt/syncthing`, makes a daemon-only
 API key from `/dev/urandom`, and only permits its REST listener on loopback.
 It accepts neither arbitrary folder paths nor a key supplied by an app. A
