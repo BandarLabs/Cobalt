@@ -162,6 +162,130 @@ mod folio_tests {
     }
 
     #[test]
+    fn a_screen_that_hides_its_bar_still_gets_one_back_when_it_is_asked_for() {
+        let chrome = Chrome::with_back(true);
+        let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+
+        let hidden =
+            ensure_way_back_revealed(asking.clone(), &chrome, "Birds", TopBarState::Hidden);
+        assert!(
+            hidden.top_bar.is_none(),
+            "hidden means the bar is not drawn"
+        );
+        let shown = ensure_way_back_revealed(asking, &chrome, "Birds", TopBarState::Shown);
+        assert!(
+            shown.top_bar.is_some(),
+            "asking for it back must produce a bar to leave from"
+        );
+
+        // Everything that did not opt in keeps the guarantee unchanged.
+        let ordinary = Screen::new(1, Vec::new());
+        assert!(
+            ensure_way_back_revealed(ordinary, &chrome, "Birds", TopBarState::Hidden)
+                .top_bar
+                .is_some(),
+            "a screen that never asked to hide its bar must never lose it"
+        );
+    }
+
+    #[test]
+    fn the_way_back_the_shell_draws_can_actually_be_reached_by_a_finger() {
+        // Composing and hit testing have to be done against the same screen.
+        // When they were not, the Back the shell had drawn sat in a place no
+        // touch resolved to, and every ordinary application lost its way out
+        // while still showing one.
+        let metrics = &CLARA_BW_METRICS;
+        let chrome = Chrome::with_back(true);
+        let drawn = Screen::new(1, Vec::new());
+
+        let shown = ensure_way_back_revealed(drawn.clone(), &chrome, "Books", TopBarState::Shown);
+        let layout = shown.layout_with(metrics, &chrome);
+        let rect = layout
+            .rect_of_action(ActionId::BACK)
+            .expect("the drawn way back must have a rectangle");
+        assert_eq!(
+            layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(ActionId::BACK),
+            "a touch in the middle of the drawn Back must resolve to Back"
+        );
+
+        // And the hidden case: nothing to hit, because nothing is drawn.
+        let hiding = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+        let hidden =
+            ensure_way_back_revealed(hiding.clone(), &chrome, "Birds", TopBarState::Hidden);
+        assert!(hidden
+            .layout_with(metrics, &chrome)
+            .rect_of_action(ActionId::BACK)
+            .is_none());
+        // Until it is asked for, and then it is reachable like any other.
+        let revealed = ensure_way_back_revealed(hiding, &chrome, "Birds", TopBarState::Shown);
+        let layout = revealed.layout_with(metrics, &chrome);
+        let rect = layout
+            .rect_of_action(ActionId::BACK)
+            .expect("asking for the bar back must draw one");
+        assert_eq!(
+            layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(ActionId::BACK)
+        );
+    }
+
+    #[test]
+    fn the_band_that_brings_the_bar_back_is_where_the_bar_would_be() {
+        let metrics = &CLARA_BW_METRICS;
+        let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+        let bar = metrics.top_bar_height();
+        let bare = Chrome::with_back(true);
+
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Hidden, bar / 2),
+            Some(TopBarState::Shown),
+            "touching where the bar would be asks for it back"
+        );
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Hidden, bar + 1),
+            None,
+            "below the band the touch is the screen's own"
+        );
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Shown, bar + 1),
+            Some(TopBarState::Hidden),
+            "carrying on elsewhere puts it away"
+        );
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Shown, bar / 2),
+            None,
+            "a touch on a bar that is showing belongs to the bar, so Back works"
+        );
+
+        let ordinary = Screen::new(1, Vec::new());
+        assert_eq!(
+            top_bar_touch(&ordinary, metrics, &bare, TopBarState::Hidden, bar / 2),
+            None,
+            "a screen that never asked must not have its top edge taken"
+        );
+
+        // With a status band the bar is not at the top of the panel, so the
+        // band is not claimed and the bar is never hidden in the first place.
+        let with_status = Chrome::with_back(true).with_status(Status::default());
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &with_status, TopBarState::Hidden, bar / 2),
+            None,
+            "the top edge belongs to the status band when there is one"
+        );
+        assert!(
+            ensure_way_back_revealed(
+                Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true),
+                &with_status,
+                "Birds",
+                TopBarState::Hidden
+            )
+            .top_bar
+            .is_some(),
+            "a bar under a status band stays drawn rather than hiding out of reach"
+        );
+    }
+
+    #[test]
     fn folio_section_link_is_a_caption_sized_control() {
         let action = ActionId(8);
         let screen = Screen::new(
@@ -2322,11 +2446,80 @@ pub struct Status {
 /// preview drawn without the way back is a preview of a screen that will never
 /// exist, and it hides the one defect that leaves somebody stuck.
 #[must_use]
-pub fn ensure_way_back(mut screen: Screen, chrome: &Chrome, name: &str) -> Screen {
+pub fn ensure_way_back(screen: Screen, chrome: &Chrome, name: &str) -> Screen {
+    ensure_way_back_revealed(screen, chrome, name, TopBarState::Shown)
+}
+
+/// Whether the shell is currently showing an auto-hiding top bar.
+///
+/// Held by the shell, never by the application, and never persisted: a screen
+/// is first drawn with its bar hidden, and every way of leaving the screen
+/// starts it hidden again.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TopBarState {
+    /// Out of sight, waiting for a touch on the band it would occupy.
+    #[default]
+    Hidden,
+    /// Drawn, and the reader can leave from it.
+    Shown,
+}
+
+/// [`ensure_way_back`], for a shell that can hide the bar it guarantees.
+///
+/// A screen that asked to auto-hide and is not currently shown loses its bar
+/// entirely, including one the application drew itself: a half-hidden bar is
+/// furniture with no purpose. Every other screen is untouched, so the
+/// guarantee that nothing is ever drawn without a way back is unchanged for
+/// everything that did not opt in.
+#[must_use]
+pub fn ensure_way_back_revealed(
+    mut screen: Screen,
+    chrome: &Chrome,
+    name: &str,
+    state: TopBarState,
+) -> Screen {
+    // Never while the shell is drawing its status band. The band sits above
+    // the bar and shifts it down, so hiding underneath one would put the way
+    // back somewhere other than where the reader is told to reach for it.
+    // Full-bleed art is a reading screen, and a reading screen has no band.
+    if screen.auto_hide_top_bar && state == TopBarState::Hidden && chrome.status.is_none() {
+        screen.top_bar = None;
+        return screen;
+    }
     if chrome.back && screen.top_bar.is_none() {
         screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
     }
     screen
+}
+
+/// What a touch at `y` means for an auto-hiding top bar, if anything.
+///
+/// The band is exactly where the bar is drawn, so "touch the top bar to get
+/// it back" is literally true, and a reader who has seen the bar once knows
+/// where to reach. A touch on a bar that is already shown is not handled
+/// here: it belongs to the bar, so Back keeps working.
+#[must_use]
+pub fn top_bar_touch(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    state: TopBarState,
+    y: i32,
+) -> Option<TopBarState> {
+    // The same condition the drawing side uses, so the band is only ever
+    // claimed on a screen whose bar really is at the top of the panel.
+    if !screen.auto_hide_top_bar || chrome.status.is_some() {
+        return None;
+    }
+    let within_band = y >= 0 && y < metrics.top_bar_height();
+    match (state, within_band) {
+        // Asking for it back.
+        (TopBarState::Hidden, true) => Some(TopBarState::Shown),
+        // Anywhere else puts it away again, the way a reader dismisses it by
+        // carrying on reading.
+        (TopBarState::Shown, false) => Some(TopBarState::Hidden),
+        _ => None,
+    }
 }
 
 /// A single tappable label in a bar.
@@ -2690,12 +2883,25 @@ impl NavBar {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent thing a screen declares about itself, and folding them into one state would make screens that combine them unrepresentable"
+)]
 pub struct Screen {
     pub id: u32,
     /// Optional fixed top bar. Structurally outside the node list so a screen
     /// cannot carry two of them, bury one inside a card, or place one halfway
     /// down the page.
     pub top_bar: Option<TopBar>,
+    /// Whether the shell may keep the top bar out of sight until the reader
+    /// asks for it by touching the band it would occupy.
+    ///
+    /// A screen whose whole point is the picture on it says so here; the
+    /// showing and hiding belong to the shell, never to the application,
+    /// because a way out that an application can lose is not a way out. The
+    /// shell repaints from the screen it already holds, so the band answers
+    /// even when the application that drew it has stopped answering.
+    pub auto_hide_top_bar: bool,
     pub nodes: Vec<Node>,
     /// Optional fixed bottom bar, pinned to the panel rather than the flow.
     pub nav_bar: Option<NavBar>,
@@ -2912,6 +3118,7 @@ impl Screen {
         Self {
             id,
             top_bar: None,
+            auto_hide_top_bar: false,
             nodes,
             nav_bar: None,
             bottom_action: None,
@@ -2941,6 +3148,18 @@ impl Screen {
     #[must_use]
     pub const fn with_reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Lets the shell keep the top bar out of sight until it is asked for.
+    ///
+    /// For a screen that is one picture edge to edge, where a bar is a strip
+    /// of somebody else's furniture across the top of it. The reader gets the
+    /// bar back by touching where it would be. Nothing about leaving moves
+    /// into the application: see [`Screen::auto_hide_top_bar`].
+    #[must_use]
+    pub const fn with_auto_hidden_top_bar(mut self, auto_hide: bool) -> Self {
+        self.auto_hide_top_bar = auto_hide;
         self
     }
 
@@ -4583,6 +4802,14 @@ pub enum Node {
         /// drawn rather than written, and a box around it would be as odd as
         /// a box around a sentence.
         framed: bool,
+        /// Whether the picture is the page rather than something on it.
+        ///
+        /// Measured against the panel instead of the text column, so it
+        /// reaches the bezel on every side. The margins exist to keep prose
+        /// off the edge of the glass; art that is the whole point of the
+        /// screen only loses by them, and a plate with a four millimetre
+        /// border reads as a photograph of a page rather than the page.
+        bleed: bool,
     },
     /// Work in flight, typically a network request.
     ///
@@ -8619,7 +8846,18 @@ fn layout_node(
             source,
             max_height_tenths_mm,
             framed,
+            bleed,
         } => {
+            // Against the panel, not the column. Pulled up to the top edge
+            // only when nothing has been placed above it: a picture that
+            // follows a heading bleeds sideways but must not climb over what
+            // it follows.
+            let (x, width, y, bottom) = if *bleed {
+                let top = if y <= metrics.screen_margin() { 0 } else { y };
+                (0, metrics.width, top, metrics.height)
+            } else {
+                (x, width, y, bottom)
+            };
             let ceiling = metrics
                 .tenth_mm(i32::from(*max_height_tenths_mm))
                 .min(bottom.saturating_sub(y).max(0));
@@ -12790,8 +13028,22 @@ fn validate_content_bounds(
 ) {
     let mut hidden = Vec::new();
     let mut clipped = Vec::new();
+    let panel = Rect {
+        x: 0,
+        y: 0,
+        width: metrics.width,
+        height: metrics.height,
+    };
     for node in nodes {
         let id = node.id();
+        // A picture that is the page is outside the content box on purpose,
+        // so it answers to the panel instead. Off the panel is still off the
+        // panel, which is the thing this check exists to catch.
+        let allowed = if matches!(node, Node::Picture { bleed: true, .. }) {
+            panel
+        } else {
+            layout.content
+        };
         let laid_out = layout
             .nodes
             .iter()
@@ -12830,16 +13082,13 @@ fn validate_content_bounds(
                     rect: None,
                 });
             }
-        } else if rects
-            .iter()
-            .any(|rect| !rect_is_inside(*rect, layout.content))
-            && !clipped.contains(&id)
+        } else if rects.iter().any(|rect| !rect_is_inside(*rect, allowed)) && !clipped.contains(&id)
         {
             clipped.push(id);
             let rect = rects
                 .iter()
                 .copied()
-                .find(|rect| !rect_is_inside(*rect, layout.content));
+                .find(|rect| !rect_is_inside(*rect, allowed));
             issues.push(LayoutIssue {
                 severity: DiagnosticSeverity::Error,
                 node: Some(id),
@@ -16933,6 +17182,7 @@ mod tests {
                     source: (10, 10),
                     max_height_tenths_mm: 100,
                     framed,
+                    bleed: false,
                 }],
             )
             .layout()
@@ -16969,6 +17219,7 @@ mod tests {
                             source: (1072, 1448),
                             max_height_tenths_mm: 5000,
                             framed: false,
+                            bleed: false,
                         },
                         Node::Grid {
                             id: NodeId(2),
@@ -17030,6 +17281,7 @@ mod tests {
                 source: (10, 10),
                 max_height_tenths_mm: 100,
                 framed: true,
+                bleed: false,
             }],
         );
         let diagnostics = screen.diagnostics_with_pictures(

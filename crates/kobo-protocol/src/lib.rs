@@ -65,7 +65,20 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
 /// older runtime refuses rather than misreads.
-pub const VERSION: u8 = 14;
+/// The protocol a screen must be encoded at to carry an auto-hiding top
+/// bar. Additive: every earlier version simply never sends the byte.
+/// The protocol that introduced suspend handshakes and server accounts,
+/// and the newest one published applications were built against. Kept in
+/// the accepted set by name now that it is no longer the current version.
+pub const SUSPEND_VERSION: u8 = 14;
+
+/// The protocol a picture must be encoded at to say it is the page rather
+/// than something on it. Additive in the same way, and in the same version.
+pub const PICTURE_BLEED_VERSION: u8 = 15;
+
+pub const AUTO_HIDDEN_TOP_BAR_VERSION: u8 = 15;
+
+pub const VERSION: u8 = 15;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -1964,7 +1977,7 @@ impl From<io::Error> for StreamError {
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     if !matches!(
         frame.version,
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | SUSPEND_VERSION | VERSION
     ) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
@@ -2697,7 +2710,7 @@ fn suspend_layout(
     generation: u64,
     version: u8,
 ) -> Result<(u8, usize), ProtocolError> {
-    if version < VERSION || generation == 0 {
+    if version < SUSPEND_VERSION || generation == 0 {
         return Err(ProtocolError::InvalidValue(
             "protocol 14 suspend generation",
         ));
@@ -4551,7 +4564,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
     let version = bytes[4];
     if !matches!(
         version,
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | SUSPEND_VERSION | VERSION
     ) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
@@ -4969,7 +4982,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         25 => Message::DropFont {
             handle: FontHandle(reader.u32()?),
         },
-        tag @ (37..=40) if version >= VERSION => {
+        tag @ (37..=40) if version >= SUSPEND_VERSION => {
             let generation = reader.u64()?;
             if generation == 0 {
                 return Err(ProtocolError::InvalidValue("suspend generation"));
@@ -5029,7 +5042,7 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     }
     if !matches!(
         header[4],
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | SUSPEND_VERSION | VERSION
     ) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
@@ -5044,12 +5057,24 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     Ok(decode(&bytes)?)
 }
 
-fn encode_top_bar(output: &mut Vec<u8>, top_bar: Option<&TopBar>) -> Result<(), ProtocolError> {
+/// Writes the bar, and whether the shell may keep it out of sight.
+///
+/// The presence byte already discriminated, so asking for an auto-hiding bar
+/// sets a bit in it rather than adding a byte to every screen ever encoded.
+/// A screen that does not ask encodes exactly the bytes it always did, which
+/// is what keeps published payloads identical across versions.
+fn encode_top_bar(
+    output: &mut Vec<u8>,
+    top_bar: Option<&TopBar>,
+    auto_hide: bool,
+    version: u8,
+) -> Result<(), ProtocolError> {
+    let auto_hide = auto_hide && version >= AUTO_HIDDEN_TOP_BAR_VERSION;
     let Some(top_bar) = top_bar else {
-        output.push(0);
+        output.push(if auto_hide { 2 } else { 0 });
         return Ok(());
     };
-    output.push(1);
+    output.push(if auto_hide { 3 } else { 1 });
     push_u32(output, top_bar.id.0);
     push_string(output, &top_bar.title)?;
     // A count rather than a flag. One control was the whole shape of this bar
@@ -5076,7 +5101,12 @@ fn encode_screen(
     // Bars are encoded as presence flags outside the node list, mirroring the
     // in-memory shape. A screen with two nav bars is not a frame this format
     // can express, so no validation is needed to reject one.
-    encode_top_bar(output, screen.top_bar.as_ref())?;
+    encode_top_bar(
+        output,
+        screen.top_bar.as_ref(),
+        screen.auto_hide_top_bar,
+        version,
+    )?;
     match &screen.nav_bar {
         None => output.push(0),
         Some(nav_bar) => {
@@ -5748,6 +5778,7 @@ fn encode_node(
             source,
             max_height_tenths_mm,
             framed,
+            bleed,
         } => {
             output.push(17);
             push_u32(output, id.0);
@@ -5755,7 +5786,11 @@ fn encode_node(
             push_u32(output, source.0);
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
-            output.push(u8::from(*framed));
+            // Bit one beside the frame's bit zero, so a picture that does not
+            // bleed encodes the byte it always did and no published payload
+            // changes shape. Only protocol 15 may set it.
+            let bleeds = *bleed && version >= PICTURE_BLEED_VERSION;
+            output.push(u8::from(*framed) | (u8::from(bleeds) << 1));
         }
         Node::Table { id, rows, weights } => {
             output.push(30);
@@ -6205,9 +6240,18 @@ fn decode_screen(
     version: u8,
 ) -> Result<Screen, ProtocolError> {
     let id = reader.u32()?;
-    let top_bar = match reader.u8()? {
-        0 => None,
-        1 => {
+    let bar_flag = reader.u8()?;
+    // 2 and 3 are 0 and 1 with the auto-hide bit set, and only protocol 15
+    // and later may set it, so an older payload naming them is malformed
+    // rather than quietly granted a hidden way out.
+    let auto_hide_top_bar = match bar_flag {
+        2 | 3 if version >= AUTO_HIDDEN_TOP_BAR_VERSION => true,
+        2 | 3 => return Err(ProtocolError::InvalidValue("top bar flag")),
+        _ => false,
+    };
+    let top_bar = match bar_flag {
+        0 | 2 => None,
+        1 | 3 => {
             let bar_id = NodeId(reader.u32()?);
             let title = reader.string()?;
             let count = usize::from(reader.u8()?);
@@ -6368,6 +6412,7 @@ fn decode_screen(
     screen.owns_back = owns_back;
     screen.text_scale = text_scale;
     screen.reading = reading;
+    screen.auto_hide_top_bar = auto_hide_top_bar;
     screen.reading_font = reading_font;
     screen.legacy_typography = version == LEGACY_VERSION;
     Ok(screen)
@@ -6827,13 +6872,23 @@ fn decode_node(
             page: reader.u16()?,
             of: reader.u16()?,
         }),
-        17 => Ok(Node::Picture {
-            id,
-            handle: PictureHandle(reader.u32()?),
-            source: (reader.u32()?, reader.u32()?),
-            max_height_tenths_mm: reader.u16()?,
-            framed: reader.u8()? != 0,
-        }),
+        17 => {
+            let handle = PictureHandle(reader.u32()?);
+            let source = (reader.u32()?, reader.u32()?);
+            let max_height_tenths_mm = reader.u16()?;
+            let flags = reader.u8()?;
+            if flags & !0b11 != 0 || (flags & 0b10 != 0 && version < PICTURE_BLEED_VERSION) {
+                return Err(ProtocolError::InvalidValue("picture flags"));
+            }
+            Ok(Node::Picture {
+                id,
+                handle,
+                source,
+                max_height_tenths_mm,
+                framed: flags & 0b1 != 0,
+                bleed: flags & 0b10 != 0,
+            })
+        }
         10 => {
             let prompt = reader.string()?;
             let len = usize::from(reader.u8()?);
@@ -10223,6 +10278,7 @@ mod picture_tests {
                     source: (190, 300),
                     max_height_tenths_mm: 600,
                     framed: true,
+                    bleed: false,
                 },
             ],
         );
@@ -10621,6 +10677,126 @@ mod update_task_tests {
                 assert!(decode(&bytes[..end]).is_err(), "truncation {end}");
             }
         }
+    }
+
+    #[test]
+    fn an_auto_hidden_top_bar_costs_nothing_for_the_screens_that_never_ask() {
+        let plain = Screen::new(1, Vec::new());
+        let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+        let frame = |screen: Screen, version| Frame {
+            version,
+            request_id: 3,
+            message: Message::SetScreen(screen),
+        };
+        // The whole point of carrying it in the presence byte: a screen that
+        // does not ask encodes the bytes it always did, so nothing published
+        // has to be republished for a flag it never sets.
+        assert_eq!(
+            encode(&frame(plain.clone(), SUSPEND_VERSION)).unwrap()[HEADER_LEN..],
+            encode(&frame(plain.clone(), VERSION)).unwrap()[HEADER_LEN..]
+        );
+
+        let decoded = decode(&encode(&frame(asking.clone(), VERSION)).unwrap()).unwrap();
+        let Message::SetScreen(screen) = decoded.message else {
+            panic!("screen");
+        };
+        assert!(screen.auto_hide_top_bar, "the ask must survive the wire");
+
+        // An older runtime was never told about hiding, so asking it is not
+        // encoded at all rather than encoded and silently misread.
+        let older = decode(&encode(&frame(asking, SUSPEND_VERSION)).unwrap()).unwrap();
+        let Message::SetScreen(screen) = older.message else {
+            panic!("screen");
+        };
+        assert!(
+            !screen.auto_hide_top_bar,
+            "a protocol that cannot hide a bar must not claim to have hidden one"
+        );
+    }
+
+    #[test]
+    fn suspend_still_reaches_an_application_built_before_this_protocol() {
+        // Suspend arrived at protocol 14, and the guard that admits it was
+        // written as "the current version". Moving the current version left
+        // every published application unable to be told the cover had closed.
+        for message in [
+            Message::PrepareSuspend { generation: 4 },
+            Message::SuspendReady {
+                generation: 4,
+                ready: true,
+            },
+        ] {
+            let frame = Frame {
+                version: SUSPEND_VERSION,
+                request_id: 2,
+                message,
+            };
+            assert_eq!(
+                decode(&encode(&frame).unwrap()).unwrap(),
+                frame,
+                "a protocol 14 application must still be suspendable"
+            );
+        }
+    }
+
+    #[test]
+    fn an_application_published_before_this_protocol_still_speaks_to_it() {
+        // The case that must never break: a reader updates, and every
+        // application already installed on it carries on. Those binaries were
+        // built against protocol 14 and will never be rebuilt, so 14 has to
+        // keep working in a runtime that has moved on to 15.
+        let screen = Screen::new(
+            7,
+            vec![Node::Heading {
+                id: NodeId(1),
+                level: 1,
+                text: "Chapter".into(),
+            }],
+        )
+        .with_top_bar(TopBar::new(NodeId(2), "Books"))
+        .with_reading(true);
+        let frame = Frame {
+            version: SUSPEND_VERSION,
+            request_id: 5,
+            message: Message::SetScreen(screen),
+        };
+        assert_eq!(
+            decode(&encode(&frame).unwrap()).unwrap(),
+            frame,
+            "a protocol 14 screen must survive a protocol 15 runtime unchanged"
+        );
+
+        // The handshake decides the session, and the runtime answers in the
+        // version the application opened with rather than its own newest.
+        let hello = Frame {
+            version: SUSPEND_VERSION,
+            request_id: 1,
+            message: Message::Hello {
+                name: "books".into(),
+            },
+        };
+        let decoded = decode(&encode(&hello).unwrap()).unwrap();
+        assert_eq!(
+            decoded.version, SUSPEND_VERSION,
+            "the runtime must keep speaking the version the application opened with"
+        );
+    }
+
+    #[test]
+    fn a_bar_hidden_by_a_protocol_that_has_no_such_flag_is_refused() {
+        // Byte 4 is the version and the presence byte follows the screen id.
+        // A payload that sets the auto-hide bit while naming protocol 14 is
+        // malformed: granting it would let a crafted frame take the way out
+        // off a screen on a runtime that cannot give it back.
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::SetScreen(Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true)),
+        };
+        let mut bytes = encode(&frame).unwrap();
+        assert_eq!(bytes[HEADER_LEN + 4], 2, "an auto-hidden bar with no bar");
+        bytes[4] = SUSPEND_VERSION;
+        assert!(decode(&bytes).is_err());
     }
 
     #[test]
