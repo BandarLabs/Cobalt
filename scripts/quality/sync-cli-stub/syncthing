@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Stub Syncthing binary for the sync-companion fixture harness."""
+import json, os, sys, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+HOST_ID = "AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA"
+
+def home_arg():
+    return Path(sys.argv[sys.argv.index('--home') + 1])
+
+if sys.argv[1] == '--version':
+    print('syncthing v2.0.9 "Fermium Flea" (go1.25.0 linux-amd64) stub')
+elif sys.argv[1] == 'generate':
+    home = home_arg()
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'cert.pem').write_text('stub cert')
+    (home / 'key.pem').write_text('stub key')
+    (home / 'config.xml').write_text('<configuration version="37"></configuration>')
+elif sys.argv[1] == 'device-id':
+    print(HOST_ID)
+elif sys.argv[1] == 'serve':
+    home = home_arg()
+    key = os.environ.get('STGUIAPIKEY', '')
+    record = home / 'stub-record.jsonl'
+    state = {'config': None}
+
+    def note(entry):
+        with record.open('a') as handle:
+            handle.write(json.dumps(entry) + '\n')
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def reply(self, value, code=200):
+            body = json.dumps(value).encode()
+            self.send_response(code)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def authed(self):
+            if self.headers.get('X-API-Key') != key:
+                self.reply({}, 403)
+                return False
+            return True
+        def do_GET(self):
+            if not self.authed():
+                return
+            path = self.path.split('?')[0]
+            if path == '/rest/system/status':
+                return self.reply({'myID': HOST_ID})
+            if path == '/rest/config':
+                return self.reply(state['config'] or {'gui': {}, 'options': {}})
+            if path in ('/rest/config/defaults/folder', '/rest/config/defaults/device'):
+                return self.reply({})
+            if path == '/rest/db/status':
+                return self.reply({'state': 'idle', 'stateChanged': '2026-09-17T04:00:00Z',
+                                   'errors': 0, 'pullErrors': 0})
+            return self.reply({}, 404)
+        def do_PUT(self):
+            if not self.authed():
+                return
+            body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+            if self.path == '/rest/config':
+                state['config'] = json.loads(body.decode())
+                note({'put-config': state['config']})
+                return self.reply({})
+            return self.reply({}, 404)
+        def do_POST(self):
+            if not self.authed():
+                return
+            path = self.path.split('?')[0]
+            if path == '/rest/system/shutdown':
+                self.reply({})
+                threading.Thread(target=self.server.shutdown).start()
+                return
+            if path in ('/rest/system/pause', '/rest/system/resume'):
+                note({path.rsplit('/', 1)[1]: self.path})
+                return self.reply({})
+            return self.reply({}, 404)
+
+    class Server(HTTPServer):
+        allow_reuse_address = True
+
+    server = Server(('127.0.0.1', 8385), Handler)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+else:
+    sys.exit('stub syncthing: unhandled argv ' + ' '.join(sys.argv[1:]))

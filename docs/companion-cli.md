@@ -30,6 +30,19 @@ full command reference; `kobo frame --help`, `kobo flashcards --help` and
 Named-reader selection, a desktop companion window and resumable operation
 receipts remain under development.
 
+## Sync folders
+
+`kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP` pairs one
+computer folder with the reader's fixed Sync set through a dedicated, private
+Syncthing peer (its own home, its own identity, API on loopback only).
+`kobo sync plan` shows the mapping, its fixed direction and what the reader
+imports from it; `kobo sync run` starts the peer, `status` reports folder
+state with last change and errors, `pause` and `resume` suspend transfers
+with the reader, and `stop` shuts the peer down. `kobo sync publish --folder
+vault` packs raw Markdown notes into the shelf package the reader imports
+after each window; the owner's original files are never modified. Set
+KOBO_SYNC_HOME to an absolute path to keep a separate configuration.
+
 ## Feed subscription files
 
 `kobo feeds check FILE` and `kobo feeds push FILE --sim` accept OPML files up
