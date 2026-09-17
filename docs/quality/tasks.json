@@ -2741,8 +2741,12 @@
     "pr": 3,
     "group": "Post",
     "task": "Explain gateway/companion setup",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "README documents the gateway contract (GET /letters paged, POST /replies with reply_id) and both setup paths: `kobo post login --gateway ... --token-file ...` (companion CLI, pr6-companion-clis 05bb88a7) and the legacy `kobo secret set hermes-post`.",
+      "scripts/quality/check-post-login-cli.py: 5/5 checks against a TLS fixture gateway - a refused token stops the login and installs nothing; a good token is pinned (cobalt-server-account-v1) and installed with the gateway address in app state.",
+      "docs/quality/evidence/post/post-cli-login-inbox.png: after `kobo post login --sim` (no in-app setup), the app opens straight into the inbox showing the fixture letters."
+    ]
   },
   {
     "id": "POST-05",
