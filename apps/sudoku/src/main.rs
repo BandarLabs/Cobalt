@@ -33,7 +33,6 @@ struct Sudoku {
     load_error: Option<String>,
     notice: Option<String>,
     help_page: usize,
-    lower_rows: bool,
     sent_orientation: Option<kobo_sdk::Orientation>,
 }
 impl Default for Sudoku {
@@ -49,7 +48,6 @@ impl Default for Sudoku {
             load_error: None,
             notice: None,
             help_page: 0,
-            lower_rows: false,
             sent_orientation: None,
         }
     }
@@ -68,15 +66,6 @@ fn digit_name(digit: u8) -> String {
     format!("digit-{digit}")
 }
 impl Sudoku {
-    fn reveal_selection(&mut self) {
-        if let Some(cell) = self.game.position.selected {
-            if cell < 27 {
-                self.lower_rows = false;
-            } else if cell >= 54 {
-                self.lower_rows = true;
-            }
-        }
-    }
     fn save(&mut self, context: &mut Context) {
         let bytes =
             saved::encode(&self.game, &self.puzzles).expect("validated game fits record bound");
@@ -399,7 +388,7 @@ More offers erase, checking and reveal. Checking starts off. Turn it on to flag 
 
 Your game saves after every edit. Undo restores the last 64 moves, even after reopening. A full correct grid completes the puzzle. New puzzle replaces the current game and its history.
 
-Landscape shows rows 1–6 or 4–9. Use the range button to move between them.
+Landscape shows the whole board with the digits beside it.
 
 There are 12 original puzzles per difficulty. Easy uses single candidates. Medium adds single locations in a row, column or box. Hard needs more advanced techniques.", true, self.orientation())
     }
@@ -434,7 +423,6 @@ impl KoboApp for Sudoku {
             } => match saved::decode(&bytes, &self.puzzles) {
                 Ok(game) => {
                     self.game = game;
-                    self.reveal_selection();
                     self.draft = Draft::restored(bytes, saved::LIMIT).expect("validated record");
                     self.loaded = true;
                     self.load_error = None;
@@ -489,9 +477,7 @@ impl KoboApp for Sudoku {
         } else {
             match self.view {
                 View::Play => {
-                    if is("rows") {
-                        self.lower_rows = !self.lower_rows;
-                    } else if is("more") {
+                    if is("more") {
                         self.view = View::Menu;
                     } else if is("pencil") {
                         self.game.pencil = !self.game.pencil;
@@ -533,7 +519,6 @@ impl KoboApp for Sudoku {
                         let landscape = self.game.landscape;
                         self.game = Game::new(next, &self.puzzles);
                         self.game.landscape = landscape;
-                        self.lower_rows = false;
                         self.view = View::Play;
                     }
                 }
@@ -569,7 +554,6 @@ impl KoboApp for Sudoku {
             }
         }
         if before != self.game {
-            self.reveal_selection();
             self.save(context);
         }
         self.show(context);
