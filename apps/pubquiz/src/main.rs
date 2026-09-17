@@ -339,7 +339,7 @@ fn answer_rows(question: &Question) -> impl Iterator<Item = (String, String, &st
     question.answers.iter().enumerate().map(|(index, answer)| {
         (
             choice(index),
-            format!("{} · {answer}", index + 1),
+            answer.clone(),
             "",
             u16::try_from(index + 1).expect("four answers"),
         )
@@ -388,12 +388,7 @@ fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
 
 fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
-    let titles = question
-        .answers
-        .iter()
-        .enumerate()
-        .map(|(index, answer)| format!("{} · {answer}", index + 1))
-        .collect::<Vec<_>>();
+    let titles = question.answers.to_vec();
     let rows = titles
         .iter()
         .map(|title| (title.as_str(), ""))
@@ -455,24 +450,45 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
         }
         View::Question => question_screen(quiz, context),
         View::Choices => choices_screen(quiz, context),
-        View::Pass => ScreenBuilder::new("pubquiz-pass")
-            .top_bar("Pass it on")
-            .heading("Answer locked")
-            .text("Hand the Kobo to the next player before the result is shown.")
-            .primary_button("reveal", "Show result")
-            .build(),
+        View::Pass => {
+            let next = ["Ada", "Bert", "Cleo", "Dev"][(quiz.player + 1) % 4];
+            ScreenBuilder::new("pubquiz-pass")
+                .top_bar("Pass it on")
+                .heading("Answer locked")
+                .text(format!(
+                    "{} answered. Hand the Kobo to {next}, who reveals the result.",
+                    quiz.player_name()
+                ))
+                .primary_button("reveal", "Show result")
+                .build()
+        }
         View::Reveal => {
             let right = quiz.answer == Some(question.correct);
-            ScreenBuilder::new("pubquiz-reveal")
+            let mut builder = ScreenBuilder::new("pubquiz-reveal")
                 .top_bar("Round result")
                 .heading(if right { "Correct" } else { "Not this time" })
                 .secondary(format!(
                     "{} · {}",
                     question.category, question.answers[question.correct]
-                ))
+                ));
+            if !right {
+                if let Some(chosen) = quiz.answer {
+                    let who = if quiz.party {
+                        quiz.player_name()
+                    } else {
+                        "You"
+                    };
+                    builder = builder.text(format!("{who} chose {}", question.answers[chosen]));
+                }
+            }
+            builder
                 .facts((0..if quiz.party { 4 } else { 1 }).map(|i| {
                     (
-                        ["Ada", "Bert", "Cleo", "Dev"][i],
+                        if quiz.party {
+                            ["Ada", "Bert", "Cleo", "Dev"][i]
+                        } else {
+                            "You"
+                        },
                         format!("{} points", quiz.scores[i]),
                     )
                 }))
@@ -486,19 +502,28 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                 )
                 .build()
         }
-        View::Podium => ScreenBuilder::new("pubquiz-podium")
-            .top_bar("Pub Quiz")
-            .heading("Podium")
-            .rows((0..if quiz.party { 4 } else { 1 }).map(|i| {
-                (
-                    format!("player-{i}"),
-                    ["Ada", "Bert", "Cleo", "Dev"][i],
-                    format!("{} points", quiz.scores[i]),
-                    Glyph::Person,
-                )
-            }))
-            .primary_button("home", "Finish round")
-            .build(),
+        View::Podium => {
+            let count = if quiz.party { 4 } else { 1 };
+            let mut order: Vec<usize> = (0..count).collect();
+            order.sort_by_key(|&i| std::cmp::Reverse(quiz.scores[i]));
+            ScreenBuilder::new("pubquiz-podium")
+                .top_bar("Pub Quiz")
+                .heading("Podium")
+                .rows(order.into_iter().map(|i| {
+                    (
+                        format!("player-{i}"),
+                        if quiz.party {
+                            ["Ada", "Bert", "Cleo", "Dev"][i]
+                        } else {
+                            "You"
+                        },
+                        format!("{} points", quiz.scores[i]),
+                        Glyph::Person,
+                    )
+                }))
+                .primary_button("home", "Finish round")
+                .build()
+        }
         View::HowTo => ScreenBuilder::new("pubquiz-help")
             .top_bar("How to play")
             .owns_back(true)
