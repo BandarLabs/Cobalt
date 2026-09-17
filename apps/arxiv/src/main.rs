@@ -37,7 +37,18 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 
 /// The export API, which is the interface arXiv asks robots to use.
-const QUERY: &str = "https://export.arxiv.org/api/query";
+/// Where the Atom API lives, overridable so the simulator harness can point
+/// the app at a local fixture.
+fn api_base() -> String {
+    std::env::var("ARXIV_API_BASE")
+        .unwrap_or_else(|_| "https://export.arxiv.org/api/query".to_owned())
+}
+
+/// Where HTML renderings live, overridable for the same reason. A paper's
+/// figures resolve against this origin, so the override carries them too.
+fn html_base() -> String {
+    std::env::var("ARXIV_HTML_BASE").unwrap_or_else(|_| "https://arxiv.org/html".to_owned())
+}
 
 /// How many papers one listing fetch asks for.
 const PAGE: usize = 25;
@@ -498,8 +509,9 @@ impl Arxiv {
     /// subject means.
     fn ask_listing(&mut self, context: &mut Context, query: Query, offset: usize) {
         let url = format!(
-            "{QUERY}?search_query={}&start={offset}&max_results={PAGE}\
+            "{}?search_query={}&start={offset}&max_results={PAGE}\
              &sortBy=submittedDate&sortOrder=descending",
+            api_base(),
             query.expression(self.window, today())
         );
         self.trouble = None;
@@ -524,7 +536,7 @@ impl Arxiv {
         let Some(paper) = self.paper() else {
             return;
         };
-        let url = format!("https://arxiv.org/html/{}", escape_path(&paper.id));
+        let url = format!("{}/{}", html_base(), escape_path(&paper.id));
         // Asked for now rather than when the rendering lands, so that the
         // place is already in hand by the time there is a document to put
         // it into. The store is on the same machine and the paper is at the
@@ -834,7 +846,7 @@ impl Arxiv {
         // carrying the id. The paper's name appeared twice and every figure
         // came back 404, which is why a paper used to read with nothing but
         // "Refer to caption" where its plots belong.
-        let origin = format!("https://arxiv.org/html/{}", escape_path(&paper.id));
+        let origin = format!("{}/{}", html_base(), escape_path(&paper.id));
         // Whatever this paper was left at, if it has been read before. The
         // load was asked for when the paper was opened, so by the time the
         // rendering is in hand the answer is usually already here; a paper
