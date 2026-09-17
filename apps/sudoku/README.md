@@ -2,6 +2,14 @@
 
 36 original puzzles, ready to play offline. Each difficulty has 12 puzzles with exactly one solution. Your answers, pencil notes, selected square, orientation, checking preference and last 64 undo steps survive reopening.
 
+![A Hard puzzle in play with pencil notes and peer shading](screenshots/game.png)
+
+![A completed puzzle with the full grid](screenshots/completed.png)
+
+![Save recovery after a failed write](screenshots/recovery.png)
+
+![The same puzzle in landscape with the restored selection](screenshots/landscape.png)
+
 ## Play
 
 Tap a square, then a number. Given numbers cannot change. The light cross follows the selected row and column; a bracketed number or small square identifies your target. Extra spacing separates the 3×3 boxes.
