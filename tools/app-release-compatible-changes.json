@@ -365,6 +365,17 @@
      "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     }
    ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Add the kobo-json workspace member and wire it into kobo-image, kobo-net, and the new app pages for the app polish work. The lock gains only that member and its dependency edges; every package identity a published Store app resolves is unchanged.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
+     "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
+    }
+   ]
   }
  ]
 }
