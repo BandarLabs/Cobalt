@@ -343,3 +343,23 @@ text-only and is not claimed as transferred. Evidence and source hashes are in
 
 This closes NEEDLECLI-01 and NEEDLECLI-04. Physical-reader transfer remains
 unverified.
+
+### Deck picker, presets and grid proof
+
+The actual CLI initialized its practical Build preset, replaced one pad with a
+harmless raw action, and added both a real Rust learning URL and a calculator
+app launch. `deck show` exposed all of those choices before `deck push --sim`
+changed the simulator store. The running app rendered the CLI-driven nine-pad
+layout in its real 3×5 grid at extra-large type.
+
+The 1072×1448 frame was pixel-inspected: the grid is balanced and has no
+overlap. The app's deliberately short pad label bound renders the generated
+`Rust-lang` and `Calculator` labels as `Rust-lan` and `Calculat`; they stay
+reachable but this is recorded rather than hidden. Evidence and the complete
+CLI transcript are in `evidence/deck-companion-picker`.
+
+This closes DECKCLI-04 and DECKCLI-05. DECKCLI-06 remains open: the first live
+helper run executed the CLI-configured harmless action and returned its exact
+output through the helper API, but the running app's long-poll state did not
+refresh to the finished acknowledgement during the attempted journey. No
+physical-reader behavior is claimed.
