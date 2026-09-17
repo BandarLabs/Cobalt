@@ -89,13 +89,13 @@
       "completed": "4",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1464",
+      "finishedAtMillis": "1475",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "4",
-      "submittedAtMillis": "1449",
+      "submittedAtMillis": "1461",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -194,7 +194,7 @@
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "d79ebce4f6c22e4c58f4b2c05234e22d46f2562f"
+    "revision": "d4d37d10eabb08a9d4fff690e910810303862461"
   },
   "version": 1
 }
