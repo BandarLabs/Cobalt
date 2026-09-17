@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "04a2a2705a2478f19e31a932adfdc1f5c304e3cbba435ec21f93624c99fa0526",
+    "sha256": "2ffccdec766077c7deb80d4dbaf9f224169a35685b6e33ea16be0b7875d19f0c",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "14",
+  "paints": "16",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.17",
@@ -60,7 +60,7 @@
       "unixMillis": "1767265864500",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 1760067,
+    "dirtyPixelsSinceClean": 1915065,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "55",
+      "rawEvents": "69",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "14",
+      "completed": "16",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "6048",
+      "finishedAtMillis": "6791",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "14",
-      "submittedAtMillis": "6029",
+      "submitted": "16",
+      "submittedAtMillis": "6745",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,71 +117,53 @@
       },
       "width": 1072
     },
-    "refreshCount": 14,
+    "refreshCount": 16,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 97,
+        "x": 975,
         "y": 109
       },
       "raw": {
         "x": 109,
-        "y": 974
+        "y": 96
       }
     },
     "transition": {
-      "dirty": 1760067,
+      "dirty": 1915065,
       "full": false,
-      "refresh": 14,
+      "refresh": 16,
       "region": {
-        "height": 1320,
-        "width": 992,
-        "x": 40,
+        "height": 1360,
+        "width": 1072,
+        "x": 0,
         "y": 80
       },
       "regions": [
         {
           "region": {
             "height": 56,
-            "width": 48,
-            "x": 952,
+            "width": 824,
+            "x": 168,
             "y": 80
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 48,
-            "width": 344,
-            "x": 168,
-            "y": 88
+            "height": 992,
+            "width": 984,
+            "x": 48,
+            "y": 200
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 256,
-            "width": 992,
-            "x": 40,
-            "y": 184
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 176,
-            "width": 992,
-            "x": 40,
-            "y": 456
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 40,
-            "width": 216,
-            "x": 392,
-            "y": 1360
+            "height": 192,
+            "width": 1072,
+            "x": 0,
+            "y": 1248
           },
           "waveform": "GL16"
         }
@@ -190,11 +172,11 @@
     }
   },
   "source": {
-    "binarySha256": "b6cebffd7552405ed53aebe287eb5d67a168fc789aacfda032547fb957818b0f",
+    "binarySha256": "6e2ec9256bcf3d009e111554d636e6827341be88db7d69df67225d494e05b126",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "8e58cea731f03488edcfaae084fe3997cf3fd2dd"
+    "revision": "7653b3cb67d071b9e808685d0bdf11a59c87ee67"
   },
   "version": 1
 }
