@@ -5495,15 +5495,25 @@ fn find_rust_lld() -> Result<PathBuf, String> {
     for entry in
         fs::read_dir(&rustlib).map_err(|error| format!("read {}: {error}", rustlib.display()))?
     {
-        let candidate = entry
-            .map_err(|error| error.to_string())?
-            .path()
-            .join("bin/rust-lld");
+        let candidate = rust_lld_candidate(&entry.map_err(|error| error.to_string())?.path());
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err("rust-lld was not found in the active Rust toolchain".to_owned())
+    // rust-lld is part of the rustc component, so a rustup toolchain always
+    // carries it; a from-source or repackaged rustc may not.
+    Err(format!(
+        "rust-lld was not found in the active Rust toolchain under {}; a          rustup-managed toolchain carries it in the rustc component",
+        root.display()
+    ))
+}
+
+/// The linker executable is `rust-lld.exe` on Windows; probing the bare Unix
+/// name there always misses.
+fn rust_lld_candidate(target_dir: &Path) -> PathBuf {
+    target_dir
+        .join("bin")
+        .join(format!("rust-lld{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// The C cross-compiler `ring` needs to build its own sources for the reader.
@@ -8819,10 +8829,11 @@ mod tests {
     mod preparing {
         use super::super::{
             choose_reader_list, confirmation_answer, dry_run_plan, gzip,
-            load_release_package_from_manifest, parse_setup, prompt_confirmation, setup,
-            setup_device_with_confirmation, undo_setup, SetupMode, SetupPayload,
+            load_release_package_from_manifest, parse_setup, prompt_confirmation,
+            rust_lld_candidate, setup, setup_device_with_confirmation, undo_setup, SetupMode,
+            SetupPayload,
         };
-        use std::path::PathBuf;
+        use std::path::{Path, PathBuf};
 
         fn arguments(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()
@@ -8927,6 +8938,16 @@ mod tests {
             assert!(!declined);
             let closed = prompt_confirmation(&b""[..], Vec::new()).expect("closed pipe");
             assert!(!closed);
+        }
+
+        #[test]
+        fn rust_lld_probe_uses_the_platform_executable_name() {
+            let candidate = rust_lld_candidate(Path::new("toolchain-target"));
+            let name = candidate.file_name().expect("file name").to_string_lossy();
+            #[cfg(windows)]
+            assert_eq!(name, "rust-lld.exe");
+            #[cfg(not(windows))]
+            assert_eq!(name, "rust-lld");
         }
 
         #[test]
