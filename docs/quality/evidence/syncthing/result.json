@@ -1,0 +1,41 @@
+{
+  "server": "fixture supervisor files",
+  "checks": [
+    {
+      "name": "fresh start shows never-synced facts and the setup row",
+      "shot": "sync-fresh.png"
+    },
+    {
+      "name": "guide walks through pairing one folder and the fixed set",
+      "shot": "sync-guide.png"
+    },
+    {
+      "name": "running window shows state, bytes remaining and peers online",
+      "shot": "sync-running.png"
+    },
+    {
+      "name": "first verified sync is celebrated once, with last success, next window and the Vault import",
+      "shot": "sync-first-complete.png"
+    },
+    {
+      "name": "folders view explains the fixed set and which folders import",
+      "shot": "sync-folders.png"
+    },
+    {
+      "name": "engine attribution stays reachable",
+      "shot": "sync-about.png"
+    },
+    {
+      "name": "conflict state is distinct and names the retry path",
+      "shot": "sync-conflict.png"
+    },
+    {
+      "name": "pause shows the service off with the resume path",
+      "shot": "sync-paused.png"
+    },
+    {
+      "name": "restart keeps config, import report and the seen first sync (no repeated banner)",
+      "shot": "sync-restored.png"
+    }
+  ]
+}

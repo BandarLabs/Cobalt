@@ -3138,48 +3138,60 @@
     "pr": 3,
     "group": "Sync app",
     "task": "Guide folder choice through pairing and first verified sync",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/syncthing guide view (Set up Sync) walks pairing one computer folder with the exact kobo sync setup command and the fixed receive-only folder set; first verified sync is detected from the supervisor's persisted last-success and celebrated once (sync-meta). Harness checks 2 and 4 in scripts/quality/check-syncthing-sim.py; shots sync-guide.png and sync-first-complete.png in docs/quality/evidence/syncthing/."
+    ]
   },
   {
     "id": "SYNCAPP-02",
     "pr": 3,
     "group": "Sync app",
     "task": "Show last success, bytes remaining and peer availability",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The status contract now carries peers-online, last-success epoch and conflicts beyond the original three lines (crates/kobod/src/syncthing.rs, backward-compatible); the app shows State, Bytes left, Peers, Last success. Harness checks 3 and 4; kobod unit tests cover the probe parsing."
+    ]
   },
   {
     "id": "SYNCAPP-03",
     "pr": 3,
     "group": "Sync app",
     "task": "Show next scheduled window",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The app records when it arms the scheduled wake (sync-meta) and shows Next window as the civil time of schedule + cadence (Jan-format via the injectable platform clock); visible in sync-first-complete.png."
+    ]
   },
   {
     "id": "SYNCAPP-04",
     "pr": 3,
     "group": "Sync app",
     "task": "Distinguish raw transfer from app ingestion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The status screen separates raw transfer facts (State, Bytes left, Peers) from per-app imports ('Vault imported: N files, <time>'), parsed from the supervisor's sync-ingest report; folders view explains which folders become shelves and which stay files. Harness check 4."
+    ]
   },
   {
     "id": "SYNCAPP-05",
     "pr": 3,
     "group": "Sync app",
     "task": "Integrate Vault and Frame import/index publication",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobod mirrors staged sync/vault (synced.v1 package) and sync/frame (manifest.v1 album) packages into the app shelves after each completed window - hidden engine debris excluded, deletions never propagated, digest-gated against re-import - and writes the sync-ingest report the app renders. kobod unit tests ingest_mirrors_a_package_once_and_never_follows_debris and ingest_report_replaces_only_its_own_folder_line; app side verified in harness check 4. End-to-end with a real Syncthing engine is NOT verified here (no engine in the sandbox); the package contract matches what kobo sync setup stages."
+    ]
   },
   {
     "id": "SYNCAPP-06",
     "pr": 3,
     "group": "Sync app",
     "task": "Provide pause/resume and conflict/retry states",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Pause/Resume toggles the service and wake (sync-paused.png); pull errors surface a distinct conflict state with an attention banner naming the retry path (harness check 5, sync-conflict.png); restart persists config, imports and the celebrated first sync (check 7)."
+    ]
   },
   {
     "id": "TIC-01",
