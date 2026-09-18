@@ -249,7 +249,7 @@ impl Parser {
                     self.transcript.push_str("\n\n[The story has ended.]\n");
                 }
                 self.repaginate(context);
-                self.page = self.pages.len().saturating_sub(1);
+                self.page = self.last_content_page();
             }
             Err(error) => {
                 self.transcript.push_str(&machine.take_output());
@@ -272,7 +272,7 @@ impl Parser {
             Ok(_) => {
                 self.transcript.push_str(&machine.take_output());
                 self.repaginate(context);
-                self.page = self.pages.len().saturating_sub(1);
+                self.page = self.last_content_page();
                 self.autosave(context);
             }
             Err(error) => {
@@ -297,6 +297,18 @@ impl Parser {
         let mut upload = ShelfUpload::new(name, machine.save_quetzal());
         upload.start(context);
         self.saving = Some(upload);
+    }
+
+    fn last_content_page(&self) -> usize {
+        let mut page = self.pages.len().saturating_sub(1);
+        while page > 0 {
+            let (start, end) = self.pages[page];
+            if self.transcript.get(start..end).map_or("", str::trim) != ">" {
+                break;
+            }
+            page -= 1;
+        }
+        page
     }
 
     fn note_restored(&mut self) {
@@ -728,6 +740,30 @@ mod tests {
             assert!(text.is_char_boundary(end));
             assert!(parser.play_page_fits(&text[start..end], CLARA_BW_METRICS));
         }
+    }
+
+    #[test]
+    fn new_output_lands_on_output_not_a_stranded_prompt() {
+        let probe = Parser::default();
+        let mut words = 1usize;
+        while probe.play_page_fits(&"word ".repeat(words + 1), CLARA_BW_METRICS) {
+            words += 1;
+        }
+        // A full page of output followed by the Z-machine prompt: the prompt
+        // cannot fit, so pagination must strand it and landing must skip it.
+        let text = format!("{}\n\n>", "word ".repeat(words));
+        let mut parser = Parser {
+            transcript: text.clone(),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() > 1);
+        let (start, end) = parser.pages[parser.pages.len() - 1];
+        assert_eq!(text[start..end].trim(), ">");
+        let landing = parser.last_content_page();
+        assert_eq!(landing, parser.pages.len() - 2);
+        let (start, end) = parser.pages[landing];
+        assert_ne!(text[start..end].trim(), ">");
     }
 
     #[test]
