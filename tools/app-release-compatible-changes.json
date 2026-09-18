@@ -373,7 +373,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "b0ca7c0e56e97119eb5c6f2be13b622de383946e"
+     "compatible_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696"
     }
    ]
   },
@@ -385,6 +385,17 @@
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
      "compatible_blob": "8e16c7bdff881c1051e0466b136592a01f63bc20"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Parser adopts the shared kobo-zstory structural inspector so the app and its companion CLI validate and name the same story file identically. The lock gains only that workspace member and the parser package's dependency edge to it; every published package identity is unchanged and protocol bytes are untouched. Only the parser package is rebuilt.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "b0ca7c0e56e97119eb5c6f2be13b622de383946e",
+     "compatible_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696"
     }
    ]
   }

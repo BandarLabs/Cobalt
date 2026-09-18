@@ -18,16 +18,18 @@
 
 use std::fmt;
 
-const HEADER_LEN: usize = 64;
 const MAX_STEPS_PER_TURN: usize = 200_000;
 const MAX_STACK_WORDS: usize = 32_768;
 const MAX_FRAMES: usize = 1_024;
 
+pub use kobo_zstory::StoryInfo;
+
+/// Runtime errors the interpreter itself raises. Story-file inspection
+/// errors come from the shared `kobo-zstory` crate so the app and its
+/// companion CLI name the same file the same way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StoryError {
-    TooShort,
-    Glulx,
-    UnsupportedVersion(u8),
+    Inspect(kobo_zstory::StoryError),
     Invalid(&'static str),
     Fault(String),
 }
@@ -35,83 +37,16 @@ pub enum StoryError {
 impl fmt::Display for StoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TooShort => formatter.write_str("the file is too short to be a Z-machine story"),
-            Self::Glulx => formatter.write_str("this is a Glulx story — not supported yet"),
-            Self::UnsupportedVersion(version) => {
-                write!(formatter, "Z-machine version {version} is not supported")
-            }
+            Self::Inspect(error) => error.fmt(formatter),
             Self::Invalid(reason) => write!(formatter, "invalid story file: {reason}"),
             Self::Fault(reason) => write!(formatter, "story stopped: {reason}"),
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoryInfo {
-    pub version: u8,
-    pub release: u16,
-    pub serial: [u8; 6],
-    pub checksum: u16,
-    pub title: String,
-    pub id: String,
-}
-
-impl StoryInfo {
-    #[must_use]
-    pub fn inspect(bytes: &[u8], file_name: &str) -> Result<Self, StoryError> {
-        if bytes.starts_with(b"Glul") {
-            return Err(StoryError::Glulx);
-        }
-        if bytes.len() < HEADER_LEN {
-            return Err(StoryError::TooShort);
-        }
-        let version = bytes[0];
-        if !matches!(version, 3 | 5 | 8) {
-            return Err(StoryError::UnsupportedVersion(version));
-        }
-        let release = word(bytes, 2)?;
-        let serial: [u8; 6] = bytes[0x12..0x18]
-            .try_into()
-            .map_err(|_| StoryError::Invalid("missing serial number"))?;
-        let checksum = word(bytes, 0x1c)?;
-        let scale = if version <= 3 {
-            2
-        } else if version <= 5 {
-            4
-        } else {
-            8
-        };
-        let declared = usize::from(word(bytes, 0x1a)?).saturating_mul(scale);
-        if declared != 0 && declared > bytes.len() {
-            return Err(StoryError::Invalid("declared length exceeds the file"));
-        }
-        let title = file_name
-            .rsplit('/')
-            .next()
-            .unwrap_or(file_name)
-            .trim_end_matches(|character: char| {
-                character == '.'
-                    || character.is_ascii_digit()
-                    || matches!(character.to_ascii_lowercase(), 'z')
-            })
-            .replace(['_', '-'], " ")
-            .trim()
-            .to_owned();
-        let title = if title.is_empty() {
-            format!("Story {release}")
-        } else {
-            title
-        };
-        let serial_text = String::from_utf8_lossy(&serial);
-        let id = format!("{release}-{serial_text}-{checksum:04x}");
-        Ok(Self {
-            version,
-            release,
-            serial,
-            checksum,
-            title,
-            id,
-        })
+impl From<kobo_zstory::StoryError> for StoryError {
+    fn from(error: kobo_zstory::StoryError) -> Self {
+        Self::Inspect(error)
     }
 }
 
@@ -1966,13 +1901,13 @@ mod tests {
     fn unsupported_formats_are_named() {
         assert_eq!(
             StoryInfo::inspect(b"Glul\x00\x00\x00\x00", "game.ulx"),
-            Err(StoryError::Glulx)
+            Err(kobo_zstory::StoryError::Glulx)
         );
-        let mut bytes = vec![0; HEADER_LEN];
+        let mut bytes = vec![0; 64];
         bytes[0] = 6;
         assert_eq!(
             StoryInfo::inspect(&bytes, "game.z6"),
-            Err(StoryError::UnsupportedVersion(6))
+            Err(kobo_zstory::StoryError::UnsupportedVersion(6))
         );
     }
 }

@@ -1346,6 +1346,7 @@ version = "0.1.0"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
+ "kobo-zstory",
 ]
 
 [[package]]
@@ -1685,6 +1686,10 @@ dependencies = [
  "kobo-read",
  "kobo-sdk",
 ]
+
+[[package]]
+name = "kobo-zstory"
+version = "0.3.18"
 
 [[package]]
 name = "kobod"
