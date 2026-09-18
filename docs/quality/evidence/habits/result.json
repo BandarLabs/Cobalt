@@ -1,0 +1,42 @@
+{
+  "provenance": {
+    "source_revision": "748adaf5d479580161ecf03472e4ef2d623f4a9a",
+    "tracked_changes": true,
+    "cli_sha256": "f22eb7c3ec51a70c4d669d8a1cee4cd8e5dfab07946d0b2e8547e4b92c296516",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "checks": [
+    {
+      "name": "empty today and add",
+      "detail": "the empty Today screen offered Add a habit; naming one put it on the checklist with its schedule label",
+      "status": "passed"
+    },
+    {
+      "name": "skip, unskip, complete",
+      "detail": "Skip marked the row Skipped; tapping a skipped row undid the skip (plain schedule label again) and the next tap completed it",
+      "status": "passed"
+    },
+    {
+      "name": "edit screen",
+      "detail": "rename (prefilled entry, saved as read more), schedule change to every 2 days, archive shown as archived on Manage, and put back restored the habit",
+      "status": "passed"
+    },
+    {
+      "name": "weekly summary with seeded history",
+      "detail": "a seeded daily habit (3 done, 1 skipped in the window) plus the session habit summed to 'This week: 4 of 11 due days completed, 1 skipped.' under a 4 completions heading",
+      "status": "passed"
+    },
+    {
+      "name": "backup export",
+      "detail": "Settings offered Export a backup; the export flow prepared a verified text copy and announced it ready for the paired computer, with the offer saved in the app store",
+      "status": "passed"
+    },
+    {
+      "name": "persistence across restart",
+      "detail": "after a simulator restart the seeded habit was due on Today and the session habit kept its renamed, rescheduled self",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

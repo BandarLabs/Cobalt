@@ -550,8 +550,8 @@ impl KoboApp for Habits {
                         "Habit names must be 1 to {MAX_HABIT_NAME_CHARS} characters. Nothing was added."
                     ));
                 }
+                self.entry_mode = EntryMode::Add;
             }
-            self.entry_mode = EntryMode::Add;
             self.show(cx);
             return;
         }
@@ -807,6 +807,25 @@ mod tests {
         runner.start();
         runner.action(action_id("add"));
         assert!(runner.app().entry.is_open());
+    }
+
+    #[test]
+    fn a_rename_keeps_its_mode_while_typing() {
+        let app = Habits {
+            items: vec![Habit::new("read".into())],
+            loaded: true,
+            page: Page::Manage,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.action(action_id("edit-0"));
+        runner.action(action_id("rename"));
+        assert!(runner.app().entry.is_open());
+        runner.action(action_id("kb.space"));
+        runner.action(action_id("kb.r0c1"));
+        assert_eq!(runner.app().entry_mode, EntryMode::Rename);
+        assert_eq!(runner.app().items.len(), 1);
     }
 
     #[test]
