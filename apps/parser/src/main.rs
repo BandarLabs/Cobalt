@@ -90,8 +90,7 @@ impl Parser {
     fn library_screen(&self) -> Screen {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
-            .heading("Interactive fiction")
-            .text("Push a .z3, .z5 or .z8 story with `kobo parser push FILE --device IP`.");
+            .heading("Interactive fiction");
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
@@ -110,7 +109,10 @@ impl Parser {
             .collect::<Vec<_>>();
         if stories.is_empty() {
             builder
-                .empty_state("No stories have been transferred to this reader.")
+                .empty_state(
+                    "No stories yet. Push a .z3, .z5 or .z8 story with \
+                     `kobo parser push FILE --device IP`; stories play completely offline.",
+                )
                 .bottom_action("refresh", "Refresh library")
                 .build()
         } else {
@@ -801,6 +803,15 @@ mod tests {
     use super::*;
     use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
 
+    /// Measure with the same face the runtime draws with, or the tests approve
+    /// pages the panel cannot show.
+    fn install_real_face() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            kobo_text::install(CLARA_BW_METRICS).expect("bundled face installs");
+        });
+    }
+
     #[test]
     fn transcript_pagination_is_measured_utf8_safe_and_preserves_all_text() {
         let text = format!("{}\n\n{}", "word ".repeat(600), "café ".repeat(600));
@@ -889,6 +900,7 @@ mod tests {
 
     #[test]
     fn zork1_opening_paginates_cleanly_and_lands_on_the_story() {
+        install_real_face();
         let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
         machine.run().expect("opening runs");
         machine.input("look").expect("look accepted");
@@ -926,6 +938,7 @@ mod tests {
 
     #[test]
     fn zork1_landing_fits_elipsa_extra_large_with_display_chrome() {
+        install_real_face();
         let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
         machine.run().expect("opening runs");
         let mut parser = Parser {
@@ -1019,6 +1032,7 @@ mod tests {
 
     #[test]
     fn supported_matrix_layouts_fit() {
+        install_real_face();
         // One panel per supported geometry: Clara (both densities), Libra,
         // Elipsa, each in both poses, at every text scale.
         let mut parser = Parser::default();

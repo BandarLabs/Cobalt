@@ -7,11 +7,12 @@ license.workspace = true
 publish = false
 
 [dependencies]
-kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-sdk = { path = "../../crates/kobo-sdk", features = ["text"] }
 kobo-zstory = { path = "../../crates/kobo-zstory" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }
+kobo-text = { path = "../../crates/kobo-text" }
 
 [lints]
 workspace = true

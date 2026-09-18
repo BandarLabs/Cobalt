@@ -3439,7 +3439,11 @@ fn valid_app_name(name: &str) -> bool {
 /// A failure is not fatal: `kobo-ui` keeps its bitmap, so the worst case is a
 /// preview that looks like the old one.
 fn install_typeface() {
-    let _ = kobo_text::install(kobo_ui::display_metrics_from_env());
+    // The profile's own metrics, not the Clara default: glyph widths scale
+    // with the panel's density, so a face built for 300 ppi measures every
+    // line a third too wide on a 227 ppi Elipsa and validation rejects
+    // screens the panel would draw untouched.
+    let _ = kobo_text::install(profile_metrics());
 }
 
 fn parse_local_address(address: &str) -> io::Result<SocketAddr> {

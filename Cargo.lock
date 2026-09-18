@@ -1345,6 +1345,7 @@ name = "kobo-parser"
 version = "0.1.0"
 dependencies = [
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
  "kobo-zstory",
 ]
