@@ -82,12 +82,15 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         "prepare" => write_pattern(
             Path::new(out.ok_or_else(|| USAGE.to_owned())?),
             &report.markdown,
+            CopyState::Prepared,
         ),
         "preview" => write_preview(Path::new(out.ok_or_else(|| USAGE.to_owned())?), &report),
         "push" => match (target, out) {
             (Some(""), None) => publish_local(&report.markdown),
             (Some(host), None) => transfer(&report.markdown, host),
-            (None, Some(path)) => write_pattern(Path::new(path), &report.markdown),
+            (None, Some(path)) => {
+                write_pattern(Path::new(path), &report.markdown, CopyState::Prepared)
+            }
             _ => Err(USAGE.to_owned()),
         },
         _ => Err(USAGE.to_owned()),
@@ -290,15 +293,34 @@ fn prepare_pdf(
         has_images,
     ))
 }
-fn write_pattern(path: &Path, bytes: &[u8]) -> Result<(), String> {
+#[derive(Clone, Copy)]
+enum CopyState {
+    Prepared,
+    Simulator,
+}
+
+fn completion(state: CopyState, path: &Path) -> String {
+    match state {
+        CopyState::Prepared => format!(
+            "Prepared locally (not sent): {}\nThis copy is ready to review without a reader.",
+            path.display()
+        ),
+        CopyState::Simulator => format!(
+            "Sent to simulator: {}\nAvailable offline in Needles.",
+            path.display()
+        ),
+    }
+}
+
+fn write_pattern(path: &Path, bytes: &[u8], state: CopyState) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    println!("Prepared Needles pattern: {}", path.display());
+    println!("{}", completion(state, path));
     Ok(())
 }
 fn publish_local(bytes: &[u8]) -> Result<(), String> {
     let root = kobo_sim::simulated_data_root("needles");
     std::fs::create_dir_all(&root).map_err(|e| format!("create Needles shelf: {e}"))?;
-    write_pattern(&root.join(BLOB), bytes)
+    write_pattern(&root.join(BLOB), bytes, CopyState::Simulator)
 }
 fn write_preview(path: &Path, report: &Report) -> Result<(), String> {
     if path.exists() {
@@ -342,7 +364,7 @@ fn write_preview(path: &Path, report: &Report) -> Result<(), String> {
     std::fs::write(path.join("pattern.md"), &report.markdown)
         .map_err(|e| format!("write preview pattern: {e}"))?;
     println!(
-        "Prepared Needles preview: {}",
+        "Prepared locally (not sent): {}\nThis preview is ready to review without a reader.",
         path.join("index.html").display()
     );
     Ok(())
@@ -474,7 +496,7 @@ fn transfer(bytes: &[u8], host: &str) -> Result<(), String> {
          chmod 600 \"$partial\"\n\
          mv -f \"$partial\" \"$root/{BLOB}\"\n\
          sync\n\
-         printf 'Transferred Needles pattern\\n'\n"
+         printf 'Sent to reader: Needles pattern\\nAvailable offline in Needles.\\n'\n"
     );
     let output = super::run_remote_shell(
         &format!("root@{host}"),
@@ -506,10 +528,23 @@ fn has_text_extension(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_extension, has_text_extension, read_limited, read_pattern, select_section, BLOB,
+        completion, has_extension, has_text_extension, read_limited, read_pattern, select_section,
+        CopyState, BLOB,
     };
     use std::io::Cursor;
     use std::path::Path;
+
+    #[test]
+    fn completion_keeps_prepared_and_sent_states_distinct() {
+        let path = Path::new("pattern.md");
+        let prepared = completion(CopyState::Prepared, path);
+        assert!(prepared.contains("Prepared locally (not sent)"));
+        assert!(prepared.contains("without a reader"));
+        let sent = completion(CopyState::Simulator, path);
+        assert!(sent.contains("Sent to simulator"));
+        assert!(sent.contains("Available offline"));
+        assert!(!sent.contains("not sent"));
+    }
 
     #[test]
     fn help_succeeds() {
