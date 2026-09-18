@@ -559,7 +559,12 @@ impl KoboApp for Habits {
         let mut changed = false;
         for (i, h) in self.items.iter_mut().enumerate() {
             if a == action_id(&format!("done-{i}")) {
-                changed |= h.toggle_complete(Self::day());
+                let day = Self::day();
+                if h.skipped.contains(&day) {
+                    changed |= h.unskip(day);
+                } else {
+                    changed |= h.toggle_complete(day);
+                }
             }
             if a == action_id(&format!("skip-{i}")) {
                 changed |= h.skip(Self::day());
@@ -1140,6 +1145,34 @@ mod tests {
         assert_eq!(saved[0].name, long);
         assert_eq!(saved[0].schedule, Schedule::Weekdays);
         assert_eq!(saved[0].skipped, vec![day]);
+    }
+
+    #[test]
+    fn tapping_a_skipped_habit_undoes_the_skip_before_any_completion() {
+        let day = Habits::day();
+        let mut habit = Habit::new("Read".into());
+        habit.skipped = vec![day];
+        let app = Habits {
+            items: vec![habit],
+            loaded: true,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        let commands = runner.action(action_id("done-0"));
+        let saved = commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
+            _ => None,
+        });
+        let saved = decode(saved.expect("the unskip must be saved"));
+        assert!(saved[0].skipped.is_empty());
+        assert!(saved[0].done.is_empty());
+        runner.store_result(StoreResult::Saved { key: HABITS.into() });
+        let commands = runner.action(action_id("done-0"));
+        let saved = commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
+            _ => None,
+        });
+        assert_eq!(decode(saved.expect("the completion must be saved"))[0].done, vec![day]);
     }
 
     #[test]

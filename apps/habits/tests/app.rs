@@ -160,3 +160,12 @@ fn a_week_sums_only_due_days() {
     let (due, done, skipped) = week_summary(&[habit], today);
     assert_eq!((due, done, skipped), (5, 1, 1));
 }
+#[test]
+fn an_undone_skip_leaves_the_day_plainly_not_done() {
+    let mut habit = Habit::new("Read".into());
+    habit.skipped = vec![4];
+    assert!(habit.unskip(4));
+    assert!(habit.skipped.is_empty());
+    assert!(habit.done.is_empty());
+    assert!(!habit.unskip(4));
+}

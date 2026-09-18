@@ -55,6 +55,16 @@ impl Habit {
         insert_day(&mut self.skipped, day);
         true
     }
+    /// Takes back a skip, leaving the day simply not done. Completing is a
+    /// separate tap, so a mistaken skip costs one tap to undo, never a
+    /// completion the person did not mean.
+    pub fn unskip(&mut self, day: u32) -> bool {
+        if let Ok(index) = self.skipped.binary_search(&day) {
+            self.skipped.remove(index);
+            return true;
+        }
+        false
+    }
     pub fn current_streak(&self, today: u32) -> u32 {
         let mut day = today;
         let mut count = 0;
