@@ -1,14 +1,20 @@
 //! Plain numbered entry point; choices reuse the existing command handlers.
 use std::io::{BufRead, Write};
 
-pub const COMPACT_HELP: &str = "Cobalt — tools for your reader
+pub const COMPACT_HELP: &str = "Cobalt - tools for your reader
 
-  kobo setup                 Set up a reader connected by USB
-  kobo apps                  Find apps and read setup guides
-  kobo frame --help          Prepare and send photos
-  kobo flashcards --help     Import flashcards and review progress
-  kobo feeds --help          Check and send a feed subscription list
-  kobo stream                Share a computer terminal with Paperterm
+  kobo setup
+    Set up a reader connected by USB
+  kobo apps
+    Find apps and read setup guides
+  kobo frame --help
+    Prepare and send photos
+  kobo flashcards --help
+    Import cards and review progress
+  kobo feeds --help
+    Check and send feed subscriptions
+  kobo stream
+    Share a terminal with Paperterm
 
 Run kobo in a terminal for guided choices.
 Developer and release commands: kobo --help";
