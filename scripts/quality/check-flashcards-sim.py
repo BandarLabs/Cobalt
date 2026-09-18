@@ -253,9 +253,12 @@ def main():
                 (shelf / "collection.cobfc").write_bytes(merged.read_bytes())
                 start()
                 drive("wait-for Default", "wait-for 6 due")
+                capture("flashcards-merged-decks")
                 drive("tap-id deck-0", "wait-for compass point toward")
-                drive("tap-id answer", "wait-for Magnetic north.", "tap-id good",
-                      "wait 800")
+                for front, back in (("compass point toward", "Magnetic north."),
+                                    ("vapour", "Evaporation."),
+                                    ("hexagon", "Six.")):
+                    drive("tap-id answer", f"wait-for {back}", "tap-id good", "wait 800")
                 drive("wait-for compass needle settle")
                 capture("flashcards-media-question")
                 drive("tap-id answer", "wait-for Magnetic north.")
@@ -263,7 +266,7 @@ def main():
                 drive("tap-id good", "wait 800")
                 records = [json.loads(line)
                            for line in log_path.read_text().splitlines()]
-                assert len(records) == 9, f"expected 9 saved reviews, found {len(records)}"
+                assert len(records) == 11, f"expected 11 saved reviews, found {len(records)}"
                 assert len({r["bundle_sha256"] for r in records}) == 3
                 result["checks"].append(dict(
                     name="companion import over the sample",

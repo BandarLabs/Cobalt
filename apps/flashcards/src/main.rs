@@ -226,28 +226,45 @@ impl Flashcards {
         }
     }
 
-    fn active_card_ids(&self) -> &[i64] {
+    /// One row per deck, even when a merged collection keeps one queue per
+    /// source package. Cards stay in imported due order.
+    fn deck_groups(&self) -> Vec<(i64, Vec<i64>)> {
         let Some(bundle) = &self.bundle else {
-            return &[];
+            return Vec::new();
+        };
+        let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
+        for queue in &bundle.manifest().review_queue.decks {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group.0 == queue.root_deck_id)
+            {
+                group.1.extend_from_slice(&queue.card_ids);
+            } else {
+                groups.push((queue.root_deck_id, queue.card_ids.clone()));
+            }
+        }
+        groups
+    }
+
+    fn active_card_ids(&self) -> Vec<i64> {
+        let Some(bundle) = &self.bundle else {
+            return Vec::new();
         };
         self.selected_deck
-            .and_then(|index| bundle.manifest().review_queue.decks.get(index))
-            .map_or(
-                bundle.manifest().review_queue.card_ids.as_slice(),
-                |queue| queue.card_ids.as_slice(),
-            )
+            .and_then(|index| self.deck_groups().get(index).map(|group| group.1.clone()))
+            .unwrap_or_else(|| bundle.manifest().review_queue.card_ids.clone())
     }
 
     fn current_card(&self) -> Option<&Card> {
         let bundle = self.bundle.as_ref()?;
-        let card_id = self
-            .active_card_ids()
+        let active = self.active_card_ids();
+        let card_id = *active
             .iter()
             .find(|card_id| !self.reviewed_cards.contains(card_id))?;
         let index = bundle
             .manifest()
             .cards
-            .binary_search_by_key(card_id, |card| card.id)
+            .binary_search_by_key(&card_id, |card| card.id)
             .ok()?;
         bundle.manifest().cards.get(index)
     }
@@ -264,13 +281,13 @@ impl Flashcards {
             return "Flashcards".to_owned();
         };
         self.selected_deck
-            .and_then(|index| bundle.manifest().review_queue.decks.get(index))
-            .and_then(|queue| {
+            .and_then(|index| self.deck_groups().get(index).map(|group| group.0))
+            .and_then(|root_deck_id| {
                 bundle
                     .manifest()
                     .decks
                     .iter()
-                    .find(|deck| deck.id == queue.root_deck_id)
+                    .find(|deck| deck.id == root_deck_id)
             })
             .map_or_else(
                 || "All due cards".to_owned(),
@@ -357,8 +374,9 @@ impl Flashcards {
             return Vec::new();
         };
         let queue = &bundle.manifest().review_queue;
+        let groups = self.deck_groups();
         let mut choices = Vec::new();
-        if queue.decks.len() > 1 {
+        if groups.len() > 1 {
             let remaining = queue
                 .card_ids
                 .iter()
@@ -367,19 +385,18 @@ impl Flashcards {
             choices.push(DeckChoice {
                 action: "deck-all".to_owned(),
                 title: "All due cards".to_owned(),
-                summary: format!("Across {} decks · imported due order", queue.decks.len()),
+                summary: format!("Across {} decks · imported due order", groups.len()),
                 trailing: due_label(remaining),
             });
         }
-        for (index, deck_queue) in queue.decks.iter().enumerate() {
+        for (index, (root_deck_id, card_ids)) in groups.iter().enumerate() {
             let name = bundle
                 .manifest()
                 .decks
                 .iter()
-                .find(|deck| deck.id == deck_queue.root_deck_id)
+                .find(|deck| deck.id == *root_deck_id)
                 .map_or_else(|| "Imported deck".to_owned(), |deck| deck.name.clone());
-            let remaining = deck_queue
-                .card_ids
+            let remaining = card_ids
                 .iter()
                 .filter(|card_id| !self.reviewed_cards.contains(card_id))
                 .count();

@@ -31,9 +31,12 @@ review log is not replaced.
 
 The host derives the due queue, deck order/limits, cloze ordinals, both rendered
 sides, and side-specific media references from pinned Anki rslib. The device
-reviews that finite queue once per launch; non-due, suspended, and buried cards
-are absent. Review grades append only to the separately preserved,
+reviews that finite queue in imported due order; non-due, suspended, and buried
+cards are absent. Review grades append only to the separately preserved,
 bundle-digest-bound Cobalt owner log and do not claim to update Anki scheduling.
+Cards recorded against the collection's digest stay done across launches, so a
+restart never deals the same card twice; staging a new collection keeps that
+log beside it.
 
 The device UI is a sparse portrait review surface rather than a desktop-Anki
 clone: choose a due deck, read one dominant card, reveal it with one primary
