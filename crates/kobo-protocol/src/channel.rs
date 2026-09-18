@@ -84,18 +84,18 @@ impl Listener {
             use std::net::{Ipv4Addr, TcpListener};
             let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
             let port = listener.local_addr()?.port();
+            let mut file = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(path)?;
             let result = (|| {
-                let mut file = fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(path)?;
                 file.write_all(format!("{port}\n").as_bytes())?;
                 file.sync_all()
             })();
-            if result.is_err() {
+            if let Err(error) = result {
                 let _ignored = fs::remove_file(path);
+                return Err(error);
             }
-            result?;
             Ok(Self {
                 inner: listener,
                 path: path.to_path_buf(),
