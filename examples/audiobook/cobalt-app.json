@@ -3,7 +3,7 @@
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
   "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,5 +11,5 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "Check every provider account before the first paid request and name any that are missing, and follow narration part by part instead of a bare percentage."
+  "release_notes": "Cancelling a creation keeps its resume point, so an interrupted book can still be picked up from the composer afterwards."
 }

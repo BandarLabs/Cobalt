@@ -715,6 +715,9 @@ impl Audiobook {
         let titles = std::mem::take(&mut self.titles);
         let pages = std::mem::take(&mut self.pages);
         let shelf_unreadable = self.shelf_unreadable;
+        // A cancel stops the work, not the record of it: the checkpoint the
+        // store holds stays offered, here as much as after a restart.
+        let checkpoint = self.checkpoint.take();
         // A person who narrates in Hindi will narrate in Hindi again.
         let language = self.language;
         *self = Self {
@@ -723,6 +726,7 @@ impl Audiobook {
             titles,
             pages,
             shelf_unreadable,
+            checkpoint,
             ..Self::default()
         };
     }
