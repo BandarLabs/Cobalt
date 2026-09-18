@@ -70,6 +70,23 @@ intentionally absent because the device binary does not link Anki code.
 
 State-by-state 1072×1448 golden captures are under `screenshots/states/`.
 
+## On the device, end to end
+
+| First use offers the sample | Reviewing all six |
+| --- | --- |
+| ![No collection yet: start with the sample deck or stage your own collection from your computer](screenshots/first-use.png) | ![Review complete: 6 of 6 due cards recorded locally](screenshots/complete.png) |
+
+| A Japanese question | A long answer, controls in place |
+| --- | --- |
+| ![The greeting こんにちは in the Japanese subset face, one Reveal answer action](screenshots/japanese.png) | ![A five-line answer with stable Again, Hard, Good and Easy controls](screenshots/long-answer.png) |
+
+| A card with its own image |
+| --- |
+| ![A merged, imported card showing its embedded image above the question](screenshots/media.png) |
+
+*Captured by `scripts/quality/check-flashcards-sim.py` on the simulator's Clara
+BW profile, end to end with no network at all.*
+
 | Question | Answer |
 | --- | --- |
 | ![Japanese question with bounded SVG media and one Reveal answer action](screenshots/states/question-japanese-svg.png) | ![Revealed answer with stable Again, Hard, Good and Easy controls](screenshots/states/answer-reveal.png) |

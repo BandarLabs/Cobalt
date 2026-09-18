@@ -1,0 +1,37 @@
+{
+  "provenance": {
+    "source_revision": "1029d6cd64153e3e34159b09becebf06cd048c2d",
+    "tracked_changes": false,
+    "cli_sha256": "a7b52ea871e8b95807fb407d07f829167ec5f5cea76408fa2a6fdc20ea1ae41a",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "checks": [
+    {
+      "name": "first use and sample deck",
+      "detail": "an empty shelf offered the sample deck and named the companion commands; starting the sample saved it and listed its deck",
+      "status": "passed"
+    },
+    {
+      "name": "reveal and grade every card",
+      "detail": "all six sample cards revealed and graded Good, including the Japanese greeting and the long multi-sentence answer, ending on the Review complete screen",
+      "status": "passed"
+    },
+    {
+      "name": "review log persistence",
+      "detail": "six Good reviews were appended to cobalt-review-log.ndjson beside the collection, and after a simulator restart the recorded cards stayed done instead of coming up again",
+      "status": "passed"
+    },
+    {
+      "name": "companion import over the sample",
+      "detail": "the real flashcards-import helper converted an original three-card package, the CLI verified it, the staged bundle replaced the sample collection and one more Good review appended to the untouched earlier log",
+      "status": "passed"
+    },
+    {
+      "name": "media cards through the companion pair",
+      "detail": "a second package carrying an embedded PNG merged through the CLI into a six-card collection; the media card revealed and graded on the simulator with its image on screen",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}
