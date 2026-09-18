@@ -1587,6 +1587,20 @@ impl AppSecrets<'_> {
                 value: kobo_protocol::SecretValue::new(value.into()),
             }));
     }
+    /// Ask which of these credentials are installed, before spending any.
+    ///
+    /// The answer arrives through [`KoboApp::on_device_result`] as
+    /// [`kobo_protocol::DeviceResult::Secrets`], carrying the names that
+    /// are present and never a value. The runtime authorizes every name
+    /// against the calling application's reviewed list.
+    pub fn check(&mut self, names: &[&str]) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::CheckSecrets {
+                names: names.iter().map(|name| (*name).to_owned()).collect(),
+            }));
+    }
+
     /// Save an account together with its owner-selected HTTPS server.
     /// The runtime restricts use to its approved application and provider.
     pub fn set_server(

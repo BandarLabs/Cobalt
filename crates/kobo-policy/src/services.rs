@@ -327,9 +327,10 @@ impl DeviceServices {
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
             }
-            // Only the host's durable credential handler can acknowledge SetSecret.
+            // Only the host's durable credential handler can answer for secrets.
             DeviceRequest::SetSecret { .. }
             | DeviceRequest::SetServerSecret { .. }
+            | DeviceRequest::CheckSecrets { .. }
             | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
@@ -725,7 +726,8 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::ReadUpdateChannel
         | DeviceRequest::SetUpdateChannel { .. }
         | DeviceRequest::SetSecret { .. }
-        | DeviceRequest::SetServerSecret { .. } => return None,
+        | DeviceRequest::SetServerSecret { .. }
+        | DeviceRequest::CheckSecrets { .. } => return None,
         DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
     })
 }

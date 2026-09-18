@@ -60,6 +60,36 @@ pub fn handle_install(
     Some(result.map_or_else(DeviceResult::Failed, |()| DeviceResult::Done))
 }
 
+/// Answer a presence check against real storage, names and booleans only.
+///
+/// The companion to [`handle_install`]: a value can be written but never
+/// read back, so "is it there?" is the only question an application may
+/// ask, and only about names its reviewed policy may set. `None` means
+/// this request belongs to another device service.
+#[must_use]
+pub fn handle_check(
+    root: &Path,
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<kobo_protocol::DeviceResult> {
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    let DeviceRequest::CheckSecrets { names } = request else {
+        return None;
+    };
+    if names.is_empty() || names.iter().any(|name| !may_set(app, name)) {
+        return Some(DeviceResult::Denied(DenyReason::PolicyRejected));
+    }
+    let present = names
+        .iter()
+        .filter(|name| {
+            app_secret_path(root, app, name).is_some_and(|path| path.is_file())
+                || servers::path(root, app, name).is_some_and(|path| path.is_file())
+        })
+        .cloned()
+        .collect();
+    Some(DeviceResult::Secrets { present })
+}
+
 /// Validate an account request before either real storage or an injected fault.
 /// `None` means this request belongs to another device service.
 #[must_use]
@@ -721,6 +751,51 @@ mod tests {
             Some(DeviceResult::Failed(_))
         ));
         assert_eq!(std::fs::read(&blocked).unwrap(), b"preserved");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_presence_check_names_only_what_the_calling_app_may_set() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-credential-check-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::CheckSecrets {
+            names: vec!["exa".into(), "openai".into(), "elevenlabs".into()],
+        };
+        // Nothing installed: an empty answer, which is a true answer.
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets { present: vec![] })
+        );
+        install_app_secret(&root, "audiobook", "openai", "synthetic-key")
+            .expect("install one credential");
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into()]
+            })
+        );
+        // A name outside the app's reviewed list is refused, not answered.
+        let nosy = DeviceRequest::CheckSecrets {
+            names: vec!["openai".into(), "zotero".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &nosy),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        // Another app asking about the same installed secret is refused too:
+        // presence of somebody else's credential is not its business.
+        let theirs = DeviceRequest::CheckSecrets {
+            names: vec!["openai".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "zotero-reader", &theirs),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        // Requests for other services fall through.
+        let other = DeviceRequest::ReadBattery;
+        assert_eq!(super::handle_check(&root, "audiobook", &other), None);
         std::fs::remove_dir_all(root).unwrap();
     }
 

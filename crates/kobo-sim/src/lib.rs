@@ -3092,13 +3092,26 @@ fn simulated_platform_request_allowed(
     !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
 }
 
-fn simulated_app_request(
+/// Credential installs and presence checks, answered against the same policy
+/// functions and durable layout the device host uses.
+fn simulated_credential_request(
     state: &Arc<Mutex<AppState>>,
     caller: &str,
     scenario: Scenario,
     request: &kobo_protocol::DeviceRequest,
 ) -> io::Result<Option<kobo_protocol::DeviceResult>> {
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let DeviceRequest::CheckSecrets { .. } = request {
+        let directory = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .secret_directory
+            .clone();
+        return Ok(kobo_policy::credentials::handle_check(
+            &directory, caller, request,
+        ));
+    }
 
     if matches!(
         request,
@@ -3121,6 +3134,20 @@ fn simulated_app_request(
         return Ok(kobo_policy::credentials::handle_install(
             &directory, caller, request,
         ));
+    }
+    Ok(None)
+}
+
+fn simulated_app_request(
+    state: &Arc<Mutex<AppState>>,
+    caller: &str,
+    scenario: Scenario,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<Option<kobo_protocol::DeviceResult>> {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let Some(result) = simulated_credential_request(state, caller, scenario, request)? {
+        return Ok(Some(result));
     }
 
     let authorized = match request {
@@ -3721,6 +3748,46 @@ mod tests {
             app_result(&state, "todo", Scenario::Normal, &request),
             DeviceResult::Denied(_)
         ));
+        fs::remove_dir_all(directory).expect("remove owned test directory");
+    }
+
+    #[test]
+    fn simulated_presence_check_answers_names_only_for_the_calling_app() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, SecretValue};
+
+        let directory = private_temp_dir();
+        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
+            SimulatedApps::default(),
+        )))));
+        state
+            .lock()
+            .unwrap()
+            .secret_directory
+            .clone_from(&directory);
+        let install = DeviceRequest::SetSecret {
+            name: "openai".to_owned(),
+            value: SecretValue::new("private-token"),
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &install),
+            DeviceResult::Done
+        );
+        let ask = DeviceRequest::CheckSecrets {
+            names: vec!["exa".to_owned(), "openai".to_owned()],
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &ask),
+            DeviceResult::Secrets {
+                present: vec!["openai".to_owned()]
+            }
+        );
+        let nosy = DeviceRequest::CheckSecrets {
+            names: vec!["zotero".to_owned()],
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &nosy),
+            DeviceResult::Denied(DenyReason::PolicyRejected)
+        );
         fs::remove_dir_all(directory).expect("remove owned test directory");
     }
 
