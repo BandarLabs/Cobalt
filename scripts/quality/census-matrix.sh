@@ -27,7 +27,7 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
 run_cell() {
   local profile="$1" scale="$2"
   local cell="$OUT_ROOT/$profile-$scale"
-  if [ -s "$cell/COMPLETE" ]; then
+  if [ -e "$cell/COMPLETE" ]; then
     echo "SKIP $profile-$scale (already complete)"
     return 0
   fi
