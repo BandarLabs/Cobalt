@@ -1006,48 +1006,60 @@
   "pr": 3,
   "group": "Audiobook Studio",
   "task": "Preflight required provider configuration",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Preflight runs before the first paid request: a new CheckSecrets device request (wire tag 51, additive) asks the credential layer for presence only, and the composer names every missing account at once - 'research, writing and narration are missing (secrets: exa, openai, elevenlabs)'. End to end with no secrets installed, a create attempt ended on that screen and the recorded fixtures for all three providers received zero requests (journey 1 of scripts/quality/check-audiobook-sim.py, docs/quality/evidence/audiobook)."
+  ]
  },
  {
   "id": "AUDIO-02",
   "pr": 3,
   "group": "Audiobook Studio",
   "task": "Show truthful generation stages and cancellation",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Each stage says what it is doing: 'Researching the topic', 'Writing the script', 'Narrating part 1 of 3', a seconds counter, and a byte-exact save bar - no bare percentages. Cancel stops the work and returns to the shelf; proven end to end by cancelling mid-narration during a held fixture call (journey 4 of check-audiobook-sim.py; captures audiobook-researching/narrating)."
+  ]
  },
  {
   "id": "AUDIO-03",
   "pr": 3,
   "group": "Audiobook Studio",
   "task": "Checkpoint partial generation and support explicit retry",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "A checkpoint in the app store records the kept script and the next part at every part boundary; it is cleared on completion, start-over, or a new book, and survives a full simulator restart. In-session resume after a failed part 2 made exactly two further calls (the retry and part 3); resume after a restart re-narrated the kept script from part 1, exactly three calls (journeys 3 and 4 of check-audiobook-sim.py). A cancel keeps the checkpoint it made (5b271b37)."
+  ]
  },
  {
   "id": "AUDIO-04",
   "pr": 3,
   "group": "Audiobook Studio",
   "task": "Provide a free original playable sample",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The empty library offers 'Play the sample' next to 'Create an audiobook': 52 seconds of original narration ('The Quiet Shelf'), machine-generated and encoded to the same format the narration provider returns, shipped as assets/sample.mp3 (ed2dbf63). It saves to the shelf and plays with zero accounts installed - journey 1 of check-audiobook-sim.py shows no fixture received any request while it played."
+  ]
  },
  {
   "id": "AUDIO-05",
   "pr": 3,
   "group": "Audiobook Studio",
   "task": "Unify library and now-playing controls",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "One player path both ways: a fresh creation lands in the same AudioPlayer a saved book opens in, and back returns to the shelf it came from. Verified end to end in journey 5 of check-audiobook-sim.py (capture audiobook-library-player). Caveat: the simulator answers audio requests with 'playback unavailable on this firmware', so playback is proven to the player-load level there; audible output remains device-only."
+  ]
  },
  {
   "id": "AUDIO-06",
   "pr": 3,
   "group": "Audiobook Studio",
   "task": "Map missing-secret and partial failures to useful recovery",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Failures name their recovery: a missing account overrides the SDK's generic credential error with the stage's own words - 'Account details for research are missing (secret: exa). Add them, then try again.'; a failed narration ends on a screen that leads with 'Resume <title>' next to Start over and Your audiobooks; the preflight screen names all missing providers at once. All three screens verified pixel-for-pixel in journeys 1 and 3 of check-audiobook-sim.py."
+  ]
  },
  {
   "id": "BACK-01",
