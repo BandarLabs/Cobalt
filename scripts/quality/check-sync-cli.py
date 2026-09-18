@@ -115,7 +115,10 @@ def main():
         checks.append({'name': 'plan --json states direction, ingest contract and loopback API'})
 
         # 4. run + status surface last change and errors, then pause/resume.
-        run_cli('run')
+        started = run_cli('run').stdout
+        assert "uses this computer's network until stopped" in started
+        assert 'does not keep a sleeping reader awake' in started
+        assert 'kobo sync pause' in started and 'kobo sync stop' in started
         for _ in range(50):
             probe = json.loads(run_cli('status', '--json').stdout)
             if probe['running']:
@@ -131,8 +134,8 @@ def main():
         run_cli('resume')
         actions = [key for entry in record() for key in entry if key in ('pause', 'resume')]
         assert actions == ['pause', 'resume'], actions
-        checks.append({'name': 'run, structured status with last change and errors, '
-                               'pause and resume against the paired reader'})
+        checks.append({'name': 'run names computer network and reader sleep effects; structured '
+                               'status, pause, resume and stop controls act on the paired reader'})
 
         # 5. publish packs raw notes into the synced.v1 ingest package.
         published = run_cli('publish', '--folder', 'vault').stdout

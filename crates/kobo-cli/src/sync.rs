@@ -250,13 +250,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
     }
     if !foreground {
         println!(
-            "Sync peer started in the background (PID {}).\nRun 'kobo sync status' for folder state and 'kobo sync stop' to stop it.",
+            "Sync peer started in the background (PID {}).\nIt uses this computer's network until stopped; it does not keep a sleeping reader awake.\nRun 'kobo sync status' for folder state, 'kobo sync pause' to pause transfers, or 'kobo sync stop' to quit.",
             child.id()
         );
         return Ok(());
     }
     println!(
-        "Sync peer is running for at most {seconds} seconds; 'kobo sync stop' can end it sooner."
+        "Sync peer is running for at most {seconds} seconds; it uses this computer's network during that window and does not keep a sleeping reader awake. 'kobo sync stop' can end it sooner."
     );
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
