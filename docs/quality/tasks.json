@@ -1529,48 +1529,60 @@
   "pr": 3,
   "group": "Flashcards app",
   "task": "Replace expected missing collection error with first-use setup",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The missing-collection error is replaced by a first-use screen ('No collection yet') that offers the built-in sample or the companion path, with 'Read collection again' as retry. Unit test a_missing_collection_offers_first_use_setup; golden screenshots/states/first-use.png; simulator capture flashcards-first-use in docs/quality/evidence/flashcards (script check-flashcards-sim.py journey 1)."
+  ]
  },
  {
   "id": "CARDS-02",
   "pr": 3,
   "group": "Flashcards app",
   "task": "Include an original ready-to-review sample",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "New sample.rs builds an original six-card 'Getting started' deck at runtime through the format crate's verified encoder (Japanese greeting and a long multi-sentence answer included); 'Start with the sample' writes it to the shelf and opens it. Unit test the_sample_deck_loads_after_writing drives the write and reload through in-memory shelf/store; E2E journey 1 captures the deck on screen (flashcards-sample-decks)."
+  ]
  },
  {
   "id": "CARDS-03",
   "pr": 3,
   "group": "Flashcards app",
   "task": "Show import status and guided companion handoff",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The first-use screen names the exact companion commands: 'kobo flashcards import deck.apkg --merge collection.cobfc', then 'kobo flashcards stage collection.cobfc'. The E2E runs those very commands with the real flashcards-import helper on an original generated package and opens the staged collection on the simulator (journeys 4-5, captures flashcards-imported*)."
+  ]
  },
  {
   "id": "CARDS-04",
   "pr": 3,
   "group": "Flashcards app",
   "task": "Explain local grading and review-log reconciliation accurately",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Review settings gained a Grading section: grades append to a local review log beside the collection, recorded cards stay done across restarts, restaging keeps the log, and the desktop scheduler is never written back. Behavior matches the copy: the saved log seeds the done set at load (unit test a_restart_keeps_recorded_reviews; E2E journey 3 asserts six digest-bound records on disk and the 'recorded locally' state after restart; journey 4 proves restaging leaves the earlier log byte-identical)."
+  ]
  },
  {
   "id": "CARDS-05",
   "pr": 3,
   "group": "Flashcards app",
   "task": "Test reveal, grade and restart with imported fixtures",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "scripts/quality/check-flashcards-sim.py proves reveal, grade and restart end to end offline: all six sample cards revealed and graded Good with on-screen assertions per step, the review log persisted to cobalt-review-log.ndjson, and a simulator restart kept every recorded card done (result.json all five checks passed on 1029d6cd, clean tree; captures in docs/quality/evidence/flashcards)."
+  ]
  },
  {
   "id": "CARDS-06",
   "pr": 3,
   "group": "Flashcards app",
   "task": "Test Japanese, media and long cards",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Japanese (greeting rendered in the subset face, capture flashcards-japanese), media (an original package carrying an embedded PNG merged through the real CLI and reviewed on device with its image on screen, captures flashcards-media-question/answer), and long cards (five-line answer paginated with controls in place, capture flashcards-long-answer) all pass in the simulator E2E; goldens question-japanese-svg and answer-reveal cover SVG media."
+  ]
  },
  {
   "id": "FRAME-01",
