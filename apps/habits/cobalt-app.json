@@ -5,7 +5,7 @@
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
   "version": "0.1.5",
-  "release_notes": "The empty Today screen offers Add a habit directly, Stats sums up the week, and Settings says plainly how missed and skipped days count.",
+  "release_notes": "Add a habit is offered on the empty Today screen, Stats sums up the week, Settings states the streak rules, and every habit has an edit screen: rename, schedule, archive.",
   "glyph": "check",
   "capabilities": []
 }

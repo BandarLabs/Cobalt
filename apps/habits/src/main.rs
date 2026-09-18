@@ -13,10 +13,17 @@ const HABITS: &str = "habits-v1";
 const ROWS_PER_PAGE: usize = 3;
 const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EntryMode {
+    Add,
+    Rename,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
     Today,
     Streaks,
     Manage,
+    Edit,
     Stats,
     Settings,
 }
@@ -26,8 +33,7 @@ impl Page {
             Self::Today => 0,
             Self::Streaks => 1,
             Self::Manage => 2,
-            Self::Stats => 3,
-            Self::Settings => 4,
+            Self::Edit | Self::Stats | Self::Settings => 4,
         }
     }
     fn all() -> [(&'static str, &'static str); 4] {
@@ -47,6 +53,8 @@ struct Habits {
     manage_page: usize,
     streaks_page: usize,
     entry: TextEntry,
+    entry_mode: EntryMode,
+    editing: Option<usize>,
     notice: Option<String>,
     loading: bool,
     save_in_flight: bool,
@@ -62,6 +70,8 @@ impl Default for Habits {
             manage_page: 0,
             streaks_page: 0,
             entry: TextEntry::new().opened_by("add"),
+            entry_mode: EntryMode::Add,
+            editing: None,
             notice: None,
             loading: false,
             save_in_flight: false,
@@ -156,6 +166,7 @@ impl Habits {
     fn back_target(&self) -> Option<Page> {
         match self.page {
             Page::Today => None,
+            Page::Edit => Some(Page::Manage),
             Page::Settings => Some(Page::Stats),
             Page::Streaks | Page::Manage | Page::Stats => Some(Page::Today),
         }
@@ -177,21 +188,26 @@ impl Habits {
     #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
         if self.entry.is_open() {
+            let submit = match self.entry_mode {
+                EntryMode::Add => "Add",
+                EntryMode::Rename => "Save",
+            };
             return ScreenBuilder::new("hb-add")
                 .top_bar("Habits")
                 .secondary(format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."))
-                .text_entry(&self.entry, "Habit name", "Add")
+                .text_entry(&self.entry, "Habit name", submit)
                 .build();
         }
         let mut s = ScreenBuilder::new(match self.page {
             Page::Today => "hb-today",
             Page::Streaks => "hb-streaks",
             Page::Manage => "hb-manage",
+            Page::Edit => "hb-edit",
             Page::Stats => "hb-stats",
             Page::Settings => "hb-settings",
         })
         .top_bar("Habits");
-        if self.page != Page::Settings {
+        if matches!(self.page, Page::Today | Page::Streaks | Page::Manage | Page::Stats) {
             s = s.tabs(self.page.index(), Page::all());
         }
         if !self.loaded {
@@ -295,7 +311,7 @@ impl Habits {
                         Self::page_bounds(self.manage_page, self.items.len());
                     s = s.rows(self.items[start..end].iter().enumerate().map(|(i, h)| {
                         (
-                            format!("cycle-{}", start + i),
+                            format!("edit-{}", start + i),
                             Self::display_name(&h.name),
                             format!(
                                 "{}{}",
@@ -306,6 +322,42 @@ impl Habits {
                         )
                     }));
                     s = Self::paged(s, page, pages, "manage-prev", "manage-next");
+                }
+            }
+            Page::Edit => {
+                match self.editing.and_then(|i| self.items.get(i).map(|h| (i, h))) {
+                    Some((i, h)) => {
+                        let archive: (&str, &str) = if h.archived {
+                            ("unarchive", "Put back")
+                        } else {
+                            ("archive", "Archive")
+                        };
+                        let schedules = [
+                            ("sched-daily", "Daily", Schedule::Daily),
+                            ("sched-weekdays", "Weekdays", Schedule::Weekdays),
+                            ("sched-every-2", "Every 2 days", Schedule::Every(2)),
+                        ];
+                        let _ = i;
+                        s = s
+                            .top_bar_action("rename", "Rename")
+                            .heading(Self::display_name(&h.name))
+                            .rows(schedules.iter().map(|(action, label, schedule)| {
+                                (
+                                    (*action).to_owned(),
+                                    (*label).to_owned(),
+                                    if *schedule == h.schedule {
+                                        "current".to_owned()
+                                    } else {
+                                        String::new()
+                                    },
+                                    Glyph::Check,
+                                )
+                            }))
+                            .buttons([archive]);
+                    }
+                    None => {
+                        s = s.splash(Some(Glyph::Settings), "Nothing to edit", "Pick a habit on Manage.");
+                    }
                 }
             }
             Page::Stats => {
@@ -337,7 +389,69 @@ impl Habits {
         }
         s.build()
     }
+    /// Previous/More on every paged list. Returns whether the action turned
+    /// a page.
+    fn page_turn(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        let pagers = [
+            ("due-prev", "due-next", 0usize),
+            ("manage-prev", "manage-next", 1),
+            ("streaks-prev", "streaks-next", 2),
+        ];
+        for (previous, next, which) in pagers {
+            let delta = if a == action_id(previous) {
+                -1
+            } else if a == action_id(next) {
+                1
+            } else {
+                continue;
+            };
+            let page = match which {
+                0 => &mut self.today_page,
+                1 => &mut self.manage_page,
+                _ => &mut self.streaks_page,
+            };
+            *page = page.saturating_add_signed(delta);
+            self.show(cx);
+            return true;
+        }
+        false
+    }
+
+    /// The edit screen's own actions: rename, archive, and the schedule
+    /// choices. Returns whether the action was one of theirs.
+    fn handle_edit(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if a == action_id("rename") {
+            if let Some(habit) = self.editing.and_then(|i| self.items.get(i)) {
+                let name = habit.name.clone();
+                self.entry_mode = EntryMode::Rename;
+                self.entry.open_with(name);
+            }
+        } else if a == action_id("archive") || a == action_id("unarchive") {
+            if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                habit.archived = !habit.archived;
+                self.save(cx);
+            }
+        } else {
+            let schedules = [
+                ("sched-daily", Schedule::Daily),
+                ("sched-weekdays", Schedule::Weekdays),
+                ("sched-every-2", Schedule::Every(2)),
+            ];
+            let Some((_, schedule)) = schedules.iter().find(|(action, _)| a == action_id(action))
+            else {
+                return false;
+            };
+            if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                habit.schedule = schedule.clone();
+                self.save(cx);
+            }
+        }
+        self.show(cx);
+        true
+    }
+
 }
+
 impl KoboApp for Habits {
     fn on_start(&mut self, cx: &mut Context) {
         self.loading = true;
@@ -394,7 +508,14 @@ impl KoboApp for Habits {
         if let Some(event) = self.entry.handle(a) {
             if let Typing::Submitted(name) = event {
                 if let Some(name) = canonical_name(&name) {
-                    self.items.push(Habit::new(name));
+                    match self.entry_mode {
+                        EntryMode::Add => self.items.push(Habit::new(name)),
+                        EntryMode::Rename => {
+                            if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                                habit.name = name;
+                            }
+                        }
+                    }
                     self.save(cx);
                 } else {
                     self.notice = Some(format!(
@@ -402,6 +523,7 @@ impl KoboApp for Habits {
                     ));
                 }
             }
+            self.entry_mode = EntryMode::Add;
             self.show(cx);
             return;
         }
@@ -428,34 +550,10 @@ impl KoboApp for Habits {
             self.show(cx);
             return;
         }
-        if a == action_id("due-prev") {
-            self.today_page = self.today_page.saturating_sub(1);
-            self.show(cx);
+        if self.page_turn(cx, a) {
             return;
         }
-        if a == action_id("due-next") {
-            self.today_page = self.today_page.saturating_add(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("manage-prev") {
-            self.manage_page = self.manage_page.saturating_sub(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("manage-next") {
-            self.manage_page = self.manage_page.saturating_add(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("streaks-prev") {
-            self.streaks_page = self.streaks_page.saturating_sub(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("streaks-next") {
-            self.streaks_page = self.streaks_page.saturating_add(1);
-            self.show(cx);
+        if self.handle_edit(cx, a) {
             return;
         }
         let mut changed = false;
@@ -466,13 +564,11 @@ impl KoboApp for Habits {
             if a == action_id(&format!("skip-{i}")) {
                 changed |= h.skip(Self::day());
             }
-            if a == action_id(&format!("cycle-{i}")) {
-                h.schedule = match h.schedule {
-                    Schedule::Daily => Schedule::Weekdays,
-                    Schedule::Weekdays => Schedule::Every(2),
-                    Schedule::Every(_) => Schedule::Daily,
-                };
-                changed = true;
+            if a == action_id(&format!("edit-{i}")) {
+                self.editing = Some(i);
+                self.page = Page::Edit;
+                self.show(cx);
+                return;
             }
         }
         if changed {
@@ -818,10 +914,10 @@ mod tests {
         assert!(has_row_action(&runner.app().screen(), "done-0"));
 
         runner.app_mut().page = Page::Manage;
-        assert!(has_row_action(&runner.app().screen(), "cycle-3"));
+        assert!(has_row_action(&runner.app().screen(), "edit-3"));
         runner.action(action_id("manage-prev"));
         assert_eq!(runner.app().manage_page, 0);
-        assert!(has_row_action(&runner.app().screen(), "cycle-0"));
+        assert!(has_row_action(&runner.app().screen(), "edit-0"));
 
         runner.app_mut().page = Page::Streaks;
         assert!(has_row_action(&runner.app().screen(), "streak-3"));
@@ -845,20 +941,20 @@ mod tests {
         for (page, expected, pager) in [
             (
                 0,
-                ["cycle-0", "cycle-1", "cycle-2"].as_slice(),
+                ["edit-0", "edit-1", "edit-2"].as_slice(),
                 "manage-next",
             ),
             (
                 1,
-                ["cycle-3", "cycle-4", "cycle-5"].as_slice(),
+                ["edit-3", "edit-4", "edit-5"].as_slice(),
                 "manage-next",
             ),
             (
                 2,
-                ["cycle-6", "cycle-7", "cycle-8"].as_slice(),
+                ["edit-6", "edit-7", "edit-8"].as_slice(),
                 "manage-next",
             ),
-            (3, ["cycle-9"].as_slice(), "manage-prev"),
+            (3, ["edit-9"].as_slice(), "manage-prev"),
         ] {
             app.page = Page::Manage;
             app.manage_page = page;
@@ -1028,12 +1124,14 @@ mod tests {
 
         runner.app_mut().page = Page::Manage;
         let manage = runner.app().screen();
-        assert!(has_row_action(&manage, "cycle-0"));
+        assert!(has_row_action(&manage, "edit-0"));
         assert!(manage
             .diagnostics(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default())
             .issues
             .is_empty());
-        let commands = runner.action(action_id("cycle-0"));
+        runner.action(action_id("edit-0"));
+        assert_eq!(runner.app().page, Page::Edit);
+        let commands = runner.action(action_id("sched-weekdays"));
         let saved = commands.iter().find_map(|command| match command {
             Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
             _ => None,
@@ -1042,6 +1140,55 @@ mod tests {
         assert_eq!(saved[0].name, long);
         assert_eq!(saved[0].schedule, Schedule::Weekdays);
         assert_eq!(saved[0].skipped, vec![day]);
+    }
+
+    #[test]
+    fn the_edit_screen_renames_reschedules_and_archives() {
+        let day = Habits::day();
+        let mut habit = Habit::new("Read".into());
+        habit.done = vec![day];
+        let app = Habits {
+            items: vec![habit],
+            loaded: true,
+            page: Page::Manage,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("edit-0"));
+        assert_eq!(runner.app().page, Page::Edit);
+
+        let commands = runner.action(action_id("archive"));
+        let saved = commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
+            _ => None,
+        });
+        assert!(decode(saved.expect("archiving must be saved"))[0].archived);
+        runner.store_result(StoreResult::Saved { key: HABITS.into() });
+        runner.action(action_id("unarchive"));
+        assert!(!runner.app().items[0].archived);
+
+        runner.action(action_id("rename"));
+        assert!(runner.app().entry.is_open());
+        assert_eq!(runner.app().entry.text(), "Read");
+        runner.app_mut().entry.close();
+        assert_eq!(runner.app().items[0].name, "Read");
+
+        runner.action(action_id("ActionId::BACK"));
+        let screen = runner.app().screen().with_own_back(runner.app().owns_back());
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let diagnostics = screen.diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
+                assert!(diagnostics.issues.is_empty(), "{metrics:?}: {:?}", diagnostics.issues);
+            }
+        }
     }
 
     #[test]
