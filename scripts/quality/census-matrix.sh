@@ -37,9 +37,9 @@ run_cell() {
     python3 "$ROOT/scripts/check-apps-sim.py" --out "$cell/out" \
     > "$cell/cell.log" 2>&1
   local rc=$?
-  # Only mark complete when every catalog app ran; a killed cell leaves a
-  # partial results.json that must be rerun, not skipped.
-  if [ $rc -eq 0 ]; then touch "$cell/COMPLETE"; fi
+  # Mark complete when every catalog app ran (the runner's final summary
+  # line), pass or fail. A killed cell leaves no summary and must rerun.
+  if grep -q 'apps passed; ' "$cell/cell.log"; then touch "$cell/COMPLETE"; fi
   echo "DONE $profile-$scale rc=$rc $(date -Is)"
 }
 running=0
