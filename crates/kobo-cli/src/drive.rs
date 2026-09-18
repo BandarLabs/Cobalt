@@ -63,6 +63,14 @@ const FRAME_HEIGHT: u32 = SIMULATED_PANEL.1;
 const CAPTURE_HEADER: &str = "capture-begin";
 const CAPTURE_FOOTER: &str = "capture-end";
 
+/// The screen's content area and page-turn declaration, as the simulator
+/// reports them alongside the layout nodes.
+#[derive(Clone, Copy, Debug)]
+struct Paging {
+    content: (i32, i32, i32, i32),
+    has_next: bool,
+}
+
 /// One node of the layout the renderer produced.
 #[derive(Clone, Debug)]
 pub struct Control {
@@ -184,32 +192,8 @@ impl Driver {
         let rest = rest.trim();
         let result = match verb {
             "tap" => self.tap(rest),
-            "tap-id" => {
-                let action = parse_action_id(rest)?;
-                let control = self
-                    .layout()?
-                    .into_iter()
-                    .find(|control| control.action == Some(action))
-                    .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
-                self.touch(control.centre.0, control.centre.1)
-            }
-            "maybe-tap-id" => {
-                let action = parse_action_id(rest)?;
-                match self
-                    .layout()?
-                    .into_iter()
-                    .find(|control| control.action == Some(action))
-                {
-                    Some(control) => self.touch(control.centre.0, control.centre.1),
-                    // A pager that the whole catalogue fits on one page
-                    // never draws is not a failure; the page it would have
-                    // turned to does not exist on this panel.
-                    None => {
-                        println!("maybe-tap-id {rest}: not on this screen, skipping");
-                        Ok(())
-                    }
-                }
-            }
+            "tap-id" => self.tap_action_id(rest),
+            "maybe-tap-id" => self.maybe_tap_id(rest),
             "tap-paged" => self.tap_paged(rest),
             "tap-at" => {
                 let (x, y) = parse_point(rest)?;
@@ -300,6 +284,34 @@ impl Driver {
         Ok(())
     }
 
+    /// Taps the control carrying the named action.
+    fn tap_action_id(&mut self, rest: &str) -> Result<(), String> {
+        let action = parse_action_id(rest)?;
+        let control = self
+            .layout()?
+            .into_iter()
+            .find(|control| control.action == Some(action))
+            .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
+        self.touch(control.centre.0, control.centre.1)
+    }
+
+    /// Taps the control carrying `action` when this panel draws it, and
+    /// skips with a note when it does not. A pager that the whole catalogue
+    /// fits on one page never draws is not a failure; the page it would
+    /// have turned to does not exist on this panel.
+    fn maybe_tap_id(&mut self, rest: &str) -> Result<(), String> {
+        let action = parse_action_id(rest)?;
+        if let Some(control) = self
+            .layout()?
+            .into_iter()
+            .find(|control| control.action == Some(action))
+        {
+            return self.touch(control.centre.0, control.centre.1);
+        }
+        println!("maybe-tap-id {rest}: not on this screen, skipping");
+        Ok(())
+    }
+
     /// Taps the first control saying `label`, turning pages to find it.
     ///
     /// Pagination is a function of profile and text scale: a catalogue that
@@ -320,11 +332,11 @@ impl Driver {
                 break;
             }
             let controls = self.layout()?;
-            let (content, has_next) = self.paging()?;
-            if !has_next {
+            let paging = self.paging()?;
+            if !paging.has_next {
                 break;
             }
-            let (x, y) = forward_point(&controls, content)
+            let (x, y) = forward_point(&controls, paging.content)
                 .ok_or("no empty spot in the forward page-turn zone")?;
             self.touch(x, y)?;
         }
@@ -336,17 +348,22 @@ impl Driver {
     /// The screen's content rectangle and whether it declared page-turn
     /// zones, from the same layout payload the controls come from. Both
     /// default to the old payload's absence: no reported area and no zones.
-    fn paging(&self) -> Result<((i32, i32, i32, i32), bool), String> {
+    fn paging(&self) -> Result<Paging, String> {
         let body = self.get("/layout")?;
         let body = String::from_utf8_lossy(&body).into_owned();
-        let number = |key: &str| json_number(&body, key).unwrap_or_default() as i32;
+        let number = |key: &str| {
+            i32::try_from(json_number(&body, key).unwrap_or_default()).unwrap_or_default()
+        };
         let content = (
             number("\"x\""),
             number("\"y\""),
             number("\"width\""),
             number("\"height\""),
         );
-        Ok((content, body.contains("\"pageTurns\":{")))
+        Ok(Paging {
+            content,
+            has_next: body.contains("\"pageTurns\":{"),
+        })
     }
 
     /// Taps the control whose label carries `label`.
@@ -597,10 +614,14 @@ impl Driver {
             .map(|node| Control {
                 kind: json_field(&node, "kind").unwrap_or_default(),
                 rect: (
-                    json_number(&node, "\"x\"").unwrap_or_default() as i32,
-                    json_number(&node, "\"y\"").unwrap_or_default() as i32,
-                    json_number(&node, "\"width\"").unwrap_or_default() as i32,
-                    json_number(&node, "\"height\"").unwrap_or_default() as i32,
+                    i32::try_from(json_number(&node, "\"x\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"y\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"width\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"height\"").unwrap_or_default())
+                        .unwrap_or_default(),
                 ),
                 centre: json_point(&node, "centre"),
                 lines: json_array(&node, "lines"),
