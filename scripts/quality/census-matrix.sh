@@ -17,7 +17,7 @@
 #   control get measured-reflow checks through that control instead.
 # - 758x1024 is NOT a supported profile; do not add it.
 # - No source edits while the matrix runs: every cell must measure the same
-#   tree. 2-way parallel maximum on small sandboxes.
+#   tree. 4-way parallel (cells are wait-bound, CPU idles).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT_ROOT="${1:-/tmp/census/matrix}"
@@ -47,7 +47,7 @@ for profile in $PROFILES; do
   for scale in $SCALES; do
     run_cell "$profile" "$scale" &
     running=$((running + 1))
-    if [ "$running" -ge 2 ]; then wait -n; running=$((running - 1)); fi
+    if [ "$running" -ge 4 ]; then wait -n; running=$((running - 1)); fi
   done
 done
 wait
