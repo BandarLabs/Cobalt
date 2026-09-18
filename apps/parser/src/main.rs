@@ -922,6 +922,38 @@ mod tests {
     }
 
     #[test]
+    fn zork1_landing_fits_elipsa_extra_large_with_display_chrome() {
+        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let mut parser = Parser {
+            transcript: machine.take_output(),
+            ..Parser::default()
+        };
+        for keyboard_open in [false, true] {
+            parser.keyboard_open = keyboard_open;
+            let metrics = DisplayMetrics {
+                width: 1404,
+                height: 1872,
+                pixels_per_inch: 227,
+                text_scale: TextScale::ExtraLarge,
+            };
+            parser.repaginate_for_metrics(metrics);
+            let landing = parser.last_content_page();
+            let (start, end) = parser.pages[landing];
+            let text = parser.transcript[start..end].to_owned();
+            let screen = parser.play_screen_for(&text, landing + 1, parser.pages.len());
+            for chrome in [Chrome::default(), Chrome::measuring(true)] {
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "keyboard_open={keyboard_open}: {:?}",
+                    diagnostics.issues
+                );
+            }
+        }
+    }
+
+    #[test]
     fn slot_rows_name_what_each_slot_holds() {
         assert_eq!(
             slot_subtitle(SlotAction::Save, true),
