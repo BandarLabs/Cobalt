@@ -132,6 +132,7 @@ struct Flashcards {
     sample_upload: Option<ShelfUpload>,
     sample_saving: bool,
     review_download: Option<ShelfDownload>,
+    resume_download: Option<ShelfDownload>,
     review_upload: Option<ShelfUpload>,
     bundle: Option<ParsedBundle>,
     bundle_digest: String,
@@ -169,6 +170,7 @@ impl Default for Flashcards {
             menu_open: false,
             library_download: None,
             review_download: None,
+            resume_download: None,
             review_upload: None,
             bundle: None,
             bundle_digest: String::new(),
@@ -608,8 +610,13 @@ impl Flashcards {
                 self.pending_review = None;
                 self.picture = None;
                 self.media_message = None;
-                self.view = View::Decks;
-                self.prepare_deck_pages(context);
+                let mut resume = ShelfDownload::new(REVIEW_LOG_NAME).at_most(MAX_REVIEW_LOG_BYTES);
+                resume.start(context);
+                self.resume_download = Some(resume);
+                self.loading_received = 0;
+                self.loading_total = None;
+                self.loading_bucket = None;
+                self.view = View::Loading;
                 context.set_screen(self.screen());
             }
             Err(error) => {
@@ -783,6 +790,33 @@ impl Flashcards {
         let mut download = ShelfDownload::new(REVIEW_LOG_NAME).at_most(MAX_REVIEW_LOG_BYTES);
         download.start(context);
         self.review_download = Some(download);
+        context.set_screen(self.screen());
+    }
+
+    /// Cards already recorded against this collection's digest do not come
+    /// up again after a restart; their grades wait in the log for the paired
+    /// computer.
+    fn seed_reviewed_cards(&mut self, log: &[u8]) {
+        if validate_review_log(log).is_err() {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(log) else {
+            return;
+        };
+        for line in text.lines() {
+            if let Some(card_id) = review_card_id(line, &self.bundle_digest) {
+                self.reviewed_cards.insert(card_id);
+            }
+        }
+    }
+
+    fn finish_resume(&mut self, context: &mut Context, log: Option<Vec<u8>>) {
+        self.resume_download = None;
+        if let Some(log) = log {
+            self.seed_reviewed_cards(&log);
+        }
+        self.view = View::Decks;
+        self.prepare_deck_pages(context);
         context.set_screen(self.screen());
     }
 
@@ -1064,6 +1098,27 @@ impl KoboApp for Flashcards {
         if self.advance_sample_upload(context, &result) {
             return;
         }
+        if let Some(download) = &mut self.resume_download {
+            match download.advance(context, &result) {
+                ShelfProgress::Done => {
+                    let log = self
+                        .resume_download
+                        .take()
+                        .expect("active resume download")
+                        .take();
+                    self.finish_resume(context, Some(log));
+                    return;
+                }
+                ShelfProgress::Moving { .. } => return,
+                // A first run has no log; an unreadable one must not lock the
+                // collection out. Offer the imported queue in both cases.
+                ShelfProgress::Failed(_) => {
+                    self.finish_resume(context, None);
+                    return;
+                }
+                ShelfProgress::Elsewhere => {}
+            }
+        }
         if let Some(download) = &mut self.review_download {
             match download.advance(context, &result) {
                 ShelfProgress::Done => {
@@ -1173,6 +1228,19 @@ fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
         .build()
 }
 
+fn review_card_id(record: &str, digest: &str) -> Option<i64> {
+    if !record.contains(&format!("\"bundle_sha256\":\"{digest}\"")) {
+        return None;
+    }
+    let key = "\"card_id\":";
+    let start = record.find(key)? + key.len();
+    let digits: String = record[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
 fn settings_screen(detailed: bool) -> Screen {
     ScreenBuilder::new("flashcards-settings")
         .top_bar("Review settings")
@@ -1195,8 +1263,9 @@ fn settings_screen(detailed: bool) -> Screen {
         ])
         .section("Grading")
         .text(
-            "Grades append to a local review log kept beside this collection. Staging the \
-             collection again keeps the log; your desktop scheduler is never written back.",
+            "Grades append to a local review log kept beside this collection, and recorded \
+             cards stay done when you come back. Staging the collection again keeps the log; \
+             your desktop scheduler is never written back.",
         )
         .bottom_action("screen-back", "Done")
         .build()
@@ -2000,36 +2069,44 @@ mod tests {
         }
     }
 
+    type TestMaps = std::collections::BTreeMap<String, Vec<u8>>;
+
+    fn pump_transfers(
+        runner: &mut kobo_sdk::AppRunner<Flashcards>,
+        mut commands: Vec<kobo_sdk::Command>,
+        values: &mut TestMaps,
+        blobs: &mut TestMaps,
+        writes: &mut TestMaps,
+    ) {
+        for _ in 0..40 {
+            let mut next = Vec::new();
+            for command in commands {
+                let kobo_sdk::Command::Store(request) = command else {
+                    continue;
+                };
+                let result = answer_store(values, blobs, writes, request);
+                next.extend(runner.store_result(result));
+            }
+            if next.is_empty() {
+                return;
+            }
+            commands = next;
+        }
+        panic!("the transfers did not settle");
+    }
+
     #[test]
     fn the_sample_deck_loads_after_writing() {
-        use kobo_sdk::{AppRunner, Command, StoreRequest, StoreResult};
+        use kobo_sdk::{AppRunner, StoreRequest, StoreResult};
 
-        let mut values = std::collections::BTreeMap::new();
-        let mut blobs = std::collections::BTreeMap::new();
-        let mut writes = std::collections::BTreeMap::new();
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
         let mut runner = AppRunner::new(Flashcards::default());
-        let mut pump = |runner: &mut AppRunner<Flashcards>, mut commands: Vec<Command>| {
-            for _ in 0..40 {
-                let mut next = Vec::new();
-                for command in commands {
-                    let Command::Store(request) = command else {
-                        continue;
-                    };
-                    let result = answer_store(&mut values, &mut blobs, &mut writes, request);
-                    next.extend(runner.store_result(result));
-                }
-                if next.is_empty() {
-                    return;
-                }
-                commands = next;
-            }
-            panic!("the transfers did not settle");
-        };
         let commands = runner.start();
-        pump(&mut runner, commands);
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
         assert_eq!(runner.app().view, View::FirstUse);
         let commands = runner.action(action_id("sample"));
-        pump(&mut runner, commands);
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
         assert_eq!(runner.app().view, View::Decks);
         assert!(screen_text(&runner.app().screen(), "Getting started"));
         assert_eq!(
@@ -2044,6 +2121,41 @@ mod tests {
                 u32::try_from(sample::collection().len()).expect("sample fits in u32")
             )])
         );
+    }
+
+    #[test]
+    fn a_restart_keeps_recorded_reviews() {
+        use kobo_sdk::AppRunner;
+
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
+        let mut runner = AppRunner::new(Flashcards::default());
+        let commands = runner.start();
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        let commands = runner.action(action_id("sample"));
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        for action in ["deck-0", "answer", "good"] {
+            let commands = runner.action(action_id(action));
+            pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        }
+        assert!(blobs.contains_key(REVIEW_LOG_NAME));
+
+        let mut restarted = AppRunner::new(Flashcards::default());
+        let commands = restarted.start();
+        pump_transfers(
+            &mut restarted,
+            commands,
+            &mut values,
+            &mut blobs,
+            &mut writes,
+        );
+        assert_eq!(restarted.app().view, View::Decks);
+        assert_eq!(restarted.app().reviewed_cards.len(), 1);
+        assert!(restarted
+            .app()
+            .deck_choices()
+            .iter()
+            .any(|choice| choice.trailing == "5 due"));
     }
 
     fn japanese_review_screens() -> (Screen, Screen) {
