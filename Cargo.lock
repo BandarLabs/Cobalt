@@ -1021,7 +1021,6 @@ dependencies = [
  "fsrs",
  "kobo-flashcards-format",
  "kobo-image",
- "kobo-policy",
  "kobo-sdk",
  "kobo-text",
  "kobo-ui",

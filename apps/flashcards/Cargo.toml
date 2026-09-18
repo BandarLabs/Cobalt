@@ -13,7 +13,6 @@ kobo-image = { path = "../../crates/kobo-image" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]
-kobo-policy = { path = "../../crates/kobo-policy" }
 kobo-text = { path = "../../crates/kobo-text" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 

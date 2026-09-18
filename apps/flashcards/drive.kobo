@@ -1,5 +1,5 @@
 wait 500
 expect Flashcards
-expect Collection not found
+expect No collection yet
 clean
-shot collection-missing
+shot first-use

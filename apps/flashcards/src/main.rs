@@ -1924,27 +1924,98 @@ mod tests {
             .is_empty());
     }
 
+    fn answer_store(
+        values: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        blobs: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        writes: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        request: kobo_sdk::StoreRequest,
+    ) -> kobo_sdk::StoreResult {
+        use kobo_sdk::{StoreError, StoreRequest, StoreResult};
+        match request {
+            StoreRequest::Save { key, value } => {
+                values.insert(key.clone(), value);
+                StoreResult::Saved { key }
+            }
+            StoreRequest::Load { key } => StoreResult::Loaded {
+                value: values.get(&key).cloned(),
+                key,
+            },
+            StoreRequest::Forget { key } => {
+                values.remove(&key);
+                StoreResult::Forgotten { key }
+            }
+            StoreRequest::List => StoreResult::Keys(values.keys().cloned().collect()),
+            StoreRequest::ShelfWrite {
+                name,
+                offset,
+                bytes,
+                last,
+            } => {
+                let offset = offset as usize;
+                let pending = writes.entry(name.clone()).or_default();
+                if pending.len() < offset + bytes.len() {
+                    pending.resize(offset + bytes.len(), 0);
+                }
+                pending[offset..offset + bytes.len()].copy_from_slice(&bytes);
+                let size = u32::try_from(pending.len()).expect("test blob fits in u32");
+                if last {
+                    let finished = writes.remove(&name).unwrap_or_default();
+                    blobs.insert(name.clone(), finished);
+                }
+                StoreResult::ShelfWritten { name, size }
+            }
+            StoreRequest::ShelfRead {
+                name,
+                offset,
+                length,
+            } => {
+                let Some(blob) = blobs.get(&name) else {
+                    return StoreResult::Denied(StoreError::Missing);
+                };
+                let offset = offset as usize;
+                let end = (offset + length as usize).min(blob.len());
+                StoreResult::ShelfRead {
+                    name,
+                    offset: u32::try_from(offset).expect("test offset fits in u32"),
+                    bytes: blob.get(offset..end).unwrap_or(&[]).to_vec(),
+                    size: u32::try_from(blob.len()).expect("test blob fits in u32"),
+                }
+            }
+            StoreRequest::ShelfRemove { name } => {
+                blobs.remove(&name);
+                writes.remove(&name);
+                StoreResult::ShelfRemoved { name }
+            }
+            StoreRequest::ShelfList => StoreResult::Shelf(
+                blobs
+                    .iter()
+                    .map(|(name, bytes)| {
+                        (
+                            name.clone(),
+                            u32::try_from(bytes.len()).expect("test blob fits in u32"),
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
     #[test]
     fn the_sample_deck_loads_after_writing() {
-        use kobo_policy::shelf::Shelf;
-        use kobo_policy::store::Store;
-        use kobo_sdk::{AppRunner, Command};
+        use kobo_sdk::{AppRunner, Command, StoreRequest, StoreResult};
 
-        let root =
-            std::env::temp_dir().join(format!("cobalt-flashcards-sample-{}", std::process::id()));
-        let shelf = Shelf::new(root.join("data"));
-        let store = Store::new(root.join("state"));
+        let mut values = std::collections::BTreeMap::new();
+        let mut blobs = std::collections::BTreeMap::new();
+        let mut writes = std::collections::BTreeMap::new();
         let mut runner = AppRunner::new(Flashcards::default());
-        let pump = |runner: &mut AppRunner<Flashcards>, mut commands: Vec<Command>| {
+        let mut pump = |runner: &mut AppRunner<Flashcards>, mut commands: Vec<Command>| {
             for _ in 0..40 {
                 let mut next = Vec::new();
                 for command in commands {
                     let Command::Store(request) = command else {
                         continue;
                     };
-                    let result = shelf
-                        .handle(&request)
-                        .unwrap_or_else(|| store.handle(&request));
+                    let result = answer_store(&mut values, &mut blobs, &mut writes, request);
                     next.extend(runner.store_result(result));
                 }
                 if next.is_empty() {
@@ -1961,7 +2032,18 @@ mod tests {
         pump(&mut runner, commands);
         assert_eq!(runner.app().view, View::Decks);
         assert!(screen_text(&runner.app().screen(), "Getting started"));
-        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(
+            answer_store(
+                &mut values,
+                &mut blobs,
+                &mut writes,
+                StoreRequest::ShelfList
+            ),
+            StoreResult::Shelf(vec![(
+                BUNDLE_NAME.to_owned(),
+                u32::try_from(sample::collection().len()).expect("sample fits in u32")
+            )])
+        );
     }
 
     fn japanese_review_screens() -> (Screen, Screen) {
