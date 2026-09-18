@@ -299,6 +299,13 @@ impl Parser {
         self.saving = Some(upload);
     }
 
+    fn note_restored(&mut self) {
+        if !self.transcript.is_empty() {
+            self.transcript.push_str("\n\n");
+        }
+        self.transcript.push_str("[Restored.]");
+    }
+
     fn noun(&mut self, index: usize) {
         let page = self.page.min(self.pages.len().saturating_sub(1));
         let text = self
@@ -610,12 +617,20 @@ impl KoboApp for Parser {
                         .take()
                         .expect("restore download exists")
                         .take();
+                    let mut restored = false;
                     if let Some(machine) = &mut self.machine {
-                        if let Err(error) = machine.restore_quetzal(&bytes) {
-                            self.message = Some(error.to_string());
+                        match machine.restore_quetzal(&bytes) {
+                            Ok(()) => restored = true,
+                            Err(error) => self.message = Some(error.to_string()),
                         }
                     }
+                    if restored {
+                        self.note_restored();
+                    }
                     self.advance_story(context);
+                    if restored {
+                        self.command(context, "look");
+                    }
                 }
                 ShelfProgress::Failed(kobo_sdk::StoreError::Missing) => {
                     self.pending_restore = None;
@@ -713,6 +728,15 @@ mod tests {
             assert!(text.is_char_boundary(end));
             assert!(parser.play_page_fits(&text[start..end], CLARA_BW_METRICS));
         }
+    }
+
+    #[test]
+    fn restore_marker_separates_old_transcript_from_new() {
+        let mut parser = Parser::default();
+        parser.note_restored();
+        assert_eq!(parser.transcript, "[Restored.]");
+        parser.note_restored();
+        assert_eq!(parser.transcript, "[Restored.]\n\n[Restored.]");
     }
 
     #[test]

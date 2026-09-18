@@ -5,7 +5,7 @@
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
   "version": "0.1.3",
-  "release_notes": "Transcript pages are now measured against the real screen instead of split by byte count, so long story text always fits beside the keyboard and word links stay tappable.",
+  "release_notes": "Transcript pages are now measured against the real screen instead of split by byte count, so long story text always fits beside the keyboard. Restoring a saved game marks the transcript and looks around, so you can see where you are.",
   "glyph": "book",
   "capabilities": []
 }
