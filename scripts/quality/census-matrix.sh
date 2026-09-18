@@ -27,7 +27,7 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
 run_cell() {
   local profile="$1" scale="$2"
   local cell="$OUT_ROOT/$profile-$scale"
-  if [ -s "$cell/out/results.json" ]; then
+  if [ -s "$cell/COMPLETE" ]; then
     echo "SKIP $profile-$scale (already complete)"
     return 0
   fi
@@ -36,7 +36,11 @@ run_cell() {
   KOBO_SIM_PROFILE="$profile" KOBO_TEXT_SCALE="$scale" \
     python3 "$ROOT/scripts/check-apps-sim.py" --out "$cell/out" \
     > "$cell/cell.log" 2>&1
-  echo "DONE $profile-$scale rc=$? $(date -Is)"
+  local rc=$?
+  # Only mark complete when every catalog app ran; a killed cell leaves a
+  # partial results.json that must be rerun, not skipped.
+  if [ $rc -eq 0 ]; then touch "$cell/COMPLETE"; fi
+  echo "DONE $profile-$scale rc=$rc $(date -Is)"
 }
 running=0
 for profile in $PROFILES; do
