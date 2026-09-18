@@ -1285,10 +1285,19 @@ impl Context {
             let layout = screen.layout_for(&self.metrics);
             for node in &layout.nodes {
                 for line in &node.text_lines {
+                    let Some(character) = kobo_ui::undrawable_in(line, kobo_ui::Face::Text) else {
+                        continue;
+                    };
+                    // Reading prose is drawn in the publisher face, not the
+                    // system face, so a character the system face lacks is
+                    // still fine when the screen's reading face has it.
+                    let readable = screen.reading
+                        && kobo_ui::with_reading_font(screen.reading_font, || {
+                            kobo_ui::undrawable_in(line, kobo_ui::Face::Reading).is_none()
+                        });
                     assert!(
-                        kobo_ui::undrawable_in(line, kobo_ui::Face::Text).is_none(),
-                        "this screen carries {:?}, which the installed face cannot draw: {line:?}",
-                        kobo_ui::undrawable_in(line, kobo_ui::Face::Text).expect("just found one")
+                        readable,
+                        "this screen carries {character:?}, which the installed face cannot draw: {line:?}"
                     );
                 }
             }
