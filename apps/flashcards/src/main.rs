@@ -837,6 +837,47 @@ impl Flashcards {
         context.set_screen(self.screen());
     }
 
+    /// Advances the collection download; true when it owned the store result.
+    fn advance_library_download(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(download) = &mut self.library_download else {
+            return false;
+        };
+        match download.advance(context, result) {
+            ShelfProgress::Done => {
+                self.finish_download(context);
+            }
+            ShelfProgress::Moving { done, total } => {
+                let percent = (total > 0).then(|| {
+                    u8::try_from(done.saturating_mul(100) / total)
+                        .unwrap_or(100)
+                        .min(100)
+                });
+                let bucket = percent.map(|percent| percent / 10 * 10);
+                self.loading_received = u64::from(done);
+                self.loading_total = (total > 0).then_some(u64::from(total));
+                if bucket != self.loading_bucket {
+                    self.loading_bucket = bucket;
+                    context.set_screen(self.screen());
+                }
+            }
+            ShelfProgress::Failed(StoreError::Missing) => {
+                self.library_download = None;
+                self.view = View::FirstUse;
+                context.set_screen(self.screen());
+            }
+            ShelfProgress::Failed(_) => {
+                self.library_download = None;
+                self.set_problem(
+                    context,
+                    ProblemKind::Corrupt,
+                    "The collection could not be read. Check the staged bundle and try again.",
+                );
+            }
+            ShelfProgress::Elsewhere => return false,
+        }
+        true
+    }
+
     /// Advances the one sample upload; true when it owned the store result.
     fn advance_sample_upload(&mut self, context: &mut Context, result: &StoreResult) -> bool {
         let Some(upload) = &mut self.sample_upload else {
@@ -1073,44 +1114,8 @@ impl KoboApp for Flashcards {
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if let Some(download) = &mut self.library_download {
-            match download.advance(context, &result) {
-                ShelfProgress::Done => {
-                    self.finish_download(context);
-                    return;
-                }
-                ShelfProgress::Moving { done, total } => {
-                    let percent = (total > 0).then(|| {
-                        u8::try_from(done.saturating_mul(100) / total)
-                            .unwrap_or(100)
-                            .min(100)
-                    });
-                    let bucket = percent.map(|percent| percent / 10 * 10);
-                    self.loading_received = u64::from(done);
-                    self.loading_total = (total > 0).then_some(u64::from(total));
-                    if bucket != self.loading_bucket {
-                        self.loading_bucket = bucket;
-                        context.set_screen(self.screen());
-                    }
-                    return;
-                }
-                ShelfProgress::Failed(StoreError::Missing) => {
-                    self.library_download = None;
-                    self.view = View::FirstUse;
-                    context.set_screen(self.screen());
-                    return;
-                }
-                ShelfProgress::Failed(_) => {
-                    self.library_download = None;
-                    self.set_problem(
-                        context,
-                        ProblemKind::Corrupt,
-                        "The collection could not be read. Check the staged bundle and try again.",
-                    );
-                    return;
-                }
-                ShelfProgress::Elsewhere => {}
-            }
+        if self.advance_library_download(context, &result) {
+            return;
         }
         if self.advance_sample_upload(context, &result) {
             return;
@@ -1253,7 +1258,7 @@ fn review_card_id(record: &str, digest: &str) -> Option<i64> {
     let start = record.find(key)? + key.len();
     let digits: String = record[start..]
         .chars()
-        .take_while(|character| character.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
         .collect();
     digits.parse().ok()
 }
