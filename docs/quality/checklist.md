@@ -593,7 +593,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 - [x] **FLASHCLI-01** Replace main CLI refusal stub with the supported helper entry point.
 - [x] **FLASHCLI-02** Make helper install/version status discoverable.
-- [ ] **FLASHCLI-03** Distribute verified host helper without requiring a toolchain.
+- [x] **FLASHCLI-03** Distribute verified host helper without requiring a toolchain.
 - [x] **FLASHCLI-04** Keep existing helper license/distribution boundary intact.
 - [x] **FLASHCLI-05** Explain actual supported formats and unsupported features.
 - [x] **FLASHCLI-06** Preview front/back, media and card counts.

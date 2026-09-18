@@ -13,7 +13,7 @@ const USAGE: &str = "usage: kobo flashcards preview COLLECTION.cobfc --out PREVI
                      \x20      kobo flashcards status\n\
                      \x20      kobo flashcards formats\n\
                      \x20      kobo flashcards --licenses\n\n\
-                     Uses the separate flashcards-import helper. Install it beside kobo or on PATH.\n\
+                     Uses the signed flashcards-import helper installed beside kobo. Source builds may also use PATH.\n\
                      Import prepares a local bundle; stage transfers it to a mounted reader.\n\
                      Keep Flashcards closed while staging. Review logs are preserved separately.";
 
@@ -63,7 +63,7 @@ fn helper_arguments(arguments: &[String]) -> Result<Vec<String>, String> {
 fn run_helper(path: &Path, arguments: &[String]) -> Result<(), String> {
     let status = Command::new(path).args(arguments).status().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            "The Flashcards importer is not installed. Install the separate flashcards-import helper beside kobo or on PATH, then retry. Source-build instructions: apps/flashcards/README.md. No import or transfer was started.".to_owned()
+            "The Flashcards importer is not installed or is missing from this host installation. Run 'kobo update' to restore the signed helper, or follow the source-build instructions in apps/flashcards/README.md. No import or transfer was started.".to_owned()
         } else {
             format!("Could not start the Flashcards importer: {error}")
         }

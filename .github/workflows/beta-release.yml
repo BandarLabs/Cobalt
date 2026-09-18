@@ -323,18 +323,22 @@ jobs:
           - platform: macos-x86_64
             runner: macos-15-intel
             target: x86_64-apple-darwin
+            helper-target: x86_64-apple-darwin
             cc: ""
           - platform: macos-arm64
             runner: macos-14
             target: aarch64-apple-darwin
+            helper-target: aarch64-apple-darwin
             cc: ""
           - platform: linux-x86_64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
+            helper-target: x86_64-unknown-linux-gnu
             cc: musl-gcc
           - platform: linux-arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-musl
+            helper-target: aarch64-unknown-linux-gnu
             cc: musl-gcc
     runs-on: ${{ matrix.runner }}
     steps:
@@ -343,22 +347,42 @@ jobs:
         with:
           toolchain: 1.85.1
           targets: ${{ matrix.target }}
-      - name: Install Linux cross tools
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.88.0
+          targets: ${{ matrix.helper-target }}
+      - name: Install Linux host build tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools protobuf-compiler libclang-dev pkg-config
+      - name: Install macOS importer build tools
+        if: runner.os == 'macOS'
+        run: brew install protobuf llvm
       - name: Build the host kobo command
         env:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
-        run: cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+        run: |
+          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          # The importer intentionally owns a separate Rust 1.88 workspace and
+          # lockfile so Anki's host-only graph never enters the reader/CLI graph.
+          if [ "${{ runner.os }}" = macOS ]; then
+            export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+          fi
+          cargo +1.88.0 build --locked --release \
+            --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+            --target "${{ matrix.helper-target }}"
       - name: Stage the host binary
         run: |
           mkdir -p host
           cp "target/${{ matrix.target }}/release/kobo" host/kobo
+          cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
+            host/flashcards-import
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: host-${{ matrix.platform }}
-          path: host/kobo
+          path: |
+            host/kobo
+            host/flashcards-import
           if-no-files-found: error
 
   publish:
@@ -384,9 +408,12 @@ jobs:
         run: |
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "dist/host-binaries/host-${platform}/kobo"
+            test -f "dist/host-binaries/host-${platform}/flashcards-import"
             mkdir -p "dist/host-binaries/${platform}"
             mv "dist/host-binaries/host-${platform}/kobo" \
               "dist/host-binaries/${platform}/kobo"
+            mv "dist/host-binaries/host-${platform}/flashcards-import" \
+              "dist/host-binaries/${platform}/flashcards-import"
           done
       - name: Build deterministic host release assets
         env:
