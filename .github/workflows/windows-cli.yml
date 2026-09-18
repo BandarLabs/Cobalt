@@ -23,7 +23,11 @@ jobs:
       # runner, setup's zig fallback must find zig, wrap it, and compile the
       # TLS stack's C for armv7 musl. This is the exact journey the setup
       # error text sends Windows users on, so it runs here on every push.
-      - name: Install zig the way the setup error text describes
+      # The Appx cmdlets only load in Windows PowerShell 5.1 ("Operation is
+      # not supported on this platform" under PowerShell 7), which is also
+      # the shell a Windows user has before they install anything.
+      - name: Bootstrap App Installer when the runner has no winget
+        shell: powershell
         run: |
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             # The error text's own fallback: App Installer provides winget.
@@ -35,11 +39,12 @@ jobs:
             try { Add-AppxPackage "$env:TEMP\UIXaml.appx" -ErrorAction Stop } catch { Write-Host "UI.Xaml already present: $($_.Exception.Message)" }
             Invoke-WebRequest -Uri https://aka.ms/getwinget -OutFile "$env:TEMP\AppInstaller.msixbundle"
             Add-AppxPackage "$env:TEMP\AppInstaller.msixbundle"
-            # The error text says "open a new terminal": the fresh winget alias
-            # only lands in a new session's PATH, so refresh it the same way.
-            $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
           }
-          winget install --id zig.zig -e --source winget --accept-package-agreements --accept-source-agreements
+
+      # A fresh step is the error text's "open a new terminal": the winget
+      # alias lands in the new session's PATH by itself.
+      - name: Install zig the way the setup error text describes
+        run: winget install --id zig.zig -e --source winget --accept-package-agreements --accept-source-agreements
 
       - name: Build the device binaries through the zig fallback
         run: cargo run --locked -p kobo-cli -- build --device
