@@ -310,9 +310,15 @@ impl Habits {
             }
             Page::Stats => {
                 let completed: usize = self.items.iter().map(|h| h.done.len()).sum();
+                let (due, done, skipped) = model::week_summary(&self.items, Self::day());
+                let week = if due == 0 {
+                    "This week: nothing was due.".to_owned()
+                } else {
+                    format!("This week: {done} of {due} due days completed, {skipped} skipped.")
+                };
                 s = s
                     .heading(format!("{completed} completions"))
-                    .text("Best streaks are measured across scheduled days.")
+                    .text(week)
                     .button("settings", "Settings");
             }
             Page::Settings => {
@@ -323,6 +329,9 @@ impl Habits {
                         "Works without network access.",
                         Glyph::Settings,
                     )])
+                    .text("A missed day breaks a streak.")
+                    .text("A skipped day keeps it.")
+                    .text("Both stay on the record.")
                     .text("Habits never connect, upload, or back up your completions.");
             }
         }
@@ -571,6 +580,68 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("settings"))
             .is_some());
+    }
+
+    #[test]
+    fn the_week_sums_due_done_and_skipped_days() {
+        let today = 20_000;
+        let mut habit = Habit::new("Read".into());
+        habit.done = vec![today - 2, today];
+        habit.skipped = vec![today - 1];
+        let mut archived = Habit::new("Old".into());
+        archived.archived = true;
+        archived.done = vec![today];
+        let (due, done, skipped) = model::week_summary(&[habit, archived], today);
+        assert_eq!((due, done, skipped), (7, 2, 1));
+    }
+
+    #[test]
+    fn stats_sums_the_week_and_states_the_rules_at_every_scale() {
+        let today = Habits::day();
+        let mut habit = Habit::new("Read".into());
+        habit.done = vec![today];
+        let app = Habits {
+            items: vec![habit],
+            loaded: true,
+            page: Page::Stats,
+            ..Habits::default()
+        };
+        let screen = app.screen().with_own_back(app.owns_back());
+        let says = |screen: &Screen, needle: &str| {
+            screen.nodes.iter().any(|node| match node {
+                kobo_sdk::Node::Heading { text, .. } | kobo_sdk::Node::Text { text, .. } => {
+                    text.contains(needle)
+                }
+                _ => false,
+            })
+        };
+        assert!(says(&screen, "This week: 1 of 7 due days completed, 0 skipped."));
+        let settings = Habits {
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        }
+        .screen();
+        assert!(says(&settings, "A missed day breaks a streak."));
+        assert!(says(&settings, "A skipped day keeps it."));
+        let screens = [screen, settings.with_own_back(true)];
+        for screen in &screens {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let chrome = kobo_ui::Chrome::measuring(true);
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(diagnostics.issues.is_empty(), "{metrics:?}: {:?}", diagnostics.issues);
+            }
+        }
+        }
     }
 
     #[test]

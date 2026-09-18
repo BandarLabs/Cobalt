@@ -98,6 +98,27 @@ impl Habit {
     }
 }
 
+/// The last seven days across the active habits: due days, how many of
+/// them were completed, and how many were skipped. Today counts.
+pub fn week_summary(habits: &[Habit], today: u32) -> (u32, u32, u32) {
+    let mut due = 0;
+    let mut done = 0;
+    let mut skipped = 0;
+    for habit in habits.iter().filter(|habit| !habit.archived) {
+        for day in today.saturating_sub(6)..=today {
+            if habit.due(day) {
+                due += 1;
+                if has_day(&habit.done, day) {
+                    done += 1;
+                } else if has_day(&habit.skipped, day) {
+                    skipped += 1;
+                }
+            }
+        }
+    }
+    (due, done, skipped)
+}
+
 pub fn canonical_name(name: &str) -> Option<String> {
     (!name.trim().is_empty() && name == name.trim() && name.chars().count() <= MAX_HABIT_NAME_CHARS)
         .then(|| name.to_owned())
