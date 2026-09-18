@@ -2349,7 +2349,22 @@ fn layout_json_with_chrome(
 ) -> String {
     let metrics = profile_metrics().oriented(orientation);
     let layout = screen.layout_with(&metrics, chrome);
-    let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
+    // The content area and declared page-turn zones ride along so a driver
+    // can page a catalogue the way a reader's thumb would -- a tap on the
+    // empty right edge -- instead of needing to know the application's own
+    // action names, which differ from app to app.
+    let content = physical_rect(orientation, layout.content);
+    let page_turns = match layout.page_turns.declared() {
+        Some(turns) => format!(
+            "{{\"previous\":{},\"next\":{}}}",
+            turns.previous.0, turns.next.0
+        ),
+        None => "null".to_owned(),
+    };
+    let mut json = format!(
+        "{{\"paints\":{paints},\"content\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"pageTurns\":{page_turns},\"nodes\":[",
+        content.x, content.y, content.width, content.height
+    );
     for (index, node) in layout.nodes.iter().enumerate() {
         if index > 0 {
             json.push(',');
