@@ -2,7 +2,9 @@ name: Windows
 
 on:
   push:
-    branches: [windows-cli]
+    branches: [beta, windows-cli]
+  pull_request:
+    branches: [beta]
   workflow_dispatch:
 
 permissions:
