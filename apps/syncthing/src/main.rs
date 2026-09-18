@@ -167,8 +167,34 @@ impl Sync {
             "Disabled"
         };
         let facts = self.status_facts();
-        let mut screen = ScreenBuilder::new("syncthing")
-            .top_bar("Sync")
+        // The banner leads the screen: appended last it is the first node the
+        // stack drops when a larger text size runs out of panel, which hid
+        // "Sync is off." at exactly the sizes where the warning matters.
+        let banner = if !self.config.enabled {
+            Some((BannerLevel::Info, "Sync is off."))
+        } else if self.first_sync_banner {
+            Some((
+                BannerLevel::Info,
+                "First sync complete. Files now import after every window.",
+            ))
+        } else if self.status.conflicts.unwrap_or(0) > 0 {
+            Some((
+                BannerLevel::Attention,
+                "Some files could not sync. They retry on the next window.",
+            ))
+        } else if self.status_seen && self.status.last_success == 0 && self.config.enabled {
+            Some((
+                BannerLevel::Info,
+                "Waiting for the first sync. Keep the reader on Wi-Fi.",
+            ))
+        } else {
+            None
+        };
+        let mut screen = ScreenBuilder::new("syncthing").top_bar("Sync");
+        if let Some((level, text)) = banner {
+            screen = screen.banner(level, text);
+        }
+        let mut screen = screen
             .section_with_value("Service", state)
             .rows([
                 (
@@ -184,10 +210,13 @@ impl Sync {
                 (
                     "cadence",
                     self.config.cadence.label().to_owned(),
-                    format!(
-                        "Up to {} radio minutes per day.",
-                        self.config.cadence.radio_minutes()
-                    ),
+                    match self.config.cadence.seconds() {
+                        Some(_) => format!(
+                            "Up to {} radio minutes per day.",
+                            self.config.cadence.radio_minutes()
+                        ),
+                        None => "Sync runs only when you start it.".to_owned(),
+                    },
                     Glyph::Clock,
                 ),
                 // The panel holds four rows beside the facts. Before the first
@@ -220,24 +249,6 @@ impl Sync {
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             );
-        if !self.config.enabled {
-            screen = screen.banner(BannerLevel::Info, "Sync is off.");
-        } else if self.first_sync_banner {
-            screen = screen.banner(
-                BannerLevel::Info,
-                "First sync complete. Files now import after every window.",
-            );
-        } else if self.status.conflicts.unwrap_or(0) > 0 {
-            screen = screen.banner(
-                BannerLevel::Attention,
-                "Some files could not sync. They retry on the next window.",
-            );
-        } else if self.status_seen && self.status.last_success == 0 && self.config.enabled {
-            screen = screen.banner(
-                BannerLevel::Info,
-                "Waiting for the first sync. Keep the reader on Wi-Fi.",
-            );
-        }
         screen.build()
     }
 

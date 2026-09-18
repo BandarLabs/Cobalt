@@ -67,9 +67,8 @@ impl Post {
         let mut screen = ScreenBuilder::new("post-setup")
             .top_bar("Post")
             .heading("Connect a Hermes gateway")
-            .text("Post reads letters from a Hermes gateway you run. On your computer, finish the gateway setup, then install its token with:")
-            .text("kobo post login --gateway <address> --token-file <path> --device <reader>")
-            .text("Enter the same gateway address here.");
+            .text("Post reads letters from a Hermes gateway you run. Install its token with:")
+            .text("kobo post login --gateway <address> --token-file <path> --device <reader>");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }

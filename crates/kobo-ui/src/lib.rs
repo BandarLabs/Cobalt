@@ -8187,6 +8187,11 @@ fn layout_node(
                     value_size.line_height(),
                     lines.len() as i32 * value_size.line_height(),
                 );
+                // What every node does when it runs out of panel: the facts
+                // that cannot fit whole are dropped, never drawn half-cut.
+                if cursor.saturating_add(height) > bottom {
+                    break;
+                }
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -22822,6 +22827,44 @@ mod prose_tests {
             value.rect.width * 2 > layout.content.width,
             "the label column took more than half the panel from its value"
         );
+    }
+
+    #[test]
+    fn facts_that_run_out_of_panel_drop_whole_entries_instead_of_clipping() {
+        let entries = (0..20)
+            .map(|index| {
+                (
+                    format!("Label {index}"),
+                    format!("A value with enough words to wrap onto a second line {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let screen = Screen::new(
+            1,
+            vec![Node::Facts {
+                id: NodeId(1),
+                entries: entries.clone(),
+            }],
+        );
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(
+            !issues.iter().any(|issue| matches!(
+                issue.kind,
+                LayoutIssueKind::Clipped | LayoutIssueKind::TextOverflow
+            )),
+            "a facts block taller than the panel clipped: {issues:?}"
+        );
+        let shown = screen
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::FactValue)
+            .count();
+        assert!(
+            shown < entries.len(),
+            "every fact was laid out on a panel that cannot hold them"
+        );
+        assert!(shown > 0, "no facts were laid out at all");
     }
 
     #[test]
