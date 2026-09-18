@@ -360,7 +360,11 @@ impl Habits {
                                 } else {
                                     String::new()
                                 },
-                                Glyph::Check,
+                                if *schedule == h.schedule {
+                                    Glyph::Check
+                                } else {
+                                    Glyph::Circle
+                                },
                             )
                         }))
                         .buttons([archive]);
