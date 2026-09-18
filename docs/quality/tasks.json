@@ -2809,16 +2809,20 @@
   "pr": 3,
   "group": "Parser",
   "task": "Run representative story fixtures",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Real MIT-licensed Zork I (historicalsource/zork1 @97b7b3d, SHA-256 37084966477dff679282de42974b2077156b1bd68fad92a65d4ea94d8eb64d79) vendored as apps/parser/fixtures/zork1.z3 (tests only, not bundled) with licenses/LICENSE-Zork1.txt, licenses/SOURCE-Parser-Zork1.md and a THIRD-PARTY.md test-fixtures row. Tests prove header facts (v3 R119 serial 880429 checksum bf44, 86,838 bytes), opening prints West of House, look/inventory/open mailbox/take leaflet flow works, a save round trip restores, and real output paginates cleanly at all 9 text scales (commit 4ed22645, CI green). Physical reader UNVERIFIED."
+  ]
  },
  {
   "id": "PARSER-06",
   "pr": 3,
   "group": "Parser",
   "task": "Paginate long transcript and restore saved play",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Transcript pagination is measured against the real screen (ed8f79fe), new output lands on the last page with content rather than a stranded prompt page (c3a2dc20), and a restored save writes a [Restored.] marker and issues a look so the current room is on screen (e671f05b). PR-B verified end to end with real Zork I on c3a2dc20: shelf-listed, opened, LOOK executed, pixel-inspected captures clean (PARSERCLI-01..04 evidence, docs/quality/evidence/parser-companion-real-story). Regression tests: stranded-prompt landing, measured pagination preserving all text at every text scale, real Zork I pagination. Physical reader UNVERIFIED."
+  ]
  },
  {
   "id": "POST-01",
