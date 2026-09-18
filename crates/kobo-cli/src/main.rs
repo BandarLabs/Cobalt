@@ -615,13 +615,14 @@ fn run(arguments: &[String]) -> Result<(), String> {
     }
 }
 
-fn parser_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo parser inspect FILE\n\
+const PARSER_USAGE: &str = "usage: kobo parser inspect FILE\n\
                          \x20      kobo parser push FILE (--sim | --device IP) [--replace]\n\
                          inspect reports format, title and Parser compatibility.\n\
                          push validates with the interpreter's shared inspector first.";
+
+fn parser_command(arguments: &[String]) -> Result<(), String> {
     if wants_help(arguments) {
-        return print_command_help(USAGE);
+        return print_command_help(PARSER_USAGE);
     }
     if let [verb, file] = arguments {
         if matches!(verb.as_str(), "inspect" | "check") {
@@ -644,9 +645,9 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
         }
     }
     if arguments.first().map(String::as_str) != Some("push") {
-        return Err(USAGE.to_owned());
+        return Err(PARSER_USAGE.to_owned());
     }
-    let file = arguments.get(1).ok_or_else(|| USAGE.to_owned())?;
+    let file = arguments.get(1).ok_or_else(|| PARSER_USAGE.to_owned())?;
     let mut target: Option<String> = None;
     let mut replace = false;
     let mut index = 2;
@@ -654,18 +655,20 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
         match arguments[index].as_str() {
             "--sim" => {
                 if target.is_some() {
-                    return Err(USAGE.to_owned());
+                    return Err(PARSER_USAGE.to_owned());
                 }
                 target = Some(String::new());
                 index += 1;
             }
             flag if is_device_flag(flag) => {
-                let host = arguments.get(index + 1).ok_or_else(|| USAGE.to_owned())?;
+                let host = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| PARSER_USAGE.to_owned())?;
                 if !valid_device_host(host) {
                     return Err("device host contains unsupported characters".to_owned());
                 }
                 if target.replace(host.clone()).is_some() {
-                    return Err(USAGE.to_owned());
+                    return Err(PARSER_USAGE.to_owned());
                 }
                 index += 2;
             }
@@ -673,7 +676,7 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
                 replace = true;
                 index += 1;
             }
-            _ => return Err(USAGE.to_owned()),
+            _ => return Err(PARSER_USAGE.to_owned()),
         }
     }
     let path = Path::new(file);
@@ -681,7 +684,7 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let info = kobo_zstory::StoryInfo::inspect(&bytes, file).map_err(|error| error.to_string())?;
     let name = info.shelf_name(file);
-    match target.ok_or_else(|| USAGE.to_owned())? {
+    match target.ok_or_else(|| PARSER_USAGE.to_owned())? {
         host if host.is_empty() => parser_publish_local(&name, &bytes, replace)?,
         host => parser_publish_remote(&host, &name, &bytes, replace)?,
     }
@@ -6967,8 +6970,9 @@ fn print_help() {
            needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
            nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
                                              Prepare and atomically transfer a photo puzzle\n\
-           parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
-           parser push FILE --device IP  Transfer a checked story to Parser\n\
+           parser inspect FILE                 Show story identity and compatibility\n\
+           parser push FILE (--sim | --device IP) [--replace]\n\
+                                             Validate and publish a story to Parser\n\
            stream init [--device IP]     Pair Paperterm with a named reader on this network\n\
            stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
@@ -7131,6 +7135,8 @@ mod tests {
     #[test]
     fn companion_help_exits_successfully() {
         super::parser_command(&["--help".into()]).expect("parser help");
+        assert!(super::PARSER_USAGE.contains("parser inspect FILE"));
+        assert!(super::PARSER_USAGE.contains("--sim | --device IP"));
         super::stream_command(&["--help".into()]).expect("stream help");
         super::flashcards::command(&["--help".into()]).expect("flashcards help");
         super::deck::command(&["--help".into()]).expect("deck help");
