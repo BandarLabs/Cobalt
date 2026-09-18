@@ -194,7 +194,7 @@ impl Sync {
         if let Some((level, text)) = banner {
             screen = screen.banner(level, text);
         }
-        let mut screen = screen
+        let screen = screen
             .section_with_value("Service", state)
             .rows([
                 (
