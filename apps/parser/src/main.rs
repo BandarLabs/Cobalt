@@ -826,6 +826,76 @@ mod tests {
         assert_ne!(text[start..end].trim(), ">");
     }
 
+    fn zork1_fixture() -> Vec<u8> {
+        include_bytes!("../fixtures/zork1.z3").to_vec()
+    }
+
+    #[test]
+    fn zork1_fixture_facts_match_provenance() {
+        let info = StoryInfo::inspect(&zork1_fixture(), "zork1.z3").expect("fixture inspects");
+        assert_eq!(info.release, 119);
+        assert_eq!(&info.serial, b"880429");
+        assert_eq!(info.checksum, 0xbf44);
+        assert_eq!(info.bytes, 86_838);
+    }
+
+    #[test]
+    fn zork1_opens_answers_and_survives_a_save_round_trip() {
+        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let opening = machine.take_output();
+        assert!(opening.contains("West of House"), "{opening}");
+        machine.input("look").expect("look accepted");
+        let look = machine.take_output();
+        assert!(look.contains("West of House"), "{look}");
+        machine.input("inventory").expect("inventory accepted");
+        let inventory = machine.take_output();
+        assert!(inventory.contains("empty-handed"), "{inventory}");
+        machine.input("open mailbox").expect("open accepted");
+        machine.take_output();
+        machine.input("take leaflet").expect("take accepted");
+        machine.take_output();
+        machine.input("inventory").expect("inventory accepted");
+        let inventory = machine.take_output();
+        assert!(inventory.contains("leaflet"), "{inventory}");
+        let save = machine.save_quetzal();
+        let mut restored = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture reopens");
+        restored.restore_quetzal(&save).expect("save restores");
+        restored.input("look").expect("restored look accepted");
+        let look = restored.take_output();
+        assert!(look.contains("West of House"), "{look}");
+    }
+
+    #[test]
+    fn zork1_opening_paginates_cleanly_and_lands_on_the_story() {
+        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        machine.input("look").expect("look accepted");
+        let mut parser = Parser {
+            transcript: machine.take_output(),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() > 1, "real output spans pages");
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            parser.repaginate_for_metrics(metrics);
+            for &(start, end) in &parser.pages {
+                let page_text = &parser.transcript[start..end];
+                assert!(
+                    parser.play_page_fits(page_text, metrics),
+                    "{scale:?} overflow: {page_text:?}"
+                );
+            }
+        }
+        let landing = parser.last_content_page();
+        let (start, end) = parser.pages[landing];
+        assert_ne!(parser.transcript[start..end].trim(), ">");
+    }
+
     #[test]
     fn slot_rows_name_what_each_slot_holds() {
         assert_eq!(
