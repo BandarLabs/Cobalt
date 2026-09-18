@@ -21,6 +21,9 @@ const SHELF: &str = "shelf";
 const LIBRARY_BACK: &str = "library-back";
 const LIBRARY_NEXT: &str = "library-next";
 
+/// The three accounts one audiobook spends, checked before the first spend.
+const SECRETS: &[&str] = &["exa", "openai", "elevenlabs"];
+
 /// Where the title of each finished audiobook is kept.
 ///
 /// The shelf stores bytes under a file name, and a file name is a slug: it
@@ -47,6 +50,9 @@ enum Stage {
     #[default]
     Library,
     Compose,
+    /// Account setup is checked before the first paid request, so a
+    /// missing key is reported before anything is spent.
+    Setup,
     Research,
     Write,
     Narrate,
@@ -160,6 +166,7 @@ impl Audiobook {
             }
             _ => {
                 let (label, percent) = self.progress();
+                let label = label.as_str();
                 let mut screen = ScreenBuilder::new("audiobook-progress")
                     .top_bar("Creating audiobook")
                     .heading(if self.title.is_empty() {
@@ -344,18 +351,27 @@ impl Audiobook {
         self.stage = Stage::Player;
     }
 
-    fn progress(&self) -> (&'static str, u8) {
+    fn progress(&self) -> (String, u8) {
         match self.stage {
-            Stage::Research => ("Researching the topic", 10),
-            Stage::Write => ("Writing the spoken script", 30),
+            Stage::Setup => ("Checking account setup".to_owned(), 5),
+            Stage::Research => ("Researching the topic".to_owned(), 10),
+            Stage::Write => ("Writing the spoken script".to_owned(), 30),
             Stage::Narrate => {
                 let total = self.parts.len().max(1);
                 let percent = 35 + (self.next_part.saturating_mul(50) / total).min(50);
-                ("Narrating the script", u8::try_from(percent).unwrap_or(85))
+                (
+                    format!(
+                        "Narrating part {} of {total}",
+                        self.next_part.min(total - 1) + 1
+                    ),
+                    u8::try_from(percent).unwrap_or(85),
+                )
             }
-            Stage::Package => ("Packaging Kobo audiobook", 88),
-            Stage::Save => ("Saving audiobook", 94),
-            Stage::Library | Stage::Compose | Stage::Player | Stage::Failed => ("Preparing", 0),
+            Stage::Package => ("Packaging Kobo audiobook".to_owned(), 88),
+            Stage::Save => ("Saving audiobook".to_owned(), 94),
+            Stage::Library | Stage::Compose | Stage::Player | Stage::Failed => {
+                ("Preparing".to_owned(), 0)
+            }
         }
     }
 
@@ -366,14 +382,68 @@ impl Audiobook {
             self.show(context);
             return;
         }
-        self.stage = Stage::Research;
+        self.stage = Stage::Setup;
         self.hint = None;
         self.trouble = None;
-        // One clock for the whole creation rather than one per stage. What
-        // somebody waiting wants to know is how long they have been waiting,
-        // not how long this particular provider has.
+        // Every account this book will spend is checked before the first
+        // request goes out. Research, writing and narration each have their
+        // own key, and finding out the narration key is missing after the
+        // research was paid for is the failure this stage exists to prevent.
+        context.secrets().check(SECRETS);
+        self.show(context);
+    }
+
+    /// The answer to the preflight: start spending, or say exactly which
+    /// accounts are missing while nothing has been spent yet.
+    fn checked_secrets(&mut self, context: &mut Context, present: &[String]) {
+        if self.stage != Stage::Setup {
+            return;
+        }
+        let missing = SECRETS
+            .iter()
+            .filter(|name| !present.iter().any(|held| held == *name))
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            self.stage = Stage::Research;
+            // One clock for the whole creation rather than one per stage. What
+            // somebody waiting wants to know is how long they have been waiting,
+            // not how long this particular provider has.
+            self.clock.start(context);
+            self.task = context.spawn(pipeline::research(self.topic.text().trim()));
+            if self.task.is_none() {
+                self.fail("The runtime is already busy.");
+            }
+        } else {
+            let services = missing
+                .iter()
+                .map(|name| service_name(name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let names = missing
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.fail_as(
+                StandardState::PermissionDenied,
+                format!(
+                    "Account details for {services} are missing (secrets: {names}). Add them, then try again."
+                ),
+            );
+        }
+        self.show(context);
+    }
+
+    /// The check itself could not run, so the flow continues and lets each
+    /// stage report its own missing key the way it always has. An old
+    /// runtime answers this way; it is a degraded path, not a failure.
+    fn skip_preflight(&mut self, context: &mut Context) {
+        if self.stage != Stage::Setup {
+            return;
+        }
+        self.stage = Stage::Research;
         self.clock.start(context);
-        self.task = context.spawn(pipeline::research(topic));
+        self.task = context.spawn(pipeline::research(self.topic.text().trim()));
         if self.task.is_none() {
             self.fail("The runtime is already busy.");
         }
@@ -636,7 +706,20 @@ impl KoboApp for Audiobook {
                 Stage::Narrate => self.received_voice(context, bytes),
                 _ => self.fail("A provider answered at the wrong stage."),
             },
-            TaskOutcome::Failed(error) => self.fail_with(Failure::of(error)),
+            TaskOutcome::Failed(error) => {
+                if error == kobo_sdk::TaskError::NoCredential {
+                    let service = service_name(self.secret_wanted());
+                    self.fail_as(
+                        StandardState::PermissionDenied,
+                        format!(
+                            "Account details for {service} are missing (secret: {}). Add them, then try again.",
+                            self.secret_wanted()
+                        ),
+                    );
+                } else {
+                    self.fail_with(Failure::of(error));
+                }
+            }
             TaskOutcome::Cancelled => self.reset(),
         }
         if !matches!(
@@ -709,6 +792,14 @@ impl KoboApp for Audiobook {
         request: DeviceRequest,
         result: DeviceResult,
     ) {
+        if let kobo_sdk::DeviceRequest::CheckSecrets { .. } = request {
+            match result {
+                DeviceResult::Secrets { present } => self.checked_secrets(context, &present),
+                DeviceResult::Denied(_) | DeviceResult::Failed(_) => self.skip_preflight(context),
+                _ => {}
+            }
+            return;
+        }
         if self
             .player
             .as_mut()
@@ -716,6 +807,15 @@ impl KoboApp for Audiobook {
         {
             self.show(context);
         }
+    }
+}
+
+/// The service one secret pays for, in the words the compose screen used.
+fn service_name(secret: &str) -> &'static str {
+    match secret {
+        "exa" => "research",
+        "elevenlabs" => "narration",
+        _ => "writing",
     }
 }
 
@@ -858,7 +958,7 @@ mod tests {
     #[test]
     fn compose_progress_complete_and_failure_screens_fit_a_clara() {
         let mut app = Audiobook::default();
-        for stage in [Stage::Compose, Stage::Research, Stage::Failed] {
+        for stage in [Stage::Compose, Stage::Setup, Stage::Research, Stage::Failed] {
             app.stage = stage;
             app.title = "A researched history of the night sky".to_owned();
             app.summary = "An original, source-grounded tour of how people learned to understand the Moon, planets, and stars.".to_owned();
@@ -1005,6 +1105,62 @@ mod tests {
         for index in 0..MAX_ROWS {
             assert!(seen.insert(action_id(&play_action(index))), "{index}");
         }
+    }
+
+    /// A topic submit asks the runtime which accounts are installed rather
+    /// than spending first and finding out later.
+    #[test]
+    fn a_submit_checks_every_account_before_spending() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Compose,
+            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            ..Audiobook::default()
+        };
+        app.begin(&mut context);
+        assert_eq!(app.stage, Stage::Setup);
+        assert!(app.task.is_none(), "nothing is spent during the check");
+        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+    }
+
+    /// The preflight answer names every missing account at once, while the
+    /// reader has spent nothing.
+    #[test]
+    fn a_missing_account_is_named_before_anything_is_spent() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Setup,
+            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            ..Audiobook::default()
+        };
+        app.checked_secrets(&mut context, &["openai".to_owned()]);
+        assert_eq!(app.stage, Stage::Failed);
+        let (state, advice) = app.trouble.clone().expect("a failure was recorded");
+        assert_eq!(state, StandardState::PermissionDenied);
+        assert!(advice.contains("research"), "{advice}");
+        assert!(advice.contains("narration"), "{advice}");
+        assert!(!advice.contains("writing"), "{advice}");
+        assert!(advice.contains("exa"), "{advice}");
+        assert!(advice.contains("elevenlabs"), "{advice}");
+        assert!(app.task.is_none(), "nothing was spent");
+        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+    }
+
+    /// A runtime that cannot answer the check leaves the flow to find a
+    /// missing key at the stage that spends it, the way it always has.
+    #[test]
+    fn an_unanswerable_preflight_defers_to_the_stages() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Setup,
+            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            ..Audiobook::default()
+        };
+        app.skip_preflight(&mut context);
+        assert_eq!(app.stage, Stage::Research);
     }
 
     /// Missing account setup should use the shared customer-facing remedy.
