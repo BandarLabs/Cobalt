@@ -53,6 +53,7 @@ class Providers:
         self.calls = {'exa': [], 'openai': [], 'elevenlabs': []}
         self.tts_fail_at = None      # 1-based narration call to fail once
         self.tts_delay = 0.0         # seconds to hold the next TTS answer
+        self.exa_delay = 0.0         # seconds to hold the next research answer
         self._failed = set()
 
     def total(self, name):
@@ -77,7 +78,13 @@ def make_handler(providers, name):
                 'bytes': length,
             })
             if name == 'exa':
-                body = ('data: {"id":"run_1","status":"completed","output":{"structured":'
+                if providers.exa_delay:
+                    time.sleep(providers.exa_delay)
+                    providers.exa_delay = 0.0
+                body = ('event: agent_run.created\n'
+                        'data: {"id":"run_1","status":"queued"}\n\n'
+                        'event: agent_run.completed\n'
+                        'data: {"id":"run_1","status":"completed","output":{"structured":'
                         + json.dumps({'research': 'A brief on the topic with grounding.',
                                       'sources': [{'title': 'A source',
                                                    'url': 'https://example.org'}]})
@@ -186,7 +193,9 @@ def main():
 
         process = None
         address = None
-        with (out / 'simulator.log').open('w') as log:
+        seen_addresses = set()
+        (out / 'simulator.log').write_text('')
+        if True:
             def stop():
                 nonlocal process
                 if process is not None and process.poll() is None:
@@ -196,19 +205,21 @@ def main():
 
             def start():
                 nonlocal process, address
-                offset = (out / 'simulator.log').stat().st_size
+                sink = open(out / 'simulator.log', 'a')
                 process = subprocess.Popen([str(cli), 'dev', '127.0.0.1:0'],
                                            cwd=ROOT / 'examples/audiobook', env=env,
-                                           stdout=log, stderr=log, start_new_session=True)
+                                           stdout=sink, stderr=sink, start_new_session=True)
                 deadline = time.monotonic() + 300
                 while time.monotonic() < deadline:
                     if process.poll() is not None:
                         raise RuntimeError('Simulator exited; see simulator.log')
-                    match = re.search(r'Kobo app simulator: http://(127\.0\.0\.1:\d+)',
-                                      (out / 'simulator.log').read_text()[offset:])
-                    if match:
-                        address = match.group(1)
-                        return
+                    for match in re.finditer(r'Kobo app simulator: http://(127\.0\.0\.1:\d+)',
+                                             (out / 'simulator.log').read_text()):
+                        if match.group(1) not in seen_addresses:
+                            address = match.group(1)
+                            seen_addresses.add(address)
+                            sink.close()
+                            return
                     time.sleep(.1)
                 raise TimeoutError('Simulator startup timed out')
 
@@ -258,12 +269,14 @@ def main():
                 start()
                 drive('wait-for The Quiet Shelf')
                 drive('tap Create', 'wait-for What should it be about?')
+                providers.exa_delay = 5.0
                 drive('tap Type any topic', 'type the moon', 'tap Create',
                       'wait-for Researching the topic')
                 capture('audiobook-researching')
-                drive('wait-for Narrating part 1 of 3', 'wait-for Narrating part 2 of 3')
+                providers.tts_delay = 5.0
+                drive('wait-for Narrating part 1 of 3')
                 capture('audiobook-narrating')
-                drive('wait-for The Moon Tonight', 'wait 2500')
+                drive('wait-for Now playing', 'wait 2000')
                 capture('audiobook-player')
                 assert providers.total('exa') == 1, providers.calls['exa']
                 assert providers.total('openai') == 1, providers.calls['openai']
@@ -284,14 +297,12 @@ def main():
                 # Phase C: a narration call fails; Resume spends only that call.
                 drive('tap back', 'wait-for The Moon Tonight')
                 drive('tap Create', 'wait-for What should it be about?')
-                drive('tap Type any topic', 'type the tides', 'tap Create',
-                      'wait-for Researching the topic')
                 providers.tts_fail_at = providers.total('elevenlabs') + 2
-                drive('wait-for Could not create audiobook')
+                drive('tap Type any topic', 'type the tides', 'tap Create',
+                      'wait-for Could not create audiobook')
                 capture('audiobook-failed-resume')
                 before = providers.total('elevenlabs')
-                drive('tap Resume', 'wait-for Narrating part 2 of 3',
-                      'wait-for The Moon Tonight', 'wait 2000')
+                drive('tap Resume', 'wait-for Now playing', 'wait 1500')
                 assert providers.total('elevenlabs') == before + 2, \
                     f'resume re-narrated too much: {before} -> {providers.total("elevenlabs")}'
                 result['checks'].append(dict(
@@ -303,22 +314,20 @@ def main():
 
                 # Phase D: cancel mid-narration; the checkpoint survives a
                 # simulator restart and resumes the script from the top.
-                drive('tap back', 'wait-for Your audiobooks')
+                drive('tap back', 'wait-for Audiobooks')
                 drive('tap Create', 'wait-for What should it be about?')
+                providers.tts_delay = 6.0
                 drive('tap Type any topic', 'type the stars', 'tap Create',
-                      'wait-for Researching the topic', 'wait-for Narrating part 1 of 3')
-                providers.tts_delay = 8.0
-                drive('wait 2500')
+                      'wait-for Narrating part 1 of 3')
                 mid = providers.total('elevenlabs')
-                drive('tap Cancel', 'wait-for Your audiobooks', 'wait 1000')
+                drive('tap Cancel', 'wait-for Audiobooks', 'wait 1500')
                 stop()
                 start()
                 drive('wait-for The Quiet Shelf')
                 drive('tap Create', 'wait-for What should it be about?')
                 capture('audiobook-compose-resume')
-                drive('tap Resume', 'wait-for Narrating part 1 of 3')
                 restart_base = providers.total('elevenlabs')
-                drive('wait-for The Moon Tonight', 'wait 2000')
+                drive('tap Resume', 'wait-for Now playing', 'wait 1500')
                 assert providers.total('elevenlabs') == restart_base + 3, \
                     'a restarted resume re-narrates the whole script, honestly'
                 result['checks'].append(dict(
@@ -329,8 +338,8 @@ def main():
                     status='passed'))
 
                 # Phase E: library and player are one path both ways.
-                drive('tap back', 'wait-for Your audiobooks')
-                drive('tap The Moon Tonight', 'wait-for The Moon Tonight', 'wait 1500')
+                drive('tap back', 'wait-for Audiobooks')
+                drive('tap The Moon Tonight', 'wait-for Now playing', 'wait 1500')
                 capture('audiobook-library-player')
                 drive('tap back', 'wait-for The Moon Tonight')
                 shelf = private / 'cobalt-sim-data/audiobook'

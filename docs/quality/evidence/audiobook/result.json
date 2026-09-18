@@ -1,0 +1,37 @@
+{
+  "provenance": {
+    "source_revision": "b2875cce29983345dc36bbc7c0ac59daa4f2a03d",
+    "tracked_changes": true,
+    "cli_sha256": "9fe23f615da89b7c299f25c1b9ead0e16d1f9755ce76089843ece7168ec780d4",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "checks": [
+    {
+      "name": "sample and preflight without accounts",
+      "detail": "free sample saved and played with no secrets installed; a create attempt named research, writing and narration as missing and no fixture received any request",
+      "status": "passed"
+    },
+    {
+      "name": "full creation over three fixture providers",
+      "detail": "preflight passed, research (1 Exa SSE call), script (1 OpenAI responses call) and narration (3 ElevenLabs calls, English voice) ran in order with the right credentials; the packaged book saved to the shelf and opened in the player",
+      "status": "passed"
+    },
+    {
+      "name": "in-session resume spends only the failed part",
+      "detail": "part 2 of 3 failed once at the fixture; the failure screen led with Resume and one tap re-asked only part 2 (two further calls: the retry and part 3), then packaged and played",
+      "status": "passed"
+    },
+    {
+      "name": "cancel and resume across a restart",
+      "detail": "cancel mid-narration returned to the shelf; after a simulator restart the composer still offered Resume for the interrupted book, and resuming re-narrated the kept script from part 1 (3 calls)",
+      "status": "passed"
+    },
+    {
+      "name": "library and player round trip",
+      "detail": "a saved book opens in the same player a fresh creation lands in and back returns to the shelf; on disk: ['the-moon-tonight.mp3z', 'the-quiet-shelf.mp3z']",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}
