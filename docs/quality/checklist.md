@@ -701,14 +701,14 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **OWNERQA-08** Test rejected/missing token versus host/certificate errors.
 - [ ] **OWNERQA-09** Test expected empty app sample flow.
 - [ ] **OWNERQA-10** Test missing/incompatible helper recovery.
-- [ ] **OWNERQA-11** Prepare 6–8-person nontechnical usability protocol including assistive technology.
-- [ ] **OWNERQA-12** Measure completion, assistance, wrong-target attempts and error comprehension.
-- [ ] **OWNERQA-13** Record first-success timing separately from firmware reboot.
+- [x] **OWNERQA-11** Prepare 6–8-person nontechnical usability protocol including assistive technology.
+- [x] **OWNERQA-12** Measure completion, assistance, wrong-target attempts and error comprehension.
+- [x] **OWNERQA-13** Record first-success timing separately from firmware reboot.
 - [ ] **OWNERQA-14** Validate recovery without repeated file selection.
-- [ ] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
-- [ ] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
+- [x] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
+- [x] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
 - [ ] **OWNERQA-17** Run all automated simulator and integration gates.
-- [ ] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
-- [ ] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
+- [x] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
+- [x] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
 - [ ] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
 - [ ] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.
