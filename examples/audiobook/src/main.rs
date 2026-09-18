@@ -24,6 +24,15 @@ const LIBRARY_NEXT: &str = "library-next";
 /// The three accounts one audiobook spends, checked before the first spend.
 const SECRETS: &[&str] = &["exa", "openai", "elevenlabs"];
 const RESUME: &str = "resume";
+const SAMPLE: &str = "sample";
+/// The sample's place in the library once it is saved.
+const SAMPLE_NAME: &str = "the-quiet-shelf.mp3z";
+const SAMPLE_TITLE: &str = "The Quiet Shelf";
+/// The free sample: fifty-two seconds of original narration, made for this
+/// application and shipped inside it, so the player can be tried before any
+/// account exists. Encoded exactly as a narrated book is (MP3, 44.1 kHz,
+/// 128 kbps), because a sample that plays differently proves nothing.
+const SAMPLE_BYTES: &[u8] = include_bytes!("../assets/sample.mp3");
 
 /// Where the title of each finished audiobook is kept.
 ///
@@ -125,6 +134,9 @@ struct Audiobook {
     /// The interrupted creation the store last told us about, offered on the
     /// composer until a new book supersedes it or a save finishes it.
     checkpoint: Option<Checkpoint>,
+    /// The upload in flight is the free sample, not a creation: saving it
+    /// must not retire somebody's interrupted book.
+    saving_sample: bool,
 }
 
 impl Audiobook {
@@ -287,7 +299,9 @@ impl Audiobook {
                     "No audiobooks yet. One made here stays on the reader and plays offline.",
                 )
             };
-            return screen.button(NEW, "Create an audiobook").build();
+            return screen
+                .buttons([(NEW, "Create an audiobook"), (SAMPLE, "Play the sample")])
+                .build();
         }
         // The bottom of the panel is spent on page turns, so the way to the
         // composer is the one action the top bar allows.
@@ -398,6 +412,39 @@ impl Audiobook {
         self.title = book.title;
         self.archive_name = book.name;
         self.open_player(context);
+    }
+
+    /// The free sample, playable before any account exists.
+    ///
+    /// Once saved it is an ordinary book on the shelf and lists like one.
+    /// Before that, saving it is the whole errand: the same upload and the
+    /// same player a created book uses, because a sample that took a
+    /// shortcut would prove the shortcut, not the book.
+    fn play_sample(&mut self, context: &mut Context) {
+        SAMPLE_TITLE.clone_into(&mut self.title);
+        SAMPLE_NAME.clone_into(&mut self.archive_name);
+        let already_saved = self
+            .library
+            .as_ref()
+            .is_some_and(|books| books.iter().any(|book| book.name == SAMPLE_NAME));
+        if already_saved {
+            self.open_player(context);
+            return;
+        }
+        let bytes = match kobo_doc::zip::stored(&[("001.mp3".to_owned(), SAMPLE_BYTES.to_vec())]) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.fail(format!("Could not package the sample: {error}"));
+                return;
+            }
+        };
+        self.total = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        self.saved = 0;
+        self.saving_sample = true;
+        let mut upload = ShelfUpload::new(self.archive_name.clone(), bytes);
+        upload.start(context);
+        self.upload = Some(upload);
+        self.stage = Stage::Save;
     }
 
     /// The player, for an audiobook that has just been made and for one that
@@ -774,6 +821,11 @@ impl KoboApp for Audiobook {
             return;
         }
         if self.stage == Stage::Library {
+            if action == action_id(SAMPLE) {
+                self.play_sample(context);
+                self.show(context);
+                return;
+            }
             if action == action_id(NEW) {
                 self.stage = Stage::Compose;
                 self.show(context);
@@ -890,8 +942,13 @@ impl KoboApp for Audiobook {
                     self.parts.clear();
                     // Finished is the one end to an interruption: there is
                     // nothing left to resume once the book is on the shelf.
-                    self.checkpoint = None;
-                    context.store().forget(CHECKPOINT_KEY);
+                    // The sample is not a creation, so saving it retires
+                    // nothing.
+                    if !self.saving_sample {
+                        self.checkpoint = None;
+                        context.store().forget(CHECKPOINT_KEY);
+                    }
+                    self.saving_sample = false;
                     self.remember(context);
                     context.shelf().list();
                     self.open_player(context);
@@ -1158,7 +1215,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         archive_name, parse_index, play_action, read_checkpoint, size_on_disk, title_from_name,
-        write_checkpoint, Audiobook, Checkpoint, Saved, Stage,
+        write_checkpoint, Audiobook, Checkpoint, Saved, Stage, SAMPLE_NAME, SAMPLE_TITLE,
     };
     use crate::pipeline;
     use kobo_sdk::{action_id, Failure, StandardState, CLARA_BW_METRICS, MAX_ROWS};
@@ -1475,6 +1532,55 @@ mod tests {
         assert!(drawn.contains("Resume"), "{drawn}");
         assert!(drawn.contains("Start over"), "{drawn}");
         assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+    }
+
+    /// An empty shelf is the moment the sample is for: no accounts, no
+    /// network, just proof the player works.
+    #[test]
+    fn an_empty_library_offers_the_free_sample() {
+        let mut app = Audiobook {
+            library: Some(Vec::new()),
+            ..Audiobook::default()
+        };
+        let drawn = format!("{:?}", app.screen());
+        assert!(drawn.contains("Play the sample"), "{drawn}");
+        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        // A shelf with books on it does not need the offer; the sample is
+        // there once saved, listed like any other book.
+        app.titles = vec![(SAMPLE_NAME.to_owned(), SAMPLE_TITLE.to_owned())];
+        app.shelved(
+            &kobo_sdk::AppRunner::new(Audiobook::default()).context(),
+            &[(SAMPLE_NAME.to_owned(), 900_000)],
+        );
+        let drawn = format!("{:?}", app.screen());
+        assert!(drawn.contains(SAMPLE_TITLE), "{drawn}");
+    }
+
+    /// The sample plays like any book once it is on the shelf, and saves
+    /// itself through the same upload when it is not.
+    #[test]
+    fn the_sample_saves_then_plays_like_any_book() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            library: Some(Vec::new()),
+            ..Audiobook::default()
+        };
+        app.play_sample(&mut context);
+        assert_eq!(app.stage, Stage::Save);
+        assert!(app.upload.is_some(), "the sample is being saved first");
+        assert!(app.saving_sample);
+        let mut saved = Audiobook {
+            library: Some(vec![Saved {
+                name: SAMPLE_NAME.to_owned(),
+                title: SAMPLE_TITLE.to_owned(),
+                bytes: 900_000,
+            }]),
+            ..Audiobook::default()
+        };
+        saved.play_sample(&mut context);
+        assert_eq!(saved.stage, Stage::Player);
+        assert!(saved.upload.is_none(), "no second save for a saved sample");
     }
 
     /// Missing account setup should use the shared customer-facing remedy.
