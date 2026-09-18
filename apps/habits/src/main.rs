@@ -210,11 +210,13 @@ impl Habits {
                     .filter(|(_, h)| !h.archived && h.due(day))
                     .collect();
                 if due.is_empty() {
-                    s = s.splash(
-                        Some(Glyph::Check),
-                        "Nothing due",
-                        "Add a habit, or return when one is due.",
-                    );
+                    s = s
+                        .splash(
+                            Some(Glyph::Check),
+                            "Nothing due",
+                            "Add a habit, or return when one is due.",
+                        )
+                        .button("add", "Add a habit");
                 } else {
                     let (start, end, page, pages) = Self::page_bounds(self.today_page, due.len());
                     let visible = &due[start..end];
@@ -569,6 +571,24 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("settings"))
             .is_some());
+    }
+
+    #[test]
+    fn an_empty_today_offers_add_prominently() {
+        use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+        let app = Habits {
+            loaded: true,
+            ..Habits::default()
+        };
+        let screen = app.screen().with_own_back(app.owns_back());
+        let laid = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(laid.rect_of_action(action_id("add")).is_some());
+        assert!(screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default()).issues.is_empty());
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.action(action_id("add"));
+        assert!(runner.app().entry.is_open());
     }
 
     #[test]
