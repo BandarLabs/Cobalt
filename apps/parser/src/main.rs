@@ -4,8 +4,9 @@ mod zvm;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, ParagraphPresentation, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, TileShape,
+    action_id, ActionId, Chrome, Context, DisplayMetrics, Glyph, KoboApp, LayoutIssueKind,
+    ParagraphPresentation, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
+    StoreResult, TileShape,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -13,8 +14,6 @@ use zvm::{Machine, RunState, StoryInfo};
 
 const STORY_PREFIX: &str = "story-";
 const SAVE_PREFIX: &str = "save-";
-const TRANSCRIPT_PAGE_BYTES: usize = 2_400;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Library,
@@ -37,6 +36,9 @@ struct Parser {
     saving: Option<ShelfUpload>,
     pending_restore: Option<ShelfDownload>,
     transcript: String,
+    pages: Vec<(usize, usize)>,
+    paginated_len: usize,
+    pages_metrics: Option<DisplayMetrics>,
     page: usize,
     keyboard: Keyboard,
     message: Option<String>,
@@ -54,6 +56,9 @@ impl Default for Parser {
             saving: None,
             pending_restore: None,
             transcript: String::new(),
+            pages: Vec::new(),
+            paginated_len: 0,
+            pages_metrics: None,
             page: 0,
             keyboard: Keyboard::new(),
             message: None,
@@ -63,7 +68,8 @@ impl Default for Parser {
 }
 
 impl Parser {
-    fn show(&self, context: &mut Context) {
+    fn show(&mut self, context: &mut Context) {
+        self.repaginate(context);
         context.set_screen(match self.view {
             View::Library => self.library_screen(),
             View::Play => self.play_screen(),
@@ -109,9 +115,19 @@ impl Parser {
     }
 
     fn play_screen(&self) -> Screen {
-        let pages = transcript_pages(&self.transcript);
-        let page = self.page.min(pages.len().saturating_sub(1));
-        let text = pages.get(page).copied().unwrap_or("");
+        if self.transcript.is_empty() {
+            return self.play_screen_for("Starting story…", 1, 1);
+        }
+        let index = self.page.min(self.pages.len().saturating_sub(1));
+        let text = self
+            .pages
+            .get(index)
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("");
+        self.play_screen_for(text, index + 1, self.pages.len().max(1))
+    }
+
+    fn play_screen_for(&self, text: &str, page: usize, pages: usize) -> Screen {
         let links = word_links(text);
         let status = match self.machine.as_ref() {
             Some(machine) => {
@@ -158,8 +174,8 @@ impl Parser {
             )
             .page_turns("page-back", "page-next")
             .page_position(
-                u16::try_from(page + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                u16::try_from(page).unwrap_or(u16::MAX),
+                u16::try_from(pages).unwrap_or(u16::MAX),
             );
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
@@ -205,6 +221,8 @@ impl Parser {
                 self.machine = Some(machine);
                 self.open_blob = Some(blob);
                 self.transcript.clear();
+                self.pages.clear();
+                self.paginated_len = 0;
                 self.page = 0;
                 self.view = View::Play;
                 let mut restore = ShelfDownload::new(save).at_most(2 * 1024 * 1024);
@@ -230,11 +248,13 @@ impl Parser {
                 if state == RunState::Halted {
                     self.transcript.push_str("\n\n[The story has ended.]\n");
                 }
-                self.page = transcript_pages(&self.transcript).len().saturating_sub(1);
+                self.repaginate(context);
+                self.page = self.pages.len().saturating_sub(1);
             }
             Err(error) => {
                 self.transcript.push_str(&machine.take_output());
                 self.message = Some(error.to_string());
+                self.repaginate(context);
             }
         }
         self.show(context);
@@ -251,10 +271,14 @@ impl Parser {
         match machine.input(command.trim()) {
             Ok(_) => {
                 self.transcript.push_str(&machine.take_output());
-                self.page = transcript_pages(&self.transcript).len().saturating_sub(1);
+                self.repaginate(context);
+                self.page = self.pages.len().saturating_sub(1);
                 self.autosave(context);
             }
-            Err(error) => self.message = Some(error.to_string()),
+            Err(error) => {
+                self.message = Some(error.to_string());
+                self.repaginate(context);
+            }
         }
         self.show(context);
     }
@@ -276,11 +300,13 @@ impl Parser {
     }
 
     fn noun(&mut self, index: usize) {
-        let pages = transcript_pages(&self.transcript);
-        let page = self.page.min(pages.len().saturating_sub(1));
-        let links = pages
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        let text = self
+            .pages
             .get(page)
-            .map_or_else(Vec::new, |text| word_links(text));
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("");
+        let links = word_links(text);
         let Some((_, _, _, word)) = links.get(index).cloned() else {
             return;
         };
@@ -290,6 +316,93 @@ impl Parser {
         }
         input.push_str(word.trim_matches(|character: char| !character.is_alphanumeric()));
         self.keyboard = Keyboard::with_text(input);
+    }
+}
+
+impl Parser {
+    fn play_page_fits(&self, text: &str, metrics: DisplayMetrics) -> bool {
+        let diagnostics = self
+            .play_screen_for(text, 1, 2)
+            .diagnostics(&metrics, &Chrome::measuring(true));
+        !diagnostics.issues.iter().any(|issue| {
+            matches!(
+                issue.kind,
+                LayoutIssueKind::ContentOverflow { .. }
+                    | LayoutIssueKind::Clipped
+                    | LayoutIssueKind::TextOverflow
+                    | LayoutIssueKind::TouchTargetTooSmall { .. }
+            )
+        })
+    }
+
+    fn repaginate(&mut self, context: &Context) {
+        self.repaginate_for_metrics(context.metrics());
+    }
+
+    fn repaginate_for_metrics(&mut self, metrics: DisplayMetrics) {
+        if self.pages_metrics != Some(metrics)
+            || self.paginated_len > self.transcript.len()
+            || !self.transcript.is_char_boundary(self.paginated_len)
+        {
+            self.pages.clear();
+            self.paginated_len = 0;
+        }
+        self.pages_metrics = Some(metrics);
+        if self.paginated_len == self.transcript.len() {
+            self.page = self.page.min(self.pages.len().saturating_sub(1));
+            return;
+        }
+        let mut start = self.pages.pop().map_or(0, |(page_start, _)| page_start);
+        let text = &self.transcript;
+        let boundaries: Vec<usize> = text
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        while start < text.len() {
+            let start_index = boundaries
+                .binary_search(&start)
+                .expect("page start is a char boundary");
+            let mut low = start_index + 1;
+            let mut high = boundaries.len() - 1;
+            let mut best = boundaries[low.min(high)];
+            while low <= high {
+                let middle = low + (high - low) / 2;
+                let end = boundaries[middle];
+                if self.play_page_fits(&text[start..end], metrics) {
+                    best = end;
+                    low = middle + 1;
+                } else if middle == 0 {
+                    break;
+                } else {
+                    high = middle - 1;
+                }
+            }
+            if best < text.len() {
+                let segment = &text[start..best];
+                let half = segment.len() / 2;
+                let break_at = segment
+                    .rfind("\n\n")
+                    .filter(|offset| *offset >= half)
+                    .map(|offset| offset + 2)
+                    .or_else(|| {
+                        segment
+                            .rfind('\n')
+                            .filter(|offset| *offset >= half)
+                            .map(|offset| offset + 1)
+                    });
+                if let Some(offset) = break_at {
+                    best = start + offset;
+                }
+            }
+            if best <= start {
+                best = text.len();
+            }
+            self.pages.push((start, best));
+            start = best;
+        }
+        self.paginated_len = self.transcript.len();
+        self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 }
 
@@ -358,14 +471,13 @@ impl KoboApp for Parser {
             }
             return;
         }
-        let pages = transcript_pages(&self.transcript);
-        let page = self.page.min(pages.len().saturating_sub(1));
-        for (index, (name, _, _, _)) in pages
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        let text = self
+            .pages
             .get(page)
-            .map_or_else(Vec::new, |text| word_links(text))
-            .iter()
-            .enumerate()
-        {
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("");
+        for (index, (name, _, _, _)) in word_links(text).iter().enumerate() {
             if action == action_id(name) {
                 self.noun(index);
                 self.show(context);
@@ -378,7 +490,7 @@ impl KoboApp for Parser {
             return;
         }
         if action == action_id("page-next") {
-            self.page = (self.page + 1).min(pages.len().saturating_sub(1));
+            self.page = (self.page + 1).min(self.pages.len().saturating_sub(1));
             self.show(context);
             return;
         }
@@ -422,9 +534,8 @@ impl KoboApp for Parser {
         if self.view != View::Play {
             return;
         }
-        let pages = transcript_pages(&self.transcript);
         self.page = if forward {
-            (self.page + 1).min(pages.len().saturating_sub(1))
+            (self.page + 1).min(self.pages.len().saturating_sub(1))
         } else {
             self.page.saturating_sub(1)
         };
@@ -521,33 +632,6 @@ impl KoboApp for Parser {
     }
 }
 
-fn transcript_pages(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        return vec!["Starting story…"];
-    }
-    let mut pages = Vec::new();
-    let mut start = 0;
-    while start < text.len() {
-        let mut end = (start + TRANSCRIPT_PAGE_BYTES).min(text.len());
-        while end > start && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        if end < text.len() {
-            if let Some(break_at) = text[start..end].rfind("\n\n") {
-                end = start + break_at + 2;
-            } else if let Some(break_at) = text[start..end].rfind('\n') {
-                end = start + break_at + 1;
-            }
-        }
-        if end == start {
-            end = text.len();
-        }
-        pages.push(&text[start..end]);
-        start = end;
-    }
-    pages
-}
-
 fn word_links(text: &str) -> Vec<(String, usize, usize, String)> {
     let mut links = Vec::new();
     let mut start = None;
@@ -610,11 +694,25 @@ mod tests {
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
     #[test]
-    fn transcript_navigation_is_utf8_safe_and_preserves_all_text() {
+    fn transcript_pagination_is_measured_utf8_safe_and_preserves_all_text() {
         let text = format!("{}\n\n{}", "word ".repeat(600), "café ".repeat(600));
-        let pages = transcript_pages(&text);
-        assert!(pages.len() > 1);
-        assert_eq!(pages.concat(), text);
+        let mut parser = Parser {
+            transcript: text.clone(),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() > 1);
+        let joined: String = parser
+            .pages
+            .iter()
+            .map(|&(start, end)| &text[start..end])
+            .collect();
+        assert_eq!(joined, text);
+        for &(start, end) in &parser.pages {
+            assert!(text.is_char_boundary(start));
+            assert!(text.is_char_boundary(end));
+            assert!(parser.play_page_fits(&text[start..end], CLARA_BW_METRICS));
+        }
     }
 
     #[test]
@@ -625,6 +723,8 @@ mod tests {
             transcript: "A brass lamp waits.".to_owned(),
             ..Parser::default()
         };
+        parser.pages = vec![(0, parser.transcript.len())];
+        parser.paginated_len = parser.transcript.len();
         parser.noun(0);
         assert_eq!(parser.keyboard.text(), "brass");
     }
