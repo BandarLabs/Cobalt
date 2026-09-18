@@ -24,7 +24,22 @@ jobs:
       # TLS stack's C for armv7 musl. This is the exact journey the setup
       # error text sends Windows users on, so it runs here on every push.
       - name: Install zig the way the setup error text describes
-        run: winget install --id zig.zig -e --source winget --accept-package-agreements --accept-source-agreements
+        run: |
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            # The error text's own fallback: App Installer provides winget.
+            # The Store is the GUI route; this installs the same package.
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx -OutFile "$env:TEMP\VCLibs.appx"
+            try { Add-AppxPackage "$env:TEMP\VCLibs.appx" -ErrorAction Stop } catch { Write-Host "VCLibs already present: $($_.Exception.Message)" }
+            Invoke-WebRequest -Uri https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx -OutFile "$env:TEMP\UIXaml.appx"
+            try { Add-AppxPackage "$env:TEMP\UIXaml.appx" -ErrorAction Stop } catch { Write-Host "UI.Xaml already present: $($_.Exception.Message)" }
+            Invoke-WebRequest -Uri https://aka.ms/getwinget -OutFile "$env:TEMP\AppInstaller.msixbundle"
+            Add-AppxPackage "$env:TEMP\AppInstaller.msixbundle"
+            # The error text says "open a new terminal": the fresh winget alias
+            # only lands in a new session's PATH, so refresh it the same way.
+            $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
+          }
+          winget install --id zig.zig -e --source winget --accept-package-agreements --accept-source-agreements
 
       - name: Build the device binaries through the zig fallback
         run: cargo run --locked -p kobo-cli -- build --device
