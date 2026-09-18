@@ -5030,9 +5030,10 @@ fn confirmed_setup(
             "noninteractive setup was not explicitly confirmed with --yes",
         ));
     }
-    // The prompt bypasses stdio so a piped install still asks on the
-    // controlling terminal. /dev/tty is a Unix device; on Windows the
-    // console is reached through stdin and stdout themselves.
+    // The prompt bypasses stdio so redirected input cannot approve a device
+    // write. /dev/tty is the Unix controlling terminal; CONIN$/CONOUT$ are
+    // the corresponding Windows console devices and fail closed when this
+    // process has no attached console.
     #[cfg(unix)]
     {
         let tty = fs::OpenOptions::new()
@@ -5047,7 +5048,25 @@ fn confirmed_setup(
         prompt_confirmation(&tty, &tty)
     }
     #[cfg(windows)]
-    prompt_confirmation(std::io::stdin(), std::io::stdout())
+    {
+        let input = fs::OpenOptions::new()
+            .read(true)
+            .open("CONIN$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        let output = fs::OpenOptions::new()
+            .write(true)
+            .open("CONOUT$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(input, output)
+    }
 }
 
 fn prompt_confirmation(
