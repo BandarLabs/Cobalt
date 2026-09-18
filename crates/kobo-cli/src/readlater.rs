@@ -128,7 +128,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
         &[],
         16 * 1024,
     )
-    .map_err(|error| format!("the Wallabag sign-in failed: {error}"))?;
+    .map_err(|error| super::post::login_error("Wallabag", &server, error))?;
     let token = parse_token(&answer)
         .ok_or_else(|| "the Wallabag sign-in answer held no tokens".to_owned())?;
 

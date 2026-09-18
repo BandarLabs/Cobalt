@@ -676,9 +676,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **SERVICECLI-02** Provide per-app Connect service form.
 - [ ] **SERVICECLI-03** Use discovery and browser authentication where supported.
 - [ ] **SERVICECLI-04** Use labeled masked tokens with direct provider guidance otherwise.
-- [ ] **SERVICECLI-05** Test endpoint and required capabilities.
-- [ ] **SERVICECLI-06** Show account/server identity.
-- [ ] **SERVICECLI-07** Explain certificate errors and explicit trust installation.
+- [x] **SERVICECLI-05** Test endpoint and required capabilities.
+- [x] **SERVICECLI-06** Show account/server identity.
+- [x] **SERVICECLI-07** Explain certificate errors and explicit trust installation.
 - [x] **SERVICECLI-08** Avoid secret input in shell history.
 
 ## PR 4 · Missing companion workflows

@@ -73,6 +73,11 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
         return Err("the gateway must be an https:// address".to_owned());
     }
     let token_file = token_file.ok_or_else(|| USAGE.to_owned())?;
+    let metadata =
+        fs::symlink_metadata(&token_file).map_err(|error| format!("read {token_file}: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.len() > 4096 {
+        return Err("the token file must be a regular file no larger than 4 KiB".into());
+    }
     let token = fs::read_to_string(&token_file)
         .map_err(|error| format!("read {token_file}: {error}"))?
         .trim()
@@ -85,6 +90,17 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
         token,
         target: target.ok_or_else(|| USAGE.to_owned())?,
     })
+}
+
+pub(super) fn login_error(service: &str, server: &str, error: kobo_protocol::TaskError) -> String {
+    let guidance = match error {
+        kobo_protocol::TaskError::Unauthorized => "The token was rejected. Create or copy a current token and retry.",
+        kobo_protocol::TaskError::Unreachable => "The server or its TLS certificate could not be verified. Check the HTTPS address; for a private CA, install its root with 'kobo trust set NAME --from ROOT.pem --device ADDRESS'.",
+        kobo_protocol::TaskError::Offline => "This computer has no network route. Reconnect it before checking the service.",
+        kobo_protocol::TaskError::TimedOut => "The server did not answer in time. Nothing was installed; retry when it is reachable.",
+        _ => "The service check failed. Nothing was installed.",
+    };
+    format!("{service} at {server} could not be connected: {guidance}")
 }
 
 /// The credential's file format, shared with the runtime: a version line, the
@@ -108,14 +124,15 @@ fn login(arguments: &[String]) -> Result<(), String> {
 
     // A token that does not open the inbox must never reach the reader: the
     // application would install it and then fail on the owner's hands.
+    let authorization = format!("Bearer {token}");
     kobo_net::fetch_from(
         &format!("{gateway}/letters?page=1&per_page=1"),
         0,
         16 * 1024,
-        Some(("Authorization", &format!("Bearer {token}"))),
+        Some(("Authorization", &authorization)),
         &[],
     )
-    .map_err(|error| format!("the gateway did not accept the token: {error}"))?;
+    .map_err(|error| login_error("Hermes", &gateway, error))?;
 
     let credential = credential_value(&gateway, &token);
     match target {
@@ -185,6 +202,29 @@ fn remote(host: &str, script: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_errors_distinguish_token_network_and_private_trust() {
+        let rejected = login_error(
+            "Hermes",
+            "https://letters.example",
+            kobo_protocol::TaskError::Unauthorized,
+        );
+        assert!(rejected.contains("token was rejected"));
+        let tls = login_error(
+            "Hermes",
+            "https://letters.example",
+            kobo_protocol::TaskError::Unreachable,
+        );
+        assert!(tls.contains("TLS certificate"));
+        assert!(tls.contains("kobo trust set"));
+        assert!(login_error(
+            "Hermes",
+            "https://letters.example",
+            kobo_protocol::TaskError::Offline
+        )
+        .contains("no network route"));
+    }
 
     #[test]
     fn credential_value_pins_the_gateway() {
