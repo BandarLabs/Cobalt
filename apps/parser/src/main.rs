@@ -178,18 +178,21 @@ impl Parser {
         // behind a top-bar toggle, so the screen fits every panel and pose.
         builder = builder.top_bar_action(
             "keyboard-toggle",
-            if self.keyboard_open { "Close keys" } else { "Keyboard" },
+            if self.keyboard_open {
+                "Close keys"
+            } else {
+                "Keyboard"
+            },
         );
         builder = if self.keyboard_open {
             builder.keyboard(&self.keyboard, "Run")
         } else {
             builder.grid(4, false, commands)
         };
-        builder = builder.page_turns("page-back", "page-next")
-            .page_position(
-                u16::try_from(page).unwrap_or(u16::MAX),
-                u16::try_from(pages).unwrap_or(u16::MAX),
-            );
+        builder = builder.page_turns("page-back", "page-next").page_position(
+            u16::try_from(page).unwrap_or(u16::MAX),
+            u16::try_from(pages).unwrap_or(u16::MAX),
+        );
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
