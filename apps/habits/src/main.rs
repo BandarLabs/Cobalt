@@ -1,5 +1,6 @@
 mod model;
 use kobo_sdk::keyboard::{TextEntry, Typing};
+use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
 };
@@ -55,6 +56,7 @@ struct Habits {
     entry: TextEntry,
     entry_mode: EntryMode,
     editing: Option<usize>,
+    export: Option<Export>,
     notice: Option<String>,
     loading: bool,
     save_in_flight: bool,
@@ -72,6 +74,7 @@ impl Default for Habits {
             entry: TextEntry::new().opened_by("add"),
             entry_mode: EntryMode::Add,
             editing: None,
+            export: None,
             notice: None,
             loading: false,
             save_in_flight: false,
@@ -172,10 +175,12 @@ impl Habits {
         }
     }
     fn owns_back(&self) -> bool {
-        self.entry.is_open() || self.back_target().is_some()
+        self.export.is_some() || self.entry.is_open() || self.back_target().is_some()
     }
     fn go_back(&mut self) {
-        if self.entry.is_open() {
+        if self.export.is_some() {
+            self.export = None;
+        } else if self.entry.is_open() {
             self.entry.close();
         } else if let Some(page) = self.back_target() {
             self.page = page;
@@ -187,6 +192,9 @@ impl Habits {
     }
     #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
+        if let Some(export) = &self.export {
+            return export.screen();
+        }
         if self.entry.is_open() {
             let submit = match self.entry_mode {
                 EntryMode::Add => "Add",
@@ -383,8 +391,8 @@ impl Habits {
                     )])
                     .text("A missed day breaks a streak.")
                     .text("A skipped day keeps it.")
-                    .text("Both stay on the record.")
-                    .text("Habits never connect, upload, or back up your completions.");
+                    .text("Habits never connect or upload your completions.")
+                    .button("backup", "Export a backup");
             }
         }
         s.build()
@@ -458,7 +466,27 @@ impl KoboApp for Habits {
         cx.store().load(HABITS);
         self.show(cx);
     }
+    fn on_shelf(&mut self, cx: &mut Context, name: &str, result: StoreResult) {
+        if let Some(export) = self.export.as_mut() {
+            if export.on_shelf(cx, name, &result) {
+                self.show(cx);
+            }
+        }
+    }
+
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
+        // A backup on its way out answers on its own keys; the habits key is
+        // never handed to it.
+        if let Some(export) = self.export.as_mut() {
+            let key = match &result {
+                StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.clone(),
+                _ => String::new(),
+            };
+            if key != HABITS && export.on_save(cx, &key, &result) {
+                self.show(cx);
+                return;
+            }
+        }
         match result {
             StoreResult::Loaded { key, value } if key == HABITS => {
                 let (items, ignored_blank_names) = value
@@ -551,6 +579,24 @@ impl KoboApp for Habits {
             return;
         }
         if self.page_turn(cx, a) {
+            return;
+        }
+        if a == action_id("backup") {
+            match Export::new("habits-backup", ExportFormat::Text, encode(&self.items)) {
+                Ok(mut export) => {
+                    export.begin(cx);
+                    self.export = Some(export);
+                }
+                Err(error) => self.notice = Some(error),
+            }
+            self.show(cx);
+            return;
+        }
+        if a == action_id("export-confirm") || a == action_id("export-retry") {
+            if let Some(export) = self.export.as_mut() {
+                export.begin(cx);
+            }
+            self.show(cx);
             return;
         }
         if self.handle_edit(cx, a) {
@@ -761,6 +807,29 @@ mod tests {
         runner.start();
         runner.action(action_id("add"));
         assert!(runner.app().entry.is_open());
+    }
+
+    #[test]
+    fn settings_offers_a_backup_export_and_back_closes_it() {
+        let app = Habits {
+            items: vec![Habit::new("Read".into())],
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.action(action_id("backup"));
+        let export = runner
+            .app()
+            .export
+            .as_ref()
+            .expect("a backup on its way out");
+        assert_eq!(export.offer().format, ExportFormat::Text);
+        assert_eq!(export.offer().title, "habits-backup");
+        runner.action(ActionId::BACK);
+        assert!(runner.app().export.is_none());
+        assert_eq!(runner.app().page, Page::Settings);
     }
 
     #[test]
