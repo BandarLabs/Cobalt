@@ -473,7 +473,7 @@ fn reject_symlink_components(path: &Path, purpose: &str) -> Result<(), String> {
 fn locate_syncthing() -> Result<PathBuf, String> {
     let path = env::var_os("PATH").unwrap_or_default();
     for directory in env::split_paths(&path) {
-        let candidate = directory.join("syncthing");
+        let candidate = directory.join(format!("syncthing{}", env::consts::EXE_SUFFIX));
         let Ok(canonical) = fs::canonicalize(candidate) else {
             continue;
         };
