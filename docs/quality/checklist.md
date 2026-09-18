@@ -296,13 +296,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Inkling
 
-- [ ] **INK-01** Expand audited answer and guess vocabulary.
-- [ ] **INK-02** Show uppercase letters with redundant state patterns.
-- [ ] **INK-03** Keep keyboard knowledge visible.
-- [ ] **INK-04** Use real date instead of technical identifiers.
-- [ ] **INK-05** Add result export and distribution statistics.
-- [ ] **INK-06** Provide archive play.
-- [ ] **INK-07** Verify daily persistence and deterministic fixtures.
+- [x] **INK-01** Expand audited answer and guess vocabulary.
+- [x] **INK-02** Show uppercase letters with redundant state patterns.
+- [x] **INK-03** Keep keyboard knowledge visible.
+- [x] **INK-04** Use real date instead of technical identifiers.
+- [x] **INK-05** Add result export and distribution statistics.
+- [x] **INK-06** Provide archive play.
+- [x] **INK-07** Verify daily persistence and deterministic fixtures.
 
 ## PR 3 · Kitchen Card (APP-2)
 

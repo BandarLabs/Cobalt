@@ -1990,56 +1990,70 @@
   "pr": 3,
   "group": "Inkling",
   "task": "Expand audited answer and guess vocabulary",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Vocabulary grew from 12 answers and 66 guesses to 870 answers and 1,914 guesses, every entry a hand-checked common English word; no copied commercial game list. A unit test audits the lists: five lowercase letters, no duplicates, answers never repeated as guesses, and the original seed words stay valid."
+  ]
  },
  {
   "id": "INK-02",
   "pr": 3,
   "group": "Inkling",
   "task": "Show uppercase letters with redundant state patterns",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Board letters render uppercase inside shape marks: [L] placed, (L) present, Lx absent, so state never relies on color. Proven on the simulator board and in the export text; capture inkling-solved.png in docs/quality/evidence/inkling."
+  ]
  },
  {
   "id": "INK-03",
   "pr": 3,
   "group": "Inkling",
   "task": "Keep keyboard knowledge visible",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The typing panel lists proven letters while typing: placed positions as a slot line, letters elsewhere in the word, and letters that are out, refreshed after every guess. Proven in the sim journey ('No letters known yet.' on the first guess, 'Placed: _RA__' on the second); capture inkling-knowledge.png."
+  ]
  },
  {
   "id": "INK-04",
   "pr": 3,
   "group": "Inkling",
   "task": "Use real date instead of technical identifiers",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The title shows the real date ('Inkling - Sep 1', 'Archive - Aug 31') and the statistics screen spells it out ('Today is September 1, 2026.'); the hash-based puzzle number is gone. Date math round-trips against the civil calendar in a unit test over 400,000 days."
+  ]
  },
  {
   "id": "INK-05",
   "pr": 3,
   "group": "Inkling",
   "task": "Add result export and distribution statistics",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Statistics keep played and won plus a win distribution by guess count, migrating v1 saves with the distribution honestly empty and a screen note saying so. Export results writes the day's shape-marked board and statistics to export-result.txt in the store; the sim reads the file back and asserts every line. Capture inkling-stats.png."
+  ]
  },
  {
   "id": "INK-06",
   "pr": 3,
   "group": "Inkling",
   "task": "Provide archive play",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The archive offers the past 365 days paged five per screen with an Earlier puzzles row. Archive games are session-only and never touch statistics; the sim solves a past day and proves played/won/distribution are unchanged. Captures inkling-archive-list.png and inkling-archive-solved.png."
+  ]
  },
  {
   "id": "INK-07",
   "pr": 3,
   "group": "Inkling",
   "task": "Verify daily persistence and deterministic fixtures",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "scripts/quality/check-inkling-sim.py pins KOBO_INKLING_DAY=2026-09-01 and proves determinism and persistence: the pinned answer solves, the export verifies on disk, and the finished daily game plus statistics survive a simulator restart. Unit tests cover save migration, corrupt-save rejection, duplicate-letter scoring, hard mode, and date determinism. Result: passed; evidence in docs/quality/evidence/inkling. Physical device flow UNVERIFIED."
+  ]
  },
  {
   "id": "KITCHEN-01",
