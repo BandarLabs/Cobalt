@@ -648,10 +648,10 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Parser companion
 
-- [ ] **PARSERCLI-01** Share structural validation with interpreter.
-- [ ] **PARSERCLI-02** Distinguish recognized format from playable validated story.
-- [ ] **PARSERCLI-03** Show title, format and compatibility.
-- [ ] **PARSERCLI-04** Support shelf choice, duplicates and simulator transfer.
+- [x] **PARSERCLI-01** Share structural validation with interpreter.
+- [x] **PARSERCLI-02** Distinguish recognized format from playable validated story.
+- [x] **PARSERCLI-03** Show title, format and compatibility.
+- [x] **PARSERCLI-04** Support shelf choice, duplicates and simulator transfer.
 
 ## PR 4 · Paperterm companion
 

@@ -399,3 +399,25 @@ Both 1072×1448 frames were pixel-inspected. The paired grid and completion line
 are clear with no clipping or overlap. Evidence is under
 `evidence/deck-companion-acknowledgement`. DECKCLI-06 is complete; physical
 reader execution remains unverified.
+
+### Parser shared validation and real Zork I journey
+
+The CLI and running Parser app now use the same `kobo-zstory` structural
+inspector. The real proof used the compiled Zork I story from
+`historicalsource/zork1` at commit `97b7b3d`, MIT licensed, SHA-256
+`37084966477dff679282de42974b2077156b1bd68fad92a65d4ea94d8eb64d79`.
+The CLI reported Z-machine v3, release 119, serial 880429, checksum `bf44`, and
+playable text-only compatibility before publishing the 86,838-byte story to a
+private simulator shelf.
+
+The running app listed that exact CLI output, opened the story, and executed
+LOOK. This side-by-side journey exposed two app regressions: fixed-byte
+pagination overflowed the measured layout, then measured pagination landed on
+a prompt-only final page that made commands appear to do nothing. PR-A fixed
+both before closeout. The retained 922x1246 library, opened-story and post-LOOK
+frames were pixel-inspected: story identity, game text, keyboard, suggestions,
+page turns and save controls are legible with no overlap or clipping. Evidence
+is under `evidence/parser-companion-real-story`.
+
+PARSERCLI-01/02/03/04 are complete. Physical-reader transfer and rendering
+remain unverified.
