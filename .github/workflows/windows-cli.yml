@@ -32,10 +32,30 @@ jobs:
       - name: Install zig the way the setup error text describes
         run: |
           $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile "$env:TEMP\zig.zip"
-          $hash = (Get-FileHash "$env:TEMP\zig.zip" -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne '68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e') {
-            throw "zig archive hash mismatch: $hash"
+          $zigArchive = "$env:TEMP\zig.zip"
+          $zigDigest = '68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e'
+          $zigUrls = @(
+            'https://pkg.hexops.org/zig/zig-x86_64-windows-0.16.0.zip?source=cobalt-ci',
+            'https://ziglang.freetls.fastly.net/zig-x86_64-windows-0.16.0.zip?source=cobalt-ci',
+            'https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip'
+          )
+          $zigDownloaded = $false
+          foreach ($zigUrl in $zigUrls) {
+            try {
+              Invoke-WebRequest -Uri $zigUrl -OutFile $zigArchive -TimeoutSec 120
+              $hash = (Get-FileHash $zigArchive -Algorithm SHA256).Hash.ToLower()
+              if ($hash -eq $zigDigest) {
+                $zigDownloaded = $true
+                break
+              }
+              Write-Warning "Zig archive from $zigUrl had unexpected hash $hash"
+            } catch {
+              Write-Warning "Could not obtain the pinned Zig archive from ${zigUrl}: $_"
+            }
+            Remove-Item $zigArchive -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $zigDownloaded) {
+            throw 'No source supplied the pinned Zig archive'
           }
           Expand-Archive "$env:TEMP\zig.zip" -DestinationPath "$env:TEMP\zig"
           # A fresh step is the error text's "open a new terminal": GITHUB_PATH
