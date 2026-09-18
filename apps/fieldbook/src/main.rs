@@ -6,8 +6,8 @@ mod shelf;
 use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, StoreResult,
+    action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
+    LayoutIssueKind, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult,
 };
 use shelf::{Pack, Species, MANIFEST, MAX_MANIFEST};
 use std::process::ExitCode;
@@ -75,6 +75,7 @@ struct Fieldbook {
     query: String,
     location: Keyboard,
     naming_location: bool,
+    outing_page: usize,
     save: SaveState,
     manifest_load: Option<ShelfDownload>,
     loads: Loads,
@@ -97,6 +98,7 @@ impl Default for Fieldbook {
             query: String::new(),
             location: Keyboard::new(),
             naming_location: false,
+            outing_page: 0,
             save: SaveState::Idle,
             manifest_load: None,
             loads: Loads::default(),
@@ -535,8 +537,8 @@ impl Fieldbook {
         screen.nav_bar(Some(2), Self::tab_bar()).build()
     }
 
-    fn outing_screen(&self) -> Screen {
-        let mut s = self.top("Outing");
+    fn outing_screen(&self, metrics: DisplayMetrics) -> Screen {
+        let s = self.top("Outing");
         if self.naming_location {
             return s
                 .secondary("Name this place. Recent places are offered next time.")
@@ -550,43 +552,111 @@ impl Fieldbook {
                 .build();
         };
         let (species, individuals) = self.outing_totals(outing.id);
-        s = s.secondary(format!(
+        let summary = format!(
             "{} · {} · {} — {} species, {} birds",
             outing.location, outing.date, outing.start, species, individuals
-        ));
+        );
         let tally = self.outing_species();
-        if tally.is_empty() {
-            s = s.section("Log a species by name:");
-        }
-        let screen = s.rows(tally.iter().take(6).enumerate().map(|(index, bird)| {
-            let logged: u32 = self
-                .sightings
-                .iter()
-                .filter(|s| s.outing == outing.id && s.code == bird.code)
-                .map(|s| u32::from(s.count))
-                .sum();
-            (
-                format!("tally-{index}"),
-                bird.common.clone(),
-                if logged > 0 {
-                    format!("{} · {logged} logged", bird.code)
-                } else {
-                    species_line(bird)
-                },
-                if logged > 0 {
-                    Glyph::Check
-                } else {
-                    Glyph::Search
-                },
-            )
-        }));
-        screen
-            .buttons([
+        let rows: Vec<(String, String, String, Glyph)> = tally
+            .iter()
+            .take(6)
+            .enumerate()
+            .map(|(index, bird)| {
+                let logged: u32 = self
+                    .sightings
+                    .iter()
+                    .filter(|s| s.outing == outing.id && s.code == bird.code)
+                    .map(|s| u32::from(s.count))
+                    .sum();
+                (
+                    format!("tally-{index}"),
+                    bird.common.clone(),
+                    if logged > 0 {
+                        format!("{} · {logged} logged", bird.code)
+                    } else {
+                        species_line(bird)
+                    },
+                    if logged > 0 {
+                        Glyph::Check
+                    } else {
+                        Glyph::Search
+                    },
+                )
+            })
+            .collect();
+        // One panel of the outing, whole: the summary, the tally rows dealt
+        // to the device in hand, and the three actions. At the largest text
+        // scale six rows and the actions do not fit one Clara panel, so the
+        // rows deal onto panels measured the way the gallery measures its
+        // reference pages -- a button pushed off the panel is an outing that
+        // cannot be finished.
+        let frame = |page_rows: &[(String, String, String, Glyph)], page: usize, pages: usize| {
+            let mut screen = self.top("Outing").secondary(summary.clone());
+            if tally.is_empty() {
+                screen = screen.section("Log a species by name:");
+            }
+            let mut screen = screen.rows(page_rows.iter().cloned()).buttons([
                 ("type-species", "Type a species"),
                 ("sightings", "Review sightings"),
                 ("finish", "Finish outing"),
-            ])
+            ]);
+            if pages > 1 {
+                // Six rows deal onto a single-digit page count; the fallback
+                // is for the compiler, not the reader.
+                let (page, of) = (
+                    u16::try_from(page + 1).unwrap_or(1),
+                    u16::try_from(pages).unwrap_or(1),
+                );
+                screen = screen
+                    .page_turns("outing-back", "outing-next")
+                    .page_position(page, of);
+            }
+            screen
+        };
+        let mut panels: Vec<usize> = Vec::new();
+        let mut start = 0;
+        while start < rows.len() {
+            let mut take = rows.len() - start;
+            // Measured against the most pages the deal can produce, because
+            // "6 of 6" is wider than "1 of 1" and a page that fits only
+            // while it is the only page is not fitting.
+            while take > 1
+                && Self::overflows(
+                    frame(&rows[start..start + take], panels.len(), rows.len()),
+                    metrics,
+                )
+            {
+                take -= 1;
+            }
+            panels.push(take);
+            start += take;
+        }
+        if panels.is_empty() {
+            panels.push(0);
+        }
+        let page = self.outing_page.min(panels.len() - 1);
+        let start = panels[..page].iter().sum();
+        frame(&rows[start..start + panels[page]], page, panels.len()).build()
+    }
+
+    /// Whether anything on this screen was pushed off the panel, or squeezed
+    /// until it no longer fits what it says. Measured against the runtime's
+    /// own diagnostics, the way the gallery deals its reference pages.
+    fn overflows(screen: ScreenBuilder, metrics: DisplayMetrics) -> bool {
+        screen
             .build()
+            .diagnostics(&metrics, &Chrome::measuring(false))
+            .issues
+            .iter()
+            .any(|issue| {
+                matches!(
+                    issue.kind,
+                    LayoutIssueKind::ContentOverflow { .. }
+                        | LayoutIssueKind::Clipped
+                        | LayoutIssueKind::InteractiveOffscreen
+                        | LayoutIssueKind::TextOverflow
+                )
+            })
     }
 
     fn sightings_screen(&self) -> Screen {
@@ -713,12 +783,12 @@ impl Fieldbook {
         s.bottom_action("back", "Back").build()
     }
 
-    fn screen(&self, _context: &Context) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Home => self.home_screen(),
             View::Packs => self.packs_screen(),
             View::Search => self.search_screen(),
-            View::Outing => self.outing_screen(),
+            View::Outing => self.outing_screen(context.metrics()),
             View::Sightings => self.sightings_screen(),
             View::Life => self.life_screen(),
             View::Export => self.export_screen(),
@@ -874,8 +944,14 @@ impl KoboApp for Fieldbook {
             self.naming_location = true;
             self.view = View::Outing;
             self.open_outing = None;
+            self.outing_page = 0;
         } else if action == action_id("resume") {
             self.view = View::Outing;
+            self.outing_page = 0;
+        } else if action == action_id("outing-next") {
+            self.outing_page += 1;
+        } else if action == action_id("outing-back") {
+            self.outing_page = self.outing_page.saturating_sub(1);
         } else if action == action_id("finish") {
             self.open_outing = None;
             self.pack_pick = None;
