@@ -1,6 +1,6 @@
 mod model;
-use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::exports::{Export, Format as ExportFormat};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
 };
@@ -215,7 +215,10 @@ impl Habits {
             Page::Settings => "hb-settings",
         })
         .top_bar("Habits");
-        if matches!(self.page, Page::Today | Page::Streaks | Page::Manage | Page::Stats) {
+        if matches!(
+            self.page,
+            Page::Today | Page::Streaks | Page::Manage | Page::Stats
+        ) {
             s = s.tabs(self.page.index(), Page::all());
         }
         if !self.loaded {
@@ -332,42 +335,44 @@ impl Habits {
                     s = Self::paged(s, page, pages, "manage-prev", "manage-next");
                 }
             }
-            Page::Edit => {
-                match self.editing.and_then(|i| self.items.get(i).map(|h| (i, h))) {
-                    Some((i, h)) => {
-                        let archive: (&str, &str) = if h.archived {
-                            ("unarchive", "Put back")
-                        } else {
-                            ("archive", "Archive")
-                        };
-                        let schedules = [
-                            ("sched-daily", "Daily", Schedule::Daily),
-                            ("sched-weekdays", "Weekdays", Schedule::Weekdays),
-                            ("sched-every-2", "Every 2 days", Schedule::Every(2)),
-                        ];
-                        let _ = i;
-                        s = s
-                            .top_bar_action("rename", "Rename")
-                            .heading(Self::display_name(&h.name))
-                            .rows(schedules.iter().map(|(action, label, schedule)| {
-                                (
-                                    (*action).to_owned(),
-                                    (*label).to_owned(),
-                                    if *schedule == h.schedule {
-                                        "current".to_owned()
-                                    } else {
-                                        String::new()
-                                    },
-                                    Glyph::Check,
-                                )
-                            }))
-                            .buttons([archive]);
-                    }
-                    None => {
-                        s = s.splash(Some(Glyph::Settings), "Nothing to edit", "Pick a habit on Manage.");
-                    }
+            Page::Edit => match self.editing.and_then(|i| self.items.get(i).map(|h| (i, h))) {
+                Some((i, h)) => {
+                    let archive: (&str, &str) = if h.archived {
+                        ("unarchive", "Put back")
+                    } else {
+                        ("archive", "Archive")
+                    };
+                    let schedules = [
+                        ("sched-daily", "Daily", Schedule::Daily),
+                        ("sched-weekdays", "Weekdays", Schedule::Weekdays),
+                        ("sched-every-2", "Every 2 days", Schedule::Every(2)),
+                    ];
+                    let _ = i;
+                    s = s
+                        .top_bar_action("rename", "Rename")
+                        .heading(Self::display_name(&h.name))
+                        .rows(schedules.iter().map(|(action, label, schedule)| {
+                            (
+                                (*action).to_owned(),
+                                (*label).to_owned(),
+                                if *schedule == h.schedule {
+                                    "current".to_owned()
+                                } else {
+                                    String::new()
+                                },
+                                Glyph::Check,
+                            )
+                        }))
+                        .buttons([archive]);
                 }
-            }
+                None => {
+                    s = s.splash(
+                        Some(Glyph::Settings),
+                        "Nothing to edit",
+                        "Pick a habit on Manage.",
+                    );
+                }
+            },
             Page::Stats => {
                 let completed: usize = self.items.iter().map(|h| h.done.len()).sum();
                 let (due, done, skipped) = model::week_summary(&self.items, Self::day());
@@ -457,7 +462,6 @@ impl Habits {
         self.show(cx);
         true
     }
-
 }
 
 impl KoboApp for Habits {
@@ -762,7 +766,10 @@ mod tests {
                 _ => false,
             })
         };
-        assert!(says(&screen, "This week: 1 of 7 due days completed, 0 skipped."));
+        assert!(says(
+            &screen,
+            "This week: 1 of 7 due days completed, 0 skipped."
+        ));
         let settings = Habits {
             loaded: true,
             page: Page::Settings,
@@ -773,21 +780,25 @@ mod tests {
         assert!(says(&settings, "A skipped day keeps it."));
         let screens = [screen, settings.with_own_back(true)];
         for screen in &screens {
-        for (width, height, pixels_per_inch) in
-            [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
-        {
-            for text_scale in kobo_ui::TextScale::STEPS {
-                let metrics = kobo_sdk::DisplayMetrics {
-                    width,
-                    height,
-                    pixels_per_inch,
-                    text_scale,
-                };
-                let chrome = kobo_ui::Chrome::measuring(true);
-                let diagnostics = screen.diagnostics(&metrics, &chrome);
-                assert!(diagnostics.issues.is_empty(), "{metrics:?}: {:?}", diagnostics.issues);
+            for (width, height, pixels_per_inch) in
+                [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+            {
+                for text_scale in kobo_ui::TextScale::STEPS {
+                    let metrics = kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    };
+                    let chrome = kobo_ui::Chrome::measuring(true);
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
             }
-        }
         }
     }
 
@@ -802,7 +813,10 @@ mod tests {
         let screen = app.screen().with_own_back(app.owns_back());
         let laid = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(laid.rect_of_action(action_id("add")).is_some());
-        assert!(screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default()).issues.is_empty());
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
         let mut runner = AppRunner::new(app);
         runner.start();
         runner.action(action_id("add"));
@@ -1032,21 +1046,9 @@ mod tests {
             ..Habits::default()
         };
         for (page, expected, pager) in [
-            (
-                0,
-                ["edit-0", "edit-1", "edit-2"].as_slice(),
-                "manage-next",
-            ),
-            (
-                1,
-                ["edit-3", "edit-4", "edit-5"].as_slice(),
-                "manage-next",
-            ),
-            (
-                2,
-                ["edit-6", "edit-7", "edit-8"].as_slice(),
-                "manage-next",
-            ),
+            (0, ["edit-0", "edit-1", "edit-2"].as_slice(), "manage-next"),
+            (1, ["edit-3", "edit-4", "edit-5"].as_slice(), "manage-next"),
+            (2, ["edit-6", "edit-7", "edit-8"].as_slice(), "manage-next"),
             (3, ["edit-9"].as_slice(), "manage-prev"),
         ] {
             app.page = Page::Manage;
@@ -1260,7 +1262,10 @@ mod tests {
             Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
             _ => None,
         });
-        assert_eq!(decode(saved.expect("the completion must be saved"))[0].done, vec![day]);
+        assert_eq!(
+            decode(saved.expect("the completion must be saved"))[0].done,
+            vec![day]
+        );
     }
 
     #[test]
@@ -1295,7 +1300,10 @@ mod tests {
         assert_eq!(runner.app().items[0].name, "Read");
 
         runner.action(action_id("ActionId::BACK"));
-        let screen = runner.app().screen().with_own_back(runner.app().owns_back());
+        let screen = runner
+            .app()
+            .screen()
+            .with_own_back(runner.app().owns_back());
         for (width, height, pixels_per_inch) in
             [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
         {
@@ -1307,7 +1315,11 @@ mod tests {
                     text_scale,
                 };
                 let diagnostics = screen.diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
-                assert!(diagnostics.issues.is_empty(), "{metrics:?}: {:?}", diagnostics.issues);
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    diagnostics.issues
+                );
             }
         }
     }
