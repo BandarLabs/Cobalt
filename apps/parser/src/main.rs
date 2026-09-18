@@ -12,6 +12,8 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 use zvm::{Machine, RunState, StoryInfo};
 
+const SLOT_PAGE_ROWS: usize = 4;
+
 const STORY_PREFIX: &str = "story-";
 const SAVE_PREFIX: &str = "save-";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,6 +32,8 @@ enum SlotAction {
 struct Parser {
     view: View,
     stories: Vec<(String, u32)>,
+    saves: Vec<String>,
+    slots_page: usize,
     machine: Option<Machine>,
     open_blob: Option<String>,
     loading: Option<ShelfDownload>,
@@ -50,6 +54,8 @@ impl Default for Parser {
         Self {
             view: View::Library,
             stories: Vec::new(),
+            saves: Vec::new(),
+            slots_page: 0,
             machine: None,
             open_blob: None,
             loading: None,
@@ -82,8 +88,8 @@ impl Parser {
             .top_bar("Parser")
             .heading("Interactive fiction")
             .text(
-                "Push a .z3, .z5 or .z8 story with `kobo parser push FILE --device IP`. \
-                 Stories play completely offline.",
+                "Push a .z3, .z5 or .z8 story with `kobo parser push FILE --device IP`; \
+                 `kobo parser check FILE` validates one first. Stories play completely offline.",
             );
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
@@ -184,24 +190,42 @@ impl Parser {
     }
 
     fn slots_screen(&self) -> Screen {
-        let (title, instruction) = match self.slot_action {
-            SlotAction::Save => ("Save game", "Tap to save the current turn"),
-            SlotAction::Restore => ("Restore game", "Tap to restore this slot"),
+        let title = match self.slot_action {
+            SlotAction::Save => "Save game",
+            SlotAction::Restore => "Restore game",
         };
-        let rows = (1..=10).map(|slot| {
+        let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
+        let page = self.slots_page.min(page_count - 1);
+        let first = page * SLOT_PAGE_ROWS + 1;
+        let last = (first + SLOT_PAGE_ROWS - 1).min(10);
+        let rows = (first..=last).map(|slot| {
+            let occupied = self.machine.as_ref().is_some_and(|machine| {
+                self.saves
+                    .contains(&save_name(machine.info(), &slot.to_string()))
+            });
             (
                 format!("slot-{slot}"),
                 format!("Slot {slot}"),
-                instruction,
+                slot_subtitle(self.slot_action, occupied),
                 Glyph::Bookmark,
             )
         });
-        ScreenBuilder::new("parser-slots")
+        let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
             .top_bar_action("play", "Back")
-            .text("Parser keeps ten Quetzal slots per story. Autosave is separate and updated after every turn.")
-            .rows(rows)
-            .build()
+            .rows(rows);
+        if page_count > 1 {
+            builder = builder
+                .page_turns("slots-page-back", "slots-page-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(page_count).unwrap_or(u16::MAX),
+                );
+        }
+        if let Some(message) = &self.message {
+            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        }
+        builder.build()
     }
 
     fn open_story(&mut self, context: &mut Context, index: usize) {
@@ -465,13 +489,21 @@ impl KoboApp for Parser {
                                 self.message = Some(format!("Saved in slot {slot}."));
                             }
                             SlotAction::Restore => {
-                                let mut restore = ShelfDownload::new(name).at_most(2 * 1024 * 1024);
-                                restore.start(context);
-                                self.pending_restore = Some(restore);
-                                self.message = None;
+                                if self.saves.contains(&name) {
+                                    let mut restore =
+                                        ShelfDownload::new(name).at_most(2 * 1024 * 1024);
+                                    restore.start(context);
+                                    self.pending_restore = Some(restore);
+                                    self.message = None;
+                                    self.view = View::Play;
+                                } else {
+                                    self.message = Some(format!("Slot {slot} is empty."));
+                                }
                             }
                         }
-                        self.view = View::Play;
+                        if self.pending_restore.is_some() {
+                            self.view = View::Play;
+                        }
                         self.show(context);
                     }
                     return;
@@ -515,13 +547,17 @@ impl KoboApp for Parser {
         }
         if action == action_id("save") {
             self.slot_action = SlotAction::Save;
+            self.slots_page = 0;
             self.view = View::Slots;
+            context.shelf().list();
             self.show(context);
             return;
         }
         if action == action_id("restore") {
             self.slot_action = SlotAction::Restore;
+            self.slots_page = 0;
             self.view = View::Slots;
+            context.shelf().list();
             self.show(context);
             return;
         }
@@ -550,6 +586,16 @@ impl KoboApp for Parser {
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Slots {
+            let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
+            self.slots_page = if forward {
+                (self.slots_page + 1).min(page_count - 1)
+            } else {
+                self.slots_page.saturating_sub(1)
+            };
+            self.show(context);
+            return;
+        }
         if self.view != View::Play {
             return;
         }
@@ -581,7 +627,12 @@ impl KoboApp for Parser {
                 .cloned()
                 .collect();
             self.stories.sort_by(|left, right| left.0.cmp(&right.0));
-            if self.view == View::Library {
+            self.saves = items
+                .iter()
+                .filter(|(name, _)| name.starts_with(SAVE_PREFIX))
+                .map(|(name, _)| name.clone())
+                .collect();
+            if self.view == View::Library || self.view == View::Slots {
                 self.show(context);
             }
             return;
@@ -682,6 +733,15 @@ fn word_links(text: &str) -> Vec<(String, usize, usize, String)> {
     links
 }
 
+fn slot_subtitle(action: SlotAction, occupied: bool) -> String {
+    match (action, occupied) {
+        (SlotAction::Save, true) => "Saved game: tap to overwrite".to_owned(),
+        (SlotAction::Save, false) => "Empty: tap to save here".to_owned(),
+        (SlotAction::Restore, true) => "Saved game: tap to restore".to_owned(),
+        (SlotAction::Restore, false) => "Empty: nothing to restore".to_owned(),
+    }
+}
+
 fn save_name(info: &StoryInfo, slot: &str) -> String {
     let mut id = info
         .id
@@ -718,7 +778,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
 
     #[test]
     fn transcript_pagination_is_measured_utf8_safe_and_preserves_all_text() {
@@ -767,6 +827,44 @@ mod tests {
     }
 
     #[test]
+    fn slot_rows_name_what_each_slot_holds() {
+        assert_eq!(
+            slot_subtitle(SlotAction::Save, true),
+            "Saved game: tap to overwrite"
+        );
+        assert_eq!(
+            slot_subtitle(SlotAction::Save, false),
+            "Empty: tap to save here"
+        );
+        assert_eq!(
+            slot_subtitle(SlotAction::Restore, false),
+            "Empty: nothing to restore"
+        );
+        let mut parser = Parser {
+            saves: vec!["save-zork1-3".to_owned()],
+            ..Parser::default()
+        };
+        parser.message = Some("Slot 4 is empty.".to_owned());
+        for scale in TextScale::STEPS {
+            let scaled = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for page in 0..3 {
+                parser.slots_page = page;
+                let diagnostics = parser
+                    .slots_screen()
+                    .diagnostics(&scaled, &Chrome::default());
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "page {page} at {scaled:?}: {:?}",
+                    diagnostics.issues
+                );
+            }
+        }
+    }
+
+    #[test]
     fn restore_marker_separates_old_transcript_from_new() {
         let mut parser = Parser::default();
         parser.note_restored();
@@ -793,9 +891,19 @@ mod tests {
     fn library_and_play_layouts_fit_clara() {
         let mut parser = Parser::default();
         parser.stories.push(("story-advent.z3".to_owned(), 128_000));
-        for screen in [parser.library_screen(), parser.play_screen()] {
-            let diagnostics = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
-            assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for screen in [parser.library_screen(), parser.play_screen()] {
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    diagnostics.issues
+                );
+            }
         }
     }
 }
