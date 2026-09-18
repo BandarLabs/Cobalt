@@ -43,10 +43,12 @@ struct Parser {
     pages: Vec<(usize, usize)>,
     paginated_len: usize,
     pages_metrics: Option<DisplayMetrics>,
+    pages_keyboard_open: Option<bool>,
     page: usize,
     keyboard: Keyboard,
     message: Option<String>,
     slot_action: SlotAction,
+    keyboard_open: bool,
 }
 
 impl Default for Parser {
@@ -65,10 +67,12 @@ impl Default for Parser {
             pages: Vec::new(),
             paginated_len: 0,
             pages_metrics: None,
+            pages_keyboard_open: None,
             page: 0,
             keyboard: Keyboard::new(),
             message: None,
             slot_action: SlotAction::Save,
+            keyboard_open: false,
         }
     }
 }
@@ -87,10 +91,7 @@ impl Parser {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
             .heading("Interactive fiction")
-            .text(
-                "Push a .z3, .z5 or .z8 story with `kobo parser push FILE --device IP`; \
-                 `kobo parser check FILE` validates one first. Stories play completely offline.",
-            );
+            .text("Push a .z3, .z5 or .z8 story with `kobo parser push FILE --device IP`.");
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
@@ -145,6 +146,20 @@ impl Parser {
             }
             None => "Parser".to_owned(),
         };
+        let commands = [
+            ("look", "LOOK"),
+            ("inventory", "INVENTORY"),
+            ("examine", "EXAMINE"),
+            ("take", "TAKE"),
+            ("north", "N"),
+            ("south", "S"),
+            ("east", "E"),
+            ("west", "W"),
+            ("undo", "UNDO"),
+            ("save", "SAVE"),
+            ("restore", "RESTORE"),
+            ("again", "AGAIN"),
+        ];
         let mut builder = ScreenBuilder::new("parser-play")
             .top_bar(status)
             .top_bar_glyph("library", "Library", Glyph::Book)
@@ -158,27 +173,19 @@ impl Parser {
                     .map(|(name, start, end, _)| (name, *start, *end)),
             )
             .divider()
-            .typed(&self.keyboard, "Type a command")
-            .keyboard(&self.keyboard, "Run")
-            .grid(
-                4,
-                false,
-                [
-                    ("look", "LOOK"),
-                    ("inventory", "INVENTORY"),
-                    ("examine", "EXAMINE"),
-                    ("take", "TAKE"),
-                    ("north", "N"),
-                    ("south", "S"),
-                    ("east", "E"),
-                    ("west", "W"),
-                    ("undo", "UNDO"),
-                    ("save", "SAVE"),
-                    ("restore", "RESTORE"),
-                    ("again", "AGAIN"),
-                ],
-            )
-            .page_turns("page-back", "page-next")
+            .typed(&self.keyboard, "Type a command");
+        // One input surface at a time: the palette by default, the keyboard
+        // behind a top-bar toggle, so the screen fits every panel and pose.
+        builder = builder.top_bar_action(
+            "keyboard-toggle",
+            if self.keyboard_open { "Close keys" } else { "Keyboard" },
+        );
+        builder = if self.keyboard_open {
+            builder.keyboard(&self.keyboard, "Run")
+        } else {
+            builder.grid(4, false, commands)
+        };
+        builder = builder.page_turns("page-back", "page-next")
             .page_position(
                 u16::try_from(page).unwrap_or(u16::MAX),
                 u16::try_from(pages).unwrap_or(u16::MAX),
@@ -353,6 +360,7 @@ impl Parser {
         let Some((_, _, _, word)) = links.get(index).cloned() else {
             return;
         };
+        self.keyboard_open = true;
         let mut input = self.keyboard.text().to_owned();
         if !input.is_empty() && !input.ends_with(' ') {
             input.push(' ');
@@ -384,6 +392,7 @@ impl Parser {
 
     fn repaginate_for_metrics(&mut self, metrics: DisplayMetrics) {
         if self.pages_metrics != Some(metrics)
+            || self.pages_keyboard_open != Some(self.keyboard_open)
             || self.paginated_len > self.transcript.len()
             || !self.transcript.is_char_boundary(self.paginated_len)
         {
@@ -391,6 +400,7 @@ impl Parser {
             self.paginated_len = 0;
         }
         self.pages_metrics = Some(metrics);
+        self.pages_keyboard_open = Some(self.keyboard_open);
         if self.paginated_len == self.transcript.len() {
             self.page = self.page.min(self.pages.len().saturating_sub(1));
             return;
@@ -513,14 +523,21 @@ impl KoboApp for Parser {
         if self.view != View::Play {
             return;
         }
-        if let Some(pressed) = self.keyboard.press(action) {
-            if pressed == Pressed::Submitted {
-                let input = self.keyboard.take();
-                self.command(context, &input);
-            } else {
-                self.show(context);
-            }
+        if action == action_id("keyboard-toggle") {
+            self.keyboard_open = !self.keyboard_open;
+            self.show(context);
             return;
+        }
+        if self.keyboard_open {
+            if let Some(pressed) = self.keyboard.press(action) {
+                if pressed == Pressed::Submitted {
+                    let input = self.keyboard.take();
+                    self.command(context, &input);
+                } else {
+                    self.show(context);
+                }
+                return;
+            }
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));
         let text = self
@@ -576,6 +593,7 @@ impl KoboApp for Parser {
             if action == action_id(name) {
                 if command.ends_with(' ') {
                     self.keyboard = Keyboard::with_text(command);
+                    self.keyboard_open = true;
                     self.show(context);
                 } else {
                     self.command(context, command);
@@ -875,19 +893,26 @@ mod tests {
             transcript: machine.take_output(),
             ..Parser::default()
         };
-        parser.repaginate_for_metrics(CLARA_BW_METRICS);
-        assert!(parser.pages.len() > 1, "real output spans pages");
-        for scale in TextScale::STEPS {
-            let metrics = DisplayMetrics {
-                text_scale: scale,
-                ..CLARA_BW_METRICS
-            };
-            parser.repaginate_for_metrics(metrics);
-            for &(start, end) in &parser.pages {
-                let page_text = &parser.transcript[start..end];
+        for keyboard_open in [false, true] {
+            parser.keyboard_open = keyboard_open;
+            for scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..CLARA_BW_METRICS
+                };
+                parser.repaginate_for_metrics(metrics);
+                for &(start, end) in &parser.pages {
+                    let page_text = &parser.transcript[start..end];
+                    assert!(
+                        parser.play_page_fits(page_text, metrics),
+                        "{scale:?} keyboard_open={keyboard_open} overflow: {page_text:?}"
+                    );
+                }
+            }
+            if keyboard_open {
                 assert!(
-                    parser.play_page_fits(page_text, metrics),
-                    "{scale:?} overflow: {page_text:?}"
+                    parser.pages.len() > 1,
+                    "real output spans pages with the keyboard open"
                 );
             }
         }
@@ -958,21 +983,42 @@ mod tests {
     }
 
     #[test]
-    fn library_and_play_layouts_fit_clara() {
+    fn supported_matrix_layouts_fit() {
+        // One panel per supported geometry: Clara (both densities), Libra,
+        // Elipsa, each in both poses, at every text scale.
         let mut parser = Parser::default();
         parser.stories.push(("story-advent.z3".to_owned(), 128_000));
-        for scale in TextScale::STEPS {
-            let metrics = DisplayMetrics {
-                text_scale: scale,
-                ..CLARA_BW_METRICS
-            };
-            for screen in [parser.library_screen(), parser.play_screen()] {
-                let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
-                assert!(
-                    diagnostics.issues.is_empty(),
-                    "{metrics:?}: {:?}",
-                    diagnostics.issues
-                );
+        for (width, height, ppi) in [
+            (1072, 1448, 300),
+            (1072, 1448, 212),
+            (1264, 1680, 300),
+            (1404, 1872, 227),
+        ] {
+            for pose in [(width, height), (height, width)] {
+                for scale in TextScale::STEPS {
+                    let metrics = DisplayMetrics {
+                        width: pose.0,
+                        height: pose.1,
+                        pixels_per_inch: ppi,
+                        text_scale: scale,
+                    };
+                    for keyboard_open in [false, true] {
+                        parser.keyboard_open = keyboard_open;
+                        for (name, screen) in [
+                            ("library", parser.library_screen()),
+                            ("play", parser.play_screen()),
+                        ] {
+                            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                            assert!(
+                                diagnostics.issues.is_empty(),
+                                "{name} {}x{}@{ppi} {scale:?} keyboard_open={keyboard_open}: {:?}",
+                                pose.0,
+                                pose.1,
+                                diagnostics.issues
+                            );
+                        }
+                    }
+                }
             }
         }
     }
