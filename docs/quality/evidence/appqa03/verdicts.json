@@ -84,6 +84,98 @@
   "deck": {
    "status": "pass",
    "notes": "No content cache; the 'last action' line honestly reports what the computer answered, which is the only freshness that exists for a remote-control surface. Evidence: freshness.json + main.rs:12-174."
+  },
+  "audiobook": {
+   "status": "pass",
+   "notes": "Created books and the sample are on-device content ('Saved on this reader'); creation needs the network and failures name what was kept. No cache-freshness concept beyond that. Evidence: freshness.json."
+  },
+  "birds": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Snapshot-read failure surfaces with detail (APPQA-02)."
+  },
+  "chat": {
+   "status": "pass",
+   "notes": "Conversations are local records of a live service; the save format is versioned and refuses unknown versions rather than restoring garbage. Nothing cached to go stale. Evidence: freshness.json."
+  },
+  "crossword": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Progress per puzzle with decode-refusal on damaged records (APPQA-02)."
+  },
+  "fieldbook": {
+   "status": "pass",
+   "notes": "Outings/sightings are owner-generated records; failed writes are named ('Not saved. The last write failed.'); packs pushed via CLI. Evidence: freshness.json."
+  },
+  "flashcards": {
+   "status": "pass",
+   "notes": "Review log is the local state; failed saves name the repair path ('Export or repair the local review log'); imported schedules left unchanged on failure. Evidence: freshness.json."
+  },
+  "frame": {
+   "status": "pass",
+   "notes": "Pushed albums are on-device content; transfer-record mismatches are detected and named with re-push remedy - freshness verification for pushed content. Evidence: freshness.json + APPQA-02 notes."
+  },
+  "gallery": {
+   "status": "pass",
+   "notes": "Component catalog; cache/freshness specimens are themselves the reviewed states (APPQA-05). Counted for census completeness."
+  },
+  "grimoire": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Bundled reference document."
+  },
+  "habits": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Degraded-mode honesty on load failure (APPQA-02)."
+  },
+  "inkling": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Damaged saves ignored and named ('Saved game was damaged and was ignored.')."
+  },
+  "logicpack": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Non-destructive save-corruption handling (APPQA-02)."
+  },
+  "magnet": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Live sensor readings only."
+  },
+  "morse": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Bundled code table."
+  },
+  "nonograms": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Import manifest validation taxonomy (APPQA-02)."
+  },
+  "paperterm": {
+   "status": "pass",
+   "notes": "Live terminal sessions; the preview is explicitly labeled sample output. No cache to go stale. Evidence: freshness.json."
+  },
+  "parlor": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Game saves with resume."
+  },
+  "parser": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. In-world SAVE/RESTORE; story validation shared with CLI."
+  },
+  "sidekick": {
+   "status": "pass",
+   "notes": "Live question board; stale-question honesty ('gone before the answer arrived'). No content cache. Evidence: freshness.json."
+  },
+  "sudoku": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Save kept + retry-reading on failure (APPQA-02)."
+  },
+  "tictactoe": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02."
+  },
+  "todo": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Save-on-every-change with load-failure splash (APPQA-02)."
+  },
+  "backgammon": {
+   "status": "pass",
+   "notes": "Local content only - no network cache concept, nothing to go stale. Save-state integrity and failure honesty covered under APPQA-02. Versioned autosave with migration (APPQA-02)."
   }
  },
  "findings": []
