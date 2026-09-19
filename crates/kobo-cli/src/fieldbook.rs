@@ -588,10 +588,11 @@ fn copy_directory_atomic(source: &Path, destination: &Path) -> Result<(), String
     Ok(())
 }
 
-/// The reader's shelf answers flat names only, so a pack's photos/
-/// directory becomes root-level files named by content digest. The
-/// manifest keeps the photos/ path; the reader side derives the flat
-/// shelf key from the asset's file name.
+/// The reader's shelf answers flat names of at most 64 characters, so a
+/// pack's photos/<digest>.jpg assets publish as root-level <digest> files:
+/// the full content address fits the key limit, the extension does not.
+/// The manifest keeps the photos/ path; the reader derives the same key
+/// from the asset's file stem.
 fn flatten_photos(stage: &Path) -> Result<(), String> {
     let photos = stage.join("photos");
     if !photos.exists() {
@@ -607,7 +608,9 @@ fn flatten_photos(stage: &Path) -> Result<(), String> {
             return Err("the pack photos directory holds more than files".into());
         }
         let name = entry.file_name();
-        fs::rename(entry.path(), stage.join(&name)).map_err(|error| error.to_string())?;
+        let name = name.to_str().ok_or("photo file name is not UTF-8")?;
+        let name = name.strip_suffix(".jpg").unwrap_or(name);
+        fs::rename(entry.path(), stage.join(name)).map_err(|error| error.to_string())?;
     }
     fs::remove_dir(&photos).map_err(|error| error.to_string())
 }
@@ -657,9 +660,13 @@ fn remote_directory(host: &str, source: &Path) -> Result<(), String> {
         if relative.contains('\'') || relative.contains('\n') || relative.contains("..") {
             return Err("unsafe photo pack filename".into());
         }
-        // The reader's shelf answers flat names only; photos/<digest>.jpg
-        // stages as <digest>.jpg and the reader derives the same key.
-        let staged = relative.strip_prefix("photos/").unwrap_or(relative);
+        // The reader's shelf answers flat names of at most 64 characters;
+        // photos/<digest>.jpg stages as <digest> and the reader derives
+        // the same key from the asset's file stem.
+        let staged = relative
+            .strip_prefix("photos/")
+            .and_then(|name| name.strip_suffix(".jpg"))
+            .unwrap_or(relative);
         let bytes = bounded(&path, MAX_PHOTO, "photo pack file")?;
         let encoded = super::base64_encode(&bytes);
         let digest = kobo_net::sha256::hex_digest(&bytes);
@@ -828,7 +835,7 @@ mod tests {
         let destination = root.join("sim-data");
         copy_directory_atomic(&source, &destination).unwrap();
         assert!(destination.join(MANIFEST).is_file());
-        assert!(destination.join(format!("{digest}.jpg")).is_file());
+        assert!(destination.join(&digest).is_file());
         assert!(!destination.join("photos").exists());
         let _ = fs::remove_dir_all(&root);
     }
