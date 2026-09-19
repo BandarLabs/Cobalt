@@ -3665,8 +3665,10 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Keep cached content usable with honest freshness",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/appqa03/"
+  ]
  },
  {
   "id": "APPQA-04",
