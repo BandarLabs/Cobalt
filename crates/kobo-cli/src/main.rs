@@ -4224,6 +4224,9 @@ struct SetupOptions {
     /// thing anybody asked for. `--no-key` is for a reader that already has
     /// the key, or one being prepared for somebody else.
     authorize_key: bool,
+    /// Whether a short original welcome note joins the install, so the first
+    /// reconnect shows something new to open. `--no-sample` skips it.
+    sample: bool,
 }
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
@@ -4241,6 +4244,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         wait: true,
         enable_ssh: false,
         authorize_key: true,
+        sample: true,
     };
     let mut index = 0;
     while index < arguments.len() {
@@ -4270,13 +4274,15 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--menu" => options.menu = MenuEntry::Force,
             "--enable-ssh" => options.enable_ssh = true,
             "--no-key" => options.authorize_key = false,
+            "--no-sample" => options.sample = false,
             "--dry-run" => options.dry_run = true,
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
                      usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
                      [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
-                     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source]"
+                     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source] \
+                     [--no-sample]"
                 ));
             }
         }
@@ -4286,7 +4292,9 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         return Err("--source and --release-dir are mutually exclusive".to_owned());
     }
     if options.non_interactive && !options.yes && !options.dry_run {
-        return Err("--non-interactive requires --yes for any change".to_owned());
+        return Err(crate::console::usage(
+            "--non-interactive requires --yes for any change",
+        ));
     }
     Ok(options)
 }
@@ -4533,7 +4541,9 @@ fn confirmed_setup(
         return Ok(true);
     }
     if options.non_interactive {
-        return Err("noninteractive setup was not explicitly confirmed with --yes".to_owned());
+        return Err(crate::console::usage(
+            "noninteractive setup was not explicitly confirmed with --yes",
+        ));
     }
     let tty = fs::OpenOptions::new()
         .read(true)
@@ -4657,6 +4667,9 @@ fn setup_device_with_confirmation(
     let staged_here = matches!(menu, Some(Ok(menu::Menu::Staged)));
     let key = (options.enable_ssh && options.authorize_key)
         .then(|| authorize_this_machine(&reader.volume, staged_here));
+    // Before the eject, because the note is a write to the volume. It never
+    // fails the install: a set-up reader without the note is still set up.
+    let sample = options.sample.then(|| setup::write_sample(&reader.volume));
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
     // A reader that was never ejected has not seen the install and will not be
@@ -4678,6 +4691,16 @@ fn setup_device_with_confirmation(
         }
         .describe_for(&reader)
     );
+    match &sample {
+        Some(Ok(path)) => println!(
+            "sample: {} is in the library; open it on the reader after the restart, and delete it whenever you like",
+            path.display()
+        ),
+        Some(Err(error)) => println!(
+            "sample: the welcome note was not written ({error}); the install itself is fine"
+        ),
+        None => {}
+    }
     if waiting {
         let subnet = subnet.unwrap_or_default();
         await_reader(&subnet);
@@ -4852,6 +4875,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
          {trust_plan}\n\
          {}\n\
          {}\n\
+         {}\n\
          would eject, then {}\n\
          nothing outside the book partition{}",
         reader.volume.display(),
@@ -4896,6 +4920,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             )
         },
         describe_key_plan(options, would_stage),
+        describe_sample_plan(options),
         if options.enable_ssh && options.wait {
             "wait for the restarted reader to appear on the network"
         } else if !options.enable_ssh {
@@ -4911,6 +4936,18 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             (false, false) => ", nothing extracted as root",
         }
     )
+}
+
+/// The one line of the dry run that covers the welcome note.
+fn describe_sample_plan(options: &SetupOptions) -> String {
+    if options.sample {
+        format!(
+            "would add {} to the library, a short welcome note to open after the restart",
+            setup::SAMPLE_NAME
+        )
+    } else {
+        "would add no welcome note, because --no-sample was given".to_owned()
+    }
 }
 
 /// The one line of the dry run that covers this machine's trust roots.
@@ -9361,6 +9398,23 @@ mod tests {
             for (section, key, value) in setup::SETTINGS_APPLIED {
                 assert!(plan.contains(&format!("{section}/{key}={value}")), "{plan}");
             }
+        }
+
+        #[test]
+        fn a_dry_run_names_the_welcome_note_and_its_opt_out() {
+            let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains(setup::SAMPLE_NAME), "{plan}");
+            let parsed = parse_setup(&arguments(&["--dry-run", "--no-sample"])).expect("parse");
+            assert!(!parsed.sample);
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains("--no-sample was given"), "{plan}");
+        }
+
+        #[test]
+        fn noninteractive_change_without_yes_is_a_usage_error() {
+            let error = parse_setup(&arguments(&["--non-interactive"])).expect_err("refused");
+            assert!(error.starts_with("usage: "), "{error}");
         }
 
         #[test]

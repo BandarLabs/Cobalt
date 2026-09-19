@@ -110,6 +110,23 @@ fn answer(
 mod tests {
     use super::*;
     #[test]
+    fn every_choice_dispatches_to_a_real_command() {
+        // The guided surface and the typed commands are the same operations:
+        // each choice produces argv whose head is a command the binary
+        // actually has, so the menu can never offer a path that does not
+        // exist outside it.
+        let known = ["setup", "frame", "feeds", "stream", "--help", "apps"];
+        for answers in ["1\n", "2\n/x\n/y\n", "3\n/x.opml\n", "4\n", "5\n", "6\n1\n"] {
+            let mut input = std::io::BufReader::new(answers.as_bytes());
+            let mut output = Vec::new();
+            let command = choose(&mut input, &mut output)
+                .expect("a choice")
+                .expect("a command");
+            assert!(known.contains(&command[0].as_str()), "{command:?}");
+        }
+    }
+
+    #[test]
     fn preview_paths_stay_literal_and_cancellation_does_nothing() {
         let mut output = Vec::new();
         let result = choose(
