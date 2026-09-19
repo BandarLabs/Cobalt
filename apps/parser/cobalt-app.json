@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.5",
-  "release_notes": "The save and restore screens now say what a slot is before you pick one: a kept position of the story, with the story resuming where you left off either way.",
+  "version": "0.1.6",
+  "release_notes": "First Light, an original three-room tutorial story, is bundled and seeds itself onto an empty shelf, so a first run opens on a library with something in it. Story tiles no longer show the file extension.",
   "glyph": "book",
   "capabilities": []
 }

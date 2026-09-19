@@ -1,5 +1,6 @@
 //! Parser is an offline, touch-first Z-machine interactive-fiction player.
 
+mod story;
 mod zvm;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
@@ -18,6 +19,8 @@ use zvm::{Machine, RunState, StoryInfo};
 const SLOT_PAGE_ROWS: usize = 3;
 
 const STORY_PREFIX: &str = "story-";
+/// Shelf name of the bundled tutorial story.
+const TUTORIAL_BLOB: &str = "story-First_Light.z3";
 const SAVE_PREFIX: &str = "save-";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -41,6 +44,8 @@ struct Parser {
     open_blob: Option<String>,
     loading: Option<ShelfDownload>,
     saving: Option<ShelfUpload>,
+    seeding: Option<ShelfUpload>,
+    tutorial_seeded: bool,
     pending_restore: Option<ShelfDownload>,
     transcript: String,
     pages: Vec<(usize, usize)>,
@@ -65,6 +70,8 @@ impl Default for Parser {
             open_blob: None,
             loading: None,
             saving: None,
+            seeding: None,
+            tutorial_seeded: false,
             pending_restore: None,
             transcript: String::new(),
             pages: Vec::new(),
@@ -81,6 +88,35 @@ impl Default for Parser {
 }
 
 impl Parser {
+    fn advance_seeding(&mut self, context: &mut Context, result: &StoreResult) {
+        let Some(seeding) = &mut self.seeding else {
+            return;
+        };
+        match seeding.advance(context, result) {
+            ShelfProgress::Done => {
+                self.seeding = None;
+                context.shelf().list();
+            }
+            ShelfProgress::Failed(_) => {
+                self.seeding = None;
+                self.show(context);
+            }
+            ShelfProgress::Moving { .. } | ShelfProgress::Elsewhere => {}
+        }
+    }
+
+    /// A reader who has never pushed a story still gets one: the bundled
+    /// tutorial seeds itself onto an empty shelf, once, so a first run opens
+    /// on a library with something in it.
+    fn maybe_seed_tutorial(&mut self, context: &mut Context) {
+        if self.stories.is_empty() && !self.tutorial_seeded && self.seeding.is_none() {
+            self.tutorial_seeded = true;
+            let mut seeding = ShelfUpload::new(TUTORIAL_BLOB, crate::story::build_first_light());
+            seeding.start(context);
+            self.seeding = Some(seeding);
+        }
+    }
+
     fn show(&mut self, context: &mut Context) {
         self.repaginate(context);
         context.set_screen(match self.view {
@@ -778,9 +814,14 @@ impl KoboApp for Parser {
                 .filter(|(name, _)| name.starts_with(SAVE_PREFIX))
                 .map(|(name, _)| name.clone())
                 .collect();
+            self.maybe_seed_tutorial(context);
             if self.view == View::Library || self.view == View::Slots {
                 self.show(context);
             }
+            return;
+        }
+        if self.seeding.is_some() {
+            self.advance_seeding(context, &result);
             return;
         }
         if let Some(upload) = &mut self.saving {
@@ -899,8 +940,13 @@ fn save_name(info: &StoryInfo, slot: &str) -> String {
 }
 
 fn display_name(name: &str) -> String {
-    name.trim_start_matches(STORY_PREFIX)
-        .replace(['_', '-'], " ")
+    let bare = name.trim_start_matches(STORY_PREFIX);
+    let bare = bare
+        .strip_suffix(".z3")
+        .or_else(|| bare.strip_suffix(".z5"))
+        .or_else(|| bare.strip_suffix(".z8"))
+        .unwrap_or(bare);
+    bare.replace(['_', '-'], " ")
 }
 
 fn format_size(bytes: u32) -> String {
