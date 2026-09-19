@@ -3904,7 +3904,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Preview content for the selected reader before sending",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3912,7 +3912,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Report real preparing/sending/checking/ready stages",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3920,7 +3920,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Persist receipts and resume approved interrupted transfers",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
