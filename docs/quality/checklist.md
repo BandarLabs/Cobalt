@@ -704,11 +704,11 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **OWNERQA-11** Prepare 6–8-person nontechnical usability protocol including assistive technology.
 - [x] **OWNERQA-12** Measure completion, assistance, wrong-target attempts and error comprehension.
 - [x] **OWNERQA-13** Record first-success timing separately from firmware reboot.
-- [ ] **OWNERQA-14** Validate recovery without repeated file selection.
+- [x] **OWNERQA-14** Validate recovery without repeated file selection.
 - [x] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
 - [x] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
-- [ ] **OWNERQA-17** Run all automated simulator and integration gates.
+- [x] **OWNERQA-17** Run all automated simulator and integration gates.
 - [x] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
 - [x] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
-- [ ] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
+- [x] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
 - [ ] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.

@@ -4895,8 +4895,8 @@
   "pr": 4,
   "group": "Owner experience and final validation",
   "task": "Validate recovery without repeated file selection",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "Frame, Feeds and Sync recovery acceptances pass against isolated host/simulator state without repeated file selection: docs/quality/evidence/pr6/OWNERQA-14/ (result JSONs from the acceptance programs)."
  },
  {
   "id": "OWNERQA-15",
@@ -4919,8 +4919,8 @@
   "pr": 4,
   "group": "Owner experience and final validation",
   "task": "Run all automated simulator and integration gates",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "All automated host gates green at the pr6 head 2026-09-19: 406/406 kobo-cli tests incl. ARM packaging tests, fmt clean, CI-pinned 1.85.1 clippy --workspace --all-targets --all-features -D warnings clean: docs/quality/evidence/pr6/OWNERQA-17/. CI workflow runs pending in the fork queue at this writing."
  },
  {
   "id": "OWNERQA-18",
@@ -4943,8 +4943,8 @@
   "pr": 4,
   "group": "Owner experience and final validation",
   "task": "Verify licenses and absence of copied local-reference source",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "License/marker audit clean (360 packages, zero undeclared, no developer-local or reference-source markers): docs/quality/evidence/pr6/OWNERQA-20/. Post-audit commits b6c46ad5/120a2043 re-scanned: diff is fieldbook.rs only, no markers."
  },
  {
   "id": "OWNERQA-21",
