@@ -1,0 +1,7 @@
+Kobo app simulator: http://127.0.0.1:43163
+shot /home/sandbox/cobalt/docs/quality/evidence/parser-repro/matrix/libra-2-388-default/parser-shots/parser-library.png
+shot /home/sandbox/cobalt/docs/quality/evidence/parser-repro/matrix/libra-2-388-default/parser-shots/parser-opening.png
+shot /home/sandbox/cobalt/docs/quality/evidence/parser-repro/matrix/libra-2-388-default/parser-shots/parser-story-save.png
+shot /home/sandbox/cobalt/docs/quality/evidence/parser-repro/matrix/libra-2-388-default/parser-shots/parser-restore-picker.png
+shot /home/sandbox/cobalt/docs/quality/evidence/parser-repro/matrix/libra-2-388-default/parser-shots/parser-restored.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/parser-repro/matrix/libra-2-388-default/parser-shots

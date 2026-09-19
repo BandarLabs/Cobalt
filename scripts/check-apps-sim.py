@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import contextlib
 import shutil
 import subprocess
 import tempfile
@@ -68,7 +69,8 @@ def seed(app, state, kobo, env, log):
         shutil.copyfile(ROOT / 'apps/parser/fixtures/zork1.z3', shelf / 'story-zork1.z3')
 
 
-def run_app(app, kobo, out, environment, timeout, bare=False, route_override=None):
+def run_app(app, kobo, out, environment, timeout, bare=False, route_override=None,
+            seed_root=None, state_dir=None):
     directory = next((ROOT / group / app for group in ('apps', 'examples')
                       if (ROOT / group / app).is_dir()), None)
     result = dict(app=app, launched=False, status='fail')
@@ -76,12 +78,22 @@ def run_app(app, kobo, out, environment, timeout, bare=False, route_override=Non
         return dict(result, error='catalog app has no source directory')
     route = route_override or next((directory / name for name in ('drive.kobo', 'drive.txt')
                                     if (directory / name).is_file()), None)
-    result['route'] = str(route.relative_to(ROOT)) if route else None
+    result['route'] = (str(route.relative_to(ROOT)) if route and route.is_relative_to(ROOT)
+                       else str(route) if route else None)
     process = None
     log_path = out / (app + '.log')
     # Short paths are required by Unix sockets, independently of --out length.
-    with tempfile.TemporaryDirectory(prefix='cb-', dir='/tmp') as state, log_path.open('w') as log:
+    if state_dir is not None:
+        kept = Path(state_dir)
+        kept.mkdir(parents=True, exist_ok=True)
+        context = contextlib.nullcontext(str(kept))
+    else:
+        context = tempfile.TemporaryDirectory(prefix='cb-', dir='/tmp')
+    with context as state, log_path.open('w') as log:
         env = dict(environment, TMPDIR=state, KOBO_INKLING_DAY='2026-09-01')
+        if seed_root is not None and Path(seed_root).is_dir():
+            shutil.copytree(seed_root, state, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns('*.sock'))
         if app == 'fanshelf':
             env['FANSHELF_DEMO'] = '1'
         if app == 'backgammon':
@@ -128,6 +140,10 @@ def main():
     parser.add_argument('--timeout', type=int, default=300)
     parser.add_argument('--bare', action='store_true',
                         help='skip seeding, for first-run scenarios')
+    parser.add_argument('--seed-root', type=Path,
+                        help='copy this prepared simulator state into the fresh simulator')
+    parser.add_argument('--state-dir', type=Path,
+                        help='keep simulator state here instead of deleting it after the run')
     parser.add_argument('--route', type=Path,
                         help='drive script to run instead of the app default')
     args = parser.parse_args()
@@ -162,7 +178,8 @@ def main():
     }
     for app in apps:
         result = run_app(app, kobo, out, env, args.timeout,
-                                   bare=args.bare, route_override=args.route)
+                                   bare=args.bare, route_override=args.route,
+                                   seed_root=args.seed_root, state_dir=args.state_dir)
         report['results'].append(result)
         (out / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(result), flush=True)
