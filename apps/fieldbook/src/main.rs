@@ -7,15 +7,19 @@ use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
-    LayoutIssueKind, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult,
+    LayoutIssueKind, PictureHandle, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+    StoreResult, TilePicture,
 };
-use shelf::{Pack, Species, MANIFEST, MAX_MANIFEST};
+use shelf::{Attribution, Pack, PhotoCredit, Species, MANIFEST, MAX_MANIFEST};
 use std::process::ExitCode;
 
 const OUTINGS: &str = "outings.v1";
 const SIGHTINGS: &str = "sightings.v1";
 const EXPORT: &str = "export-checklist.csv";
 const MAX_STATE: usize = 256 * 1024;
+const ATTRIBUTION: &str = "attribution.json";
+const MAX_PHOTO: usize = 2 * 1024 * 1024;
+const PICTURE_HANDLE: PictureHandle = PictureHandle(1);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Outing {
@@ -79,6 +83,10 @@ struct Fieldbook {
     save: SaveState,
     manifest_load: Option<ShelfDownload>,
     loads: Loads,
+    credits: Vec<PhotoCredit>,
+    attribution_load: Option<ShelfDownload>,
+    photo_load: Option<ShelfDownload>,
+    photo: Option<TilePicture>,
 }
 
 impl Default for Fieldbook {
@@ -102,6 +110,10 @@ impl Default for Fieldbook {
             save: SaveState::Idle,
             manifest_load: None,
             loads: Loads::default(),
+            credits: Vec::new(),
+            attribution_load: None,
+            photo_load: None,
+            photo: None,
         }
     }
 }
@@ -196,6 +208,13 @@ impl Fieldbook {
                             .collect();
                         self.packs = decoded.packs;
                         self.pack_notice = None;
+                        if self
+                            .packs
+                            .iter()
+                            .any(|pack| pack.species.iter().any(|bird| bird.photo.is_some()))
+                        {
+                            self.begin_attribution(context);
+                        }
                     }
                     Err(error) => {
                         self.packs.clear();
@@ -217,6 +236,91 @@ impl Fieldbook {
                 self.loads.manifest = true;
                 self.pack_notice = Some("The field pack shelf could not be opened.".to_owned());
                 self.start_when_ready(context);
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+        }
+    }
+
+    fn begin_attribution(&mut self, context: &mut Context) {
+        let mut load = ShelfDownload::new(ATTRIBUTION).at_most(MAX_MANIFEST);
+        load.start(context);
+        self.attribution_load = Some(load);
+    }
+
+    fn advance_attribution(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.attribution_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self
+                    .attribution_load
+                    .take()
+                    .expect("active attribution")
+                    .take();
+                self.credits = Attribution::decode(&bytes)
+                    .map(|attribution| attribution.photos)
+                    .unwrap_or_default();
+                if self.loads.started && self.view == View::Detail {
+                    self.show(context);
+                }
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                self.attribution_load = None;
+                self.credits.clear();
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+        }
+    }
+
+    /// Loads the detail screen's photo, when the pack carries one. The
+    /// companion publishes photos under the asset's file name; the pack
+    /// keeps the human-readable directory layout.
+    fn begin_photo(&mut self, context: &mut Context) {
+        self.photo = None;
+        self.photo_load = None;
+        let Some(photo) = self
+            .detail
+            .as_ref()
+            .and_then(|species| species.photo.as_ref())
+        else {
+            return;
+        };
+        let mut load = ShelfDownload::new(photo.shelf_key().to_owned()).at_most(MAX_PHOTO);
+        load.start(context);
+        self.photo_load = Some(load);
+    }
+
+    fn advance_photo(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.photo_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self.photo_load.take().expect("active photo").take();
+                self.photo = kobo_image::decode(&bytes)
+                    .and_then(|decoded| decoded.fit(640, 480))
+                    .map(|mut picture| {
+                        picture.dither(kobo_image::PANEL_GREYS);
+                        context.put_picture(
+                            PICTURE_HANDLE,
+                            picture.width(),
+                            picture.height(),
+                            picture.into_grey(),
+                        )
+                    })
+                    .unwrap_or(None);
+                self.show(context);
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                self.photo_load = None;
+                self.photo = None;
                 true
             }
             ShelfProgress::Moving { .. } => true,
@@ -274,6 +378,7 @@ impl Fieldbook {
                     code: sighting.code.clone(),
                     common: sighting.common.clone(),
                     scientific: sighting.scientific.clone(),
+                    photo: None,
                 });
             }
         }
@@ -776,6 +881,16 @@ impl Fieldbook {
                 "{}\n{}\nBanding code: {}",
                 species.common, species.scientific, species.code
             ));
+            if let Some(picture) = self.photo {
+                s = s.picture(picture, 45);
+                if let Some(credit) = species
+                    .photo
+                    .as_ref()
+                    .and_then(|photo| self.credits.iter().find(|c| c.id == photo.attribution))
+                {
+                    s = s.secondary(format!("Photo: {} · {}", credit.creator, credit.license));
+                }
+            }
             if self.open_outing.is_some() {
                 s = s.button("log-detail", "Log in the open outing");
             }
@@ -868,6 +983,12 @@ impl KoboApp for Fieldbook {
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if self.advance_manifest(context, &result) {
+            return;
+        }
+        if self.advance_attribution(context, &result) {
+            return;
+        }
+        if self.advance_photo(context, &result) {
             return;
         }
         match result {
@@ -974,6 +1095,7 @@ impl KoboApp for Fieldbook {
                         code: String::new(),
                         common: name,
                         scientific: String::new(),
+                        photo: None,
                     },
                 );
             }
@@ -989,6 +1111,7 @@ impl KoboApp for Fieldbook {
             if let Some(species) = self.search_results().get(index).cloned() {
                 self.detail = Some(species);
                 self.view = View::Detail;
+                self.begin_photo(context);
             }
         } else if let Some(index) = (0..6).find(|i| action == action_id(&format!("tally-{i}"))) {
             if let Some(species) = self.outing_species().get(index).cloned() {
@@ -1019,6 +1142,10 @@ impl KoboApp for Fieldbook {
                     .insert(index.min(self.sightings.len()), sighting);
                 self.persist(context);
             }
+        }
+        if self.view != View::Detail {
+            self.photo = None;
+            self.photo_load = None;
         }
         self.show(context);
     }

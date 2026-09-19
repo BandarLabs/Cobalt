@@ -1009,6 +1009,7 @@ dependencies = [
 name = "kobo-fieldbook"
 version = "0.2.0"
 dependencies = [
+ "kobo-image",
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",

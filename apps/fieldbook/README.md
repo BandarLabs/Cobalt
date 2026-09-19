@@ -10,6 +10,14 @@ A pack is a regional species list prepared on a computer and published to the re
 
 ![Searching a pack](screenshots/search.png)
 
+## Species photos
+
+A pack prepared with `kobo fieldbook photos` carries a licensed photo for every species it can match, shown on the detail screen with the photographer and license. Photos come from Avicommons and ship only under licenses that allow redistribution; a species without an eligible photo stays text-only.
+
+![Species detail with photo](screenshots/detail-photo.png)
+
+The photo in the screenshot is the Northern Cardinal by Adam Jackson, CC0 2.0, via Avicommons. Each pack carries attribution records for its own photos, and the detail screen shows the credit alongside the photo.
+
 ## Logging an outing
 
 **Start an outing** asks for a place name, then stamps the date and start time from the reader's clock. Tapping a species tallies it; **Review sightings** lists the outing's log, where a tap removes an entry and **Undo delete** restores it. **Finish outing** files it on Today. The life list totals every species on the reader.

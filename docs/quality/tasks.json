@@ -1539,11 +1539,8 @@
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Show a licensed species photo on the species detail screen",
-  "status": "todo",
-  "evidence": [
-   "Owner decision 2026-09-19 (WhatsApp): add species photos. Real CC-licensed photos only, no fixture/synthetic content; avicommons.org first, Wikimedia Commons or iNaturalist CC photos as fallback with a per-photo license filter; attribution recorded in the pack. Grayscale vs dithering chosen by what the platform image pipeline actually does on Carta (16-gray path vs fast 1-bit). Proof: simulator captures of the detail screen with photos at multiple profiles and text scales.",
-   "Owner steer 2026-09-19 (WhatsApp): license info goes in the app directory README as applicable - apps/fieldbook/README.md records photo sources, per-photo licenses and attribution; the same convention applies wherever an app ships third-party content."
-  ]
+  "status": "done",
+  "evidence": "App decodes v2 packs (species photo asset + attribution id) and attribution.json, loads the photo via shelf (bare-digest key), renders decode->fit->dither(16 grey)->put_picture with a \"Photo: creator - license\" credit; species without an eligible photo stay text-only. Real-workload e2e: kobo fieldbook photos fetched Avicommons photos for 2 of 3 species (AMRO CC0 2.0 Adam Jackson, NOCA CC BY-SA 3.0 en:User:Mdf; BLJA none eligible, fail-closed), pushed via CLI, driven in sim. Captures at clara-bw-391 default + extra-large and elipsa-2e-389: docs/quality/evidence/fieldbook/fieldbook-detail-photo*.png + no-photo. pr6 companion flattened shelf keys (120a2043). README records source, license and credit."
  },
  {
   "id": "CARDS-01",

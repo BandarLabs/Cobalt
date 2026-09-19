@@ -221,6 +221,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **FIELD-06** Produce a real downloadable checklist.
 - [x] **FIELD-07** Report save/sync failure instead of fictitious success.
 - [x] **FIELD-08** Keep local logging independent of service availability.
+- [x] **FIELD-09** Show a licensed species photo on the species detail screen.
 
 ## PR 3 · Flashcards app
 
