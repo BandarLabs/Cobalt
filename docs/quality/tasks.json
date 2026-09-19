@@ -3687,8 +3687,13 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Supply a committed meaningful route for each of the 43 apps",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "All 44 non-pilot catalog apps carry a committed route (drive.kobo or drive.txt); zotero-reader excluded per APPQA-13.",
+   "Gap list closed this run: brief c944986d, audiobook 8cd2574b, gutenbird e66a6647, rss fb0d76ab, homepanel 74cc6de6, post e2eaac29, musicstand 1899611a, flashcards d6b0335a, birds da85a98c, verses+sidekick 62b4189c, hn 60cc0f0d, todo 5f2a545c; fieldbook and parser already had assert-full routes.",
+   "Every new route verified 1/1 via scripts/check-apps-sim.py before commit; asserts target stable chrome only (sim has live network).",
+   "Route work surfaced and fixed a birds copy bug: 'Updated just now ago' -> 'Updated just now' (b25b4bbb, 9 profiles x 3 scales, 27/27 pass, evidence docs/quality/evidence/birds-freshness/)."
+  ]
  },
  {
   "id": "APPQA-07",
