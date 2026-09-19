@@ -1,0 +1,20 @@
+$ cat $KOBO_CONFIG_DIR/setup-steps   (a completed setup recorded for serial N365410043013)
+step = setup
+serial = N365410043013
+at = 1758281000
+
+$ printf "0\n" | script -qec "kobo" /dev/null   (the guided surface reads the steps back)
+0
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+0. Exit
+Done on this computer: reader setup (serial N365…).
+Choose a number: 
+$ KOBO_CONFIG_DIR=/tmp/kobo-empty-config kobo </dev/null   (no steps: no line, normal menu)
+done-lines: 0
