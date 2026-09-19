@@ -2976,8 +2976,10 @@
   "pr": 3,
   "group": "Pub Quiz",
   "task": "Show pack source and freshness",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pubquiz-sim/ (matrix.json: 27/27 profile-scale cells plus 3/3 seeded-state cells green at 04e4f1a8; about-default.png and about-extra-large.png inspected on clara-bw-391): the packs screen names the question source and About shows Source and Updated rows, with the sync stamp persisted in saved state. Twenty-one app tests cover the state round trip, pre-freshness states loading as bundled, About labels, sync stamping and age labels; strict Clippy passes."
+  ]
  },
  {
   "id": "QUIZ-04",

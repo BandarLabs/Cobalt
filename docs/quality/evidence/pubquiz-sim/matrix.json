@@ -1,6 +1,6 @@
 {
  "app": "pubquiz",
- "head": "9a785c6b",
+ "head": "04e4f1a8",
  "profiles": 9,
  "scales": [
   "default",
@@ -45,5 +45,5 @@
    "clara-bw-391/extra-large"
   ]
  },
- "notes": "Standard route: help, round setup, pass-around players, question. States route: about, setup, question, locked answer, reveal, on seeded pack state. Rows per page in round setup follow the text scale (3/2/1) after the renderer refused larger pages at extra-large; long pack category names ellipsize at 18 characters. Setup screenshots inspected at default and extra-large on clara-bw-391."
+ "notes": "Standard route: help, round setup, pass-around players, question. States route: about (with Source and Updated rows), setup, question, locked answer, reveal, on seeded pack state. Rows per page in round setup follow the text scale (3/2/1) after the renderer refused larger pages at extra-large; long pack category names ellipsize at 18 characters. Setup screenshots inspected at default and extra-large on clara-bw-391 (QUIZ-02, 9a785c6b); About screenshots inspected at default and extra-large on clara-bw-391 (QUIZ-03, 04e4f1a8)."
 }
