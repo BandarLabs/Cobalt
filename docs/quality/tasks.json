@@ -3928,7 +3928,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Publish atomically and retain prior valid content",
-  "status": "todo",
+  "status": "done",
   "evidence": [
    "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions.",
    "Credential imports now stage then rename for network and volume destinations; bounded regular-file input rejects invalid/oversized values before transfer. Shell failed-write and occupied-stage regressions preserve the previous credential; real CLI volume validation/retry passes. Evidence: docs/quality/evidence/provider-help/result.json. Other transfer workflows remain open."
@@ -3939,7 +3939,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Retain selection and preparation on retry",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3947,7 +3947,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Report useful owner errors with optional technical details",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {

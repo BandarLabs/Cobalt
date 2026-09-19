@@ -557,9 +557,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-15** Preview content for the selected reader before sending.
 - [x] **CLI-16** Report real preparing/sending/checking/ready stages.
 - [x] **CLI-17** Persist receipts and resume approved interrupted transfers.
-- [ ] **CLI-18** Publish atomically and retain prior valid content.
-- [ ] **CLI-19** Retain selection and preparation on retry.
-- [ ] **CLI-20** Report useful owner errors with optional technical details.
+- [x] **CLI-18** Publish atomically and retain prior valid content.
+- [x] **CLI-19** Retain selection and preparation on retry.
+- [x] **CLI-20** Report useful owner errors with optional technical details.
 - [ ] **CLI-21** Export diagnostic reports without secrets or content by default.
 - [ ] **CLI-22** Provide understandable background status, pause and quit.
 - [ ] **CLI-23** Notify only useful completion or required action.
