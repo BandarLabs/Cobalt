@@ -4937,5 +4937,17 @@
   "task": "Open no more than three logically grouped PRs with tests and remaining validation stated",
   "status": "todo",
   "evidence": []
+ },
+ {
+  "id": "PARSER-07",
+  "pr": 3,
+  "group": "Parser",
+  "task": "Replace the third-party story fixture with an in-tree original",
+  "status": "done",
+  "evidence": [
+   "df759c05: Lamplight, an original story written for this project (apps/parser/fixtures/lamplight.inf), compiled with Inform 6.44 against PunyInform 6_8 (MIT) to fixtures/lamplight.z3 - Z-machine v3 release 1 serial 260919 checksum 0x276d, 28,160 bytes; zork1.z3, LICENSE-Zork1.txt and SOURCE-Parser-Zork1.md removed, LICENSE-PunyInform.txt and SOURCE-Parser-Lamplight.md added, THIRD-PARTY.md test-fixtures row repointed",
+   "35/35 parser tests green on the new fixture incl. header-fact provenance, opening/look/inventory/open crate/take note flow, quetzal save round trip, palette order and all-scale pagination; workspace fmt and CI-exact clippy clean",
+   "Sim drive route (apps/parser/drive.kobo), check-apps-sim.py, audit-interruptions.py and audit-item-counts.py seed and drive story-lamplight.z3; sim route runs land with the 23-app suite on the post-swap head"
+  ]
  }
 ]
