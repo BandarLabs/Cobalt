@@ -1,0 +1,4 @@
+Kobo app simulator: http://127.0.0.1:41877
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/arxiv/arxiv-shots/subjects.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/arxiv/arxiv-shots/library.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/arxiv/arxiv-shots

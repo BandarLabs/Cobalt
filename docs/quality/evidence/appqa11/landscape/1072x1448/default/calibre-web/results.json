@@ -1,0 +1,13 @@
+{
+  "source_sha": "a667776cef70f4cfb30e8d23533feda2a3a2bdc7",
+  "dirty": true,
+  "results": [
+    {
+      "app": "calibre-web",
+      "launched": true,
+      "status": "pass",
+      "route": "/tmp/appqa11-calibre-web-landscape.kobo",
+      "exit_code": 0
+    }
+  ]
+}

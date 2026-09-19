@@ -1,0 +1,4 @@
+Kobo app simulator: http://127.0.0.1:36443
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/large/calibre-web/calibre-web-shots/libraries.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/large/calibre-web/calibre-web-shots/address.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/large/calibre-web/calibre-web-shots
