@@ -120,6 +120,26 @@
   "paperterm": {
    "status": "pass",
    "notes": "Connection-state honesty: OFF_AIR 'Connection lost. Reconnecting.' distinct from pairing/trust/address-error flows; preview explicitly labeled sample ('Nothing is running on your computer'); retry-vs-continue-without-saving on pairing failure. Evidence: states.json + main.rs:27 + onboarding.rs."
+  },
+  "parlor": {
+   "status": "pass",
+   "notes": "Local board games. Illegal-move feedback is specific per cause ('brackets no opposing discs', 'has no legal move', 'cannot move') distinct from game-over and house-thinking states; save/resume via menu. No network states by design. Evidence: states.json + main.rs:595-828."
+  },
+  "parser": {
+   "status": "pass",
+   "notes": "Story interpreter: parser-feedback states are the fiction's own voice ('The story does not know that word', 'No path that way'), SAVE/RESTORE named in-world; story-file validation is shared with the CLI (PARSERCLI). No network states by design. Evidence: states.json + story.rs:344-402."
+  },
+  "post": {
+   "status": "pass",
+   "notes": "Malformed vs network vs cached-state preservation all distinct: 'answered with something other than letters. Your cached list is unchanged' vs 'Couldn't connect - ... Your cached letters are still here' vs 'Couldn't read the gateway's answer. The reply stays queued.' Connect-gateway setup state separate. Evidence: states.json + main.rs:303-340."
+  },
+  "pubquiz": {
+   "status": "pass",
+   "notes": "Offline distinct with kept-state honesty ('Off the air. Existing packs still play offline.'), empty-mix vs no-category distinct, no-points state separate. Evidence: states.json + main.rs:339-1759."
+  },
+  "readlater": {
+   "status": "pass",
+   "notes": "Storage-limit vs load-failure-with-preservation ('Current articles are unchanged') vs per-tab empty states vs signed-in/expired-credential guidance ('Run kobo readlater login to switch accounts') vs connect splash. Evidence: states.json + main.rs:179-416."
   }
  },
  "findings": []
