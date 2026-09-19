@@ -691,16 +691,16 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Owner experience and final validation
 
-- [ ] **OWNERQA-01** Test photo first-use flow without command typing.
-- [ ] **OWNERQA-02** Test card preview/import/review-log flow.
-- [ ] **OWNERQA-03** Test notes import and optional sync flow.
-- [ ] **OWNERQA-04** Test disconnected reader with retained prepared files.
-- [ ] **OWNERQA-05** Test multiple-reader selection and identity revalidation.
-- [ ] **OWNERQA-06** Test partial transfer with truthful acknowledged counts.
-- [ ] **OWNERQA-07** Test unsupported/oversized/corrupt input recovery.
-- [ ] **OWNERQA-08** Test rejected/missing token versus host/certificate errors.
-- [ ] **OWNERQA-09** Test expected empty app sample flow.
-- [ ] **OWNERQA-10** Test missing/incompatible helper recovery.
+- [x] **OWNERQA-01** Test photo first-use flow without command typing.
+- [x] **OWNERQA-02** Test card preview/import/review-log flow.
+- [x] **OWNERQA-03** Test notes import and optional sync flow.
+- [x] **OWNERQA-04** Test disconnected reader with retained prepared files.
+- [x] **OWNERQA-05** Test multiple-reader selection and identity revalidation.
+- [x] **OWNERQA-06** Test partial transfer with truthful acknowledged counts.
+- [x] **OWNERQA-07** Test unsupported/oversized/corrupt input recovery.
+- [x] **OWNERQA-08** Test rejected/missing token versus host/certificate errors.
+- [x] **OWNERQA-09** Test expected empty app sample flow.
+- [x] **OWNERQA-10** Test missing/incompatible helper recovery.
 - [x] **OWNERQA-11** Prepare 6–8-person nontechnical usability protocol including assistive technology.
 - [x] **OWNERQA-12** Measure completion, assistance, wrong-target attempts and error comprehension.
 - [x] **OWNERQA-13** Record first-success timing separately from firmware reboot.
