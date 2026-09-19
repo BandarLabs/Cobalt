@@ -1,0 +1,199 @@
+Kobo application SDK
+
+Usage: kobo <command>
+
+Commands:
+apps [search WORD | setup APP] Find apps and
+read offline setup guides
+new <name>             Create a Rust application
+dev [--builtin] [address] Run this SDK app in
+the browser simulator
+dev --runtime [address] [--apps IDs] Run
+launcher and selected local apps
+drive --script PATH Drive a running simulator
+and save PNG screenshots
+drive --script PATH --record DIR ... and film
+it, no hardware needed
+deck set PAD --launch APP|--url URL|--run CMD
+Assign a Deck pad on this computer
+deck ls|show [--json] List the assigned pads, or
+print the layout JSON
+deck push (--sim | --device IP | --out PATH)
+Publish that layout to the reader or simulator
+flashcards --help Prepare, verify, stage, and
+export card bundles
+musicstand --help Convert and send score pages
+post --help Check and install a Hermes account
+readlater --help Sign in to a Wallabag account
+birds listen|status|stop|push Mirror a
+Fugleramme bird collage to the reader
+frame init (--sim | --device IP) Create the
+Frame shelf
+frame push INPUT (--sim | --device IP) [--fit
+crop|pad] [--delete]
+Prepare and atomically push Frame photos
+frame ls (--sim | --device IP) List Frame shelf
+photos
+frame rm ID (--sim | --device IP) Remove a Frame
+shelf photo
+vault init (--device IP | --sim) Prepare the
+Vault store on the reader or simulator
+vault push DIR (--device IP | --sim | --out
+INDEX) Pack a markdown vault and publish it
+sync setup DIR --folder NAME --device IP Pair
+one safe fixed Sync folder
+sync run [--foreground] [--seconds N] Start the
+private host Syncthing peer
+export --app APP --device IP --out DIR Receive a
+prepared text or image copy
+sync status|stop Inspect or stop that dedicated
+peer
+sidekick setup [AGENT] Install the Sidekick hook
+for a coding agent
+sidekick run [--foreground] Start the helper the
+reader answers through
+sidekick status|stop Inspect or stop that helper
+sidekick sample See it work with nothing else
+set up
+sidekick test Ask the reader a harmless
+question, print the answer
+feeds check FILE Read an OPML subscription list
+here
+feeds push FILE (--device IP | --sim) Stage that
+list on the reader for Feeds
+fieldbook --help Send field packs and receive
+eBird CSV files
+panels --help Inspect, preview and send CBZ
+comics
+needles prepare PDF --out FILE Extract a
+user-owned PDF for Needles
+needles push FILE --device IP Transfer a
+prepared pattern to Needles
+nonograms push IMAGE --size 5|7|9 (--device IP |
+--out photo.png)
+Prepare and atomically transfer a photo puzzle
+parser inspect FILE Show story identity and
+compatibility
+parser push FILE (--sim | --device IP)
+[--replace]
+Validate and publish a story to Parser
+stream init [--device IP] Pair Paperterm with a
+named reader on this network
+stream [--grid CxR] -- COMMAND Serve host rows
+to Paperterm; the reader has no shell
+shot [--device HOST] Save a PNG of the panel
+(device or simulator)
+record --device IP [--seconds N] [--fps F]
+[--out DIR] Film the panel, read-only
+build [--device] Build host workspace or ARM
+safe doctor, disabled kobod, and sample app
+doctor [--device IP | --reader NAME] [--json]
+Run read-only device diagnostics
+devices [--subnet A.B.C] [--json] Find every
+reader on the local network
+app-link status|unpair --device IP Inspect or
+revoke browser pairing
+session --device IP Keep a device awake and on
+Wi-Fi while developing
+session --device IP --hold [minutes] Keep it
+reachable for unattended testing
+wait (--device IP | --reader NAME) Block until a
+device answers again
+logs --device IP [--follow] [--lines N] Read the
+runtime trace from the device
+shell --device IP [command ...] Run one command
+on the reader, or open a
+                              session when no
+                              command is given.
+                              Exits with
+                              whatever the
+                              reader exited with
+touch-probe --device IP [--seconds N] Watch
+touch read-only to check the transform
+guard-test --device IP --confirm ... Prove the
+guardian restores the screen
+package [--out PATH] [--folder PATH] Build the
+KoboRoot.tgz an owner copies
+app-key --seed PATH Print the Ed25519 public key
+for a release seed
+app-bundle --manifest PATH --binary PATH --seed
+PATH --out PATH
+Build one signed, pathless .cobalt-app package
+app-catalog --seed PATH --out PATH --signature
+PATH --entry PACKAGE HTTPS_URL ...
+Build and sign the public app catalog
+app-list --registry PATH
+List validated Store app packages as JSON
+app-check --registry PATH [--package PACKAGE]
+[--out PATH]
+Build and verify every registered Store app
+app-release --registry PATH --seed PATH --out
+PATH --base-url HTTPS_URL [--prebuilt-dir PATH |
+--artifact-dir PATH]
+Build and sign every registered Store app
+host-release-sign --manifest PATH --seed PATH
+--signature PATH --ssh-signature PATH
+Sign host release metadata for publishing
+host-release-verify --manifest PATH --signature
+PATH
+Verify signed host release metadata
+update [--channel stable|beta]
+Update only the installed host kobo command;
+Stable is default
+setup [--volume PATH] [--undo] [--enable-ssh]
+[--no-key] [--dry-run]
+[--yes] [--non-interactive] [--release-dir PATH
+| --source]
+Prepare a reader over USB after default-no
+confirmation;
+installed builds use their verified prebuilt
+device package
+deploy --device IP [--package PATH] Install over
+Wi-Fi, no reboot
+secret set <name> [--from PATH] --device IP
+Install a credential an app can name
+secret list --device IP Name the installed
+credentials, never their values
+secret remove <name> --device IP Take one
+credential off the reader
+trust set <name> [--from PATH] --device IP
+Install an owner TLS root the runtime verifies
+against
+trust list --device IP Name the installed trust
+roots
+trust remove <name> --device IP Take one trust
+root off the reader
+inspect <package> List a package and prove it
+writes nothing to the rootfs
+verify <arm-binary> Verify static ARM hard-float
+format
+run --sim [--app NAME] Run SDK, IPC, daemon and
+one app on host
+run Device execution remains safety-gated
+version                Print version
+
+Reading the output:
+Progress and explanations print on stderr;
+results print on stdout,
+so kobo devices > readers.txt holds only
+readers. --json prints one
+JSON object on stdout, with a version field, for
+programs to read.
+Exit status is a category, stable enough to test
+in a script:
+0 done 2 the command was misspelled 3 the reader
+or simulator
+could not be reached 4 this build or host cannot
+do it 1 anything else
+Verbs stay the same across commands: check
+reads, preview shows,
+prepare writes on this computer, push sends,
+status reports.
+
+Every command that takes --device also takes -s, and these names
+work if they are the ones you already know:
+logcat -> logs   install -> deploy   wait-for-device -> wait
+sim, simulator -> dev   init, create -> new
+
+Built without --features device-write, so the commands that write to a panel
+(tap, smoke-display) are not in this binary.
