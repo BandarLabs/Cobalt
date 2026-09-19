@@ -14,3 +14,11 @@ shot project
 tap Change section
 expect Sleeve
 expect Row 0
+tap Projects
+expect Row counter
+expect Sleeve - row 0
+clean
+shot projects
+tap-id project-0
+expect Row 0
+expect Sleeve

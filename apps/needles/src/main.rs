@@ -5,8 +5,9 @@ use kobo_bookview::{BookView, Step};
 use kobo_json::Value;
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp, Screen,
-    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp, RowLead,
+    Screen, ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, Task, TaskError, TaskId,
+    TaskOutcome,
 };
 use std::{process::ExitCode, time::Duration};
 
@@ -21,6 +22,8 @@ const SECTIONS: [&str; 3] = ["Body", "Sleeve", "Finishing"];
 enum Route {
     #[default]
     Project,
+    /// Everything being counted, for switching.
+    Projects,
     Library,
     Pattern,
     Reading,
@@ -91,10 +94,35 @@ struct Pattern {
     detail: String,
 }
 
-struct Needles {
-    route: Route,
+/// One thing on the needles: a name, the section being worked, and a counter
+/// for each named section.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Project {
+    name: String,
     section: usize,
     counters: [Counter; 3],
+}
+
+impl Project {
+    fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            section: 0,
+            counters: std::array::from_fn(|_| Counter {
+                repeat_total: 12,
+                ..Counter::default()
+            }),
+        }
+    }
+}
+
+struct Needles {
+    route: Route,
+    /// The projects on the go. Never empty: the first is the plain row
+    /// counter, there before anything is followed.
+    projects: Vec<Project>,
+    /// Which project the counter screen is counting.
+    current: usize,
     collection: Collection,
     libraries: [Vec<Pattern>; 3],
     loaded: [bool; 3],
@@ -113,6 +141,7 @@ impl Needles {
     fn screen(&self) -> Screen {
         match self.route {
             Route::Project => self.project(),
+            Route::Projects => self.projects_screen(),
             Route::Library => self.library(),
             Route::Pattern => self.pattern(),
             Route::Reading => self
@@ -132,11 +161,26 @@ impl Needles {
     }
 
     fn counter(&self) -> &Counter {
-        &self.counters[self.section]
+        let project = &self.projects[self.current];
+        &project.counters[project.section]
     }
 
     fn counter_mut(&mut self) -> &mut Counter {
-        &mut self.counters[self.section]
+        let project = &mut self.projects[self.current];
+        &mut project.counters[project.section]
+    }
+
+    /// The project a followed pattern counts against, made on first follow.
+    fn project_for(&mut self, name: &str) -> usize {
+        if let Some(index) = self
+            .projects
+            .iter()
+            .position(|project| project.name == name)
+        {
+            return index;
+        }
+        self.projects.push(Project::new(name));
+        self.projects.len() - 1
     }
 
     fn project(&self) -> Screen {
@@ -145,17 +189,14 @@ impl Needles {
             screen = screen.banner(BannerLevel::Attention, note);
         }
         let counter = self.counter();
-        let selected = self
-            .selected
-            .as_ref()
-            .map_or("Row counter", |pattern| pattern.title.as_str());
+        let project = &self.projects[self.current];
         screen
-            .section(selected)
+            .section(project.name.as_str())
             // The row count is the thing a knitter glances at between
             // stitches, so it is the heading rather than one fact among four.
             .heading(format!("Row {}", counter.row))
             .facts([
-                ("Section", SECTIONS[self.section].to_owned()),
+                ("Section", SECTIONS[project.section].to_owned()),
                 (
                     "Repeat",
                     if counter.repeat == 0 {
@@ -182,10 +223,27 @@ impl Needles {
                 ("section", "Change section"),
                 ("repeat-total", "Repeat length"),
             ])
-            .buttons([
-                ("read", "Read synced pattern"),
-                ("library", "Library, queue and favorites"),
-            ])
+            .buttons([("read", "Read synced pattern"), ("projects", "Projects")])
+            .button("library", "Library, queue and favorites")
+            .build()
+    }
+
+    /// Everything being counted, each with where it stands, so switching
+    /// projects is picking up the right needle rather than starting over.
+    fn projects_screen(&self) -> Screen {
+        ScreenBuilder::new("needles-projects")
+            .top_bar("Projects")
+            .rows(self.projects.iter().enumerate().map(|(index, project)| {
+                (
+                    format!("project-{index}"),
+                    project.name.clone(),
+                    format!(
+                        "{} - row {}",
+                        SECTIONS[project.section], project.counters[project.section].row
+                    ),
+                    RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
+                )
+            }))
             .build()
     }
 
@@ -251,25 +309,27 @@ impl Needles {
     }
 
     fn save(&self, context: &mut Context) {
-        let counters = self
-            .counters
-            .iter()
-            .map(|counter| {
-                format!(
-                    "{},{},{}",
-                    counter.row, counter.repeat, counter.repeat_total
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("|");
-        let selected = self
-            .selected
-            .as_ref()
-            .map_or_else(String::new, |pattern| hex(&pattern.title));
-        context.store().save(
-            STATE,
-            format!("1\n{}\n{}\n{}", self.section, selected, counters),
-        );
+        let mut out = format!("2\n{}", self.current);
+        for project in &self.projects {
+            let counters = project
+                .counters
+                .iter()
+                .map(|counter| {
+                    format!(
+                        "{},{},{}",
+                        counter.row, counter.repeat, counter.repeat_total
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            out.push_str(&format!(
+                "\n{}\t{}\t{}",
+                hex(&project.name),
+                project.section,
+                counters
+            ));
+        }
+        context.store().save(STATE, out);
     }
 
     fn increment(&mut self, context: &mut Context) {
@@ -368,8 +428,53 @@ impl Needles {
             return;
         };
         let mut fields = text.lines();
-        let (Some("1"), Some(section), Some(selected), Some(counters)) =
-            (fields.next(), fields.next(), fields.next(), fields.next())
+        match fields.next() {
+            Some("2") => self.restore_projects(fields),
+            // The first version kept one set of counters and the followed
+            // pattern's name; that is one project with a little history.
+            Some("1") => self.restore_alone(fields),
+            _ => {}
+        }
+    }
+
+    fn restore_projects<'a>(&mut self, mut fields: impl Iterator<Item = &'a str>) {
+        let Some(Ok(current)) = fields.next().map(str::parse::<usize>) else {
+            return;
+        };
+        let mut projects = Vec::new();
+        for line in fields {
+            let mut parts = line.split('\t');
+            let (Some(name), Some(section), Some(counters)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                return;
+            };
+            let (Some(name), Ok(section), Some(counters)) = (
+                unhex(name),
+                section.parse::<usize>(),
+                parse_counters(counters),
+            ) else {
+                return;
+            };
+            if name.is_empty() || section >= SECTIONS.len() {
+                return;
+            }
+            projects.push(Project {
+                name,
+                section,
+                counters,
+            });
+        }
+        if projects.is_empty() || current >= projects.len() {
+            return;
+        }
+        self.projects = projects;
+        self.current = current;
+    }
+
+    fn restore_alone<'a>(&mut self, mut fields: impl Iterator<Item = &'a str>) {
+        let (Some(section), Some(selected), Some(counters)) =
+            (fields.next(), fields.next(), fields.next())
         else {
             return;
         };
@@ -379,41 +484,18 @@ impl Needles {
         if section >= SECTIONS.len() {
             return;
         }
-        let parsed = counters
-            .split('|')
-            .map(|counter| {
-                let mut parts = counter.split(',');
-                let (Some(row), Some(repeat), Some(total)) =
-                    (parts.next(), parts.next(), parts.next())
-                else {
-                    return None;
-                };
-                let (Ok(row), Ok(repeat), Ok(repeat_total)) =
-                    (row.parse(), repeat.parse(), total.parse())
-                else {
-                    return None;
-                };
-                (repeat_total > 0 && repeat <= repeat_total).then_some(Counter {
-                    row,
-                    repeat,
-                    repeat_total,
-                })
-            })
-            .collect::<Option<Vec<_>>>();
-        let Some(parsed) = parsed else {
+        let Some(counters) = parse_counters(counters) else {
             return;
         };
-        let Ok(counters) = <[Counter; 3]>::try_from(parsed) else {
-            return;
-        };
-        self.section = section;
-        self.counters = counters;
-        self.selected = unhex(selected)
+        let name = unhex(selected)
             .filter(|title| !title.is_empty())
-            .map(|title| Pattern {
-                title,
-                detail: "Selected pattern".to_owned(),
-            });
+            .unwrap_or_else(|| "Row counter".to_owned());
+        self.projects = vec![Project {
+            name,
+            section,
+            counters,
+        }];
+        self.current = 0;
     }
 }
 
@@ -421,11 +503,8 @@ impl Default for Needles {
     fn default() -> Self {
         Self {
             route: Route::Project,
-            section: 0,
-            counters: std::array::from_fn(|_| Counter {
-                repeat_total: 12,
-                ..Counter::default()
-            }),
+            projects: vec![Project::new("Row counter")],
+            current: 0,
             collection: Collection::Library,
             libraries: std::array::from_fn(|_| Vec::new()),
             loaded: [false; 3],
@@ -459,6 +538,31 @@ fn pattern_from(value: &Value) -> Option<Pattern> {
         title: title.to_owned(),
         detail,
     })
+}
+
+/// Three counters as saved, or nothing when any one is off.
+fn parse_counters(text: &str) -> Option<[Counter; 3]> {
+    let parsed = text
+        .split('|')
+        .map(|counter| {
+            let mut parts = counter.split(',');
+            let (Some(row), Some(repeat), Some(total)) = (parts.next(), parts.next(), parts.next())
+            else {
+                return None;
+            };
+            let (Ok(row), Ok(repeat), Ok(repeat_total)) =
+                (row.parse(), repeat.parse(), total.parse())
+            else {
+                return None;
+            };
+            (repeat_total > 0 && repeat <= repeat_total).then_some(Counter {
+                row,
+                repeat,
+                repeat_total,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    <[Counter; 3]>::try_from(parsed).ok()
 }
 
 fn hex(text: &str) -> String {
@@ -573,9 +677,12 @@ impl KoboApp for Needles {
         } else if action == action_id("undo") {
             self.undo(context);
         } else if action == action_id("section") {
-            self.section = (self.section + 1) % SECTIONS.len();
+            let project = &mut self.projects[self.current];
+            project.section = (project.section + 1) % SECTIONS.len();
             self.notice = None;
             self.save(context);
+        } else if action == action_id("projects") {
+            self.route = Route::Projects;
         } else if action == action_id("repeat-total") {
             self.cycle_repeat_total(context);
         } else if action == action_id("library") {
@@ -589,11 +696,21 @@ impl KoboApp for Needles {
         } else if action == action_id("favorites-tab") {
             self.collection = Collection::Favorites;
         } else if action == action_id("follow") {
+            if let Some(pattern) = self.selected.clone() {
+                self.current = self.project_for(&pattern.title);
+            }
             self.route = Route::Project;
             context.device().keep_awake(Duration::from_secs(14_400));
             self.save(context);
         } else if action == action_id("read") {
             self.open_pattern(context);
+        } else if let Some(index) =
+            (0..self.projects.len()).find(|index| action == action_id(&format!("project-{index}")))
+        {
+            self.current = index;
+            self.route = Route::Project;
+            self.notice = None;
+            self.save(context);
         } else if let Some(index) = (0..self.libraries[self.collection.index()].len())
             .find(|index| action == action_id(&format!("pattern-{index}")))
         {
@@ -655,21 +772,25 @@ mod tests {
     #[test]
     fn counter_repeats_undoes_and_keeps_section_totals() {
         let mut app = Needles {
-            counters: [
-                Counter {
-                    row: 11,
-                    repeat: 11,
-                    repeat_total: 12,
-                },
-                Counter {
-                    repeat_total: 8,
-                    ..Counter::default()
-                },
-                Counter {
-                    repeat_total: 4,
-                    ..Counter::default()
-                },
-            ],
+            projects: vec![super::Project {
+                name: "Row counter".to_owned(),
+                section: 0,
+                counters: [
+                    Counter {
+                        row: 11,
+                        repeat: 11,
+                        repeat_total: 12,
+                    },
+                    Counter {
+                        repeat_total: 8,
+                        ..Counter::default()
+                    },
+                    Counter {
+                        repeat_total: 4,
+                        ..Counter::default()
+                    },
+                ],
+            }],
             ..Needles::default()
         };
         let mut context = Context::default();
@@ -679,28 +800,24 @@ mod tests {
         assert_eq!(app.counter().repeat, 1);
         app.undo(&mut context);
         assert_eq!((app.counter().row, app.counter().repeat), (12, 12));
-        app.section = 1;
+        app.projects[0].section = 1;
         app.increment(&mut context);
         assert_eq!((app.counter().row, app.counter().repeat), (1, 1));
-        assert_eq!(app.counters[0].row, 12);
+        assert_eq!(app.projects[0].counters[0].row, 12);
     }
 
     #[test]
-    fn state_round_trips_selected_pattern_and_all_sections() {
-        let mut app = Needles {
-            section: 1,
-            ..Needles::default()
-        };
-        app.counters[0].row = 42;
-        app.counters[1] = Counter {
+    fn state_round_trips_projects_and_all_sections() {
+        let mut app = Needles::default();
+        app.projects[0].counters[0].row = 42;
+        app.projects[0].section = 1;
+        app.projects.push(super::Project::new("Warm sweater"));
+        app.projects[1].counters[2] = Counter {
             row: 7,
             repeat: 7,
             repeat_total: 8,
         };
-        app.selected = Some(super::Pattern {
-            title: "Warm sweater".to_owned(),
-            detail: "Ravelry pattern".to_owned(),
-        });
+        app.current = 1;
         let mut context = Context::default();
         app.save(&mut context);
         let saved = context
@@ -723,16 +840,56 @@ mod tests {
                 value: Some(saved),
             },
         );
-        assert_eq!(restored.section, 1);
-        assert_eq!(restored.counters[0].row, 42);
-        assert_eq!(restored.counters[1].repeat_total, 8);
-        assert_eq!(
-            restored
-                .selected
-                .as_ref()
-                .map(|pattern| pattern.title.as_str()),
-            Some("Warm sweater")
+        assert_eq!(restored.current, 1);
+        assert_eq!(restored.projects.len(), 2);
+        assert_eq!(restored.projects[0].section, 1);
+        assert_eq!(restored.projects[0].counters[0].row, 42);
+        assert_eq!(restored.projects[1].name, "Warm sweater");
+        assert_eq!(restored.projects[1].counters[2].repeat_total, 8);
+    }
+
+    #[test]
+    fn the_first_version_of_the_state_becomes_one_project() {
+        // As saved before projects: section, hex of the followed pattern,
+        // then the three counters.
+        let legacy = format!("1\n1\n{}\n42,0,12|7,7,8|0,0,4", hex("Warm sweater"));
+        let mut restored = Needles::default();
+        restored.on_store(
+            &mut Context::default(),
+            StoreResult::Loaded {
+                key: super::STATE.to_owned(),
+                value: Some(legacy.into()),
+            },
         );
+        assert_eq!(restored.projects.len(), 1);
+        assert_eq!(restored.projects[0].name, "Warm sweater");
+        assert_eq!(restored.projects[0].section, 1);
+        assert_eq!(restored.projects[0].counters[0].row, 42);
+        assert_eq!(restored.projects[0].counters[1].repeat_total, 8);
+    }
+
+    #[test]
+    fn following_a_pattern_twice_keeps_one_project_and_its_count() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        app.selected = Some(super::Pattern {
+            title: "Warm sweater".to_owned(),
+            detail: "Ravelry pattern".to_owned(),
+        });
+        app.on_action(&mut context, action_id("follow"));
+        assert_eq!(app.current, 1);
+        for _ in 0..5 {
+            app.on_action(&mut context, action_id("plus"));
+        }
+        // Following it again from the library rejoins the same project.
+        app.on_action(&mut context, action_id("follow"));
+        assert_eq!(app.projects.len(), 2);
+        assert_eq!(app.counter().row, 5);
+        // And the plain counter is still where it was.
+        app.on_action(&mut context, action_id("projects"));
+        app.on_action(&mut context, action_id("project-0"));
+        assert_eq!(app.current, 0);
+        assert_eq!(app.counter().row, 0);
     }
 
     #[test]
