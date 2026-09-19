@@ -4351,48 +4351,60 @@
   "pr": 4,
   "group": "Needles companion",
   "task": "Manage required converter instead of demanding manual toolchain setup",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "90fb6c7f: kobo needles setup installs pdftotext via brew/winget/apt-get/dnf/pacman; prepare locates PATH then ~/.cobalt/tools, else names kobo needles setup"
+  ]
  },
  {
   "id": "NEEDLECLI-02",
   "pr": 4,
   "group": "Needles companion",
   "task": "Preview extracted instructions against source",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "90fb6c7f: kobo needles preview prints title, sections, charts, notes and the first 12 extracted lines against the source"
+  ]
  },
  {
   "id": "NEEDLECLI-03",
   "pr": 4,
   "group": "Needles companion",
   "task": "Flag image-only pages and missing charts",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "90fb6c7f: form-feed-split pages with no alphanumerics are reported as chart/scan pages by number; unresolved chart names are listed in the report"
+  ]
  },
  {
   "id": "NEEDLECLI-04",
   "pr": 4,
   "group": "Needles companion",
   "task": "Choose title and preview section/row parsing",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "90fb6c7f: title precedence --title > first H1 > file stem; sections computed with the real kobo_doc::markdown::parse (## preferred, flat-H1-past-title fallback, title-only -> none); test a_flat_pattern_counts_by_its_headings_past_the_title"
+  ]
  },
  {
   "id": "NEEDLECLI-05",
   "pr": 4,
   "group": "Needles companion",
   "task": "Use the same prepare/preview/send flow for PDF, Markdown and text",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "90fb6c7f: prepare/preview/push accept .pdf, .md, .markdown, .txt through one prepare() path; 12/12 needles:: tests"
+  ]
  },
  {
   "id": "NEEDLECLI-06",
   "pr": 4,
   "group": "Needles companion",
   "task": "Support simulator and output-only targets",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "90fb6c7f: push targets --sim (kobo_sim::simulated_data_root partial+rename) and --out PATH; test a_push_to_the_simulator_lays_the_pattern_on_its_shelf"
+  ]
  },
  {
   "id": "NONOCLI-01",

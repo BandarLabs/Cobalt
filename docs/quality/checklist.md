@@ -630,12 +630,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Needles companion
 
-- [ ] **NEEDLECLI-01** Manage required converter instead of demanding manual toolchain setup.
-- [ ] **NEEDLECLI-02** Preview extracted instructions against source.
-- [ ] **NEEDLECLI-03** Flag image-only pages and missing charts.
-- [ ] **NEEDLECLI-04** Choose title and preview section/row parsing.
-- [ ] **NEEDLECLI-05** Use the same prepare/preview/send flow for PDF, Markdown and text.
-- [ ] **NEEDLECLI-06** Support simulator and output-only targets.
+- [x] **NEEDLECLI-01** Manage required converter instead of demanding manual toolchain setup.
+- [x] **NEEDLECLI-02** Preview extracted instructions against source.
+- [x] **NEEDLECLI-03** Flag image-only pages and missing charts.
+- [x] **NEEDLECLI-04** Choose title and preview section/row parsing.
+- [x] **NEEDLECLI-05** Use the same prepare/preview/send flow for PDF, Markdown and text.
+- [x] **NEEDLECLI-06** Support simulator and output-only targets.
 
 ## PR 4 · Nonograms companion
 
