@@ -152,6 +152,30 @@
   "sudoku": {
    "status": "pass",
    "notes": "Game: board + digit move-pad with visible disabled digits, Digits/Undo/More secondaries (move-pad idiom, same class as nonograms); new-game difficulty buttons are the single purpose of that screen; save-recovery 'Retry save' single action. Verified game.png. Evidence: screens.json + apps/sudoku/screenshots/."
+  },
+  "syncthing": {
+   "status": "pass",
+   "notes": "Dashboard idiom: banner + facts + Back chrome and Back/About action_bar; no competing actions. Evidence: screens.json + apps/syncthing/screenshots/syncthing-folders.png."
+  },
+  "tictactoe": {
+   "status": "pass",
+   "notes": "Board game idiom: board is the play surface, plain 'Start again' + action_bar 'How to play'/'Clear score'. Evidence: screens.json + examples/tictactoe/screenshots/game.png."
+  },
+  "todo": {
+   "status": "pass",
+   "notes": "Per-state add control confirmed in source (main.rs:543-551): empty list gets single primary 'Add a task', populated list gets plain 'Add' beside 'Clear finished'; 'Undo clear' appears only after a clear; row edit offers Rename/Remove with stateful Move up/down. Intentional, documented in code comment. Evidence: screens.json + examples/todo/screenshots/list.png + source."
+  },
+  "vault": {
+   "status": "pass",
+   "notes": "Home: splash + plain 'About Vault'; browsing screens (tags, recent, backlinks, browse) are row-tap idioms; note screen action_bar Previous/next-page + 'Vault' back; search results single plain 'Search again'. Evidence: screens.json + apps/vault/screenshots/home.png, note.png."
+  },
+  "verses": {
+   "status": "pass",
+   "notes": "Poem screen action_bar Previous/Quote card/Next (per-state collapse to 'Quote card' alone is state-dependent, not competing); online/search/results are row idioms with splashes for empty states; settings has one state-dependent primary 'Turn off'. Evidence: screens.json + apps/verses/screenshots/today.png, reading.png."
+  },
+  "gallery": {
+   "status": "pass",
+   "notes": "Component catalog reviewed under APPQA-05 (specimen captions fix, v1.0.14, matrix 27/27 at docs/quality/evidence/gallery-caption/); tabs + paged panels, every enabled specimen acknowledges taps, *-off specimens intentionally inert. Counted here for census completeness."
   }
  },
  "findings": [
