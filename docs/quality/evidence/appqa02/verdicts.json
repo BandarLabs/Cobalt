@@ -20,6 +20,26 @@
   "brief": {
    "status": "pass",
    "notes": "Textbook differentiation: offline ('The reader is offline. The brief below is the one already saved.') vs empty-result ('The refresh brought back nothing.') vs save-failure ('could not be saved for offline reading') vs malformed ('This story arrived empty.') vs empty shelf splash. Evidence: states.json + main.rs:595,685,995,1327."
+  },
+  "calibre-web": {
+   "status": "pass",
+   "notes": "Textbook failure classifier catalog::failure (catalog.rs:96-108): NoCredential ('Add it from your computer') vs Unauthorized ('The library refused this account') vs Offline ('Connect to Wi-Fi... Your current catalog is kept') vs Unreachable - distinct copy plus state preservation. Loading skeleton, connect splash, offline reading screens with Retry loading/Download again/Retry saving. Evidence: states.json + catalog.rs + reading.rs:59-107."
+  },
+  "chat": {
+   "status": "pass",
+   "notes": "Malformed replies differentiated ('The reply was not text' / 'could not be read' / 'answered with no message in it'); missing credential distinct with exact remedy ('No key is installed... kobo secret set'). Empty splash + banner + activity. Evidence: states.json + conversation.rs:544-581 + main.rs:544."
+  },
+  "crossword": {
+   "status": "pass",
+   "notes": "Local app, puzzles bundled. load_error Option with Retry save guidance ('Saves are confirmed by storage... Unreadable records are kept intact'); no network states by design; load is instant (loaded flag gates first paint). Evidence: states.json + main.rs:27,46-64."
+  },
+  "deck": {
+   "status": "pass",
+   "notes": "Failure classes distinct: 'That command is still running' (busy) vs 'That control changed. Refreshing the deck' (stale) vs 'That result is no longer available' (expired) vs 'This command produced no output' (empty result) vs pairing-code guidance. Activity + banner surfaces. Evidence: states.json + main.rs:210-532."
+  },
+  "fanshelf": {
+   "status": "pass",
+   "notes": "Rate-limit distinct (SLOW_DOWN 'The archive asked us to slow down - try in a minute'), malformed download distinct ('The downloaded EPUB could not be opened'), shelf-full distinct, six empty splashes per collection, skeleton loading. Unauthorized/credential signals handled via account setup. Evidence: states.json + main.rs:33,915."
   }
  },
  "findings": []
