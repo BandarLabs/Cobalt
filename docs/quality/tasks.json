@@ -3736,8 +3736,8 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Test long bodies, supported fonts and CJK where applicable",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "audit-long-bodies.py: long bodies paginate at 3 scales (vault, needles; chat and parser via APPQA-08/parser matrix). Font map documented (Atkinson, DejaVu Mono, discovered serif + KOBO_READING_FONT override, CobaltJapanese publisher face). CJK: debug-sim halt contract confirmed on default faces; Japanese renders via the override face. docs/quality/evidence/appqa09/"
  },
  {
   "id": "APPQA-10",

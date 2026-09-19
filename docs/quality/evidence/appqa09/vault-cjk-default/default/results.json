@@ -1,0 +1,13 @@
+{
+  "source_sha": "acf3b534ad67265f7cf32e0defc1ded9d2290e4e",
+  "dirty": true,
+  "results": [
+    {
+      "app": "vault",
+      "launched": true,
+      "status": "fail",
+      "route": "/tmp/appqa09-vault-cjk-default.kobo",
+      "exit_code": 1
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+ "vault-long-body": {
+  "default": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa09-vault-long-body.kobo",
+   "exit_code": 0,
+   "contract": "rendered"
+  },
+  "large": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa09-vault-long-body.kobo",
+   "exit_code": 0,
+   "contract": "rendered"
+  },
+  "extra-large": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa09-vault-long-body.kobo",
+   "exit_code": 0,
+   "contract": "rendered"
+  }
+ },
+ "needles-long-pattern": {
+  "default": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa09-needles-long-pattern.kobo",
+   "exit_code": 0,
+   "contract": "rendered"
+  },
+  "extra-large": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa09-needles-long-pattern.kobo",
+   "exit_code": 0,
+   "contract": "rendered"
+  }
+ },
+ "vault-cjk-default": {
+  "default": {
+   "app": "vault",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa09-vault-cjk-default.kobo",
+   "exit_code": 1,
+   "contract": "halt matches the undrawable-character contract"
+  }
+ },
+ "vault-cjk-japanese-face": {
+  "default": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa09-vault-cjk-japanese-face.kobo",
+   "exit_code": 0,
+   "contract": "rendered"
+  }
+ }
+}
