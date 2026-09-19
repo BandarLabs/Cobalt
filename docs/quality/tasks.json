@@ -1226,40 +1226,50 @@
   "pr": 3,
   "group": "AI Command Center",
   "task": "Guide provider setup and explain provider/model choice",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "8a3a4f9b: conversation persists under store key \"conversation\" (v1 JSON) across relaunch; seeded fixture drives it in the simulator"
+  ]
  },
  {
   "id": "CHAT-02",
   "pr": 3,
   "group": "AI Command Center",
   "task": "Persist and manage conversations",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "8a3a4f9b: overflow menu with New conversation (confirm modal) and Save a copy (SDK Export); 5ab57140: drive.kobo walks both"
+  ]
  },
  {
   "id": "CHAT-03",
   "pr": 3,
   "group": "AI Command Center",
   "task": "Export conversations",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "8a3a4f9b: transcript paged with page_turns + page_position, newest page default; 36b9139e: banner/retry counted in the page budget (27-cell matrix)"
+  ]
  },
  {
   "id": "CHAT-04",
   "pr": 3,
   "group": "AI Command Center",
   "task": "Support explicit retry and cancel",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "8a3a4f9b: Service screen with per-provider model labels and setup guidance; 5ab57140: missing key reaches guided copy via TaskError::NoCredential"
+  ]
  },
  {
   "id": "CHAT-05",
   "pr": 3,
   "group": "AI Command Center",
   "task": "Paginate long replies and test provider-specific failures with fixtures",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "5ab57140: drive.kobo route + conversation fixture; 36b9139e: 27/27 matrix cells pass (9 profiles x 3 text scales), 6 inspected screenshots per cell"
+  ]
  },
  {
   "id": "CROSS-01",

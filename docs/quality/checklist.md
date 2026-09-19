@@ -179,11 +179,11 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · AI Command Center
 
-- [ ] **CHAT-01** Guide provider setup and explain provider/model choice.
-- [ ] **CHAT-02** Persist and manage conversations.
-- [ ] **CHAT-03** Export conversations.
-- [ ] **CHAT-04** Support explicit retry and cancel.
-- [ ] **CHAT-05** Paginate long replies and test provider-specific failures with fixtures.
+- [x] **CHAT-01** Guide provider setup and explain provider/model choice.
+- [x] **CHAT-02** Persist and manage conversations.
+- [x] **CHAT-03** Export conversations.
+- [x] **CHAT-04** Support explicit retry and cancel.
+- [x] **CHAT-05** Paginate long replies and test provider-specific failures with fixtures.
 
 ## PR 2 · Crossword
 
