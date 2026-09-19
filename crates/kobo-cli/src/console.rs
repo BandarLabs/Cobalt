@@ -112,6 +112,11 @@ const DEFAULT_WIDTH: usize = 80;
 ///
 /// Built per render rather than cached for the process, so a window resized
 /// mid-command is honoured on the next line.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent terminal capability; packing them \
+              into an enum matrix would invent states that cannot occur"
+)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Console {
     /// Colour and emphasis escapes may be sent. Nothing here emits any yet;
@@ -179,14 +184,14 @@ impl Console {
 
     /// Reports work in progress on stderr, where a stdout pipe never sees
     /// it.
-    pub fn progress(&self, message: &str) {
+    pub fn progress(message: &str) {
         eprintln!("{message}");
     }
 
     /// The one machine-readable object a `--json` run prints: the envelope
     /// version, the command answering, and that command's data.
     #[must_use]
-    pub fn json_envelope(command: &str, data: Value) -> String {
+    pub fn json_envelope(command: &str, data: &Value) -> String {
         json!({
             "version": JSON_VERSION,
             "command": command,
@@ -197,7 +202,7 @@ impl Console {
 
     /// Prints that object on stdout. Nothing else may go to stdout in the
     /// same run, or the consumer parses prose as JSON.
-    pub fn print_json(&self, command: &str, data: Value) {
+    pub fn print_json(command: &str, data: &Value) {
         println!("{}", Self::json_envelope(command, data));
     }
 
@@ -412,7 +417,7 @@ mod tests {
     fn json_envelope_carries_version_command_and_data() {
         let envelope: Value = serde_json::from_str(&Console::json_envelope(
             "devices",
-            json!({"readers": ["192.0.2.10"], "other_hosts": 2}),
+            &json!({"readers": ["192.0.2.10"], "other_hosts": 2}),
         ))
         .unwrap();
         assert_eq!(envelope["version"], JSON_VERSION);

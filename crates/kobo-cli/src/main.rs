@@ -2426,8 +2426,7 @@ fn remote_doctor(host: &str) -> Result<(), String> {
 /// question nobody asked.
 fn list_devices(arguments: &[String]) -> Result<(), String> {
     let (subnet, json) = parse_devices(arguments)?;
-    let console = console::Console::detect();
-    console.progress(&format!(
+    console::Console::progress(&format!(
         "scanning {subnet}.1-254 on port {} for readers",
         connect::SSH_PORT
     ));
@@ -2444,9 +2443,9 @@ fn list_devices(arguments: &[String]) -> Result<(), String> {
         }
     }
     if json {
-        console.print_json(
+        console::Console::print_json(
             "devices",
-            serde_json::json!({
+            &serde_json::json!({
                 "subnet": format!("{subnet}.0/24"),
                 "readers": readers
                     .iter()
