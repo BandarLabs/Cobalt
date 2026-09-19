@@ -979,11 +979,59 @@ fn run(arguments: &[String]) -> Result<(), String> {
             print_help();
             Ok(())
         }
-        "version" | "--version" | "-V" => {
+        "version" | "--version" | "-V" => version_command(&arguments[1..]),
+        unknown => Err(format!("unknown command '{unknown}'")),
+    }
+}
+
+/// `kobo version` is one line a script can read; `--full` is the
+/// compatibility report a person reads before an update: what this host is,
+/// which helpers it can see, and how signed updates are checked.
+fn version_command(arguments: &[String]) -> Result<(), String> {
+    match arguments {
+        [] => {
             println!("kobo {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        unknown => Err(format!("unknown command '{unknown}'")),
+        [flag] if flag == "--full" => {
+            println!("kobo {}", env!("CARGO_PKG_VERSION"));
+            println!("host: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+            for helper in ["kobo-doctor", "flashcards-import"] {
+                println!("helper: {}", helper_status(helper));
+            }
+            println!(
+                "updates: host release packages are signed; setup verifies the manifest signature before anything is installed"
+            );
+            println!(
+                "compatibility: a package built for a newer kobo than {} is refused with an update prompt, and each companion declares the minimum kobo it needs in the signed manifest",
+                env!("CARGO_PKG_VERSION")
+            );
+            println!(
+                "reader: a reader's own model and firmware are read from the device itself - 'kobo doctor --device HOST' or a setup dry run"
+            );
+            Ok(())
+        }
+        _ => Err(console::usage("usage: kobo version [--full]")),
+    }
+}
+
+/// One line about a helper: its version when it answers, its path problem
+/// when it cannot run, "not installed" when it is absent.
+fn helper_status(name: &str) -> String {
+    // The probe is the helper answering --version: present helpers name
+    // themselves, absent ones are reported absent, and a lookup that itself
+    // fails (an unsearchable PATH entry, a dangling sibling) says the lookup
+    // failed rather than guessing either way.
+    match Command::new(sibling_binary(name)).arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            format!("{name} {}", version.trim())
+        }
+        Ok(output) => format!("{name} present but --version exited {}", output.status),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            format!("{name} not installed (looked beside kobo and on PATH)")
+        }
+        Err(error) => format!("{name} could not be looked up: {error}"),
     }
 }
 
@@ -3249,7 +3297,10 @@ struct ShellRequest<'a> {
 }
 
 fn parse_shell(arguments: &[String]) -> Result<ShellRequest<'_>, String> {
-    const USAGE: &str = "usage: kobo shell --device <host> [command ...]";
+    const USAGE: &str = "usage: kobo shell --device <host> [command ...]\n\
+                         \x20      An advanced control: the command runs on the reader exactly as\n\
+                         \x20      typed, as root, with no validation. Prefer a named verb when one\n\
+                         \x20      exists - logs, shot, record and doctor cover the common reads.";
     let (host, rest) = match arguments {
         [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
         _ => return Err(USAGE.to_owned()),
@@ -7478,9 +7529,10 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait (--device IP | --reader NAME)  Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           shell --device IP [command ...]  Run one command on the reader, or open a\n\
-           \x20                             session when no command is given. Exits with\n\
-           \x20                             whatever the reader exited with\n\
+           shell --device IP [command ...]  Advanced: run one arbitrary command on the\n\
+           \x20                             reader, or open a session when no command is\n\
+           \x20                             given. Exits with whatever the reader exited\n\
+           \x20                             with. Nothing typed here is checked first\n\
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
