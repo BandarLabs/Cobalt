@@ -36,6 +36,7 @@ mod owner_start;
 mod package;
 mod panels;
 mod post;
+mod readers;
 mod readlater;
 mod runtime_dev;
 mod stream_demo;
@@ -811,14 +812,20 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 /// reader can still be named outright with --device, and --host still overrides
 /// the address the certificate is minted for.
 fn stream_init(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--device IP] [--host ADDRESS ...]";
+    const USAGE: &str =
+        "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]";
     let mut device = None;
+    let mut nickname = None;
     let mut hosts = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
             "--device" | "-s" => {
                 device = Some(arguments.get(index + 1).ok_or(USAGE)?.clone());
+                index += 2;
+            }
+            "--reader" => {
+                nickname = Some(arguments.get(index + 1).ok_or(USAGE)?.clone());
                 index += 2;
             }
             "--host" => {
@@ -861,6 +868,14 @@ or run this again with --device once the reader is on this network."
     let authority = stream_authority()?;
     println!("Installing the trust root on {reader}.");
     trust_set("stream", &authority, &SecretTarget::Device(reader.clone()))?;
+    // Remember the pairing by serial, so the next command can name this
+    // reader and find it again after its address changes.
+    if let Some(identity) = identify_device(&reader).filter(connect::Identity::is_kobo) {
+        let path = readers::store_path();
+        let mut store = readers::Store::load(&path)?;
+        store.record_pairing(&identity.serial, &reader, nickname.as_deref());
+        store.save(&path)?;
+    }
     println!("Paperterm is paired with {reader}. Open it on the reader and type the pairing code.");
     Ok(())
 }
@@ -1011,7 +1026,7 @@ Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
 For custom commands and other advanced options: kobo stream --help";
 
 fn stream_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--device IP] [--host ADDRESS ...]\n\
+    const USAGE: &str = "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]\n\
                          \x20      kobo stream demo [--port PORT]\n\
                          \x20      kobo stream terminal|monitor [--port PORT]\n\
                          \x20      kobo stream pairing [--port PORT]\n\
@@ -7034,7 +7049,7 @@ fn print_help() {
            parser inspect FILE                 Show story identity and compatibility\n\
            parser push FILE (--sim | --device IP) [--replace]\n\
                                              Validate and publish a story to Parser\n\
-           stream init [--device IP]     Pair Paperterm with a named reader on this network\n\
+           stream init [--device IP]     Pair Paperterm, saving the reader under --reader NAME\n\
            stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
@@ -7193,11 +7208,9 @@ mod tests {
 
     #[test]
     fn stream_init_names_its_arguments_and_nothing_else() {
-        for arguments in [
-            vec!["--reader".to_owned(), "1.2.3.4".to_owned()],
-            vec!["--device".to_owned()],
-            vec!["--host".to_owned()],
-        ] {
+        // --reader NAME is a real argument now: it names the pairing in the
+        // saved-reader store. What stays refused is a flag missing its value.
+        for arguments in [vec!["--device".to_owned()], vec!["--host".to_owned()]] {
             let error = super::stream_init(&arguments).expect_err("refused");
             assert!(
                 error.starts_with("usage: kobo stream init"),

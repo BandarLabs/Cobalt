@@ -91,14 +91,39 @@ impl TargetArgs {
 
 /// Turns a saved reader's name into its network address.
 ///
-/// TODO(CLI-05): resolve against the saved-reader store once pairing
-/// persists reader names; until the store exists every name misses, which is
-/// a target error the owner can act on rather than a guess at whichever
-/// reader answered first.
+/// Resolution goes through the saved-reader store and accepts an address
+/// only when the serial behind it is the saved one - an address is a lease,
+/// not an identity, and the first reader to answer is never a substitute for
+/// the one that was named. A miss is a target error the owner can act on.
 pub fn resolve_nickname(name: &str) -> Result<String, String> {
-    Err(crate::console::target(format!(
-        "no reader is saved under the name '{name}'"
-    )))
+    let path = crate::readers::store_path();
+    let mut store = crate::readers::Store::load(&path)?;
+    let address = crate::readers::resolve_saved(&mut store, name, probe_serial, sweep_serials)?;
+    // A re-identified address is worth keeping; a store that cannot be
+    // written never blocks a reader that was just found.
+    let _ = store.save(&path);
+    Ok(address)
+}
+
+/// The serial answering at one address, when a Kobo answers at all.
+fn probe_serial(address: &str) -> Option<String> {
+    crate::identify_device(address)
+        .filter(crate::connect::Identity::is_kobo)
+        .map(|identity| identity.serial)
+}
+
+/// Every Kobo answering on this computer's network, beside its address.
+fn sweep_serials() -> Vec<(String, String)> {
+    let Some(subnet) = crate::connect::local_subnet() else {
+        return Vec::new();
+    };
+    crate::connect::sweep(&subnet, crate::connect::PROBE_TIMEOUT)
+        .iter()
+        .filter_map(|address| {
+            let host = address.to_string();
+            probe_serial(&host).map(|serial| (host, serial))
+        })
+        .collect()
 }
 
 #[cfg(test)]
