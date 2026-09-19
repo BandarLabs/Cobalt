@@ -100,6 +100,26 @@
   "morse": {
    "status": "pass",
    "notes": "Local app, bundled code table. Failure modes covered: empty-send ('There is nothing here to send') and timing failure ('The beacon could not keep time, so it stopped'). No network/credential states by design. Evidence: states.json + main.rs:578-668."
+  },
+  "musicstand": {
+   "status": "pass",
+   "notes": "Empty stand vs score-no-longer-on-shelf vs page-over-budget vs crop-failure vs page-unreadable ('Re-push the score') - all distinct with remedies. Evidence: states.json + main.rs:308-562."
+  },
+  "needles": {
+   "status": "pass",
+   "notes": "Malformed transfer distinct with exact remedy command vs no-pattern-yet with exact push command vs cancelled-sync notice; per-collection empty states. Evidence: states.json + main.rs:326-967."
+  },
+  "nonograms": {
+   "status": "pass",
+   "notes": "Import validation taxonomy: manifest not text / names no puzzles / too many / photo unreadable / unfair puzzle - each distinct; board-fit honesty ('cannot fit at this display size'). Evidence: states.json + photo.rs:36-107 + view.rs:211."
+  },
+  "panels": {
+   "status": "pass",
+   "notes": "Server failures distinct from content failures: unexpected download vs changed-on-server vs too-large-to-keep vs settings-unreadable/unsaved (storage pressure named). Evidence: states.json + transfer.rs:137-150 + server.rs:45-174."
+  },
+  "paperterm": {
+   "status": "pass",
+   "notes": "Connection-state honesty: OFF_AIR 'Connection lost. Reconnecting.' distinct from pairing/trust/address-error flows; preview explicitly labeled sample ('Nothing is running on your computer'); retry-vs-continue-without-saving on pairing failure. Evidence: states.json + main.rs:27 + onboarding.rs."
   }
  },
  "findings": []
