@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "icon-import"
-version = "0.3.18"
+version = "0.3.19"
 
 [[package]]
 name = "image"
@@ -790,14 +790,14 @@ dependencies = [
 
 [[package]]
 name = "kobo-abi"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "kobo-app-store"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-net",
@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-arxiv"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-audiobook"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-doc",
  "kobo-json",
@@ -846,7 +846,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-books"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-bookview"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-comic",
  "kobo-doc",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-brief"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-catalog"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-policy",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-chat"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-sdk",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-cli"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-app-store",
  "kobo-catalog",
@@ -941,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-comic"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "flate2",
  "kobo-image",
@@ -972,14 +972,14 @@ dependencies = [
 
 [[package]]
 name = "kobo-dict"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "unicode-normalization",
 ]
 
 [[package]]
 name = "kobo-doc"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-html",
  "miniz_oxide 0.9.1",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-doctor"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-hal",
  "kobo-profile",
@@ -1029,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-flashcards-format"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "flate2",
  "kobo-image",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-frame-host"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "blake3",
  "image",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-gallery"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-profile",
  "kobo-sdk",
@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-guard"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-hal",
  "kobo-profile",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-gutenbird"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-hal"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-abi",
  "kobo-doc",
@@ -1126,21 +1126,21 @@ dependencies = [
 
 [[package]]
 name = "kobo-handoff"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-hal",
 ]
 
 [[package]]
 name = "kobo-hello"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-sdk",
 ]
 
 [[package]]
 name = "kobo-hn"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-html"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "ratex-layout",
  "ratex-parser",
@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-image"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "image",
 ]
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-json"
-version = "0.3.18"
+version = "0.3.19"
 
 [[package]]
 name = "kobo-kitchencard"
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-launcher"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-profile",
  "kobo-sdk",
@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-magnet"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-morse"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-net"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "http",
  "httparse",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-opds"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-xml",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-opml"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-net",
  "kobo-xml",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-policy"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-abi",
  "kobo-dict",
@@ -1376,14 +1376,14 @@ dependencies = [
 
 [[package]]
 name = "kobo-profile"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
 ]
 
 [[package]]
 name = "kobo-protocol"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-ui",
 ]
@@ -1399,7 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-read"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-doc",
  "kobo-image",
@@ -1424,7 +1424,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-rss"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-sdk"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-net",
@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-settings"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-app-store",
  "kobo-json",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-shell"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-abi",
  "kobo-policy",
@@ -1488,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-sidekick"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-sdk",
@@ -1497,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-sidekickd"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "command-group",
  "kobo-json",
@@ -1509,7 +1509,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-sim"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-abi",
  "kobo-app-store",
@@ -1529,14 +1529,14 @@ dependencies = [
 
 [[package]]
 name = "kobo-smoke"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-hal",
 ]
 
 [[package]]
 name = "kobo-state"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "kobo-policy",
@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-store"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-catalog",
  "kobo-sdk",
@@ -1555,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-stream"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-abi",
  "kobo-json",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-tap"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-abi",
  "kobo-hal",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-term"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-ui",
  "vt100",
@@ -1600,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-terminal"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-policy",
  "kobo-sdk",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-text"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "fontdue",
  "kobo-ui",
@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-tictactoe"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -1629,7 +1629,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-todo"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -1637,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-ui"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-profile",
  "unicode-segmentation",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-wifi-trace"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-json",
  "ring",
@@ -1677,11 +1677,11 @@ dependencies = [
 
 [[package]]
 name = "kobo-xml"
-version = "0.3.18"
+version = "0.3.19"
 
 [[package]]
 name = "kobo-zotero-reader"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
@@ -1696,7 +1696,7 @@ version = "0.3.18"
 
 [[package]]
 name = "kobod"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "base64",
  "kobo-abi",
