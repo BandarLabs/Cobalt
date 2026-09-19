@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.5",
-  "release_notes": "Take a quote card away: the poem set as verse with its poet, year and edition drawn on it, saved as a picture for a paired computer. A poem for the day you are reading on, complete poems, and durable favourites.",
+  "version": "0.1.6",
+  "release_notes": "A README gallery and a current web page image; no changes to reading.",
   "glyph": "note",
   "capabilities": [
     "network"

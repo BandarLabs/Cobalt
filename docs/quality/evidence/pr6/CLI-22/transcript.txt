@@ -1,0 +1,30 @@
+=== real invocations, isolated HOME=/tmp/kobo-batch8-home (nothing configured) ===
+--- kobo sync status ---
+kobo: Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first
+exit=1
+--- kobo sync pause ---
+kobo: Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first
+exit=1
+--- kobo sync resume ---
+kobo: Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first
+exit=1
+--- kobo sync stop ---
+kobo: Sync is not configured
+exit=1
+--- kobo sync run ---
+kobo: Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first
+exit=1
+
+=== kobo sync (help) ===
+usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP
+       kobo sync run [--foreground] [--seconds 1-86400]
+       kobo sync plan [--json]
+       kobo sync status [--json]
+       kobo sync publish --folder vault|frame
+       kobo sync pause
+       kobo sync resume
+       kobo sync stop
+       
+       While the peer runs it uses this computer's network. A sleeping
+       reader is not kept awake; it syncs during the windows its owner
+       opens on the Kobo.

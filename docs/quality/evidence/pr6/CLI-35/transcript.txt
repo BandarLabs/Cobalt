@@ -1,0 +1,29 @@
+=== kobo version (script-readable single line) ===
+kobo 0.3.18
+
+=== kobo version --full: compatibility and signed update status ===
+kobo 0.3.18
+host: linux x86_64
+helper: kobo-doctor could not be looked up: Permission denied (os error 13)
+helper: flashcards-import could not be looked up: Permission denied (os error 13)
+updates: host release packages are signed; setup verifies the manifest signature before anything is installed
+compatibility: a package built for a newer kobo than 0.3.18 is refused with an update prompt, and each companion declares the minimum kobo it needs in the signed manifest
+reader: a reader's own model and firmware are read from the device itself - 'kobo doctor --device HOST' or a setup dry run
+
+=== signed updates enforced in code ===
+4820:            "stable setup package {} is newer than this kobo {}; update the host command first",
+1645:        return Err("host release seed does not match the public release key".to_owned());
+        assert!(kobo_app_store::verify(&changed, &signature, &public).is_err());
+        assert!(verify_manifest(&manifest(), &"00".repeat(64))
+            .expect_err("wrong release signature")
+            .contains("verification failed"));
+
+=== a well-formed manifest with a wrong seed cannot be signed (real invocation) ===
+kobo: host release seed does not match the public release key
+exit=1
+signature files created? ls: cannot access '/tmp/f.sig': No such file or directory
+ls: cannot access '/tmp/f.ssig': No such file or directory
+
+=== a forged signature is rejected by verify (real invocation) ===
+kobo: release manifest signature verification failed
+exit=1

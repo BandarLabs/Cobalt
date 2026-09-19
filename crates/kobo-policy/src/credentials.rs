@@ -13,6 +13,8 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[path = "miniflux_credentials.rs"]
 mod miniflux;
+#[path = "post_credentials.rs"]
+mod post;
 #[path = "credential_servers.rs"]
 pub mod servers;
 use std::path::{Path, PathBuf};
@@ -56,6 +58,36 @@ pub fn handle_install(
         _ => return None,
     };
     Some(result.map_or_else(DeviceResult::Failed, |()| DeviceResult::Done))
+}
+
+/// Answer a presence check against real storage, names and booleans only.
+///
+/// The companion to [`handle_install`]: a value can be written but never
+/// read back, so "is it there?" is the only question an application may
+/// ask, and only about names its reviewed policy may set. `None` means
+/// this request belongs to another device service.
+#[must_use]
+pub fn handle_check(
+    root: &Path,
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<kobo_protocol::DeviceResult> {
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    let DeviceRequest::CheckSecrets { names } = request else {
+        return None;
+    };
+    if names.is_empty() || names.iter().any(|name| !may_set(app, name)) {
+        return Some(DeviceResult::Denied(DenyReason::PolicyRejected));
+    }
+    let present = names
+        .iter()
+        .filter(|name| {
+            app_secret_path(root, app, name).is_some_and(|path| path.is_file())
+                || servers::path(root, app, name).is_some_and(|path| path.is_file())
+        })
+        .cloned()
+        .collect();
+    Some(DeviceResult::Secrets { present })
 }
 
 /// Validate an account request before either real storage or an injected fault.
@@ -246,8 +278,12 @@ pub fn allowed_request_with_server(
     server.map_or_else(
         || allowed_request(app, credential, url, usage, body, content_type),
         |server| {
-            if app == "rss-miniflux" {
+            if app == "readlater" {
+                readlater_server_allowed(credential, server, url, usage, body)
+            } else if app == "rss-miniflux" {
                 miniflux::allowed(credential, server, url, usage, body, content_type)
+            } else if app == "post" {
+                post::allowed(credential, server, url, usage, body, content_type)
             } else {
                 servers::allowed(app, credential, server, url, usage)
             }
@@ -275,7 +311,7 @@ pub fn allowed_request(
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
     }
-    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage) {
+    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage, body) {
         return allowed;
     }
     // Historical fixed-provider policies predate update tasks. None grants
@@ -435,6 +471,7 @@ fn store_app_credential_allowed(
     credential: &Credential,
     url: &str,
     usage: CredentialUse,
+    body: Option<&str>,
 ) -> Option<bool> {
     let allowed = match app {
         "calibre-web" => {
@@ -470,8 +507,14 @@ fn store_app_credential_allowed(
             credential.secret == "mealie"
                 && credential.header == SecretHeader::Bearer
                 && usage == CredentialUse::Fetch
-                && url == "https://mealie.local/api/recipes?perPage=20"
-                && has_origin(url, "mealie.local", 443)
+                && parsed_path(url).is_some_and(|path| {
+                    let path = clean_path(&path);
+                    path.ends_with("/api/recipes")
+                        || path
+                            .rsplit("/api/recipes/")
+                            .next()
+                            .is_some_and(|slug| !slug.is_empty() && !slug.contains('/'))
+                })
         }
         "needles" => {
             credential.secret == "ravelry"
@@ -511,7 +554,12 @@ fn store_app_credential_allowed(
                             || wallabag_entry_document(&path)
                     }
                     CredentialUse::Post => wallabag_entry_document(&path),
-                    CredentialUse::Put | CredentialUse::Patch => false,
+                    // Wallabag updates an entry by PATCH; the outbox writes
+                    // only these four flag bodies.
+                    CredentialUse::Patch => {
+                        wallabag_entry_document(&path) && wallabag_flag_body(body)
+                    }
+                    CredentialUse::Put => false,
                 })
         }
         "rss-miniflux" => {
@@ -530,6 +578,39 @@ fn store_app_credential_allowed(
         _ => return None,
     };
     Some(allowed)
+}
+
+/// A server-bound wallabag account keeps its bearer token on its own host:
+/// the same entry routes an owner-installed token may use, never another
+/// server, however the application was pointed at it.
+fn readlater_server_allowed(
+    credential: &Credential,
+    server: &str,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+) -> bool {
+    credential.secret == "wallabag"
+        && credential.header == SecretHeader::Bearer
+        && servers::contains(server, url)
+        && parsed_path(url).is_some_and(|path| match usage {
+            CredentialUse::Fetch => {
+                (clean_path(&path).ends_with("/api/entries.json")
+                    && path.contains("detail=metadata"))
+                    || wallabag_entry_document(&path)
+            }
+            CredentialUse::Post => wallabag_entry_document(&path),
+            CredentialUse::Patch => wallabag_entry_document(&path) && wallabag_flag_body(body),
+            CredentialUse::Put => false,
+        })
+}
+
+/// The outbox's whole vocabulary: an entry's archive or star flag, either way.
+fn wallabag_flag_body(body: Option<&str>) -> bool {
+    matches!(
+        body,
+        Some(r#"{"archive":0}"# | r#"{"archive":1}"# | r#"{"starred":0}"# | r#"{"starred":1}"#)
+    )
 }
 
 fn wallabag_entry_document(path: &str) -> bool {
@@ -634,7 +715,10 @@ fn zotero_key(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, allowed_request, install_app_secret, may_set, AUDIOBOOK_VOICES};
+    use super::{
+        allowed, allowed_request, allowed_request_with_server, install_app_secret, may_set,
+        AUDIOBOOK_VOICES,
+    };
     use kobo_protocol::{Credential, CredentialUse};
 
     #[test]
@@ -667,6 +751,51 @@ mod tests {
             Some(DeviceResult::Failed(_))
         ));
         assert_eq!(std::fs::read(&blocked).unwrap(), b"preserved");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_presence_check_names_only_what_the_calling_app_may_set() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-credential-check-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::CheckSecrets {
+            names: vec!["exa".into(), "openai".into(), "elevenlabs".into()],
+        };
+        // Nothing installed: an empty answer, which is a true answer.
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets { present: vec![] })
+        );
+        install_app_secret(&root, "audiobook", "openai", "synthetic-key")
+            .expect("install one credential");
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into()]
+            })
+        );
+        // A name outside the app's reviewed list is refused, not answered.
+        let nosy = DeviceRequest::CheckSecrets {
+            names: vec!["openai".into(), "zotero".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &nosy),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        // Another app asking about the same installed secret is refused too:
+        // presence of somebody else's credential is not its business.
+        let theirs = DeviceRequest::CheckSecrets {
+            names: vec!["openai".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "zotero-reader", &theirs),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        // Requests for other services fall through.
+        let other = DeviceRequest::ReadBattery;
+        assert_eq!(super::handle_check(&root, "audiobook", &other), None);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -851,7 +980,13 @@ mod tests {
             (
                 "kitchencard",
                 Credential::bearer("mealie"),
-                "https://mealie.local/api/recipes?perPage=20",
+                "https://mealie.example/api/recipes?perPage=24&page=1",
+                CredentialUse::Fetch,
+            ),
+            (
+                "kitchencard",
+                Credential::bearer("mealie"),
+                "https://mealie.example/api/recipes/lemon-chickpeas",
                 CredentialUse::Fetch,
             ),
             (
@@ -898,6 +1033,124 @@ mod tests {
                 "another app used {app}'s credential"
             );
         }
+    }
+
+    #[test]
+    fn readlater_patches_only_entry_flags() {
+        let credential = Credential::bearer("wallabag");
+        let url = "https://read.example/api/entries/7.json";
+        for body in [
+            r#"{"archive":1}"#,
+            r#"{"archive":0}"#,
+            r#"{"starred":1}"#,
+            r#"{"starred":0}"#,
+        ] {
+            assert!(
+                allowed_request(
+                    "readlater",
+                    &credential,
+                    url,
+                    CredentialUse::Patch,
+                    Some(body),
+                    Some("application/json")
+                ),
+                "{body}"
+            );
+        }
+        for body in [
+            r#"{"title":"overwrite"}"#,
+            r#"{"archive":1,"star":1}"#,
+            r#"{"archive":2}"#,
+        ] {
+            assert!(
+                !allowed_request(
+                    "readlater",
+                    &credential,
+                    url,
+                    CredentialUse::Patch,
+                    Some(body),
+                    Some("application/json")
+                ),
+                "{body}"
+            );
+        }
+        assert!(!allowed_request(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries.json?detail=metadata",
+            CredentialUse::Patch,
+            Some(r#"{"starred":1}"#),
+            None
+        ));
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            url,
+            CredentialUse::Patch,
+            Some(r#"{"archive":1}"#),
+            Some("application/json"),
+            Some("https://read.example")
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            url,
+            CredentialUse::Patch,
+            Some(r#"{"title":"x"}"#),
+            Some("application/json"),
+            Some("https://read.example")
+        ));
+    }
+
+    #[test]
+    fn server_bound_wallabag_stays_on_its_server_and_routes() {
+        let credential = Credential::bearer("wallabag");
+        let server = "https://read.example";
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries.json?detail=metadata&page=1",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries/7.json",
+            CredentialUse::Post,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://other.example/api/entries/7.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/user.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &Credential::basic("wallabag"),
+            "https://read.example/api/entries/7.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
     }
 
     #[test]

@@ -1,6 +1,38 @@
+wait 800
 expect Needles
-expect +1 row
+expect Row 0
+expect ready for 1 of 12
 tap +1 row
-expect Row
+expect Row 1
+expect row 1 of 12
+tap +1 row
+expect Row 2
+tap Undo
+expect Row 1
 clean
 shot project
+tap Change section
+expect Sleeve
+expect Row 0
+tap Projects
+expect Row counter
+expect Sleeve - row 0
+clean
+shot projects
+tap-id project-0
+expect Row 0
+expect Sleeve
+tap Read synced pattern
+wait 1500
+clean
+shot reading-chart
+tap Back
+expect Winter socks
+expect Cuff
+tap Change section
+expect Leg
+clean
+shot project-imported
+tap Projects
+expect Winter socks
+expect Leg - row 0

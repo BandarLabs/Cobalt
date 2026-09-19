@@ -1,0 +1,88 @@
+$ printf "0\n" | script -qec "kobo" /dev/null   (a real terminal, owner picks Exit)
+0
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+0. Exit
+Choose a number: exit: 0
+
+$ printf "99\n0\n" | script -qec "kobo" /dev/null   (invalid choice retries, then Exit)
+99
+0
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+0. Exit
+Choose a number: Enter a number from 0 to 6.
+Choose a number: exit: 0
+$ printf "6\n0\n1\n" | script -qec "kobo" /dev/null  (numbered app list, 0 retries, 1 picks first app)
+6
+0
+1
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+0. Exit
+Choose a number: 1. arXiv
+2. Audiobook Studio
+3. Backgammon
+4. Birds
+5. Daily Brief
+6. calibre-web
+7. AI Command Center
+8. Crossword
+9. Deck
+10. Fanshelf
+11. Fieldbook
+12. Flashcards
+13. Frame
+14. Components
+15. Grimoire
+16. Gutenbird
+17. Habits
+18. Hacker News
+19. Home Panel
+20. Inkling
+21. Kitchen Card
+22. Lichess
+23. Logic Pack
+24. Magnet
+25. Morse
+26. Music Stand
+27. Needles
+28. Nonograms
+29. Panels
+30. Paperterm
+31. Parlor
+32. Parser
+33. Post
+34. Pub Quiz
+35. Read Later
+36. Feeds
+37. RSS Reader — Miniflux
+38. Sidekick
+39. Sudoku
+40. Sync
+41. Tic-tac-toe
+42. Todo
+43. Vault
+44. Verses
+45. Zotero Reader
+App number (blank cancels): Enter a number from 1 to 45.
+App number (blank cancels): arXiv
+Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.

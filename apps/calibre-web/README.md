@@ -42,6 +42,7 @@ Library and reading-position writes are serialized and acknowledged. Failed
 writes offer **Retry saving**; corrupt or future library records are preserved.
 
 ![Catalog sections](screenshots/catalog.png)
+![A private library's sections](screenshots/private-catalog.png)
 ![Offline reading](screenshots/reading.png)
 ![Recovering a damaged download](screenshots/repair.png)
 

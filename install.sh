@@ -430,6 +430,7 @@ cat > "$STAGE/host-files.expected" <<'EOF'
 ./LICENSE
 ./SOURCE.txt
 ./THIRD-PARTY.md
+./flashcards-import
 ./kobo
 ./licenses/
 ./licenses/LICENSE-Rust-dependencies.txt
@@ -440,11 +441,12 @@ if ! cmp "$STAGE/host-files.expected" "$STAGE/host-files.sorted" >/dev/null 2>&1
 fi
 tar -xzf "$HOST_ARCHIVE" -C "$PACKAGE" ||
     fail "$HOST_ASSET is not a readable host package"
-for required in kobo updater.sh LICENSE THIRD-PARTY.md licenses/LICENSE-Rust-dependencies.txt SOURCE.txt; do
+for required in kobo flashcards-import updater.sh LICENSE THIRD-PARTY.md licenses/LICENSE-Rust-dependencies.txt SOURCE.txt; do
     [ -f "$PACKAGE/$required" ] || fail "$HOST_ASSET is missing $required"
     [ ! -L "$PACKAGE/$required" ] || fail "$HOST_ASSET contains a symbolic link"
 done
 [ -x "$PACKAGE/kobo" ] || chmod 755 "$PACKAGE/kobo"
+[ -x "$PACKAGE/flashcards-import" ] || chmod 755 "$PACKAGE/flashcards-import"
 [ "$(file_size "$PACKAGE/updater.sh")" = "$BOOTSTRAP_BYTES" ] ||
     fail "packaged updater length does not match the signed manifest"
 [ "$(sha256_file "$PACKAGE/updater.sh")" = "$BOOTSTRAP_SHA" ] ||
@@ -531,7 +533,7 @@ printf '%s\n' "$manifest_source" > "$HOST_NEW/SOURCE_COMMIT"
 printf '%s\n' "$HOST_SHA" > "$HOST_NEW/HOST_ARCHIVE_SHA256"
 fail_point host-directory
 if [ -d "$HOST_DIR" ]; then
-    for file in kobo updater.sh VERSION CHANNEL PLATFORM SOURCE_COMMIT HOST_ARCHIVE_SHA256; do
+    for file in kobo flashcards-import updater.sh VERSION CHANNEL PLATFORM SOURCE_COMMIT HOST_ARCHIVE_SHA256; do
         cmp "$HOST_DIR/$file" "$HOST_NEW/$file" >/dev/null 2>&1 ||
             fail "immutable host release $HOST_ID differs from its verified copy"
     done

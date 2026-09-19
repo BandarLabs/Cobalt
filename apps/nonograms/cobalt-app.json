@@ -4,8 +4,8 @@
   "short_label": "Nonograms",
   "summary": "Solve 18 original picture puzzles with attached clues, saved undo and larger grids.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.6",
-  "release_notes": "Adds an original picture collection and keeps earlier puzzles and their saved games in a separate collection.",
+  "version": "0.1.9",
+  "release_notes": "The play header drops cursor coordinates - the outlined square shows your place - and keeps the marks counter; zoomed windows still name their rows and columns when the focus leaves the view.",
   "glyph": "grid",
   "capabilities": []
 }

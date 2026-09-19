@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
-  "version": "0.2.4",
-  "release_notes": "Preview a card's front, back and media on your computer before importing, and see how many cards and how much media a package holds. Merging and replacing a collection are now separate, named choices.",
+  "version": "0.2.5",
+  "release_notes": "First launch without a collection now offers a built-in sample deck or walks you through staging one from your computer. Review settings explain how grades are kept in the local review log.",
   "glyph": "bookmark",
   "capabilities": []
 }

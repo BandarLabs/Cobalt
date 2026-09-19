@@ -1,23 +1,43 @@
-//! Owner-attended packing of an Obsidian vault into the key Vault reads.
+//! Owner-attended Vault shelf management: walk a folder of Markdown notes on
+//! the host and publish them over the already-paired SSH channel or into the
+//! simulator. One direction: the host folder is the source of truth, and the
+//! reader is a reader. Notes edited on the reader stay on the reader; nothing
+//! here exports them back.
 
-use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use kobo_vault_host::{
+    digest, links_for, plan_prefixed, tags_for, title_for, ImportFailure, IncomingNote, Manifest,
+    Push, MANIFEST, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
+};
+use std::fmt::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, UNIX_EPOCH};
 
-const USAGE: &str = "usage: kobo vault init (--device IP | --sim)\n\
-                     \x20      kobo vault push LOCAL_DIR (--device IP | --sim | --out INDEX)";
-const INDEX_KEY: &str = "vault-index-v1";
-const INDEX_SEPARATOR: &str = "\n\n---vault-note---\n\n";
-const DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state/vault";
-const MAX_INDEX: usize = 256 * 1024;
+const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/vault";
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_INPUT_BYTES: u64 = 512 * 1024;
 const SKIP_DIRS: &[&str] = &[".obsidian", ".trash", ".git", "node_modules"];
+const USAGE: &str = "usage: kobo vault init (--sim | --device IP)\n\
+                     \x20      kobo vault push VAULT_DIR [--exclude TEXT]... (--sim | --device IP)\n\
+                     \x20      kobo vault plan VAULT_DIR [--exclude TEXT]... (--sim | --device IP)\n\
+                     \x20      kobo vault ingest SYNCED_DIR [--exclude TEXT]... (--sim | --device IP)\n\
+                     \x20      kobo vault preview NOTE.md\n\
+                     \x20      kobo vault ls (--sim | --device IP)\n\
+                     \x20      kobo vault rm ID (--sim | --device IP)\n\
+                     \n\
+                     The host folder is the source of truth: push mirrors it onto the\n\
+                     shelf. Notes the folder no longer offers leave the shelf, and a\n\
+                     renamed note keeps its place without a second transfer. Vault\n\
+                     reads Markdown; edits made on the reader are not exported.\n\
+                     \n\
+                     ingest packs a folder Sync has delivered (pair it with\n\
+                     kobo sync setup <dir> --folder vault for ongoing delivery) onto\n\
+                     the synced shelf; push and ingest never overwrite each other.";
 
-enum Destination<'a> {
-    Device(&'a str),
-    Simulator,
-    File(&'a str),
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Target {
+    Device(String),
+    Sim,
 }
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
@@ -26,116 +46,177 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     }
     match arguments.first().map(String::as_str) {
         Some("init") => init(&arguments[1..]),
-        Some("push") => push(&arguments[1..]),
+        Some("push") => push(&arguments[1..], false),
+        Some("plan") => push(&arguments[1..], true),
+        Some("ingest") => ingest(&arguments[1..]),
+        Some("preview") => preview(&arguments[1..]),
+        Some("ls") => list(&arguments[1..]),
+        Some("rm") => remove(&arguments[1..]),
         _ => Err(USAGE.to_owned()),
     }
 }
 
-fn init(arguments: &[String]) -> Result<(), String> {
-    match parse_destination(arguments, true)? {
-        Destination::Device(host) => {
-            let output = remote(
-                host,
-                &format!(
-                    "set -eu\nmkdir -p '{DEVICE_ROOT}'\nchmod 700 '{DEVICE_ROOT}'\nsync\nprintf 'Vault shelf ready.\\n'\n"
-                ),
-            )?;
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-            Ok(())
+fn parse_target(arguments: &[String]) -> Result<Target, String> {
+    match arguments {
+        [flag] if flag == "--sim" => Ok(Target::Sim),
+        [flag, host] if super::is_device_flag(flag) => {
+            if !super::valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            Ok(Target::Device(host.clone()))
         }
-        Destination::Simulator => {
-            fs::create_dir_all(sim_root())
-                .map_err(|error| format!("create simulator vault store: {error}"))?;
-            println!("Vault simulator store ready: {}", sim_root().display());
-            Ok(())
-        }
-        Destination::File(_) => Err(USAGE.to_owned()),
+        _ => Err(USAGE.to_owned()),
     }
 }
 
-fn push(arguments: &[String]) -> Result<(), String> {
-    let (local, destination) = parse_push(arguments)?;
-    let notes = collect_notes(Path::new(local))?;
-    let index = encode_index(&notes)?;
-    match destination {
-        Destination::Device(host) => transfer(&index, host, notes.len()),
-        Destination::Simulator => {
-            write_index(&sim_root().join(INDEX_KEY), &index)?;
-            println!(
-                "Pushed {} note(s) to the simulator store ({INDEX_KEY}, {} bytes).",
-                notes.len(),
-                index.len()
-            );
-            Ok(())
-        }
-        Destination::File(path) => {
-            write_index(Path::new(path), &index)?;
-            println!(
-                "Packed {} note(s) into {path} ({} bytes).",
-                notes.len(),
-                index.len()
-            );
-            Ok(())
-        }
-    }
-}
-
-fn parse_push(arguments: &[String]) -> Result<(&str, Destination<'_>), String> {
-    let Some(local) = arguments.first() else {
+fn parse_push(arguments: &[String]) -> Result<(String, Vec<String>, Target), String> {
+    let Some(folder) = arguments.first() else {
         return Err(USAGE.to_owned());
     };
-    let destination = parse_destination(&arguments[1..], false)?;
-    Ok((local, destination))
-}
-
-fn parse_destination(arguments: &[String], init: bool) -> Result<Destination<'_>, String> {
-    let mut host = None;
-    let mut sim = false;
-    let mut output = None;
-    let mut index = 0;
+    let mut excludes = Vec::new();
+    let mut target = None;
+    let mut index = 1;
     while index < arguments.len() {
         match arguments[index].as_str() {
-            flag if super::is_device_flag(flag) => {
-                host = arguments.get(index + 1).map(String::as_str);
+            "--exclude" => {
+                let Some(text) = arguments.get(index + 1) else {
+                    return Err(USAGE.to_owned());
+                };
+                if text.is_empty() {
+                    return Err("--exclude needs a non-empty text".to_owned());
+                }
+                excludes.push(text.clone());
                 index += 2;
             }
             "--sim" => {
-                sim = true;
+                target = Some(Target::Sim);
                 index += 1;
             }
-            "--out" if !init => {
-                output = arguments.get(index + 1).map(String::as_str);
+            flag if super::is_device_flag(flag) => {
+                let Some(host) = arguments.get(index + 1) else {
+                    return Err(USAGE.to_owned());
+                };
+                if !super::valid_device_host(host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                target = Some(Target::Device(host.clone()));
                 index += 2;
             }
             _ => return Err(USAGE.to_owned()),
         }
     }
-    match (host, sim, output) {
-        (Some(host), false, None) => {
-            if !super::valid_device_host(host) {
-                return Err("device host contains unsupported characters".to_owned());
-            }
-            Ok(Destination::Device(host))
+    match target {
+        Some(target) => Ok((folder.clone(), excludes, target)),
+        None => Err(USAGE.to_owned()),
+    }
+}
+
+fn init(arguments: &[String]) -> Result<(), String> {
+    match parse_target(arguments)? {
+        Target::Device(host) => {
+            let output = remote(
+                &host,
+                &format!(
+                    "set -eu\nmkdir -p '{ROOT}'\nchmod 700 '{ROOT}'\nsync\nprintf 'Vault shelf ready; transfers use this owner-attended SSH connection.\\n'\n"
+                ),
+            )?;
+            print!("{}", String::from_utf8_lossy(&output.stdout));
         }
-        (None, true, None) => Ok(Destination::Simulator),
-        (None, false, Some(path)) => Ok(Destination::File(path)),
-        _ => Err(USAGE.to_owned()),
+        Target::Sim => {
+            let root = sim_root();
+            fs::create_dir_all(&root)
+                .map_err(|error| format!("create Vault simulator shelf: {error}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+                    .map_err(|error| format!("protect Vault simulator shelf: {error}"))?;
+            }
+            println!(
+                "Vault shelf ready at {}; transfers stay on this computer.",
+                root.display()
+            );
+        }
     }
+    Ok(())
 }
 
-fn collect_notes(root: &Path) -> Result<Vec<(String, String)>, String> {
-    let metadata = fs::metadata(root)
-        .map_err(|error| format!("could not read {}: {error}", root.display()))?;
+pub(crate) struct Walk {
+    pub(crate) offered: Vec<IncomingNote>,
+    pub(crate) excluded: Vec<(String, String)>,
+    pub(crate) failures: Vec<ImportFailure>,
+}
+
+/// Walk the vault folder into offers: Markdown files become notes keyed by
+/// their vault-relative path, dot-directories and the usual tooling folders
+/// are skipped, and each --exclude text removes its matches loudly so a plan
+/// shows exactly what was left out and why.
+pub(crate) fn walk(folder: &Path, excludes: &[String]) -> Result<Walk, String> {
+    let metadata = fs::metadata(folder)
+        .map_err(|error| format!("could not read {}: {error}", folder.display()))?;
     if !metadata.is_dir() {
-        return Err(format!("{} is not a directory", root.display()));
+        return Err(format!("{} is not a directory", folder.display()));
     }
-    let mut notes = Vec::new();
-    visit(root, root, &mut notes)?;
-    notes.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(notes)
+    let mut paths = Vec::new();
+    visit(folder, folder, &mut paths)?;
+    paths.sort();
+    let mut walk = Walk {
+        offered: Vec::new(),
+        excluded: Vec::new(),
+        failures: Vec::new(),
+    };
+    for relative in paths {
+        if let Some(rule) = excludes
+            .iter()
+            .find(|rule| relative.to_lowercase().contains(&rule.to_lowercase()))
+        {
+            walk.excluded.push((relative, rule.clone()));
+            continue;
+        }
+        let full = folder.join(&relative);
+        let size = fs::metadata(&full)
+            .map_err(|error| format!("read {}: {error}", full.display()))?
+            .len();
+        if size > MAX_INPUT_BYTES {
+            walk.failures.push(ImportFailure {
+                input: relative,
+                reason: format!("larger than the {MAX_INPUT_BYTES} byte note limit"),
+            });
+            continue;
+        }
+        match fs::read(&full) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(body) => {
+                    let added = fs::metadata(&full)
+                        .ok()
+                        .and_then(|metadata| metadata.modified().ok())
+                        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                        .map_or(0, |duration| duration.as_secs());
+                    walk.offered.push(IncomingNote {
+                        title: title_for(&relative, &body),
+                        tags: tags_for(&body),
+                        links: links_for(&body),
+                        digest: digest(body.as_bytes()),
+                        added,
+                        body: body.into_bytes(),
+                        path: relative,
+                    });
+                }
+                Err(_) => walk.failures.push(ImportFailure {
+                    input: relative,
+                    reason: "not UTF-8 text".to_owned(),
+                }),
+            },
+            Err(error) => walk.failures.push(ImportFailure {
+                input: relative,
+                reason: format!("could not be read: {error}"),
+            }),
+        }
+    }
+    Ok(walk)
 }
 
-fn visit(root: &Path, dir: &Path, notes: &mut Vec<(String, String)>) -> Result<(), String> {
+fn visit(root: &Path, dir: &Path, paths: &mut Vec<String>) -> Result<(), String> {
     let mut entries: Vec<_> = fs::read_dir(dir)
         .map_err(|error| format!("read {}: {error}", dir.display()))?
         .collect::<Result<_, _>>()
@@ -151,7 +232,7 @@ fn visit(root: &Path, dir: &Path, notes: &mut Vec<(String, String)>) -> Result<(
         }
         let path = entry.path();
         if path.is_dir() {
-            visit(root, &path, notes)?;
+            visit(root, &path, paths)?;
             continue;
         }
         if !path
@@ -166,198 +247,462 @@ fn visit(root: &Path, dir: &Path, notes: &mut Vec<(String, String)>) -> Result<(
             .map_err(|_| format!("{} escaped the vault root", path.display()))?
             .to_string_lossy()
             .replace('\\', "/");
-        if relative.contains('\n') || relative.contains(INDEX_SEPARATOR) {
+        if relative.contains('\n') {
             return Err(format!(
-                "{} is not a usable note path for the Vault index",
+                "{} is not a usable note path for the Vault shelf",
                 path.display()
             ));
         }
-        let body = fs::read_to_string(&path)
-            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-        if body.contains(INDEX_SEPARATOR) {
-            return Err(format!(
-                "{} contains the Vault index separator; rename that heading or split the note",
-                path.display()
-            ));
-        }
-        notes.push((relative, body));
+        paths.push(relative);
     }
     Ok(())
 }
 
-fn encode_index(notes: &[(String, String)]) -> Result<String, String> {
-    let encoded = notes
+fn sim_root() -> PathBuf {
+    kobo_sim::simulated_data_root("vault")
+}
+
+/// Key, record layout and cap of the packed index the pre-shelf Vault app
+/// reads. Pushes keep that index current so a reader still on the old app
+/// sees the vault until the multi-shelf app ships; the shelf stays the
+/// source of truth.
+const LEGACY_INDEX_KEY: &str = "vault-index-v1";
+const LEGACY_INDEX_SEPARATOR: &str = "\n\n---vault-note---\n\n";
+const LEGACY_MAX_INDEX: usize = 256 * 1024;
+const LEGACY_DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state/vault";
+
+fn legacy_sim_root() -> PathBuf {
+    std::env::temp_dir().join("cobalt-sim-state").join("vault")
+}
+
+fn legacy_pack(notes: &[(String, String)]) -> Option<String> {
+    let packed = notes
         .iter()
         .map(|(path, body)| format!("{path}\n{body}"))
         .collect::<Vec<_>>()
-        .join(INDEX_SEPARATOR);
-    if encoded.len() > MAX_INDEX {
-        return Err(format!(
-            "this vault packs to {} bytes; Vault v1 keeps the index in the app store, which stops at {MAX_INDEX} bytes",
-            encoded.len()
-        ));
-    }
-    Ok(encoded)
+        .join(LEGACY_INDEX_SEPARATOR);
+    (packed.len() <= LEGACY_MAX_INDEX).then_some(packed)
 }
 
-fn write_index(path: &Path, index: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+/// Rebuild the legacy packed index from every shelf manifest, in the format
+/// the pre-shelf app decodes. Over-cap vaults skip the index: the old app
+/// cannot hold them either way, and the new app never reads it.
+fn legacy_write_sim() -> Result<(), String> {
+    let mut notes: Vec<(String, String)> = Vec::new();
+    for manifest_name in [MANIFEST, SYNCED_MANIFEST] {
+        let manifest = read_local_manifest_named(manifest_name)?;
+        for note in &manifest.notes {
+            let file = sim_root().join(Push::note_name(&note.id));
+            let body = fs::read_to_string(&file)
+                .map_err(|error| format!("read Vault note {}: {error}", note.path))?;
+            notes.push((note.path.clone(), body));
+        }
     }
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("{} is not a usable index path", path.display()))?;
-    let temporary = path.with_file_name(format!(".{name}.writing"));
-    {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&temporary)
-            .map_err(|error| format!("write {}: {error}", temporary.display()))?;
-        file.write_all(index.as_bytes())
-            .map_err(|error| format!("write {}: {error}", temporary.display()))?;
-        file.sync_all()
-            .map_err(|error| format!("flush {}: {error}", temporary.display()))?;
-    }
-    fs::rename(&temporary, path).map_err(|error| {
-        let _ignored = fs::remove_file(&temporary);
-        format!("publish {}: {error}", path.display())
-    })
+    let Some(packed) = legacy_pack(&notes) else {
+        println!("Vault exceeds the old app's packed-index cap; only the new app shows it.");
+        return Ok(());
+    };
+    let root = legacy_sim_root();
+    fs::create_dir_all(&root).map_err(|error| format!("create Vault simulator store: {error}"))?;
+    let dest = root.join(LEGACY_INDEX_KEY);
+    let partial = root.join(format!(".{LEGACY_INDEX_KEY}.writing"));
+    fs::write(&partial, packed)
+        .and_then(|()| fs::rename(&partial, &dest))
+        .map_err(|error| format!("publish Vault legacy index: {error}"))?;
+    Ok(())
 }
 
-fn transfer(index: &str, host: &str, notes: usize) -> Result<(), String> {
-    let encoded = super::base64_encode(index.as_bytes());
+/// Same index for a device push: every pushed note's body is still local, so
+/// the packed index ships in the same SSH session.
+fn legacy_write_device(
+    host: &str,
+    folder: &str,
+    notes: &[kobo_vault_host::NoteEntry],
+) -> Result<(), String> {
+    let mut packed_notes: Vec<(String, String)> = Vec::new();
+    for note in notes {
+        let body = fs::read_to_string(Path::new(folder).join(&note.path))
+            .map_err(|error| format!("read {}: {error}", note.path))?;
+        packed_notes.push((note.path.clone(), body));
+    }
+    let Some(packed) = legacy_pack(&packed_notes) else {
+        println!("Vault exceeds the old app's packed-index cap; only the new app shows it.");
+        return Ok(());
+    };
+    let encoded = super::base64_encode(packed.as_bytes());
     let script = format!(
         "set -eu\n\
-         root='{DEVICE_ROOT}'\n\
+         root='{LEGACY_DEVICE_ROOT}'\n\
          mkdir -p \"$root\"\n\
          chmod 700 \"$root\"\n\
-         partial=\"$root/.{INDEX_KEY}.writing\"\n\
+         partial=\"$root/.{LEGACY_INDEX_KEY}.writing\"\n\
          base64 -d > \"$partial\" <<'KOBO_VAULT_INDEX'\n\
          {encoded}\n\
          KOBO_VAULT_INDEX\n\
          chmod 600 \"$partial\"\n\
-         mv -f \"$partial\" \"$root/{INDEX_KEY}\"\n\
-         sync\n\
-         printf 'Pushed {notes} Vault note(s)\\n'\n"
+         mv -f \"$partial\" \"$root/{LEGACY_INDEX_KEY}\"\n\
+         sync\n"
     );
-    let output = remote(host, &script)?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
+    remote(host, &script)?;
+    Ok(())
+}
+
+fn read_local_manifest() -> Result<Manifest, String> {
+    read_local_manifest_named(MANIFEST)
+}
+
+fn read_local_manifest_named(manifest_name: &str) -> Result<Manifest, String> {
+    let path = sim_root().join(manifest_name);
+    match fs::read(&path) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("the simulator Vault manifest is invalid: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Manifest::default()),
+        Err(error) => Err(format!("read Vault simulator shelf: {error}")),
+    }
+}
+
+fn publish_local(push: &Push) -> Result<(), String> {
+    publish_local_named(push, MANIFEST)
+}
+
+fn publish_local_named(push: &Push, manifest_name: &str) -> Result<(), String> {
+    let root = sim_root();
+    fs::create_dir_all(&root).map_err(|error| format!("create Vault simulator shelf: {error}"))?;
+    for prepared in &push.notes {
+        let name = Push::note_name(&prepared.note_id);
+        let dest = root.join(&name);
+        let partial = root.join(format!(".{name}.writing"));
+        fs::write(&partial, &prepared.markdown)
+            .map_err(|error| format!("write Vault note {name}: {error}"))?;
+        fs::rename(&partial, &dest)
+            .map_err(|error| format!("publish Vault note {name}: {error}"))?;
+    }
+    let dest = root.join(manifest_name);
+    let partial = root.join(format!(".{manifest_name}.writing"));
+    fs::write(&partial, push.manifest.encode())
+        .map_err(|error| format!("write Vault manifest: {error}"))?;
+    fs::rename(&partial, &dest).map_err(|error| format!("publish Vault manifest: {error}"))?;
+    for removed in &push.removed {
+        let _ = fs::remove_file(root.join(Push::note_name(&removed.id)));
+    }
+    Ok(())
+}
+
+pub(crate) fn print_plan(push: &Push, walk: &Walk) {
+    let fresh = push.notes.len();
+    for note in &push.manifest.notes {
+        let state = if push.renamed.iter().any(|rename| rename.id == note.id) {
+            "renamed"
+        } else if push
+            .notes
+            .iter()
+            .any(|prepared| prepared.note_id == note.id)
+        {
+            "new"
+        } else {
+            "unchanged"
+        };
+        println!(
+            "{state} {} · {} · {} byte(s)",
+            note.id, note.path, note.bytes
+        );
+    }
+    for rename in &push.renamed {
+        println!("rename {} -> {} (no transfer)", rename.from, rename.to);
+    }
+    for removed in &push.removed {
+        println!("remove {} · {}", removed.id, removed.path);
+    }
+    for (path, rule) in &walk.excluded {
+        println!("excluded {path} (matches \"{rule}\")");
+    }
+    for failure in &push.manifest.failures {
+        println!("could not import {}: {}", failure.input, failure.reason);
+    }
+    println!(
+        "{} note(s) on the shelf, {fresh} to transfer.",
+        push.manifest.notes.len()
+    );
+}
+
+fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
+    let (folder, excludes, target) = parse_push(arguments)?;
+    let mut walk = walk(Path::new(&folder), &excludes)?;
+    let existing = match &target {
+        Target::Device(host) => read_manifest(host)?,
+        Target::Sim => read_local_manifest()?,
+    };
+    let failures = std::mem::take(&mut walk.failures);
+    let offered = std::mem::take(&mut walk.offered);
+    let push = plan_prefixed(&existing, offered, failures, "note-")?;
+    print_plan(&push, &walk);
+    if push.manifest.notes.len() > MAX_NOTES {
+        return Err(format!("Vault holds at most {MAX_NOTES} notes"));
+    }
+    if plan_only {
+        println!("Plan only. Nothing was transferred or removed.");
+        return Ok(());
+    }
+    match &target {
+        Target::Device(host) => {
+            transfer(host, &push)?;
+            legacy_write_device(host, &folder, &push.manifest.notes)?;
+            let actual = read_manifest(host)?;
+            if actual.notes != push.manifest.notes {
+                return Err("the reader's Vault shelf does not match the published plan".to_owned());
+            }
+            println!(
+                "Transferred {} note file(s); the reader's shelf now matches the plan.",
+                push.notes.len()
+            );
+            println!("Vault indexes the shelf when it next opens.");
+            println!(
+                "To keep this folder current without re-pushing: kobo sync setup {folder} --folder vault --device {host}"
+            );
+        }
+        Target::Sim => {
+            publish_local(&push)?;
+            legacy_write_sim()?;
+            let actual = read_local_manifest()?;
+            if actual.notes != push.manifest.notes {
+                return Err(
+                    "the simulator Vault shelf does not match the published plan".to_owned(),
+                );
+            }
+            println!(
+                "Transferred {} note file(s); the simulator shelf now matches the plan.",
+                push.notes.len()
+            );
+            println!("Vault indexes the shelf when it next opens.");
+        }
+    }
+    Ok(())
+}
+
+fn list(arguments: &[String]) -> Result<(), String> {
+    let (pushed, synced) = match parse_target(arguments)? {
+        Target::Device(host) => (
+            read_manifest_named(&host, MANIFEST)?,
+            read_manifest_named(&host, SYNCED_MANIFEST)?,
+        ),
+        Target::Sim => (
+            read_local_manifest_named(MANIFEST)?,
+            read_local_manifest_named(SYNCED_MANIFEST)?,
+        ),
+    };
+    if pushed.notes.is_empty() && synced.notes.is_empty() {
+        println!("The Vault shelf is empty.");
+    }
+    for note in &pushed.notes {
+        println!("{} · {} · {} byte(s)", note.id, note.path, note.bytes);
+    }
+    for note in &synced.notes {
+        println!(
+            "{} · {} · {} byte(s) · synced",
+            note.id, note.path, note.bytes
+        );
+    }
+    for failure in pushed.failures.iter().chain(synced.failures.iter()) {
+        println!("could not import {}: {}", failure.input, failure.reason);
+    }
+    Ok(())
+}
+
+/// Pack a folder Sync has delivered onto the synced shelf. The same walk,
+/// plan and atomic publish as push, against the separate synced manifest so
+/// a sync drop and a hand push never overwrite each other.
+fn ingest(arguments: &[String]) -> Result<(), String> {
+    let (folder, excludes, target) = parse_push(arguments)?;
+    let mut walk = walk(Path::new(&folder), &excludes)?;
+    let existing = match &target {
+        Target::Device(host) => read_manifest_named(host, SYNCED_MANIFEST)?,
+        Target::Sim => read_local_manifest_named(SYNCED_MANIFEST)?,
+    };
+    let failures = std::mem::take(&mut walk.failures);
+    let offered = std::mem::take(&mut walk.offered);
+    let push = plan_prefixed(&existing, offered, failures, SYNCED_PREFIX)?;
+    print_plan(&push, &walk);
+    if push.manifest.notes.len() > MAX_NOTES {
+        return Err(format!("Vault holds at most {MAX_NOTES} synced notes"));
+    }
+    match &target {
+        Target::Device(host) => {
+            transfer_named(host, &push, SYNCED_MANIFEST)?;
+            let actual = read_manifest_named(host, SYNCED_MANIFEST)?;
+            if actual.notes != push.manifest.notes {
+                return Err(
+                    "the reader's synced Vault shelf does not match the ingestion plan".to_owned(),
+                );
+            }
+            println!(
+                "Ingested {} synced note file(s); the reader's synced shelf matches the plan.",
+                push.notes.len()
+            );
+            println!("Vault indexes the synced shelf when it next opens.");
+        }
+        Target::Sim => {
+            publish_local_named(&push, SYNCED_MANIFEST)?;
+            legacy_write_sim()?;
+            let actual = read_local_manifest_named(SYNCED_MANIFEST)?;
+            if actual.notes != push.manifest.notes {
+                return Err(
+                    "the simulator synced Vault shelf does not match the ingestion plan".to_owned(),
+                );
+            }
+            println!(
+                "Ingested {} synced note file(s); the simulator synced shelf matches the plan.",
+                push.notes.len()
+            );
+            println!("Vault indexes the synced shelf when it next opens.");
+        }
+    }
+    Ok(())
+}
+
+fn remove(arguments: &[String]) -> Result<(), String> {
+    let (id, target) = match arguments {
+        [id, flag] if flag == "--sim" => (id.clone(), Target::Sim),
+        [id, flag, host] if super::is_device_flag(flag) => {
+            if !super::valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            (id.clone(), Target::Device(host.clone()))
+        }
+        _ => return Err(USAGE.to_owned()),
+    };
+    let mut manifest = match &target {
+        Target::Device(host) => read_manifest(host)?,
+        Target::Sim => read_local_manifest()?,
+    };
+    let Some(position) = manifest.notes.iter().position(|note| note.id == id) else {
+        return Err(format!("no Vault note named {id}"));
+    };
+    let removed = manifest.notes.remove(position);
+    // Every entry sharing the note file leaves with it.
+    manifest.notes.retain(|note| note.id != removed.id);
+    let push = Push {
+        manifest,
+        notes: Vec::new(),
+        removed: vec![removed.clone()],
+        renamed: Vec::new(),
+    };
+    match &target {
+        Target::Device(host) => {
+            transfer(host, &push)?;
+            println!("The old app's packed index refreshes on the next push.");
+        }
+        Target::Sim => {
+            publish_local(&push)?;
+            legacy_write_sim()?;
+        }
+    }
+    println!("Removed {} from the Vault shelf.", removed.path);
+    Ok(())
+}
+
+/// Show how a note paginates at the reader's dimensions: the rendered text is
+/// measured against the panel the same way the app measures it, so the page
+/// count and the closing line are what the reader will see.
+fn preview(arguments: &[String]) -> Result<(), String> {
+    let [path] = arguments else {
+        return Err(USAGE.to_owned());
+    };
+    let body =
+        fs::read_to_string(path).map_err(|error| format!("could not read {path}: {error}"))?;
+    let rendered = render_markdown(&body);
+    let context = kobo_sdk::Context::default();
+    let pages = context.paginate_reading(&rendered, true);
+    let last = pages
+        .last()
+        .and_then(|page| page.last())
+        .map_or("(empty note)", String::as_str);
+    let title = title_for(path, &body);
+    println!("{title}");
+    println!(
+        "{} page(s) at reader dimensions; the last page ends with:",
+        pages.len()
+    );
+    println!("  {last}");
+    Ok(())
+}
+
+/// The same Markdown boundary the app uses, kept local so the preview
+/// measures rendered text rather than raw source.
+fn render_markdown(markdown: &str) -> String {
+    let options = pulldown_cmark::Options::ENABLE_TABLES
+        | pulldown_cmark::Options::ENABLE_FOOTNOTES
+        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
+        | pulldown_cmark::Options::ENABLE_TASKLISTS;
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(
+        &mut html,
+        pulldown_cmark::Parser::new_ext(markdown, options),
+    );
+    // The shelf format's own note ceiling: a note the shelf accepted is a
+    // document, not a feed field, so the preview measures all of it.
+    kobo_html::to_text_within(
+        &html,
+        usize::try_from(kobo_vault_host::MAX_NOTE_BYTES).unwrap_or(usize::MAX),
+    )
+}
+
+fn read_manifest(host: &str) -> Result<Manifest, String> {
+    read_manifest_named(host, MANIFEST)
+}
+
+fn read_manifest_named(host: &str, manifest_name: &str) -> Result<Manifest, String> {
+    let output = remote(
+        host,
+        &format!("cat '{ROOT}/{manifest_name}' 2>/dev/null || true\n"),
+    )?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    if text.trim().is_empty() {
+        return Ok(Manifest::default());
+    }
+    Manifest::decode(text.trim().as_bytes())
+        .map_err(|error| format!("the reader's Vault manifest is invalid: {error}"))
+}
+
+fn transfer(host: &str, push: &Push) -> Result<(), String> {
+    transfer_named(host, push, MANIFEST)
+}
+
+fn transfer_named(host: &str, push: &Push, manifest_name: &str) -> Result<(), String> {
+    let mut script = format!("set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\n");
+    for prepared in &push.notes {
+        let name = Push::note_name(&prepared.note_id);
+        let encoded = super::base64_encode(&prepared.markdown);
+        let _ = write!(
+            script,
+            "partial=\"$root/.{name}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_VAULT_NOTE'\n{encoded}\nCOBALT_VAULT_NOTE\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{name}\"\n"
+        );
+    }
+    let encoded = super::base64_encode(&push.manifest.encode());
+    let _ = write!(
+        script,
+        "partial=\"$root/.{manifest_name}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_VAULT_MANIFEST'\n{encoded}\nCOBALT_VAULT_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{manifest_name}\"\nsync\n"
+    );
+    for removed in &push.removed {
+        let _ = writeln!(script, "rm -f \"$root/{}\"", Push::note_name(&removed.id));
+    }
+    script.push_str("sync\n");
+    let _ = remote(host, &script)?;
     Ok(())
 }
 
 fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> {
-    let output = super::run_remote_shell(
-        &format!("root@{host}"),
-        script,
-        super::REMOTE_COMMAND_TIMEOUT,
-    )
-    .map_err(super::unreachable_device)?;
-    if !output.status.success() {
-        return Err(format!(
-            "the reader refused the Vault transfer: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(output)
-}
-
-fn sim_root() -> PathBuf {
-    env::temp_dir().join("cobalt-sim-state").join("vault")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{collect_notes, encode_index, INDEX_SEPARATOR};
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn fixture() -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos());
-        let root =
-            std::env::temp_dir().join(format!("cobalt-vault-cli-{}-{unique}", std::process::id()));
-        fs::create_dir_all(root.join("Projects")).expect("fixture");
-        fs::create_dir_all(root.join(".obsidian")).expect("obsidian");
-        fs::create_dir_all(root.join("attachments")).expect("attachments");
-        fs::write(root.join(".obsidian/app.json"), "{}").expect("workspace");
-        fs::write(
-            root.join("attachments/sketch.png"),
-            [0x89, 0x50, 0x4e, 0x47],
-        )
-        .expect("png");
-        fs::write(
-            root.join("Welcome.md"),
-            "# Welcome\n\nHome note. See [[Alpha]].\n",
-        )
-        .expect("welcome");
-        fs::write(
-            root.join("Projects/Alpha.md"),
-            "# Alpha\n\nA project with a wiki link to [[Welcome]].\n\n---\n\n#project\n",
-        )
-        .expect("alpha");
-        root
-    }
-
-    #[test]
-    fn help_succeeds() {
-        super::command(&["--help".into()]).expect("help");
-    }
-
-    #[test]
-    fn packs_markdown_and_skips_obsidian_and_attachments() {
-        let root = fixture();
-        let notes = collect_notes(&root).expect("notes");
-        assert_eq!(
-            notes
-                .iter()
-                .map(|(path, _)| path.as_str())
-                .collect::<Vec<_>>(),
-            ["Projects/Alpha.md", "Welcome.md"]
-        );
-        let index = encode_index(&notes).expect("index");
-        assert!(index.contains("Welcome.md"));
-        assert!(index.contains("[[Alpha]]"));
-        assert!(index.contains("---\n\n#project"));
-        assert!(!index.contains("app.json"));
-        assert!(!index.contains("sketch.png"));
-        assert!(index.contains(INDEX_SEPARATOR));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn empty_directory_packs_to_an_empty_index() {
-        let root = std::env::temp_dir().join(format!(
-            "cobalt-vault-empty-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_nanos())
-        ));
-        fs::create_dir_all(&root).expect("empty");
-        let notes = collect_notes(&root).expect("notes");
-        assert!(notes.is_empty());
-        assert_eq!(encode_index(&notes).expect("index"), "");
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn refuses_a_file_as_a_vault() {
-        let path = std::env::temp_dir().join(format!(
-            "cobalt-vault-file-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_nanos())
-        ));
-        fs::write(&path, "not a vault").expect("file");
-        assert!(collect_notes(&path).is_err());
-        fs::remove_file(path).expect("cleanup");
+    let output = super::run_remote_shell(&format!("root@{host}"), script, TRANSFER_TIMEOUT)
+        .map_err(super::unreachable_device)?;
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(super::unreachable_if_ssh_gave_up(
+            super::remote_shell_error(
+                format!("Vault transfer on {host} exited with {}", output.status),
+                &output.stdout,
+                &output.stderr,
+            ),
+            &output,
+        ))
     }
 }

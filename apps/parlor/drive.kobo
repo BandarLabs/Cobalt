@@ -11,3 +11,13 @@ tap Start game
 expect Tap a hollow destination
 clean
 shot reversi
+scenario storage-full
+tap-id cell-19
+expect Progress is not saved
+clean
+shot parlor-save-refused
+scenario normal
+tap-id undo
+expect-missing Progress is not saved
+clean
+shot parlor-save-kept

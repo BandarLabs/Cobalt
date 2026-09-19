@@ -957,6 +957,50 @@ pub struct Removal {
     pub quarantines: Vec<String>,
 }
 
+/// The name the welcome note lands under in the reader's library, beside the
+/// owner's own books, so the first reconnect shows something new to open.
+pub const SAMPLE_NAME: &str = "Welcome from Cobalt.txt";
+
+/// The original welcome note a first-time setup sends.
+///
+/// Deliberately short and deliberately deletable: it exists so a first
+/// success is something the owner can see and open, not to document the
+/// install. It says what setup did in owner language and points at the one
+/// next step.
+#[must_use]
+pub fn sample_text() -> &'static str {
+    "Welcome from Cobalt\n\
+     \n\
+     This note arrived with the Cobalt setup, so there is something new to open\n\
+     the first time this reader reconnects. Nothing depends on it; delete it\n\
+     whenever you like.\n\
+     \n\
+     What setup did:\n\
+     - Installed Cobalt under .adds/cobalt. Leave that folder alone.\n\
+     - Staged a NickelMenu entry for Cobalt, unless you asked it not to.\n\
+     - Left your books, settings and annotations untouched.\n\
+     \n\
+     Next: connect this reader to Wi-Fi, then run `kobo devices` on the computer\n\
+     that set it up. Running `kobo` with no arguments there walks through photos,\n\
+     feeds and the rest.\n"
+}
+
+/// Sends the welcome note to a mounted reader.
+///
+/// Written like any other file of the install and synced before the eject,
+/// but never allowed to fail one: a reader with Cobalt and without the note
+/// is still set up, so the caller reports a failure and carries on.
+pub fn write_sample(volume: &Path) -> Result<PathBuf, String> {
+    let path = volume.join(SAMPLE_NAME);
+    fs::write(&path, sample_text())
+        .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
+    let file = fs::File::open(&path)
+        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
+    file.sync_all()
+        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
+    Ok(path)
+}
+
 /// Removes an installed Cobalt from a mounted reader while moving every owner
 /// folder into a bounded sibling recovery directory first.
 ///
@@ -1902,6 +1946,26 @@ mod tests {
                 "the sleep change is declared"
             );
         }
+    }
+
+    #[test]
+    fn the_welcome_note_lands_beside_the_library_and_is_deletable() {
+        let volume = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("kobo-sample-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&volume);
+        std::fs::create_dir_all(&volume).expect("a volume");
+        let path = super::write_sample(&volume).expect("the note writes");
+        assert_eq!(path.file_name().unwrap(), super::SAMPLE_NAME);
+        let text = std::fs::read_to_string(&path).expect("the note reads back");
+        assert!(text.contains("delete it"), "{text}");
+        assert!(text.contains("Wi-Fi"), "{text}");
+        assert!(
+            !text.contains("ssh"),
+            "owner copy stays free of plumbing: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&volume);
     }
 
     #[test]

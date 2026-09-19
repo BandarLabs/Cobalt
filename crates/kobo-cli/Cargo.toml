@@ -19,10 +19,16 @@ kobo-opml = { path = "../kobo-opml" }
 kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }
+kobo-zstory = { path = "../kobo-zstory" }
+kobo-comic = { path = "../kobo-comic" }
 kobo-net = { path = "../kobo-net" }
 kobo-stream = { path = "../kobo-stream" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-frame-host = { path = "../kobo-frame-host" }
+kobo-music-host = { path = "../kobo-music-host" }
+kobo-vault-host = { path = "../kobo-vault-host" }
+kobo-html = { path = "../kobo-html" }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobod = { path = "../kobod" }

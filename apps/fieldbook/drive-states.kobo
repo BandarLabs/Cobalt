@@ -1,8 +1,32 @@
-wait 800
-expect Nearby
+wait-for 2 packs, 10 species.
 clean
-shot nearby
-tap Log a sighting
-expect TALLY
+shot home
+tap Packs
+wait-for San Francisco Bay
+wait-for legacy-pack.csv
 clean
-shot log
+shot packs
+tap San Francisco Bay
+wait-for Search packs
+type flicker
+tap Find
+wait-for Northern Flicker
+clean
+shot search
+tap Today
+wait-for Start an outing
+tap Start an outing
+wait-for Name this place
+type lake merced
+tap Save
+wait-for lake merced
+tap American Robin
+wait-for 1 logged
+clean
+shot tally
+tap Finish outing
+wait-for Start an outing
+tap Export
+wait-for Write checklist file
+clean
+shot export

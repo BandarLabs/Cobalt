@@ -1304,6 +1304,15 @@ pub enum DeviceRequest {
     ListLibrary,
     /// Read one library document by the identifier a listing returned.
     ReadLibrary { id: String },
+    /// Ask which of these runtime-owned credentials are installed.
+    ///
+    /// Presence only, never values. An application that spends several
+    /// provider accounts on one piece of work checks them all before
+    /// spending the first, so a missing key is reported before anything
+    /// is paid for rather than after the second provider answered.
+    /// Additive on a new tag: older sides refuse the frame rather than
+    /// misreading it.
+    CheckSecrets { names: Vec<String> },
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1587,6 +1596,10 @@ pub enum DeviceResult {
     /// The bytes of one library document, or empty when it is listed but not
     /// on the card (a Kobo Store title that has not been downloaded).
     LibraryDocument { id: String, bytes: Vec<u8> },
+    /// The subset of a [`DeviceRequest::CheckSecrets`] list that is
+    /// installed on this reader. Names only: a stored value never
+    /// leaves the runtime, and an absent name says so by omission.
+    Secrets { present: Vec<String> },
 }
 
 /// The largest library listing one result may carry.
@@ -2942,6 +2955,16 @@ fn encode_device_request(
         DeviceRequest::ReadLibrary { .. } => {
             return Err(ProtocolError::InvalidValue("library id"));
         }
+        DeviceRequest::CheckSecrets { names } if !names.is_empty() && valid_secret_names(names) => {
+            output.push(51);
+            output.push(u8::try_from(names.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for name in names {
+                push_string(output, name)?;
+            }
+        }
+        DeviceRequest::CheckSecrets { .. } => {
+            return Err(ProtocolError::InvalidValue("secret names"));
+        }
     }
     Ok(())
 }
@@ -2950,6 +2973,18 @@ fn encode_device_request(
 ///
 /// CLI installation remains available for larger machine-generated material.
 pub const MAX_APP_SECRET_BYTES: usize = 512;
+
+/// The most credentials one presence check may ask about.
+///
+/// One application asks about every account its whole flow spends, which
+/// is a handful; the bound keeps a listing frame small and is far above
+/// the largest reviewed policy list.
+pub const MAX_CHECKED_SECRETS: usize = 8;
+
+/// Every name in one presence check or answer is a reviewed secret name.
+fn valid_secret_names(names: &[String]) -> bool {
+    names.len() <= MAX_CHECKED_SECRETS && names.iter().all(|name| valid_app_id(name))
+}
 
 /// A bounded server address without embedded account details or query tokens.
 #[must_use]
@@ -3292,6 +3327,21 @@ fn decode_device_request(
                 value: SecretValue::new(value),
             })
         }
+        51 => {
+            let count = usize::from(reader.u8()?);
+            if count == 0 || count > MAX_CHECKED_SECRETS {
+                return Err(ProtocolError::InvalidValue("secret names"));
+            }
+            let mut names = Vec::with_capacity(count);
+            for _ in 0..count {
+                let name = reader.string()?;
+                if !valid_app_id(&name) {
+                    return Err(ProtocolError::InvalidValue("secret names"));
+                }
+                names.push(name);
+            }
+            Ok(DeviceRequest::CheckSecrets { names })
+        }
         48 => Ok(DeviceRequest::ListLibrary),
         49 => {
             let id = reader.string()?;
@@ -3513,6 +3563,16 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             );
             output.extend_from_slice(bytes);
         }
+        DeviceResult::Secrets { present } if valid_secret_names(present) => {
+            output.push(21);
+            output.push(u8::try_from(present.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for name in present {
+                push_string(output, name)?;
+            }
+        }
+        DeviceResult::Secrets { .. } => {
+            return Err(ProtocolError::InvalidValue("secret names"));
+        }
     }
     Ok(())
 }
@@ -3715,6 +3775,21 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         16 => identity(reader).map(DeviceResult::Identity),
         17 => decode_auto_update(reader),
         18 => UpdateChannel::from_wire(reader.u8()?).map(DeviceResult::UpdateChannel),
+        21 => {
+            let count = usize::from(reader.u8()?);
+            if count > MAX_CHECKED_SECRETS {
+                return Err(ProtocolError::InvalidValue("secret names"));
+            }
+            let mut present = Vec::with_capacity(count);
+            for _ in 0..count {
+                let name = reader.string()?;
+                if !valid_app_id(&name) {
+                    return Err(ProtocolError::InvalidValue("secret names"));
+                }
+                present.push(name);
+            }
+            Ok(DeviceResult::Secrets { present })
+        }
         19 => decode_library_result(reader),
         20 => decode_library_document(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
@@ -7828,6 +7903,59 @@ mod tests {
             [b'K', b'O', b'B', b'O', VERSION, 8, 0, 0, 0, 2, 0, 0, 0, 11, 17, 2,]
         );
         assert_eq!(decode(&result_bytes).expect("decode result"), result);
+    }
+
+    #[test]
+    fn secret_presence_round_trips_and_stays_bounded() {
+        let request = Frame {
+            version: VERSION,
+            request_id: 9,
+            message: Message::DeviceRequest(DeviceRequest::CheckSecrets {
+                names: vec!["exa".to_owned(), "openai".to_owned()],
+            }),
+        };
+        let bytes = encode(&request).expect("encode request");
+        assert_eq!(decode(&bytes).expect("decode request"), request);
+        let result = Frame {
+            version: VERSION,
+            request_id: 9,
+            message: Message::DeviceResult(DeviceResult::Secrets {
+                present: vec!["openai".to_owned()],
+            }),
+        };
+        let bytes = encode(&result).expect("encode result");
+        assert_eq!(decode(&bytes).expect("decode result"), result);
+        // An empty answer is meaningful: nothing asked about is installed.
+        let none = Frame {
+            version: VERSION,
+            request_id: 9,
+            message: Message::DeviceResult(DeviceResult::Secrets { present: vec![] }),
+        };
+        let bytes = encode(&none).expect("encode empty result");
+        assert_eq!(decode(&bytes).expect("decode empty result"), none);
+        // An empty ask is not, and neither is one past the bound or a name
+        // that could not be a reviewed secret.
+        for message in [
+            Message::DeviceRequest(DeviceRequest::CheckSecrets { names: vec![] }),
+            Message::DeviceRequest(DeviceRequest::CheckSecrets {
+                names: (0..=MAX_CHECKED_SECRETS)
+                    .map(|index| format!("key{index}"))
+                    .collect(),
+            }),
+            Message::DeviceRequest(DeviceRequest::CheckSecrets {
+                names: vec!["not a name".to_owned()],
+            }),
+            Message::DeviceResult(DeviceResult::Secrets {
+                present: vec!["../escape".to_owned()],
+            }),
+        ] {
+            let frame = Frame {
+                version: VERSION,
+                request_id: 9,
+                message,
+            };
+            assert!(encode(&frame).is_err());
+        }
     }
 
     #[test]

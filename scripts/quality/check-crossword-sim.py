@@ -97,10 +97,10 @@ def main():
                     drive('wait-for-id '+expected, 'wait-idle')
                 drive('wait-for-id puzzle-3')
                 capture('01-puzzles')
-                drive('tap-id puzzle-3', 'tap-id cell-0', 'type cat', 'tap Enter', 'wait-idle')
-                assert saved()['games'][3]['position']['letters'].startswith('CAT##')
+                drive('tap-id puzzle-3', 'tap-id cell-1', 'type put', 'tap Enter', 'wait-idle')
+                assert saved()['games'][3]['position']['letters'].startswith('#PUT#')
                 capture('02-numbered-grid')
-                drive('tap-id cell-5', 'type ore')
+                drive('tap-id cell-5', 'type minor')
                 capture('03-clue-and-entry')
                 drive('tap Enter')
                 before = saved()
@@ -108,20 +108,20 @@ def main():
                 assert saved()==before
                 capture('04-restored-grid')
                 drive('tap-id more', 'tap-id undo')
-                assert saved()['games'][3]['position']['letters'].startswith('CAT##...##')
-                drive('tap-id cell-5', 'type ore', 'scenario storage-full', 'tap Enter', 'wait-idle', 'expect Progress is not saved')
+                assert saved()['games'][3]['position']['letters'].startswith('#PUT#.....')
+                drive('tap-id cell-5', 'type minor', 'scenario storage-full', 'tap Enter', 'wait-idle', 'expect Progress is not saved')
                 capture('05-save-recovery')
-                assert saved()['games'][3]['position']['letters'].startswith('CAT##...##')
+                assert saved()['games'][3]['position']['letters'].startswith('#PUT#.....')
                 drive('scenario normal', 'tap-id retry-save', 'wait-for-id more')
-                assert saved()['games'][3]['position']['letters'].startswith('CAT##ORE##')
+                assert saved()['games'][3]['position']['letters'].startswith('#PUT#MINOR')
                 drive('tap-id cell-10', 'type wrong', 'tap Enter', 'tap-id more', 'tap-id check', 'expect incorrect')
                 capture('06-check-word')
                 drive('tap-id board', 'tap-id more', 'tap-id reveal')
                 capture('07-reveal-confirmation')
                 drive('tap-id confirm-reveal', 'wait-idle')
                 assert saved()['games'][3]['reveals']==1
-                drive('tap-id more','tap-id undo','tap-id cell-10','type wedge','tap Enter',
-                      'tap-id cell-17','type dom','tap Enter','tap-id cell-22','type you','tap Enter','expect Puzzle complete')
+                drive('tap-id more','tap-id undo','tap-id cell-10','type alike','tap Enter',
+                      'tap-id cell-15','type noted','tap Enter','tap-id cell-21','type ten','tap Enter','expect Puzzle complete')
                 final = saved()
                 assert final['games'][3]['solved'] and final['games'][3]['checks']==1
                 capture('08-completed-crossword')
@@ -139,14 +139,27 @@ def main():
                     if old==get('layout'): break
                 else: raise AssertionError('Unbounded help')
                 drive('tap Back', 'tap-id clues')
-                for page in range(3):
-                    capture(f'across-clues-{page+1}')
+                # Across and down clues share one paged screen; page until the
+                # first down clue (PILOT, row clue-5) is on the panel.
+                for page in range(8):
+                    layout = get('layout').decode('utf-8', 'replace')
+                    if 'Flies the plane' in layout:
+                        break
                     drive('tap-id clues-next')
-                drive('tap-id direction')
+                else:
+                    raise AssertionError('clue pages never offered clue-5')
                 capture('11-down-clues')
-                drive('tap-id clue-0','type cow','tap Enter')
+                drive('tap-id clue-5','type pilot','tap Enter')
                 capture('12-down-selection')
                 drive('tap Back')
+                # The committed route assumes the shipped first-run state. The
+                # flows above left puzzle 3 solved with the down direction
+                # persisted, so the route starts from a fresh store.
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+                store.unlink(missing_ok=True)
+                address = start()
+                drive('wait-for-id puzzle-3', 'wait-idle')
                 subprocess.run([str(cli),'drive','--address',address,'--ideal','--shots',str(args.output/'route'),
                     '--script',str(ROOT/'apps/crossword/drive.kobo')],cwd=ROOT,env=env,stdout=log,stderr=log,check=True,timeout=45)
                 # All files below belong to this temporary simulator fixture.

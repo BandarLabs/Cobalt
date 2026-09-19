@@ -1733,7 +1733,7 @@ impl AppSession {
     }
 
     fn change_clock(&self, command: &str) -> io::Result<()> {
-        let tasks = {
+        let (tasks, due_wake) = {
             let mut state = self
                 .state
                 .lock()
@@ -1742,10 +1742,30 @@ impl AppSession {
             state.record(format!("clock: {command}"));
             state.update_chrome();
             state.commit_frame();
-            state.tasks.clone()
+            let now = state.time.now()?.monotonic_millis;
+            let due_wake = match state.scheduled_wake {
+                Some(due) if due <= now => {
+                    state.scheduled_wake = None;
+                    Some(due)
+                }
+                _ => None,
+            };
+            (state.tasks.clone(), due_wake)
         };
         if let Some(tasks) = tasks {
             deliver_task_outcomes(&tasks, &self.writer, &self.state)?;
+        }
+        // A clock crossing a scheduled wake wakes the app that asked for it,
+        // the same crossing that completes sleeps that came due.
+        if let Some(occurrence) = due_wake {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message: Message::ScheduledWake { occurrence },
+                },
+            )?;
         }
         Ok(())
     }
@@ -1983,12 +2003,25 @@ impl AppSession {
                     .state
                     .lock()
                     .map_err(|_| io::Error::other("app state unavailable"))?;
-                write_response(
-                    &mut stream,
-                    200,
-                    "application/json",
-                    state.power_status.to_json().as_bytes(),
-                )
+                let body = match &state.power_status {
+                    kobo_json::Value::Null => {
+                        let now = state.time.now()?.monotonic_millis;
+                        kobo_json::ObjectBuilder::new()
+                            .set("monotonicMillis", now.to_string())
+                            .set("wakeUntil", state.wake_until.to_string())
+                            .set("wakeHeld", state.wake_until > now)
+                            .set(
+                                "scheduledWake",
+                                state
+                                    .scheduled_wake
+                                    .map_or(kobo_json::Value::Null, |due| due.to_string().into()),
+                            )
+                            .build()
+                            .to_json()
+                    }
+                    status => status.to_json(),
+                };
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
             }
             ("POST", "/power") => {
                 let mut state = self
@@ -2316,7 +2349,22 @@ fn layout_json_with_chrome(
 ) -> String {
     let metrics = profile_metrics().oriented(orientation);
     let layout = screen.layout_with(&metrics, chrome);
-    let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
+    // The content area and declared page-turn zones ride along so a driver
+    // can page a catalogue the way a reader's thumb would -- a tap on the
+    // empty right edge -- instead of needing to know the application's own
+    // action names, which differ from app to app.
+    let content = physical_rect(orientation, layout.content);
+    let page_turns = match layout.page_turns.declared() {
+        Some(turns) => format!(
+            "{{\"previous\":{},\"next\":{}}}",
+            turns.previous.0, turns.next.0
+        ),
+        None => "null".to_owned(),
+    };
+    let mut json = format!(
+        "{{\"paints\":{paints},\"content\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"pageTurns\":{page_turns},\"nodes\":[",
+        content.x, content.y, content.width, content.height
+    );
     for (index, node) in layout.nodes.iter().enumerate() {
         if index > 0 {
             json.push(',');
@@ -3059,13 +3107,26 @@ fn simulated_platform_request_allowed(
     !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
 }
 
-fn simulated_app_request(
+/// Credential installs and presence checks, answered against the same policy
+/// functions and durable layout the device host uses.
+fn simulated_credential_request(
     state: &Arc<Mutex<AppState>>,
     caller: &str,
     scenario: Scenario,
     request: &kobo_protocol::DeviceRequest,
 ) -> io::Result<Option<kobo_protocol::DeviceResult>> {
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let DeviceRequest::CheckSecrets { .. } = request {
+        let directory = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .secret_directory
+            .clone();
+        return Ok(kobo_policy::credentials::handle_check(
+            &directory, caller, request,
+        ));
+    }
 
     if matches!(
         request,
@@ -3088,6 +3149,20 @@ fn simulated_app_request(
         return Ok(kobo_policy::credentials::handle_install(
             &directory, caller, request,
         ));
+    }
+    Ok(None)
+}
+
+fn simulated_app_request(
+    state: &Arc<Mutex<AppState>>,
+    caller: &str,
+    scenario: Scenario,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<Option<kobo_protocol::DeviceResult>> {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let Some(result) = simulated_credential_request(state, caller, scenario, request)? {
+        return Ok(Some(result));
     }
 
     let authorized = match request {
@@ -3379,7 +3454,11 @@ fn valid_app_name(name: &str) -> bool {
 /// A failure is not fatal: `kobo-ui` keeps its bitmap, so the worst case is a
 /// preview that looks like the old one.
 fn install_typeface() {
-    let _ = kobo_text::install(kobo_ui::display_metrics_from_env());
+    // The profile's own metrics, not the Clara default: glyph widths scale
+    // with the panel's density, so a face built for 300 ppi measures every
+    // line a third too wide on a 227 ppi Elipsa and validation rejects
+    // screens the panel would draw untouched.
+    let _ = kobo_text::install(profile_metrics());
 }
 
 fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
@@ -3688,6 +3767,46 @@ mod tests {
             app_result(&state, "todo", Scenario::Normal, &request),
             DeviceResult::Denied(_)
         ));
+        fs::remove_dir_all(directory).expect("remove owned test directory");
+    }
+
+    #[test]
+    fn simulated_presence_check_answers_names_only_for_the_calling_app() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, SecretValue};
+
+        let directory = private_temp_dir();
+        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
+            SimulatedApps::default(),
+        )))));
+        state
+            .lock()
+            .unwrap()
+            .secret_directory
+            .clone_from(&directory);
+        let install = DeviceRequest::SetSecret {
+            name: "openai".to_owned(),
+            value: SecretValue::new("private-token"),
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &install),
+            DeviceResult::Done
+        );
+        let ask = DeviceRequest::CheckSecrets {
+            names: vec!["exa".to_owned(), "openai".to_owned()],
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &ask),
+            DeviceResult::Secrets {
+                present: vec!["openai".to_owned()]
+            }
+        );
+        let nosy = DeviceRequest::CheckSecrets {
+            names: vec!["zotero".to_owned()],
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &nosy),
+            DeviceResult::Denied(DenyReason::PolicyRejected)
+        );
         fs::remove_dir_all(directory).expect("remove owned test directory");
     }
 

@@ -18,16 +18,18 @@
 
 use std::fmt;
 
-const HEADER_LEN: usize = 64;
 const MAX_STEPS_PER_TURN: usize = 200_000;
 const MAX_STACK_WORDS: usize = 32_768;
 const MAX_FRAMES: usize = 1_024;
 
+pub use kobo_zstory::StoryInfo;
+
+/// Runtime errors the interpreter itself raises. Story-file inspection
+/// errors come from the shared `kobo-zstory` crate so the app and its
+/// companion CLI name the same file the same way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StoryError {
-    TooShort,
-    Glulx,
-    UnsupportedVersion(u8),
+    Inspect(kobo_zstory::StoryError),
     Invalid(&'static str),
     Fault(String),
 }
@@ -35,90 +37,31 @@ pub enum StoryError {
 impl fmt::Display for StoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TooShort => formatter.write_str("the file is too short to be a Z-machine story"),
-            Self::Glulx => formatter.write_str("this is a Glulx story — not supported yet"),
-            Self::UnsupportedVersion(version) => {
-                write!(formatter, "Z-machine version {version} is not supported")
-            }
+            Self::Inspect(error) => error.fmt(formatter),
             Self::Invalid(reason) => write!(formatter, "invalid story file: {reason}"),
             Self::Fault(reason) => write!(formatter, "story stopped: {reason}"),
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoryInfo {
-    pub version: u8,
-    pub release: u16,
-    pub serial: [u8; 6],
-    pub checksum: u16,
-    pub title: String,
-    pub id: String,
-}
-
-impl StoryInfo {
-    #[must_use]
-    pub fn inspect(bytes: &[u8], file_name: &str) -> Result<Self, StoryError> {
-        if bytes.starts_with(b"Glul") {
-            return Err(StoryError::Glulx);
-        }
-        if bytes.len() < HEADER_LEN {
-            return Err(StoryError::TooShort);
-        }
-        let version = bytes[0];
-        if !matches!(version, 3 | 5 | 8) {
-            return Err(StoryError::UnsupportedVersion(version));
-        }
-        let release = word(bytes, 2)?;
-        let serial: [u8; 6] = bytes[0x12..0x18]
-            .try_into()
-            .map_err(|_| StoryError::Invalid("missing serial number"))?;
-        let checksum = word(bytes, 0x1c)?;
-        let scale = if version <= 3 {
-            2
-        } else if version <= 5 {
-            4
-        } else {
-            8
-        };
-        let declared = usize::from(word(bytes, 0x1a)?).saturating_mul(scale);
-        if declared != 0 && declared > bytes.len() {
-            return Err(StoryError::Invalid("declared length exceeds the file"));
-        }
-        let title = file_name
-            .rsplit('/')
-            .next()
-            .unwrap_or(file_name)
-            .trim_end_matches(|character: char| {
-                character == '.'
-                    || character.is_ascii_digit()
-                    || matches!(character.to_ascii_lowercase(), 'z')
-            })
-            .replace(['_', '-'], " ")
-            .trim()
-            .to_owned();
-        let title = if title.is_empty() {
-            format!("Story {release}")
-        } else {
-            title
-        };
-        let serial_text = String::from_utf8_lossy(&serial);
-        let id = format!("{release}-{serial_text}-{checksum:04x}");
-        Ok(Self {
-            version,
-            release,
-            serial,
-            checksum,
-            title,
-            id,
-        })
+impl From<kobo_zstory::StoryError> for StoryError {
+    fn from(error: kobo_zstory::StoryError) -> Self {
+        Self::Inspect(error)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunState {
     NeedInput { max_bytes: usize },
+    NeedSave,
+    NeedRestore,
     Halted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingFile {
+    Save,
+    Restore,
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +71,7 @@ struct Frame {
     locals: Vec<u16>,
     stack_base: usize,
     argument_count: u8,
+    catch: Option<(usize, u8)>,
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +95,7 @@ pub struct Machine {
     status: String,
     halted: bool,
     input: Option<InputRequest>,
+    pending_file: Option<PendingFile>,
     undo: Option<Snapshot>,
     rng: u32,
 }
@@ -190,11 +135,13 @@ impl Machine {
                 locals: Vec::new(),
                 stack_base: 0,
                 argument_count: 0,
+                catch: None,
             }],
             output: String::new(),
             status: String::new(),
             halted: false,
             input: None,
+            pending_file: None,
             undo: None,
             rng: 0x5eed_1234,
         };
@@ -212,33 +159,95 @@ impl Machine {
         &self.status
     }
 
+    /// Whether the story's dictionary knows a word. Suggestions the app
+    /// offers are filtered through this so a tap never meets "The story does
+    /// not know that word."
+    #[must_use]
+    pub fn knows_word(&self, word: &str) -> bool {
+        let Ok(dictionary) = self.header_word(8) else {
+            return false;
+        };
+        let encoded = encode_dictionary_word(word.as_bytes(), self.info.version);
+        self.dictionary_lookup(usize::from(dictionary), &encoded)
+            .is_ok_and(|address| address != 0)
+    }
+
     pub fn take_output(&mut self) -> String {
         std::mem::take(&mut self.output)
     }
 
     pub fn run(&mut self) -> Result<RunState, StoryError> {
-        if self.halted {
-            return Ok(RunState::Halted);
-        }
-        if let Some(request) = self.input {
-            return Ok(RunState::NeedInput {
-                max_bytes: self.input_capacity(request.text)?,
-            });
+        if let Some(state) = self.suspension()? {
+            return Ok(state);
         }
         for _ in 0..MAX_STEPS_PER_TURN {
             self.step()?;
-            if self.halted {
-                return Ok(RunState::Halted);
-            }
-            if let Some(request) = self.input {
-                return Ok(RunState::NeedInput {
-                    max_bytes: self.input_capacity(request.text)?,
-                });
+            if let Some(state) = self.suspension()? {
+                return Ok(state);
             }
         }
         Err(StoryError::Fault(
             "instruction budget exhausted before the next input".to_owned(),
         ))
+    }
+
+    fn suspension(&self) -> Result<Option<RunState>, StoryError> {
+        if self.halted {
+            return Ok(Some(RunState::Halted));
+        }
+        if let Some(request) = self.input {
+            return Ok(Some(RunState::NeedInput {
+                max_bytes: self.input_capacity(request.text)?,
+            }));
+        }
+        Ok(self.pending_file.map(|pending| match pending {
+            PendingFile::Save => RunState::NeedSave,
+            PendingFile::Restore => RunState::NeedRestore,
+        }))
+    }
+
+    /// True while the story waits on a restore the app has not resolved.
+    pub fn awaiting_restore(&self) -> bool {
+        self.pending_file == Some(PendingFile::Restore)
+    }
+
+    /// The app finished the save the story asked for (or the reader
+    /// cancelled it). Resolves the suspended branch/store and resumes.
+    pub fn complete_save(&mut self, succeeded: bool) -> Result<RunState, StoryError> {
+        if self.pending_file.take() != Some(PendingFile::Save) {
+            return Err(StoryError::Fault(
+                "the story did not ask to save".to_owned(),
+            ));
+        }
+        self.resolve_file_result(succeeded, u16::from(succeeded))?;
+        self.run()
+    }
+
+    /// The app could not produce a save file for the story's restore
+    /// request: the story continues past the restore opcode as a failure.
+    /// A successful restore instead loads the file with `restore_quetzal`,
+    /// which resolves the captured suspension itself.
+    pub fn complete_restore(&mut self, restored: bool) -> Result<RunState, StoryError> {
+        if self.pending_file.take() != Some(PendingFile::Restore) {
+            return Err(StoryError::Fault(
+                "the story did not ask to restore".to_owned(),
+            ));
+        }
+        self.resolve_file_result(restored, 0)?;
+        self.run()
+    }
+
+    fn resolve_file_result(
+        &mut self,
+        branch_taken: bool,
+        store_value: u16,
+    ) -> Result<(), StoryError> {
+        if self.info.version <= 3 {
+            self.branch(branch_taken)
+        } else {
+            let store = self.fetch_byte()?;
+            self.set_variable(store, store_value)
+        }
     }
 
     pub fn input(&mut self, text: &str) -> Result<RunState, StoryError> {
@@ -293,6 +302,32 @@ impl Machine {
             parser.push(input.store.unwrap_or(u8::MAX));
         } else {
             parser.push(0);
+        }
+        // Extension section (read only when present, so pre-catch save
+        // files still load): suspended save/restore, then armed catches.
+        parser.push(match self.pending_file {
+            None => 0,
+            Some(PendingFile::Save) => 1,
+            Some(PendingFile::Restore) => 2,
+        });
+        let catches: Vec<(u16, &Frame)> = self
+            .frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| {
+                frame
+                    .catch
+                    .map(|_| (u16::try_from(index).unwrap_or(u16::MAX), frame))
+            })
+            .collect();
+        parser.extend_from_slice(&(catches.len() as u16).to_be_bytes());
+        for (index, frame) in catches {
+            let Some((resume_pc, store)) = frame.catch else {
+                continue;
+            };
+            parser.extend_from_slice(&index.to_be_bytes());
+            parser.extend_from_slice(&(resume_pc as u32).to_be_bytes());
+            parser.push(store);
         }
         chunk(&mut body, b"IntD", &parser);
 
@@ -358,6 +393,15 @@ impl Machine {
             parser.ok_or(StoryError::Invalid("save has no Parser state chunk"))?,
         )?;
         self.halted = false;
+        match self.pending_file.take() {
+            // Captured at a save point: the file exists, so the resume is a
+            // restore - branch taken (v1-3) or store 2 (v4+, Standard 1.1).
+            Some(PendingFile::Save) => self.resolve_file_result(true, 2)?,
+            // Captured while waiting on a restore that never happened:
+            // resume as a failed restore.
+            Some(PendingFile::Restore) => self.resolve_file_result(false, 0)?,
+            None => {}
+        }
         Ok(())
     }
 
@@ -395,6 +439,7 @@ impl Machine {
                 locals,
                 stack_base,
                 argument_count,
+                catch: None,
             });
         }
         self.rng = read_u32(bytes, &mut cursor)?;
@@ -410,6 +455,23 @@ impl Machine {
                 store: (store != u8::MAX).then_some(store),
             })
         };
+        self.pending_file = None;
+        if cursor < bytes.len() {
+            self.pending_file = match take(bytes, &mut cursor)? {
+                1 => Some(PendingFile::Save),
+                2 => Some(PendingFile::Restore),
+                _ => None,
+            };
+            let catch_count = usize::from(read_u16(bytes, &mut cursor)?);
+            for _ in 0..catch_count {
+                let index = usize::from(read_u16(bytes, &mut cursor)?);
+                let resume_pc = read_u32(bytes, &mut cursor)? as usize;
+                let store = take(bytes, &mut cursor)?;
+                if let Some(frame) = frames.get_mut(index) {
+                    frame.catch = Some((resume_pc, store));
+                }
+            }
+        }
         self.stack = stack;
         self.frames = frames;
         Ok(())
@@ -490,20 +552,16 @@ impl Machine {
             }
             4 => Ok(()),
             5 => {
-                if self.info.version <= 3 {
-                    self.branch(true)
-                } else {
-                    let store = self.fetch_byte()?;
-                    self.set_variable(store, 1)
-                }
+                // save: suspend BEFORE the branch/store byte so a Quetzal
+                // captured now resumes at the result. The app completes it.
+                self.pending_file = Some(PendingFile::Save);
+                Ok(())
             }
             6 => {
-                if self.info.version <= 3 {
-                    self.branch(false)
-                } else {
-                    let store = self.fetch_byte()?;
-                    self.set_variable(store, 0)
-                }
+                // restore: suspend; a loaded save resolves itself as 2 /
+                // branch-taken, a refused picker resolves as failure.
+                self.pending_file = Some(PendingFile::Restore);
+                Ok(())
             }
             7 => {
                 self.pc = usize::from(self.header_word(6)?);
@@ -518,9 +576,19 @@ impl Machine {
             }
             9 => {
                 if self.info.version >= 5 {
+                    // catch -> (result): stores the frame id and arms the
+                    // resume point throw jumps back to (setjmp semantics:
+                    // a thrown value lands in catch's own store slot).
+                    let store = self.fetch_byte()?;
+                    let frame = self.frames.len().saturating_sub(1);
+                    if let Some(current) = self.frames.last_mut() {
+                        current.catch = Some((self.pc, store));
+                    }
+                    self.set_variable(store, u16::try_from(frame).unwrap_or(u16::MAX))
+                } else {
                     let _ = self.pop()?;
+                    Ok(())
                 }
-                Ok(())
             }
             10 => {
                 self.halted = true;
@@ -611,16 +679,17 @@ impl Machine {
                 self.output.push_str(&text.0);
                 Ok(())
             }
-            14 => {
-                let byte = self.read_byte(usize::from(value))?;
+            14 if self.info.version <= 4 => {
+                // load (variable) -> result: the operand is a variable NUMBER.
+                let loaded = self.variable(value as u8)?;
                 let store = self.fetch_byte()?;
-                self.set_variable(store, u16::from(byte))
+                self.set_variable(store, loaded)
             }
-            15 => {
-                let word = self.read_word(usize::from(value))?;
+            15 if self.info.version <= 4 => {
                 let store = self.fetch_byte()?;
-                self.set_variable(store, word)
+                self.set_variable(store, !value)
             }
+            15 => self.call(value, &[], None), // v5+: call_1n discards the result
             _ => self.unsupported("1OP", opcode),
         }
     }
@@ -697,37 +766,30 @@ impl Machine {
                 let store = self.fetch_byte()?;
                 self.call(a, &values[1..], Some(store))
             }
-            26 => {
-                let routine = self.frames.len().saturating_sub(1);
-                self.store_result(u16::try_from(routine).unwrap_or(u16::MAX))
-            }
-            27 => {
-                let requested = usize::from(a);
+            26 if self.info.version >= 5 => self.call(a, &values[1..], None), // call_2n
+            27 if self.info.version >= 5 => Ok(()), // set_colour: display-only
+            28 if self.info.version >= 5 => {
+                // throw value frame-id: unwind to the frame catch armed and
+                // resume after it with the value in catch's store slot.
+                let requested = usize::from(b);
                 if requested >= self.frames.len() {
-                    return Err(StoryError::Fault("invalid catch token".to_owned()));
+                    return Err(StoryError::Fault("invalid throw frame".to_owned()));
                 }
                 while self.frames.len().saturating_sub(1) > requested {
                     self.frames.pop();
                 }
-                self.return_from_routine(b)
-            }
-            28 => {
-                let shift = b as i16;
-                let result = if shift >= 0 {
-                    a.wrapping_shl(u32::from(shift.unsigned_abs().min(15)))
-                } else {
-                    a.wrapping_shr(u32::from(shift.unsigned_abs().min(15)))
+                let frame = self
+                    .frames
+                    .last()
+                    .ok_or_else(|| StoryError::Fault("invalid throw frame".to_owned()))?;
+                let Some((resume_pc, store)) = frame.catch else {
+                    return Err(StoryError::Fault(
+                        "throw to a frame without catch".to_owned(),
+                    ));
                 };
-                self.store_result(result)
-            }
-            29 => {
-                let shift = b as i16;
-                let result = if shift >= 0 {
-                    (a as i16).wrapping_shl(u32::from(shift.unsigned_abs().min(15)))
-                } else {
-                    (a as i16).wrapping_shr(u32::from(shift.unsigned_abs().min(15)))
-                };
-                self.store_result(result as u16)
+                self.stack.truncate(frame.stack_base);
+                self.pc = resume_pc;
+                self.set_variable(store, a)
             }
             _ => self.unsupported("2OP", opcode),
         }
@@ -801,8 +863,9 @@ impl Machine {
                 self.set_variable(variable, value)
             }
             10 => {
-                let lines = *values.first().unwrap_or(&0);
-                self.branch(lines == 1)
+                // split_window (v3+): no store and no branch byte. The
+                // single-panel screen treats the split as display-only.
+                Ok(())
             }
             11 => Ok(()),
             12 => {
@@ -811,7 +874,59 @@ impl Machine {
             }
             13 => Ok(()),
             14 => Ok(()),
-            15 => {
+            15..=18 if self.info.version >= 4 => {
+                // set_cursor / get_cursor / set_text_style / buffer_mode are
+                // windowed-display operations; the single-panel screen is a
+                // no-op target for 15, 17 and 18, and 16 (get_cursor) is not
+                // modelled yet, so it reports honestly instead of inventing.
+                if opcode == 16 {
+                    self.unsupported("VAR", opcode)
+                } else {
+                    Ok(())
+                }
+            }
+            19 => Ok(()),
+            20 => Ok(()),
+            21 => Ok(()),
+            22 => {
+                let store = self.fetch_byte()?;
+                self.input = Some(InputRequest {
+                    text: usize::from(*values.first().unwrap_or(&0)),
+                    parse: 0,
+                    store: Some(store),
+                });
+                Ok(())
+            }
+            24 if self.info.version >= 5 => {
+                // not (v5/6): bitwise NOT with a store; v1-4 has it at 1OP 15.
+                self.store_result(!*values.first().unwrap_or(&0))
+            }
+            23 => {
+                let value = *values.first().unwrap_or(&0);
+                let table = usize::from(*values.get(1).unwrap_or(&0));
+                let entries = *values.get(2).unwrap_or(&0);
+                let form = *values.get(3).unwrap_or(&0);
+                self.scan_table(value, table, entries, form)
+            }
+            25 | 26 if self.info.version >= 5 => {
+                // call_vn / call_vn2: the result is discarded, no store byte.
+                self.call(*values.first().unwrap_or(&0), &values[1..], None)
+            }
+            27 if self.info.version >= 5 => {
+                if values.len() >= 2 {
+                    self.tokenize(usize::from(values[0]), usize::from(values[1]))
+                } else {
+                    Ok(())
+                }
+            }
+            28 => self.encode_text(&values),
+            29 if self.info.version >= 5 => {
+                let count = usize::from(*values.get(2).unwrap_or(&0));
+                let source = usize::from(*values.first().unwrap_or(&0));
+                let destination = usize::from(*values.get(1).unwrap_or(&0));
+                self.copy_table(source, destination, count)
+            }
+            30 if self.info.version >= 5 => {
                 let table = usize::from(*values.first().unwrap_or(&0));
                 let width = usize::from(*values.get(1).unwrap_or(&0));
                 let height = usize::from(*values.get(2).unwrap_or(&1));
@@ -827,82 +942,10 @@ impl Machine {
                 }
                 Ok(())
             }
-            16 => {
-                let table = usize::from(*values.first().unwrap_or(&0));
-                let width = usize::from(*values.get(1).unwrap_or(&0));
-                let height = usize::from(*values.get(2).unwrap_or(&1));
-                let skip = usize::from(*values.get(3).unwrap_or(&0));
-                for row in 0..height {
-                    for column in 0..width {
-                        self.write_byte(table + row * (width + skip) + column, b' ')?;
-                    }
-                }
-                Ok(())
-            }
-            17 => {
-                let mut index = 0;
-                let Some(character) = self.output.chars().last() else {
-                    return self.store_result(0);
-                };
-                if character == '\n' {
-                    index = 1;
-                }
-                self.store_result(index)
-            }
-            18 => {
-                let mode = *values.first().unwrap_or(&0);
-                if mode == u16::MAX {
-                    self.output.clear();
-                }
-                Ok(())
-            }
-            19 => Ok(()),
-            20 => Ok(()),
-            21 => Ok(()),
-            22 => {
-                let store = self.fetch_byte()?;
-                self.input = Some(InputRequest {
-                    text: usize::from(*values.first().unwrap_or(&0)),
-                    parse: 0,
-                    store: Some(store),
-                });
-                Ok(())
-            }
-            23 => {
-                let value = *values.first().unwrap_or(&0);
-                let table = usize::from(*values.get(1).unwrap_or(&0));
-                let entries = *values.get(2).unwrap_or(&0);
-                let form = *values.get(3).unwrap_or(&0);
-                self.scan_table(value, table, entries, form)
-            }
-            24 => self.store_result(u16::from(
+            31 if self.info.version >= 5 => self.store_result(u16::from(
                 self.frames.last().map_or(0, |frame| frame.argument_count)
                     >= *values.first().unwrap_or(&0) as u8,
             )),
-            25 => {
-                let store = self.fetch_byte()?;
-                self.call(*values.first().unwrap_or(&0), &values[1..], Some(store))
-            }
-            26 => {
-                let store = self.fetch_byte()?;
-                self.call(*values.first().unwrap_or(&0), &values[1..], Some(store))
-            }
-            27 => {
-                let count = usize::from(*values.get(2).unwrap_or(&0));
-                let source = usize::from(*values.first().unwrap_or(&0));
-                let destination = usize::from(*values.get(1).unwrap_or(&0));
-                self.copy_table(source, destination, count)
-            }
-            28 => self.encode_text(&values),
-            29 => {
-                if values.len() >= 2 {
-                    self.tokenize(usize::from(values[0]), usize::from(values[1]))
-                } else {
-                    Ok(())
-                }
-            }
-            30 => Ok(()),
-            31 => self.branch(true),
             _ => self.unsupported("VAR", opcode),
         }
     }
@@ -990,6 +1033,7 @@ impl Machine {
             locals,
             stack_base: self.stack.len(),
             argument_count: arguments.len().min(8) as u8,
+            catch: None,
         });
         self.pc = cursor;
         Ok(())
@@ -1736,6 +1780,7 @@ impl Machine {
         self.frames = snapshot.frames;
         self.rng = snapshot.rng;
         self.input = None;
+        self.pending_file = None;
         self.halted = false;
     }
 
@@ -1966,13 +2011,253 @@ mod tests {
     fn unsupported_formats_are_named() {
         assert_eq!(
             StoryInfo::inspect(b"Glul\x00\x00\x00\x00", "game.ulx"),
-            Err(StoryError::Glulx)
+            Err(kobo_zstory::StoryError::Glulx)
         );
-        let mut bytes = vec![0; HEADER_LEN];
+        let mut bytes = vec![0; 64];
         bytes[0] = 6;
         assert_eq!(
             StoryInfo::inspect(&bytes, "game.z6"),
-            Err(StoryError::UnsupportedVersion(6))
+            Err(kobo_zstory::StoryError::UnsupportedVersion(6))
         );
+    }
+    /// A story whose initial routine runs `code`, then quits.
+    /// Conformance fixtures for the opcode map: every case encodes the
+    /// Standard 1.1 sect15 behaviour for one opcode at one version.
+    fn code_story(version: u8, code: &[u8]) -> Vec<u8> {
+        let mut bytes = story(version);
+        bytes[0x40..0x40 + code.len()].copy_from_slice(code);
+        bytes[0x40 + code.len()] = 0xba; // quit
+        bytes
+    }
+
+    fn global(bytes_machine: &Machine, index: usize) -> u16 {
+        bytes_machine.read_word(0x140 + index * 2).unwrap()
+    }
+
+    #[test]
+    fn catch_stores_the_frame_id_in_v5_and_pop_is_v1_to_v4_only() {
+        // 2OP 13: store 0xad into global 0; 0OP 9 v5: catch -> (result).
+        let code = [0x0d, 0x10, 0xad, 0xb9, 0x10];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_ne!(
+            global(&machine, 0),
+            0xad,
+            "catch must overwrite the store slot"
+        );
+        // v3: 0OP 9 is pop, not catch - no store byte follows it.
+        // VAR 8 pushes 0x55, 0OP 9 pops it, and the stack is left empty.
+        let code = [0xe8, 0x7f, 0x55, 0xb9];
+        let mut machine = Machine::new(code_story(3, &code), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert!(machine.stack.is_empty(), "v3: 0OP 9 is pop");
+    }
+
+    #[test]
+    fn not_is_1op_15_in_v3_and_v4() {
+        // 1OP 15 with small 0 stores !0 = 0xffff (v1-4). Standard: v5+ is call_1n.
+        // The loader accepts 3/5/8 only, so v3 pins the v1-4 numbering.
+        let code = [0x9f, 0x00, 0x11]; // 1OP 15, small const 0, store global 1
+        let mut machine = Machine::new(code_story(3, &code), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 0xffff, "v3: 1OP 15 is not");
+    }
+
+    #[test]
+    fn load_is_an_indirect_variable_read_in_v3_and_v4() {
+        // 2OP 13: store 0x42 into global 0 (variable 16); 1OP 14: load(16) -> global 1.
+        // The loader accepts 3/5/8 only, so v3 pins the v1-4 numbering.
+        let code = [0x0d, 0x10, 0x42, 0x9e, 0x10, 0x11];
+        let mut machine = Machine::new(code_story(3, &code), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 0x42, "v3: 1OP 14 is load");
+    }
+
+    #[test]
+    fn call_vn_discards_the_result_in_v5() {
+        // Routine at 0x200 (packed 0x80 in v5): prints "x" and rtrue.
+        // VAR 25 = call_vn: no store byte follows the operands.
+        let mut bytes = code_story(5, &[0xf9, 0x3f, 0x00, 0x80]);
+        bytes[0x200] = 0; // no locals
+        bytes[0x201] = 0xb2; // print
+        let encoded = encode_dictionary_word(b"x", 5);
+        bytes[0x202..0x202 + encoded.len()].copy_from_slice(&encoded);
+        bytes[0x202 + encoded.len()] = 0xb0; // rtrue
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "x");
+    }
+
+    #[test]
+    fn copy_table_is_var_29_in_v5() {
+        // VAR 29: copy_table first second size. Source prefilled in static memory.
+        let mut bytes = code_story(5, &[0xfd, 0x03, 0x02, 0x00, 0x00, 0x80, 0x00, 0x04]);
+        bytes[0x200..0x204].copy_from_slice(&[9, 8, 7, 6]);
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(machine.read_byte(0x80).unwrap(), 9);
+        assert_eq!(machine.read_byte(0x83).unwrap(), 6);
+    }
+    #[test]
+    fn save_suspends_then_branches_on_completion_in_v3() {
+        // 0OP 5 v3: save ?(label). The machine suspends BEFORE the branch
+        // byte; complete_save decides it. Taken: "s". Not taken: "f".
+        // Dictionary-word encoding pads to the full word length (4 bytes in
+        // v3), so the branch offset is sized for it: taken -> 0x48 prints
+        // "s", not taken -> 0x42 prints "f".
+        let mut bytes = code_story(
+            3,
+            &[0xb5, 0xc8, 0xb2, 0, 0, 0, 0, 0xba, 0xb2, 0, 0, 0, 0, 0xba],
+        );
+        let f = encode_dictionary_word(b"f", 3);
+        bytes[0x43..0x43 + f.len()].copy_from_slice(&f);
+        let s = encode_dictionary_word(b"s", 3);
+        bytes[0x49..0x49 + s.len()].copy_from_slice(&s);
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+
+        let mut machine = Machine::new(bytes.clone(), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        let save = machine.save_quetzal();
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "s");
+
+        let mut restored = Machine::new(bytes.clone(), "fixture.z3").unwrap();
+        restored.restore_quetzal(&save).unwrap();
+        assert_eq!(restored.run().unwrap(), RunState::Halted);
+        assert_eq!(restored.take_output(), "s", "v3 restore takes the branch");
+
+        let mut machine = Machine::new(bytes, "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        assert_eq!(machine.complete_save(false).unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "f");
+    }
+
+    #[test]
+    fn save_stores_one_and_restore_stores_two_in_v5() {
+        // 0OP 5 v5: save -> (result). Suspend before the store byte;
+        // complete_save stores 1. A Quetzal captured at the suspension
+        // resumes with 2: "the game is being restored" (Standard 1.1).
+        let code = [0xb5, 0x10];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        let save = machine.save_quetzal();
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 0), 1, "save stores 1 on success");
+
+        let mut restored = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        restored.restore_quetzal(&save).unwrap();
+        assert_eq!(restored.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&restored, 0), 2, "restore resumes the store with 2");
+    }
+
+    #[test]
+    fn restore_failure_stores_zero_and_needs_no_file() {
+        // 0OP 6 v5: restore -> (result). complete_restore(false) is how the
+        // app reports "no file picked": store 0, continue.
+        let code = [0xb6, 0x10];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedRestore);
+        assert_eq!(machine.complete_restore(false).unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 0), 0, "failed restore stores 0");
+    }
+
+    #[test]
+    fn catch_state_survives_a_save_round_trip() {
+        // catch arms the base frame BEFORE the save suspends, so the Quetzal
+        // captures an armed frame. setjmp semantics: a throw resumes at the
+        // point right after catch, which re-runs the save - the second
+        // suspension is expected and completed again.
+        let code = vec![
+            0xb9, 0x10, // 0x40: catch -> global0 (resume 0x42)
+            0xb5, 0x11, // 0x42: save -> global1 (suspends before the store byte)
+            0x41, 0x10, 0x00, 0xca, // 0x44: je global0 0 -> 0x50 while unthrown
+            0xb2, 0, 0, 0, 0, 0, 0,    // 0x48: print "t" (6-byte padded z-string)
+            0xba, // 0x4f: quit
+            0x8f, 0x00, 0x80, 0xba, // 0x50: call_1n 0x200; quit
+        ];
+        let mut bytes = code_story(5, &code);
+        let t = encode_dictionary_word(b"t", 5);
+        bytes[0x49..0x49 + t.len()].copy_from_slice(&t);
+        bytes[0x200] = 0;
+        bytes[0x201] = 0x3c; // throw
+        bytes[0x202] = 0x99;
+        bytes[0x203] = 0x10;
+        bytes[0x204] = 0xb0;
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+
+        let mut machine = Machine::new(bytes.clone(), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        let save = machine.save_quetzal();
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::NeedSave);
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 1);
+        assert_eq!(machine.take_output(), "t");
+
+        let mut restored = Machine::new(bytes, "fixture.z5").unwrap();
+        restored.restore_quetzal(&save).unwrap();
+        assert_eq!(global(&restored, 1), 2, "restored at the save point");
+        assert_eq!(restored.run().unwrap(), RunState::NeedSave);
+        // Without catch in the save file this throw would fault with
+        // "throw to a frame without catch".
+        assert_eq!(restored.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(restored.take_output(), "t", "catch survived the round trip");
+    }
+
+    #[test]
+    fn not_is_var_24_in_v5() {
+        // VAR 24 v5: not value -> (result). not(0) = 0xffff into global 1.
+        let code = [0xf8, 0x7f, 0x00, 0x11];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 0xffff, "v5: VAR 24 is not");
+    }
+
+    #[test]
+    fn split_window_consumes_no_branch_byte() {
+        // VAR 10 split_window has no branch and no store. The next byte must
+        // decode as the next instruction: print "s" then quit.
+        let code = [0xea, 0x7f, 0x01, 0xb2, 0xe4, 0xa5, 0xba];
+        let mut bytes = code_story(3, &code);
+        // "s" as a one-word z-string, same encoding as the throw fixture's "t".
+        let encoded = encode_dictionary_word(b"s", 3);
+        bytes[0x44..0x44 + encoded.len()].copy_from_slice(&encoded);
+        bytes[0x44 + encoded.len()] = 0xba;
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "s");
+    }
+
+    #[test]
+    fn throw_resumes_after_catch_with_the_thrown_value() {
+        // v5: catch arms global 0 with the frame id, then a called routine
+        // throws 0x99 back to it. Execution resumes after catch with global 0
+        // holding 0x99, so the jump-if-equal falls through to printing "t".
+        let code = [
+            0xb9, 0x10, // 0x40: catch -> global 0
+            0x41, 0x10, 0x00, 0xc8, // 0x42: je global0 0 -> 0x4c while unthrown
+            0xb2, 0xe4, 0xa5, 0xba, // 0x46: print "t"; quit
+            0xbb, 0xbb, // 0x4a: padding
+            0x8f, 0x00, 0x80, 0xba, // 0x4c: call_1n routine at 0x200; quit
+        ];
+        let mut bytes = code_story(5, &code);
+        bytes[0x200] = 0; // no locals
+        bytes[0x201] = 0x3c; // 2OP 28, right operand is a variable: throw
+        bytes[0x202] = 0x99; // value
+        bytes[0x203] = 0x10; // frame id from global 0
+        bytes[0x204] = 0xb0; // rtrue (unreached)
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 0), 0x99);
+        assert_eq!(machine.take_output(), "t");
     }
 }

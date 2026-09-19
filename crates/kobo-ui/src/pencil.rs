@@ -12,8 +12,16 @@ pub enum PencilMarkKind {
     Clue(u8),
     Island(u8),
     Block,
-    Sum { across: u8, down: u8 },
-    Digit { value: u8, given: bool },
+    Sum {
+        across: u8,
+        down: u8,
+    },
+    Digit {
+        value: u8,
+        given: bool,
+    },
+    /// Pencil-mark candidates for one square, bits 0..=8 for digits 1..=9.
+    Candidates(u16),
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PencilMark {
@@ -22,6 +30,8 @@ pub struct PencilMark {
     pub kind: PencilMarkKind,
     pub action: Option<ActionId>,
     pub selected: bool,
+    /// A square sharing a row, column or box with the selected one.
+    pub peer: bool,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PencilEdge {
@@ -64,6 +74,7 @@ impl PencilBoard {
                         }
                         PencilMarkKind::Clue(_) | PencilMarkKind::Island(_) => 1,
                         PencilMarkKind::Digit { value, .. } => usize::from(value != 0),
+                        PencilMarkKind::Candidates(m) => m.count_ones() as usize,
                         _ => 0,
                     }
                 })
@@ -83,7 +94,8 @@ impl PencilBoard {
                     .insert((mark.column, mark.row), mark.kind)
                     .is_some()
                 || !action_ok(mark.action)
-                || mark.selected && mark.action.is_none()
+                || (mark.selected || mark.peer) && mark.action.is_none()
+                || mark.selected && mark.peer
             {
                 return false;
             }
@@ -96,12 +108,15 @@ impl PencilBoard {
                     return false
                 }
                 PencilMarkKind::Digit { value, .. } if value > 9 => return false,
+                PencilMarkKind::Candidates(m) if m == 0 || m & !0x1FF != 0 => return false,
                 _ => {}
             }
             if mark.action.is_some()
                 && !matches!(
                     mark.kind,
-                    PencilMarkKind::Island(_) | PencilMarkKind::Digit { given: false, .. }
+                    PencilMarkKind::Island(_)
+                        | PencilMarkKind::Digit { .. }
+                        | PencilMarkKind::Candidates(_)
                 )
             {
                 return false;
@@ -163,7 +178,12 @@ pub(super) fn layout(
     if !board.is_valid() {
         return area.y;
     }
-    let cell = metrics.tenth_mm(i32::from(board.cell_tenth_mm));
+    // Physical geometry is the ceiling, not a demand: a board in a band slot
+    // or beside a panel shrinks to its allocation rather than clipping.
+    let cell = metrics
+        .tenth_mm(i32::from(board.cell_tenth_mm))
+        .min(area.width / i32::from(board.columns))
+        .min(area.height / i32::from(board.rows));
     let width = i32::from(board.columns) * cell;
     let height = i32::from(board.rows) * cell;
     let left = area.x + (area.width - width).max(0) / 2;
@@ -241,6 +261,35 @@ pub(super) fn layout(
             vec![],
         );
     }
+    // A 9x9 board made only of digit squares is a sudoku: rule its 3x3 boxes
+    // heavier so the structure a player scans by is visible.
+    let boxes = board.columns == 9
+        && board.rows == 9
+        && board.marks.iter().all(|m| {
+            matches!(
+                m.kind,
+                PencilMarkKind::Digit { .. } | PencilMarkKind::Candidates(_)
+            )
+        });
+    let box_mask = |mark: &PencilMark| -> u8 {
+        if !boxes {
+            return 0;
+        }
+        let mut mask = 0;
+        if mark.row % 3 == 0 {
+            mask |= 1;
+        }
+        if mark.column % 3 == 0 {
+            mask |= 2;
+        }
+        if mark.row == board.rows - 1 {
+            mask |= 4;
+        }
+        if mark.column == board.columns - 1 {
+            mask |= 8;
+        }
+        mask
+    };
     for mark in &board.marks {
         let rect = Rect {
             x: left + i32::from(mark.column) * cell,
@@ -262,6 +311,7 @@ pub(super) fn layout(
                         PencilMarkKind::Island(n) => format!("island {n}"),
                         PencilMarkKind::Digit { value: 0, .. } => "blank square".into(),
                         PencilMarkKind::Digit { value, .. } => format!("digit {value}"),
+                        PencilMarkKind::Candidates(_) => "notes".into(),
                         _ => "clue".into(),
                     }
                 )],
@@ -271,7 +321,7 @@ pub(super) fn layout(
             layout,
             id,
             rect,
-            LayoutKind::PencilMark(mark.kind, mark.selected),
+            LayoutKind::PencilMark(mark.kind, mark.selected, mark.peer, box_mask(mark)),
             vec![],
         );
         let mut label = |value: u8, area: Rect, inverted: bool| {
@@ -292,7 +342,28 @@ pub(super) fn layout(
         };
         match mark.kind {
             PencilMarkKind::Clue(n) | PencilMarkKind::Island(n) => label(n, rect, false),
-            PencilMarkKind::Digit { value, .. } if value != 0 => label(value, rect, false),
+            PencilMarkKind::Digit { value, .. } if value != 0 => label(value, rect, mark.selected),
+            PencilMarkKind::Candidates(mask) => {
+                // Candidate digits get their whole ninth of the square: the
+                // usual label padding would leave nothing at this size.
+                let third = rect.width / 3;
+                for d in 0..9_u8 {
+                    if mask & (1 << d) != 0 {
+                        push(
+                            layout,
+                            id,
+                            Rect {
+                                x: rect.x + i32::from(d % 3) * third,
+                                y: rect.y + i32::from(d / 3) * third,
+                                width: third,
+                                height: third,
+                            },
+                            LayoutKind::PencilNumber(mark.selected),
+                            vec![(d + 1).to_string()],
+                        );
+                    }
+                }
+            }
             PencilMarkKind::Sum { across, down } => {
                 let half = rect.width / 2;
                 if across != 0 {
@@ -333,7 +404,7 @@ pub(super) fn label_style(node: &LayoutNode) -> (FontSize, super::TextScale) {
             .all(|text| measure_text(text, size).0 <= node.rect.width)
             && size.line_height() <= node.rect.height
     };
-    for size in [FontSize::Body, FontSize::Caption] {
+    for size in [FontSize::Body, FontSize::Caption, FontSize::Terminal] {
         if fits(size) {
             return (size, current);
         }
@@ -348,17 +419,46 @@ pub(super) fn label_style(node: &LayoutNode) -> (FontSize, super::TextScale) {
         if super::with_text_scale(scale, || fits(FontSize::Caption)) {
             return (FontSize::Caption, scale);
         }
+        if super::with_text_scale(scale, || fits(FontSize::Terminal)) {
+            return (FontSize::Terminal, scale);
+        }
+    }
+    // Nothing fit exactly: a single short label drawn dense at the smallest
+    // scale keeps its glyph inside the box even when its leading does not.
+    if node
+        .text_lines
+        .first()
+        .is_some_and(|text| text.chars().count() <= 2)
+        && super::with_text_scale(super::TextScale::STEPS[0], || {
+            measure_text(&node.text_lines[0], FontSize::Terminal).0 <= node.rect.width
+        })
+    {
+        return (FontSize::Terminal, super::TextScale::STEPS[0]);
     }
     (FontSize::Caption, current)
 }
+/// How a pencil mark presents: selection, peer shading, and the 3x3 box
+/// rule mask for 9x9 digit boards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct MarkStyle {
+    pub selected: bool,
+    pub peer: bool,
+    pub box_mask: u8,
+}
+
 pub(super) fn draw_mark(
     surface: &mut Surface,
     rect: Rect,
     kind: PencilMarkKind,
-    selected: bool,
+    style: MarkStyle,
     metrics: &DisplayMetrics,
     clip: Rect,
 ) {
+    let MarkStyle {
+        selected,
+        peer,
+        box_mask,
+    } = style;
     let line = metrics.rule_thickness().max(1);
     match kind {
         PencilMarkKind::Dot => {
@@ -384,14 +484,63 @@ pub(super) fn draw_mark(
             stroke_rounded_clipped(surface, circle, circle.width / 2, tone::INK, line, clip);
         }
         PencilMarkKind::Block => fill_clipped(surface, rect, tone::INK, clip),
-        PencilMarkKind::Digit { .. } => {
+        PencilMarkKind::Digit { .. } | PencilMarkKind::Candidates(_) => {
             fill_clipped(
                 surface,
                 rect,
-                if selected { tone::SURFACE } else { tone::PAPER },
+                if selected {
+                    tone::INK
+                } else if peer {
+                    tone::SURFACE
+                } else {
+                    tone::PAPER
+                },
                 clip,
             );
             stroke_clipped(surface, rect, tone::INK, line, clip);
+            let heavy = line * 2;
+            for (bit, side) in [
+                (
+                    1,
+                    Rect {
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: heavy,
+                    },
+                ),
+                (
+                    2,
+                    Rect {
+                        x: rect.x,
+                        y: rect.y,
+                        width: heavy,
+                        height: rect.height,
+                    },
+                ),
+                (
+                    4,
+                    Rect {
+                        x: rect.x,
+                        y: rect.y + rect.height - heavy,
+                        width: rect.width,
+                        height: heavy,
+                    },
+                ),
+                (
+                    8,
+                    Rect {
+                        x: rect.x + rect.width - heavy,
+                        y: rect.y,
+                        width: heavy,
+                        height: rect.height,
+                    },
+                ),
+            ] {
+                if box_mask & bit != 0 {
+                    fill_clipped(surface, side, tone::INK, clip);
+                }
+            }
         }
         PencilMarkKind::Sum { .. } => {
             fill_clipped(surface, rect, tone::INK, clip);
@@ -478,6 +627,7 @@ mod tests {
                     kind: PencilMarkKind::Dot,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 PencilMark {
                     column: 2,
@@ -485,6 +635,7 @@ mod tests {
                     kind: PencilMarkKind::Dot,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 PencilMark {
                     column: 2,
@@ -492,6 +643,7 @@ mod tests {
                     kind: PencilMarkKind::Dot,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 PencilMark {
                     column: 1,
@@ -499,6 +651,7 @@ mod tests {
                     kind: PencilMarkKind::Clue(2),
                     action: None,
                     selected: false,
+                    peer: false,
                 },
             ],
             edges: vec![
@@ -606,5 +759,126 @@ mod tests {
         b = sample();
         b.edges[1].action = b.edges[0].action;
         assert!(!b.is_valid());
+    }
+
+    fn sudoku() -> PencilBoard {
+        PencilBoard {
+            columns: 9,
+            rows: 9,
+            cell_tenth_mm: 90,
+            marks: vec![
+                PencilMark {
+                    column: 0,
+                    row: 0,
+                    kind: PencilMarkKind::Digit {
+                        value: 5,
+                        given: true,
+                    },
+                    action: None,
+                    selected: false,
+                    peer: false,
+                },
+                PencilMark {
+                    column: 1,
+                    row: 0,
+                    kind: PencilMarkKind::Candidates(0b0000_0001_1000_0110),
+                    action: Some(ActionId(20)),
+                    selected: true,
+                    peer: false,
+                },
+                PencilMark {
+                    column: 3,
+                    row: 4,
+                    kind: PencilMarkKind::Digit {
+                        value: 0,
+                        given: false,
+                    },
+                    action: Some(ActionId(21)),
+                    selected: false,
+                    peer: true,
+                },
+            ],
+            edges: vec![],
+        }
+    }
+    #[test]
+    fn sudoku_boards_rule_boxes_and_expand_candidates() {
+        let board = sudoku();
+        assert!(board.is_valid());
+        let screen = Screen::new(
+            1,
+            vec![Node::PencilBoard {
+                id: NodeId(1),
+                board,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let marks = layout
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, LayoutKind::PencilMark(..)))
+            .collect::<Vec<_>>();
+        assert_eq!(marks.len(), 3);
+        assert!(matches!(
+            marks[0].kind,
+            LayoutKind::PencilMark(_, false, false, 0b0011)
+        ));
+        assert!(matches!(
+            marks[1].kind,
+            LayoutKind::PencilMark(_, true, false, 0b0001)
+        ));
+        assert!(matches!(
+            marks[2].kind,
+            LayoutKind::PencilMark(_, false, true, 0b0010)
+        ));
+        // The selected candidates square shows its four digits and no big number.
+        let digits = layout
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, LayoutKind::PencilNumber(true)))
+            .map(|n| n.text_lines[0].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(digits, ["2", "3", "8", "9"]);
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+    }
+    #[test]
+    fn candidates_and_peers_are_bounded() {
+        let mut b = sudoku();
+        b.marks[1].kind = PencilMarkKind::Candidates(0);
+        assert!(!b.is_valid());
+        b = sudoku();
+        b.marks[1].kind = PencilMarkKind::Candidates(1 << 9);
+        assert!(!b.is_valid());
+        b = sudoku();
+        b.marks[1].peer = true;
+        assert!(!b.is_valid());
+        b = sudoku();
+        b.marks[2].action = None;
+        assert!(!b.is_valid());
+        b = sudoku();
+        b.marks[0].kind = PencilMarkKind::Clue(3);
+        b.marks[0].action = Some(ActionId(22));
+        assert!(!b.is_valid());
+        // A 9x9 board with a non-digit mark is not ruled into boxes.
+        b = sudoku();
+        b.marks[2].kind = PencilMarkKind::Block;
+        b.marks[2].action = None;
+        b.marks[2].peer = false;
+        assert!(b.is_valid());
+        let screen = Screen::new(
+            1,
+            vec![Node::PencilBoard {
+                id: NodeId(1),
+                board: b,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(layout
+            .nodes
+            .iter()
+            .all(|n| !matches!(n.kind, LayoutKind::PencilMark(_, _, _, mask) if mask != 0)));
     }
 }

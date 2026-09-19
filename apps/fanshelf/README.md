@@ -11,15 +11,29 @@ If the OTW asks for this behavior to change or stop, it should.
 Ratings and archive warnings are rendered before the download action. An AO3
 adult-content interstitial becomes an explicit Fanshelf confirmation screen;
 `view_adult=true` is never added until the reader continues. Archive-locked
-works are not supported.
+works cannot be downloaded; the app says so in plain words instead of
+failing quietly.
 
-![A synthetic Fanshelf shelf showing an unread WIP update and a non-Latin title](screenshots/shelf.png)
+![A synthetic Fanshelf shelf showing an unread WIP update, a work being read and a work whose updates were never checked](screenshots/shelf.png)
+
+![A work screen naming the last manual update check](screenshots/work.png)
+
+![The updates screen listing unread and never-checked works](screenshots/updates.png)
+
+![The shelf narrowed to one fandom](screenshots/fandom-filter.png)
+
+![Bulk shelf management with update and copy counts](screenshots/manage.png)
+
+![A downloaded EPUB open in the reader](screenshots/reading.png)
 
 ## What v1 does
 
 - Stores bounded metadata for up to 96 works: title, author, fandom, rating,
   archive warnings, summary, chapter count/status, updated date, EPUB URL,
-  adult confirmation, download state, unread update state, and archive removal.
+  adult confirmation, download state, unread update state, archive removal,
+  and the time of the last manual update check. A work you have started
+  reading is marked on the shelf; Fanshelf shows started-or-not rather than a
+  percentage, because the reader's saved place is a location, not a fraction.
 - Downloads EPUBs in 256 KiB ranged chunks, spaces every AO3 request by at
   least one second, permits only one request in flight, and sends
   `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)` on every request.
@@ -28,6 +42,11 @@ works are not supported.
 - Opens downloaded EPUBs through `BookView`; page position, type settings,
   highlights, notes, and other reader memory are stored separately and survive
   a re-download when the updated document still has compatible anchors.
+- Filters the shelf by fandom: **Filter** lists each fandom with its work
+  count, and **All** returns to the whole shelf.
+- Manages the shelf in bulk from **Manage**: download every waiting update,
+  or remove downloaded copies after a confirmation. Works and reading
+  places stay.
 - Checks WIPs only when **Check updates** or **Check all** is pressed. A newer
   chapter sets an unread badge and enables an explicit re-download.
 - Follows up to 24 AO3 tags through `/tags/<tag>/feeds.atom`, parsed with
@@ -66,6 +85,10 @@ cargo run -p kobo-cli -- drive --ideal \
   --script apps/fanshelf/drive.kobo \
   --shots apps/fanshelf/screenshots
 ```
+
+`scripts/quality/check-fanshelf-epub-sim.py` drives the whole download-and-read
+path against a local TLS fixture that serves a synthetic work page and the
+repository's sample EPUB, and produces the reading screenshot above.
 
 Without `FANSHELF_DEMO`, simulator fetches are real network requests:
 

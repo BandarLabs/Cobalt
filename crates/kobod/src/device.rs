@@ -2537,6 +2537,12 @@ fn host_applications(
                                 &request,
                             ) {
                                 result
+                            } else if let Some(result) = kobo_policy::credentials::handle_check(
+                                Path::new(SECRETS),
+                                &apps[index].name,
+                                &request,
+                            ) {
+                                result
                             } else if let Some(reason) = services.refusal_for(&request) {
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {

@@ -5979,7 +5979,12 @@ pub enum LayoutKind {
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
     BoardClue,
-    PencilMark(PencilMarkKind, bool),
+    /// The chip marking the selected square's row and column clues. Drawn
+    /// behind the clue's numbers and sized to them, never to the gutter: the
+    /// clue's tap target stays the full strip, but the highlight itself hugs
+    /// the text it points at.
+    BoardClueChip,
+    PencilMark(PencilMarkKind, bool, bool, u8),
     PencilEdge(u8, bool),
     PencilNumber(bool),
     /// The three nested squares and four connectors behind a Morris board.
@@ -8182,6 +8187,11 @@ fn layout_node(
                     value_size.line_height(),
                     lines.len() as i32 * value_size.line_height(),
                 );
+                // What every node does when it runs out of panel: the facts
+                // that cannot fit whole are dropped, never drawn half-cut.
+                if cursor.saturating_add(height) > bottom {
+                    break;
+                }
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -8330,7 +8340,7 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
-            let pad_deck = *square && requested == 5 && cells.len() == 15;
+            let pad_deck = *square && requested == 5 && cells.len() <= 15;
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -13328,7 +13338,16 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             } else {
                 i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
             };
-            let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+            // A lone pencil number is its glyph, not its leading: the box may
+            // clip a hair of line height the same way it clips a hairline.
+            let leading_allowance = if rows == 1 && matches!(node.kind, LayoutKind::PencilNumber(_))
+            {
+                metrics.rule_thickness() * 2
+            } else {
+                0
+            };
+            let too_tall = rows.saturating_mul(size.line_height_in(face))
+                > node.rect.height + leading_allowance;
             (too_wide, too_tall)
         });
         if too_wide || too_tall {
@@ -14523,14 +14542,42 @@ fn render_all_with_selected_font(
                     );
                 });
             }
-            LayoutKind::PencilMark(mark, selected) => {
-                pencil::draw_mark(surface, node.rect, mark, selected, metrics, clip);
+            LayoutKind::PencilMark(mark, selected, peer, box_mask) => {
+                pencil::draw_mark(
+                    surface,
+                    node.rect,
+                    mark,
+                    pencil::MarkStyle {
+                        selected,
+                        peer,
+                        box_mask,
+                    },
+                    metrics,
+                    clip,
+                );
             }
             LayoutKind::PencilEdge(state, vertical) => {
                 pencil::draw_edge(surface, node.rect, state, vertical, metrics, clip);
             }
             LayoutKind::BoardMark(mark, locked) => {
                 board::draw_mark(surface, node.rect, mark, locked, metrics, clip);
+            }
+            LayoutKind::BoardClueChip => {
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::SURFACE,
+                    clip,
+                );
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::INK,
+                    metrics.button_border(),
+                    clip,
+                );
             }
             LayoutKind::BoardClue => draw_centered(
                 surface,
@@ -22780,6 +22827,44 @@ mod prose_tests {
             value.rect.width * 2 > layout.content.width,
             "the label column took more than half the panel from its value"
         );
+    }
+
+    #[test]
+    fn facts_that_run_out_of_panel_drop_whole_entries_instead_of_clipping() {
+        let entries = (0..20)
+            .map(|index| {
+                (
+                    format!("Label {index}"),
+                    format!("A value with enough words to wrap onto a second line {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let screen = Screen::new(
+            1,
+            vec![Node::Facts {
+                id: NodeId(1),
+                entries: entries.clone(),
+            }],
+        );
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(
+            !issues.iter().any(|issue| matches!(
+                issue.kind,
+                LayoutIssueKind::Clipped | LayoutIssueKind::TextOverflow
+            )),
+            "a facts block taller than the panel clipped: {issues:?}"
+        );
+        let shown = screen
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::FactValue)
+            .count();
+        assert!(
+            shown < entries.len(),
+            "every fact was laid out on a panel that cannot hold them"
+        );
+        assert!(shown > 0, "no facts were laid out at all");
     }
 
     #[test]

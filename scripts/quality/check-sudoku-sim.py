@@ -143,15 +143,15 @@ def main():
                         break
                 else:
                     raise AssertionError('Help did not finish within 12 pages')
-                drive('tap Back','tap-id more','tap-id view','tap-id rotate','wait-idle','expect Rows 1–6')
-                capture('14-landscape-upper')
-                drive('tap-id rows','expect Rows 4–9','tap-id cell-80','wait-idle')
-                capture('15-landscape-lower')
+                drive('tap Back','tap-id more','tap-id view','tap-id rotate','wait-idle','expect Choose a square')
+                capture('14-landscape-full')
+                drive('tap-id cell-80','wait-idle','expect left')
+                capture('15-landscape-selected')
                 before_rotation_restart = saved()
                 assert before_rotation_restart['landscape'] and before_rotation_restart['position']['selected']=='80'
                 restart()
                 assert saved()==before_rotation_restart
-                drive('expect Rows 4–9')
+                drive('expect left')
                 capture('16-landscape-restored')
                 drive('tap-id more','tap-id view','tap-id how-to-play')
                 for page in range(12):
@@ -168,7 +168,7 @@ def main():
                               basis='simulator-sdk-ipc',puzzles=36,source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                               source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
                               pack_sha256=hashlib.sha256(ROOT.joinpath('apps/sudoku/assets/puzzles.txt').read_bytes()).hexdigest(),
-                              checks=['notes','exact restart','persistent undo','failed-save preservation','explicit retry','optional checking','reveal confirmation','full completion','completion restart','new difficulty','all help pages','landscape row windows','landscape restart','landscape help','committed drive route'])
+                              checks=['notes','exact restart','persistent undo','failed-save preservation','explicit retry','optional checking','reveal confirmation','full completion','completion restart','new difficulty','all help pages','landscape full board','landscape restart','landscape help','committed drive route'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:

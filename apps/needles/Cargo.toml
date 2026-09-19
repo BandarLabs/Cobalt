@@ -13,6 +13,7 @@ kobo-read = { path = "../../crates/kobo-read" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]
+kobo-doc = { path = "../../crates/kobo-doc" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]

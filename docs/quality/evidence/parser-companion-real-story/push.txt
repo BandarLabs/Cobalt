@@ -1,0 +1,1 @@
+Parser story ready: zork1 (Z-machine v3, Playable in Parser's text-only v3/v5/v8 interpreter)

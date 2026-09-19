@@ -63,10 +63,19 @@ const FRAME_HEIGHT: u32 = SIMULATED_PANEL.1;
 const CAPTURE_HEADER: &str = "capture-begin";
 const CAPTURE_FOOTER: &str = "capture-end";
 
+/// The screen's content area and page-turn declaration, as the simulator
+/// reports them alongside the layout nodes.
+#[derive(Clone, Copy, Debug)]
+struct Paging {
+    content: (i32, i32, i32, i32),
+    has_next: bool,
+}
+
 /// One node of the layout the renderer produced.
 #[derive(Clone, Debug)]
 pub struct Control {
     pub kind: String,
+    pub rect: (i32, i32, i32, i32),
     pub centre: (i32, i32),
     pub lines: Vec<String>,
     pub action: Option<u32>,
@@ -183,15 +192,9 @@ impl Driver {
         let rest = rest.trim();
         let result = match verb {
             "tap" => self.tap(rest),
-            "tap-id" => {
-                let action = parse_action_id(rest)?;
-                let control = self
-                    .layout()?
-                    .into_iter()
-                    .find(|control| control.action == Some(action))
-                    .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
-                self.touch(control.centre.0, control.centre.1)
-            }
+            "tap-id" => self.tap_action_id(rest),
+            "maybe-tap-id" => self.maybe_tap_id(rest),
+            "tap-paged" => self.tap_paged(rest),
             "tap-at" => {
                 let (x, y) = parse_point(rest)?;
                 self.touch(x, y)
@@ -260,6 +263,8 @@ impl Driver {
             verb,
             "tap"
                 | "tap-id"
+                | "maybe-tap-id"
+                | "tap-paged"
                 | "tap-at"
                 | "type"
                 | "wait-for"
@@ -277,6 +282,88 @@ impl Driver {
             self.clean()?;
         }
         Ok(())
+    }
+
+    /// Taps the control carrying the named action.
+    fn tap_action_id(&mut self, rest: &str) -> Result<(), String> {
+        let action = parse_action_id(rest)?;
+        let control = self
+            .layout()?
+            .into_iter()
+            .find(|control| control.action == Some(action))
+            .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
+        self.touch(control.centre.0, control.centre.1)
+    }
+
+    /// Taps the control carrying `action` when this panel draws it, and
+    /// skips with a note when it does not. A pager that the whole catalogue
+    /// fits on one page never draws is not a failure; the page it would
+    /// have turned to does not exist on this panel.
+    fn maybe_tap_id(&mut self, rest: &str) -> Result<(), String> {
+        let action = parse_action_id(rest)?;
+        if let Some(control) = self
+            .layout()?
+            .into_iter()
+            .find(|control| control.action == Some(action))
+        {
+            return self.touch(control.centre.0, control.centre.1);
+        }
+        println!("maybe-tap-id {rest}: not on this screen, skipping");
+        Ok(())
+    }
+
+    /// Taps the first control saying `label`, turning pages to find it.
+    ///
+    /// Pagination is a function of profile and text scale: a catalogue that
+    /// fits one panel at one size spills onto a second page at a larger
+    /// one, so a route that assumes either layout is wrong on the other.
+    /// This looks for the label, and while it is missing and the screen
+    /// declared page-turn zones, taps the forward zone -- the empty right
+    /// edge of the content, where a reader's thumb goes -- and looks
+    /// again. The bound keeps a genuinely absent label a failure.
+    fn tap_paged(&mut self, label: &str) -> Result<(), String> {
+        const MAX_PAGES: u32 = 8;
+        for page in 0..=MAX_PAGES {
+            if let Some(control) = self.find(label)? {
+                let (x, y) = control.centre;
+                return self.touch(x, y);
+            }
+            if page == MAX_PAGES {
+                break;
+            }
+            let controls = self.layout()?;
+            let paging = self.paging()?;
+            if !paging.has_next {
+                break;
+            }
+            let (x, y) = forward_point(&controls, paging.content)
+                .ok_or("no empty spot in the forward page-turn zone")?;
+            self.touch(x, y)?;
+        }
+        Err(format!(
+            "{label:?} never appeared within {MAX_PAGES} page turns"
+        ))
+    }
+
+    /// The screen's content rectangle and whether it declared page-turn
+    /// zones, from the same layout payload the controls come from. Both
+    /// default to the old payload's absence: no reported area and no zones.
+    fn paging(&self) -> Result<Paging, String> {
+        let body = self.get("/layout")?;
+        let body = String::from_utf8_lossy(&body).into_owned();
+        let number = |key: &str| {
+            i32::try_from(json_number(&body, key).unwrap_or_default()).unwrap_or_default()
+        };
+        let content = (
+            number("\"x\""),
+            number("\"y\""),
+            number("\"width\""),
+            number("\"height\""),
+        );
+        Ok(Paging {
+            content,
+            has_next: body.contains("\"pageTurns\":{"),
+        })
     }
 
     /// Taps the control whose label carries `label`.
@@ -526,6 +613,16 @@ impl Driver {
             .into_iter()
             .map(|node| Control {
                 kind: json_field(&node, "kind").unwrap_or_default(),
+                rect: (
+                    i32::try_from(json_number(&node, "\"x\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"y\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"width\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"height\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                ),
                 centre: json_point(&node, "centre"),
                 lines: json_array(&node, "lines"),
                 action: json_number(&node, "\"action\"")
@@ -1157,6 +1254,29 @@ fn json_number(object: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+/// A spot in the forward page-turn zone -- the right edge of the content,
+/// where a reader's thumb goes -- that no drawn node covers, so the tap
+/// falls through to the zone instead of landing on a control drawn over it.
+/// The candidates favour the far right because a screen that split the
+/// content into turn columns still keeps that edge as the next page.
+fn forward_point(controls: &[Control], content: (i32, i32, i32, i32)) -> Option<(i32, i32)> {
+    let (cx, cy, cw, ch) = content;
+    for across in [90, 80] {
+        for down in [50, 25, 75, 12, 88] {
+            let x = cx + cw * across / 100;
+            let y = cy + ch * down / 100;
+            let covered = controls.iter().any(|control| {
+                let (nx, ny, nw, nh) = control.rect;
+                x >= nx && x < nx + nw && y >= ny && y < ny + nh
+            });
+            if !covered {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
 fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[u8]), String> {
     let header: [u8; 4] = bytes
         .get(..4)
@@ -1322,6 +1442,7 @@ mod tests {
     fn typing_prefers_sdk_keys_over_existing_crossword_letters() {
         let control = |name: &str, label: &str| super::Control {
             kind: "Cell".into(),
+            rect: (0, 0, 0, 0),
             centre: (1, 1),
             lines: vec![label.into()],
             action: Some(super::parse_action_id(name).unwrap()),
@@ -1340,6 +1461,24 @@ mod tests {
             super::keyboard_key(&cells[..1], "n").unwrap().action,
             cells[0].action
         );
+    }
+
+    #[test]
+    fn forward_point_finds_uncovered_spot_in_the_turn_zone() {
+        let control = |x: i32, y: i32, width: i32, height: i32| super::Control {
+            kind: "Button".into(),
+            rect: (x, y, width, height),
+            centre: (x + width / 2, y + height / 2),
+            lines: Vec::new(),
+            action: Some(1),
+        };
+        let content = (0, 0, 600, 800);
+        // A button on the mid-right edge pushes the pick to another row.
+        let point = super::forward_point(&[control(520, 360, 80, 80)], content).unwrap();
+        assert!((point.0 - 540).abs() <= 60 && (point.1 - 400).abs() > 40);
+        // A wall of controls over every candidate leaves no spot at all.
+        let wall = [control(460, 0, 140, 800)];
+        assert_eq!(super::forward_point(&wall, content), None);
     }
 
     #[test]
@@ -1481,6 +1620,7 @@ mod tests {
     fn text_assertions_survive_wrapping_but_do_not_invent_clipped_words() {
         let text = super::Control {
             kind: "Banner".into(),
+            rect: (0, 0, 0, 0),
             centre: (50, 100),
             action: None,
             lines: vec![
@@ -1498,6 +1638,7 @@ mod tests {
     fn back_is_addressable_without_painted_text() {
         let back = super::Control {
             kind: "Back".into(),
+            rect: (0, 0, 0, 0),
             centre: (50, 100),
             lines: vec![],
             action: Some(u32::MAX),
