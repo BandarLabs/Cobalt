@@ -665,10 +665,9 @@ fn remote_directory(host: &str, source: &Path) -> Result<(), String> {
         // The reader's shelf answers flat names of at most 64 characters;
         // photos/<digest>.jpg stages as <digest> and the reader derives
         // the same key from the asset's file stem.
-        let staged = relative
-            .strip_prefix("photos/")
-            .map(|name| name.rsplit_once('.').map_or(name, |(stem, _)| stem))
-            .unwrap_or(relative);
+        let staged = relative.strip_prefix("photos/").map_or(relative, |name| {
+            name.rsplit_once('.').map_or(name, |(stem, _)| stem)
+        });
         let bytes = bounded(&path, MAX_PHOTO, "photo pack file")?;
         let encoded = super::base64_encode(&bytes);
         let digest = kobo_net::sha256::hex_digest(&bytes);
