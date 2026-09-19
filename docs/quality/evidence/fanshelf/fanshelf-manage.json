@@ -38,7 +38,7 @@
   "paints": "12",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.17",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -89,13 +89,13 @@
       "completed": "12",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "4775",
+      "finishedAtMillis": "4164",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "12",
-      "submittedAtMillis": "4763",
+      "submittedAtMillis": "4152",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -208,11 +208,11 @@
     }
   },
   "source": {
-    "binarySha256": "774d5fbc21b07083e39ee704ad828a4380e6e9757ee7c865cbefb03b2bf1c7f3",
+    "binarySha256": "ab3f4509967b557ee34af1366b90a0644d3a53e48d5ab21505db24ae0cb0f84b",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "0ddc34cd3c881b013532eada387bbc042e0bec4a"
+    "revision": "f36f4629534469dd8e2fb444f97cda12982e8407"
   },
   "version": 1
 }
