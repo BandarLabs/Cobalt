@@ -1,18 +1,21 @@
 //! How the CLI talks to the person running it: what their terminal can do,
 //! which stream carries what, and how an exit status is meant to be read.
 //!
-//! Three rules hold for every command, and each one has tests:
+//! Three rules, and where each one stands today:
 //!
-//! * Progress is stderr, results are stdout. A pipe that captures stdout
-//!   holds the answer and nothing else.
-//! * Machine output is versioned. `--json` prints a single JSON object on
-//!   stdout whose `version` field says which shape it is; a consumer that
-//!   does not recognise the version stops instead of guessing.
 //! * Exit status is a category, not a message. `0` is done, [`EXIT_USAGE`]
 //!   is a mistake in how the command was spelled, [`EXIT_TARGET`] is a reader
 //!   or simulator that could not be reached or chosen, [`EXIT_UNSUPPORTED`]
 //!   is something this build or host cannot do, and [`EXIT_FAILURE`] is
-//!   everything else. A script tests the category, never the wording.
+//!   everything else. A script tests the category, never the wording. This
+//!   rule holds for every command.
+//! * Progress is stderr, results are stdout. A pipe that captures stdout
+//!   holds the answer and nothing else. The helpers are here and tested;
+//!   most commands still print their own lines and are being moved over.
+//! * Machine output is versioned. `--json` prints a single JSON object on
+//!   stdout whose `version` field says which shape it is; a consumer that
+//!   does not recognise the version stops instead of guessing. The envelope
+//!   is tested; `devices` is the first command wired through it.
 
 use std::env;
 use std::io::{BufRead, IsTerminal, Write};
@@ -193,9 +196,15 @@ impl Console {
     /// says what to do, not how the plumbing failed.
     #[must_use]
     pub fn details_wanted() -> bool {
+        Self::details_wanted_in(|name| std::env::var(name).ok())
+    }
+
+    /// The same policy with the environment injected, so the policy itself
+    /// is testable.
+    fn details_wanted_in(get: impl Fn(&str) -> Option<String>) -> bool {
         ["KOBO_DEBUG", "KOBO_DETAILS"]
             .iter()
-            .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty() && value != "0"))
+            .any(|name| get(name).is_some_and(|value| !value.is_empty() && value != "0"))
     }
 
     /// An owner-facing message plus its technical detail, when wanted.
@@ -253,27 +262,32 @@ fn wrap_text(text: &str, width: usize) -> String {
 }
 
 fn wrap_line(line: &str, width: usize, out: &mut String) {
-    if line.len() <= width {
+    // Widths count characters, not bytes: a multi-byte character is one
+    // column here, so Japanese deck names and scientific species names do
+    // not wrap two to four columns early per character.
+    if line.chars().count() <= width {
         out.push_str(line);
         return;
     }
     let indent = line.len() - line.trim_start().len();
+    let indent_columns = line[..indent].chars().count();
     let mut column = 0;
     for word in line.split_whitespace() {
+        let word_columns = word.chars().count();
         if column == 0 {
             out.push_str(&line[..indent]);
-            column = indent;
+            column = indent_columns;
             out.push_str(word);
-            column += word.len();
-        } else if column + 1 + word.len() > width {
+            column += word_columns;
+        } else if column + 1 + word_columns > width {
             out.push('\n');
             out.push_str(&line[..indent]);
             out.push_str(word);
-            column = indent + word.len();
+            column = indent_columns + word_columns;
         } else {
             out.push(' ');
             out.push_str(word);
-            column += 1 + word.len();
+            column += 1 + word_columns;
         }
     }
 }
@@ -396,6 +410,34 @@ mod tests {
         assert_eq!(huge.width, MAXIMUM_WIDTH);
         let garbage = Console::from_env(env(&[("COLUMNS", "wide")]), true, true, true);
         assert_eq!(garbage.width, DEFAULT_WIDTH);
+    }
+
+    #[test]
+    fn details_wanted_reads_both_flags_through_the_injected_environment() {
+        assert!(Console::details_wanted_in(
+            |name| (name == "KOBO_DEBUG").then(|| "1".to_owned())
+        ));
+        assert!(Console::details_wanted_in(
+            |name| (name == "KOBO_DETAILS").then(|| "yes".to_owned())
+        ));
+        assert!(!Console::details_wanted_in(
+            |name| (name == "KOBO_DEBUG").then(|| "0".to_owned())
+        ));
+        assert!(!Console::details_wanted_in(|_| None));
+    }
+
+    #[test]
+    fn wrap_measures_columns_in_characters_not_bytes() {
+        let console = Console::from_env(env(&[("COLUMNS", "40")]), true, true, true);
+        // 43 three-byte characters: byte length (129) wraps three times at
+        // this width, characters wrap once.
+        let wrapped = console.wrap(
+            "あいうえおかきくけこさしすせそ たちつてとなにぬねのはひふへほ まみむめもやゆよわをん",
+        );
+        assert_eq!(
+            wrapped,
+            "あいうえおかきくけこさしすせそ たちつてとなにぬねのはひふへほ\nまみむめもやゆよわをん"
+        );
     }
 
     #[test]

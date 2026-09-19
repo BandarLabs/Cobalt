@@ -609,7 +609,9 @@ fn flatten_photos(stage: &Path) -> Result<(), String> {
         }
         let name = entry.file_name();
         let name = name.to_str().ok_or("photo file name is not UTF-8")?;
-        let name = name.strip_suffix(".jpg").unwrap_or(name);
+        // The reader derives the shelf key from the file stem, whatever
+        // extension the photo carries.
+        let name = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
         fs::rename(entry.path(), stage.join(name)).map_err(|error| error.to_string())?;
     }
     fs::remove_dir(&photos).map_err(|error| error.to_string())
@@ -665,7 +667,7 @@ fn remote_directory(host: &str, source: &Path) -> Result<(), String> {
         // the same key from the asset's file stem.
         let staged = relative
             .strip_prefix("photos/")
-            .and_then(|name| name.strip_suffix(".jpg"))
+            .map(|name| name.rsplit_once('.').map_or(name, |(stem, _)| stem))
             .unwrap_or(relative);
         let bytes = bounded(&path, MAX_PHOTO, "photo pack file")?;
         let encoded = super::base64_encode(&bytes);

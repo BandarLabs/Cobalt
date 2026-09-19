@@ -333,12 +333,12 @@ jobs:
           - platform: linux-x86_64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
-            helper-target: x86_64-unknown-linux-gnu
+            helper-target: x86_64-unknown-linux-musl
             cc: musl-gcc
           - platform: linux-arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-musl
-            helper-target: aarch64-unknown-linux-gnu
+            helper-target: aarch64-unknown-linux-musl
             cc: musl-gcc
     runs-on: ${{ matrix.runner }}
     steps:
@@ -377,6 +377,13 @@ jobs:
           cp "target/${{ matrix.target }}/release/kobo" host/kobo
           cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
             host/flashcards-import
+      - name: Smoke the staged binaries
+        # A file that exists is not a binary that runs: link errors show up
+        # here, on CI, instead of on an owner's machine.
+        run: |
+          file host/kobo host/flashcards-import
+          host/kobo --version
+          host/flashcards-import --version
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: host-${{ matrix.platform }}
