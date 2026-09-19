@@ -1181,7 +1181,7 @@ mod tests {
         // When it lands, the web address has no bytes on the shelf: it is
         // passed over and keeps its caption, and the queue drains.
         let bytes = b"not really a png".to_vec();
-        let size = bytes.len() as u32;
+        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
         app.on_store(
             &mut context,
             StoreResult::ShelfRead {
