@@ -1,0 +1,12 @@
+Kobo app simulator: http://127.0.0.1:34933
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/welcome.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/preview.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/setup.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/trust.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/start.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/pairing.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/address-error.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/code.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/code-error.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots/code-preserved.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa01/paperterm/libra-h2o-384-large/paperterm-shots
