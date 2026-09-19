@@ -159,6 +159,19 @@ impl Machine {
         &self.status
     }
 
+    /// Whether the story's dictionary knows a word. Suggestions the app
+    /// offers are filtered through this so a tap never meets "The story does
+    /// not know that word."
+    #[must_use]
+    pub fn knows_word(&self, word: &str) -> bool {
+        let Ok(dictionary) = self.header_word(8) else {
+            return false;
+        };
+        let encoded = encode_dictionary_word(word.as_bytes(), self.info.version);
+        self.dictionary_lookup(usize::from(dictionary), &encoded)
+            .is_ok_and(|address| address != 0)
+    }
+
     pub fn take_output(&mut self) -> String {
         std::mem::take(&mut self.output)
     }

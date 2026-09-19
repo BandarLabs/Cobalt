@@ -189,20 +189,7 @@ impl Parser {
             }
             None => "Parser".to_owned(),
         };
-        let commands = [
-            ("look", "LOOK"),
-            ("inventory", "INVENTORY"),
-            ("examine", "EXAMINE"),
-            ("take", "TAKE"),
-            ("north", "N"),
-            ("south", "S"),
-            ("east", "E"),
-            ("west", "W"),
-            ("undo", "UNDO"),
-            ("save", "SAVE"),
-            ("restore", "RESTORE"),
-            ("again", "AGAIN"),
-        ];
+        let commands = palette(self.machine.as_ref());
         let mut builder = ScreenBuilder::new("parser-play")
             .top_bar(status)
             .top_bar_glyph("library", "Library", Glyph::Book)
@@ -230,7 +217,13 @@ impl Parser {
         builder = if self.keyboard_open {
             builder.keyboard(&self.keyboard, "Run")
         } else {
-            builder.grid(4, false, commands)
+            builder.grid(
+                4,
+                false,
+                commands
+                    .iter()
+                    .map(|&(name, label)| (name.to_owned(), label.to_owned())),
+            )
         };
         builder = builder.page_turns("page-back", "page-next").page_position(
             u16::try_from(page).unwrap_or(u16::MAX),
@@ -749,18 +742,7 @@ impl KoboApp for Parser {
             self.show(context);
             return;
         }
-        for (name, command) in [
-            ("look", "look"),
-            ("inventory", "inventory"),
-            ("examine", "examine "),
-            ("take", "take "),
-            ("north", "north"),
-            ("south", "south"),
-            ("east", "east"),
-            ("west", "west"),
-            ("undo", "undo"),
-            ("again", "again"),
-        ] {
+        for &(_, name, _, command) in CHIPS {
             if action == action_id(name) {
                 if command.ends_with(' ') {
                     self.keyboard = Keyboard::with_text(command);
@@ -946,6 +928,44 @@ fn save_name(info: &StoryInfo, slot: &str) -> String {
     format!("{SAVE_PREFIX}{id}-{slot}")
 }
 
+/// The chip table every suggestion comes from: a dictionary word to probe,
+/// the action id the chip fires, its label, and the command a tap sends.
+/// Verbs first, then directions, then meta; the save/restore slot screens
+/// are app-owned and always offered.
+const CHIPS: &[(&str, &str, &str, &str)] = &[
+    ("look", "look", "LOOK", "look"),
+    ("inventory", "inventory", "INVENTORY", "inventory"),
+    ("examine", "examine", "EXAMINE", "examine "),
+    ("take", "take", "TAKE", "take "),
+    ("north", "north", "N", "north"),
+    ("south", "south", "S", "south"),
+    ("east", "east", "E", "east"),
+    ("west", "west", "W", "west"),
+    ("up", "up", "UP", "up"),
+    ("down", "down", "DOWN", "down"),
+    ("drop", "drop", "DROP", "drop"),
+    ("open", "open", "OPEN", "open"),
+    ("read", "read", "READ", "read"),
+    ("light", "light", "LIGHT", "light"),
+    ("undo", "undo", "UNDO", "undo"),
+    ("again", "again", "AGAIN", "again"),
+];
+
+/// Commands the story actually understands, in a stable order, plus the
+/// app-owned save/restore screens. A story that never mentions a verb or a
+/// direction never offers it, so a tap can never answer "The story does not
+/// know that word."
+fn palette(machine: Option<&Machine>) -> Vec<(&'static str, &'static str)> {
+    let mut commands: Vec<(&'static str, &'static str)> = CHIPS
+        .iter()
+        .filter(|(probe, _, _, _)| machine.is_some_and(|machine| machine.knows_word(probe)))
+        .map(|(_, name, label, _)| (*name, *label))
+        .collect();
+    commands.push(("save", "SAVE"));
+    commands.push(("restore", "RESTORE"));
+    commands
+}
+
 fn display_name(name: &str) -> String {
     let bare = name.trim_start_matches(STORY_PREFIX);
     let bare = bare
@@ -1000,6 +1020,7 @@ mod tests {
 
     #[test]
     fn transcript_pagination_is_measured_utf8_safe_and_preserves_all_text() {
+        install_real_face();
         let text = format!("{}\n\n{}", "word ".repeat(600), "café ".repeat(600));
         let mut parser = Parser {
             transcript: text.clone(),
@@ -1022,6 +1043,7 @@ mod tests {
 
     #[test]
     fn new_output_lands_on_output_not_a_stranded_prompt() {
+        install_real_face();
         let probe = Parser::default();
         let mut words = 1usize;
         while probe.play_page_fits(&"word ".repeat(words + 1), CLARA_BW_METRICS) {
@@ -1042,6 +1064,56 @@ mod tests {
         assert_eq!(landing, parser.pages.len() - 2);
         let (start, end) = parser.pages[landing];
         assert_ne!(text[start..end].trim(), ">");
+    }
+
+    #[test]
+    fn palette_only_offers_words_the_story_knows() {
+        let machine =
+            Machine::new(crate::story::build_first_light(), "first-light.z3").expect("story opens");
+        let labels: Vec<&str> = palette(Some(&machine))
+            .into_iter()
+            .map(|(_, label)| label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "LOOK",
+                "INVENTORY",
+                "EXAMINE",
+                "TAKE",
+                "N",
+                "S",
+                "DROP",
+                "READ",
+                "LIGHT",
+                "SAVE",
+                "RESTORE"
+            ]
+        );
+    }
+
+    #[test]
+    fn palette_follows_the_zork_dictionary() {
+        let machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        let names: Vec<&str> = palette(Some(&machine))
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        for expected in [
+            "look",
+            "inventory",
+            "examine",
+            "take",
+            "north",
+            "south",
+            "east",
+            "west",
+            "save",
+            "restore",
+        ] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
+        assert_eq!(names.last(), Some(&"restore"));
     }
 
     #[test]

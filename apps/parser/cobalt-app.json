@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.7",
-  "release_notes": "Tiles and the reading screen title-case story names. The bundled tutorial now seeds - its shelf key had uppercase letters the store rejects. Finishing a story marks the transcript ended.",
+  "version": "0.1.8",
+  "release_notes": "The command palette now only suggests verbs, directions and meta commands the loaded story actually knows, so a tap never meets \"The story does not know that word.\"",
   "glyph": "book",
   "capabilities": []
 }
