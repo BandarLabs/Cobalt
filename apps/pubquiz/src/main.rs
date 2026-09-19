@@ -14,6 +14,7 @@ use std::process::ExitCode;
 
 const STATE: &str = "pubquiz-state";
 const PACK: &str = "pubquiz-pack-v1";
+const SCORECARD: &str = "pubquiz-scorecard.csv";
 const LICENSE: &str = "pubquiz-content-license";
 const LICENSE_TEXT: &str = "Questions: Open Trivia DB (opentdb.com), CC-BY-SA 4.0. Cached question content remains under CC-BY-SA 4.0.";
 const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
@@ -159,6 +160,7 @@ fn bundled_questions() -> Vec<Question> {
     ]
     .into()
 }
+#[allow(clippy::struct_excessive_bools)]
 struct Quiz {
     view: View,
     party: bool,
@@ -175,6 +177,7 @@ struct Quiz {
     rounds: u16,
     questions: Vec<Question>,
     round_questions: Vec<Question>,
+    scorecard_saved: bool,
     pack_origin: Option<String>,
     pack_updated_min: Option<i64>,
     setup_party: bool,
@@ -203,6 +206,7 @@ impl Default for Quiz {
             rounds: 0,
             questions: bundled_questions(),
             round_questions: bundled_questions(),
+            scorecard_saved: false,
             pack_origin: None,
             pack_updated_min: None,
             setup_party: true,
@@ -229,6 +233,20 @@ impl Quiz {
         } else {
             "You"
         }
+    }
+    fn scorecard_csv(&self) -> String {
+        let players = if self.party { self.players } else { 1 };
+        let mut csv = "round,player,points\n".to_string();
+        for index in 0..players {
+            let _ = writeln!(
+                csv,
+                "{},{},{}",
+                self.rounds,
+                self.name_for(index),
+                self.scores[index]
+            );
+        }
+        csv
     }
     fn state_line(&self) -> String {
         format!(
@@ -323,6 +341,7 @@ impl Quiz {
             return;
         }
         self.party = party;
+        self.scorecard_saved = false;
         self.view = View::Question;
         self.question = 0;
         self.player = 0;
@@ -501,6 +520,14 @@ fn now_minutes() -> Option<i64> {
         .now()
         .ok()
         .map(|snapshot| i64::try_from(snapshot.unix_millis / 60_000).unwrap_or(i64::MAX))
+}
+
+fn points_label(points: u8) -> String {
+    if points == 1 {
+        "1 point".to_owned()
+    } else {
+        format!("{points} points")
+    }
 }
 
 fn age_label(seconds: i64) -> String {
@@ -803,8 +830,8 @@ fn reveal_screen(quiz: &Quiz, question: &Question) -> Screen {
             builder = builder.text("No points yet.");
         }
     } else {
-        builder = builder
-            .facts((0..players).map(|i| (quiz.name_for(i), format!("{} points", quiz.scores[i]))));
+        builder =
+            builder.facts((0..players).map(|i| (quiz.name_for(i), points_label(quiz.scores[i]))));
     }
     builder
         .primary_button(
@@ -884,11 +911,19 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                     (
                         format!("player-{i}"),
                         quiz.name_for(i),
-                        format!("{} points", quiz.scores[i]),
+                        points_label(quiz.scores[i]),
                         Glyph::Person,
                     )
                 }))
                 .primary_button("home", "Finish round")
+                .button(
+                    "save-scorecard",
+                    if quiz.scorecard_saved {
+                        "Saved to reader"
+                    } else {
+                        "Save scorecard"
+                    },
+                )
                 .build()
         }
         View::HowTo => ScreenBuilder::new("pubquiz-help")
@@ -1046,6 +1081,11 @@ impl KoboApp for Quiz {
             self.view = View::Setup;
         } else if action == action_id("sync") && self.view == View::Home {
             self.sync(context);
+        } else if action == action_id("save-scorecard") && self.view == View::Podium {
+            context
+                .store()
+                .save(SCORECARD, self.scorecard_csv().into_bytes());
+            self.scorecard_saved = true;
         } else if action == action_id("about") {
             self.view = View::About;
         } else if action == action_id("how-to-play") {
@@ -1396,6 +1436,58 @@ mod tests {
         full.answer = Some(first.correct);
         let shown = format!("{:?}", reveal_screen(&full, &first));
         assert!(shown.contains("Next question"));
+    }
+
+    #[test]
+    fn scorecard_csv_lists_the_round_and_scores() {
+        let mut quiz = Quiz {
+            party: true,
+            players: 2,
+            rounds: 3,
+            ..Quiz::default()
+        };
+        quiz.scores = [7, 5, 0, 0];
+        let csv = quiz.scorecard_csv();
+        assert!(csv.starts_with("round,player,points\n"));
+        assert!(csv.contains("3,Ada,7\n"));
+        assert!(csv.contains("3,Bert,5\n"));
+        assert!(!csv.contains("Cleo"));
+
+        let solo = Quiz {
+            party: false,
+            rounds: 1,
+            ..Quiz::default()
+        };
+        assert!(solo.scorecard_csv().contains("1,You,0\n"));
+    }
+
+    #[test]
+    fn the_podium_offers_a_scorecard_once() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("party"));
+        runner.action(action_id("continue-setup"));
+        runner.action(action_id("start"));
+        runner.app_mut().question = runner.app().round_questions.len() - 1;
+        let correct = runner.app().round_questions[runner.app().question].correct;
+        runner.action(action_id(&choice(correct)));
+        runner.action(action_id("reveal"));
+        runner.action(action_id("continue"));
+        assert_eq!(runner.app().view, View::Podium);
+        let shown = format!("{:?}", screen(runner.app()));
+        assert!(shown.contains("Save scorecard"));
+        runner.action(action_id("save-scorecard"));
+        assert!(runner.app().scorecard_saved);
+        let shown = format!("{:?}", screen(runner.app()));
+        assert!(shown.contains("Saved to reader"));
+    }
+
+    #[test]
+    fn points_are_pluralized() {
+        assert_eq!(points_label(0), "0 points");
+        assert_eq!(points_label(1), "1 point");
+        assert_eq!(points_label(7), "7 points");
     }
 
     #[test]
