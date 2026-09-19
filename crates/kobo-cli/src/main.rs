@@ -553,14 +553,12 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
     }
     let candidates = detect::candidates(path);
     let chosen = match detect::choose(&candidates, options.app.as_deref()) {
-        Ok(app) => app.to_owned(),
-        Err(error) if error.starts_with("several companions") => {
-            match pick_companion(&candidates, &error)? {
-                Some(chosen) => chosen,
-                None => return Ok(()),
-            }
-        }
-        Err(error) => return Err(error),
+        Ok(companion) => companion,
+        Err(detect::ChooseError::Ambiguous(offered)) => match pick_companion(&offered)? {
+            Some(companion) => companion,
+            None => return Ok(()),
+        },
+        Err(detect::ChooseError::Message(error)) => return Err(error),
     };
 
     // Preview is local by definition: it renders or checks for the owner's
@@ -572,7 +570,7 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
             ));
         }
         return send_preview(
-            &chosen,
+            chosen,
             &file,
             options.out.as_deref(),
             options.profile.as_deref(),
@@ -582,12 +580,21 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         return Err(console::usage("--out and --profile belong to --preview"));
     }
 
-    let target_label = match target.resolve()? {
+    let resolved = target.resolve()?;
+    // A receipt belongs to a reader, not to one spelling of it: a nickname
+    // and its address are the same device, and the serial outlives a new
+    // DHCP lease. Fall back to the address only when no serial answers.
+    let target_label = match &resolved {
         targets::Target::Simulator => "sim".to_owned(),
-        targets::Target::Address(host) => host,
-        targets::Target::Nickname(name) => name,
+        targets::Target::Address(host) => {
+            targets::probe_serial(host).unwrap_or_else(|| host.clone())
+        }
+        targets::Target::Nickname(name) => {
+            let host = targets::resolve_nickname(name)?;
+            targets::probe_serial(&host).unwrap_or(host)
+        }
     };
-    let device_flags = match target.resolve()? {
+    let device_flags = match resolved {
         targets::Target::Simulator => vec!["--sim".to_owned()],
         targets::Target::Address(host) => vec!["--device".to_owned(), host],
         targets::Target::Nickname(name) => {
@@ -597,12 +604,12 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
 
     // Preparing is real work: hashing the content is what makes "already
     // sent" mean the same bytes, and it is what a resumed send compares.
-    console::Console::progress(&format!("preparing {file} for {chosen}"));
+    console::Console::progress(&format!("preparing {file} for {}", chosen.name()));
     let sha = receipts::hash_file(path)?;
     let receipts_path = receipts::receipts_path();
     let mut ledger = receipts::Receipts::load(&receipts_path)?;
-    if chosen != "flashcards" {
-        if let Some(receipt) = ledger.find(&chosen, &target_label, &sha) {
+    if chosen != detect::Companion::Flashcards {
+        if let Some(receipt) = ledger.find(chosen.name(), &target_label, &sha) {
             println!(
                 "{file} is unchanged since it was sent to {target_label} (receipt at {}); nothing to do",
                 receipt.at
@@ -612,7 +619,7 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
     }
 
     send_dispatch(
-        &chosen,
+        chosen,
         &file,
         &device_flags,
         &target_label,
@@ -630,7 +637,7 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
 /// duplicate.
 #[allow(clippy::too_many_arguments)]
 fn send_dispatch(
-    chosen: &str,
+    chosen: detect::Companion,
     file: &str,
     device_flags: &[String],
     target_label: &str,
@@ -642,7 +649,7 @@ fn send_dispatch(
     let pending_path = receipts::pending_path();
     let pending = receipts::Pending {
         file: file.to_owned(),
-        app: Some(chosen.to_owned()),
+        app: Some(chosen.name().to_owned()),
         target: target_words.to_owned(),
     };
     if let Err(error) = pending.save(&pending_path) {
@@ -651,11 +658,12 @@ fn send_dispatch(
     let mut forwarded = vec!["push".to_owned(), file.to_owned()];
     forwarded.extend(device_flags.iter().cloned());
     let sent = match chosen {
-        "frame" => frame::command(&forwarded),
-        "feeds" => feeds::command(&forwarded),
-        "panels" => panels::command(&forwarded),
-        "parser" => parser_command(&forwarded),
-        "flashcards" => {
+        detect::Companion::Frame => frame::command(&forwarded),
+        detect::Companion::Feeds => feeds::command(&forwarded),
+        detect::Companion::Panels => panels::command(&forwarded),
+        detect::Companion::Parser => parser_command(&forwarded),
+        detect::Companion::Needles => needles::command(&forwarded),
+        detect::Companion::Flashcards => {
             // Decks are a two-step import, not a push: the helper merges into
             // a collection, and staging needs a mounted reader. Say so with
             // the real commands rather than pretending a push happened.
@@ -665,18 +673,27 @@ fn send_dispatch(
             receipts::Pending::clear(&pending_path);
             return Ok(());
         }
-        _ => unreachable!("choose returns only detected companions"),
+        detect::Companion::Fanshelf => {
+            // Fanshelf downloads the works on its shelf itself, from the
+            // reader; there is no host-side shelf push to forward to. Say so
+            // rather than pretending a push happened.
+            println!(
+                "{file} is an EPUB book. Fanshelf shelves works it downloads itself: add the work from the app on the reader."
+            );
+            receipts::Pending::clear(&pending_path);
+            return Ok(());
+        }
     };
     if let Err(error) = sent {
         return Err(console::Console::with_details(
             format!("{error}\nThe selection is kept; retry with: kobo send --retry"),
-            &format!("forwarded: kobo {} {}", chosen, forwarded.join(" ")),
+            &format!("forwarded: kobo {} {}", chosen.name(), forwarded.join(" ")),
         ));
     }
     receipts::Pending::clear(&pending_path);
     ledger.record(receipts::Receipt {
         file: file.to_owned(),
-        app: chosen.to_owned(),
+        app: chosen.name().to_owned(),
         target: target_label.to_owned(),
         sha256: sha,
         at: steps::now(),
@@ -824,14 +841,18 @@ impl SendOptions {
 
 /// Asks which companion an ambiguous container goes to. A pipe cannot ask,
 /// so it gets a usage error naming `--app`; a blank answer cancels.
-fn pick_companion(candidates: &[&'static str], error: &str) -> Result<Option<String>, String> {
+fn pick_companion(candidates: &[detect::Companion]) -> Result<Option<detect::Companion>, String> {
+    let names: Vec<String> = candidates
+        .iter()
+        .map(|companion| companion.name().to_owned())
+        .collect();
     if !std::io::stdin().is_terminal() {
         return Err(console::usage(format!(
-            "{error} - name one with --app ({})",
-            candidates.join("|")
+            "several companions could take it: {} - name one with --app ({})",
+            names.join(", "),
+            names.join("|")
         )));
     }
-    let names: Vec<String> = candidates.iter().map(|name| (*name).to_owned()).collect();
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut output = std::io::stdout();
@@ -841,20 +862,22 @@ fn pick_companion(candidates: &[&'static str], error: &str) -> Result<Option<Str
         &names,
         "Send it to which companion (blank cancels): ",
     )?
-    .map(|index| names[index].clone()))
+    .map(|index| candidates[index]))
 }
 
 /// The local half of send: render or check the content, transfer nothing.
 fn send_preview(
-    app: &str,
+    app: detect::Companion,
     file: &str,
     out: Option<&str>,
     profile: Option<&str>,
 ) -> Result<(), String> {
+    let app_name = app.name();
     match app {
-        "frame" | "panels" => {
-            let out = out
-                .ok_or_else(|| console::usage(format!("a {app} preview needs --out DIRECTORY")))?;
+        detect::Companion::Frame | detect::Companion::Panels => {
+            let out = out.ok_or_else(|| {
+                console::usage(format!("a {app_name} preview needs --out DIRECTORY"))
+            })?;
             // frame_preview owns its verb already (frame strips it); panels
             // dispatches its own, so each gets the argv shape it expects.
             let mut forwarded = vec![file.to_owned(), "--out".to_owned(), out.to_owned()];
@@ -862,22 +885,38 @@ fn send_preview(
                 forwarded.push("--profile".to_owned());
                 forwarded.push(profile.to_owned());
             }
-            if app == "frame" {
+            if app == detect::Companion::Frame {
                 frame_preview::command(&forwarded)
             } else {
                 forwarded.insert(0, "preview".to_owned());
                 panels::command(&forwarded)
             }
         }
-        "feeds" => feeds::command(&["check".to_owned(), file.to_owned()]),
-        "parser" => parser_command(&["inspect".to_owned(), file.to_owned()]),
-        "flashcards" => {
+        detect::Companion::Feeds => feeds::command(&["check".to_owned(), file.to_owned()]),
+        detect::Companion::Parser => parser_command(&["inspect".to_owned(), file.to_owned()]),
+        detect::Companion::Needles => {
+            let out = out.ok_or_else(|| {
+                console::usage(format!("a {app_name} preview needs --out DIRECTORY"))
+            })?;
+            needles::command(&[
+                "preview".to_owned(),
+                file.to_owned(),
+                "--out".to_owned(),
+                out.to_owned(),
+            ])
+        }
+        detect::Companion::Flashcards => {
             println!(
                 "{file} is a study deck. Preview the collection it merges into:\n  kobo flashcards preview COLLECTION.cobfc --out PREVIEW.html"
             );
             Ok(())
         }
-        _ => unreachable!("choose returns only detected companions"),
+        detect::Companion::Fanshelf => {
+            println!(
+                "{file} is an EPUB book. Fanshelf shelves works it downloads itself: add the work from the app on the reader."
+            );
+            Ok(())
+        }
     }
 }
 

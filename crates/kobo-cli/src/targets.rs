@@ -106,7 +106,7 @@ pub fn resolve_nickname(name: &str) -> Result<String, String> {
 }
 
 /// The serial answering at one address, when a Kobo answers at all.
-fn probe_serial(address: &str) -> Option<String> {
+pub(crate) fn probe_serial(address: &str) -> Option<String> {
     crate::identify_device(address)
         .filter(crate::connect::Identity::is_kobo)
         .map(|identity| identity.serial)

@@ -26,19 +26,32 @@ pub fn atomically(destination: &Path, bytes: &[u8], what: &str) -> Result<(), St
         .write(true)
         .create_new(true)
         .open(&partial)
-        .map_err(|error| format!("prepare {what} (existing content unchanged): {error}"))?;
-    let result = file
-        .write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| {
-            drop(file);
-            fs::rename(&partial, destination)
-        });
-    if let Err(error) = result {
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!(
+                    "prepare {what} (existing content unchanged): {} is left over from an interrupted write; check it, then delete it to publish again",
+                    partial.display()
+                )
+            } else {
+                format!("prepare {what} (existing content unchanged): {error}")
+            }
+        })?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = written.and_then(|()| fs::rename(&partial, destination)) {
         let _ = fs::remove_file(&partial);
         return Err(format!(
             "could not publish {what}; previous content unchanged: {error}"
         ));
+    }
+    // The rename itself sits in the parent directory's metadata: sync it
+    // too, or a power loss right here can bring the old name back.
+    if let Some(parent) = destination.parent() {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                format!("published {what}, but the rename may not survive a power loss: {error}")
+            })?;
     }
     Ok(())
 }

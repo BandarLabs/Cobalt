@@ -133,13 +133,21 @@ fn converter_command(arguments: &[String]) -> Result<(), String> {
 }
 
 fn converter_status() -> Result<(), String> {
-    let output = Command::new("pdftotext").arg("-v").output().map_err(|_| {
-        "Needles PDF support is not installed. Run `kobo needles converter install`, or use a Markdown/text pattern now.".to_owned()
-    })?;
-    if !output.status.success() {
-        return Err("Poppler pdftotext is installed but did not run successfully".to_owned());
+    // A status query that determined the status succeeded: the answer goes
+    // to stdout and the exit code stays 0, whatever the answer is.
+    match Command::new("pdftotext").arg("-v").output() {
+        Ok(output) if output.status.success() => {
+            println!("PDF converter ready: Poppler pdftotext");
+        }
+        Ok(_) => {
+            return Err("Poppler pdftotext is installed but did not run successfully".to_owned());
+        }
+        Err(_) => {
+            println!(
+                "Needles PDF support is not installed. Run `kobo needles converter install`, or use a Markdown/text pattern now."
+            );
+        }
     }
-    println!("PDF converter ready: Poppler pdftotext");
     Ok(())
 }
 
