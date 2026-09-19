@@ -151,9 +151,11 @@ impl Needles {
             .map_or("Row counter", |pattern| pattern.title.as_str());
         screen
             .section(selected)
+            // The row count is the thing a knitter glances at between
+            // stitches, so it is the heading rather than one fact among four.
+            .heading(format!("Row {}", counter.row))
             .facts([
                 ("Section", SECTIONS[self.section].to_owned()),
-                ("Row", counter.row.to_string()),
                 (
                     "Repeat",
                     if counter.repeat == 0 {
@@ -164,14 +166,28 @@ impl Needles {
                 ),
                 ("Stand", "Screen stays awake while counting".to_owned()),
             ])
+            // Where in the repeat the row sits, drawn rather than only said.
+            .progress(if counter.repeat == 0 {
+                0
+            } else {
+                #[allow(clippy::integer_division)]
+                (u32::from(counter.repeat) * 100 / u32::from(counter.repeat_total))
+                    .min(100)
+                    .try_into()
+                    .unwrap_or(100)
+            })
             .text("Counters and synced pattern text stay available offline.")
-            .primary_button("plus", "+1 row")
-            .buttons([("undo", "Undo −1 row"), ("section", "Change section")])
+            // Undo sits beside the increment it reverses: a miscount is fixed
+            // with a tap next to the tap that made it, not one a screen away.
+            .buttons([("plus", "+1 row"), ("undo", "Undo")])
             .buttons([
+                ("section", "Change section"),
                 ("repeat-total", "Repeat length"),
-                ("read", "Read synced pattern"),
             ])
-            .button("library", "Library, queue and favorites")
+            .buttons([
+                ("read", "Read synced pattern"),
+                ("library", "Library, queue and favorites"),
+            ])
             .build()
     }
 
@@ -734,6 +750,53 @@ mod tests {
         assert_eq!(patterns.iter().filter_map(pattern_from).count(), 2);
         assert_eq!(hex("Warm sweater"), "5761726d2073776561746572");
         assert_eq!(SECTIONS, ["Body", "Sleeve", "Finishing"]);
+    }
+
+    #[test]
+    fn undo_sits_beside_the_increment_it_reverses() {
+        let app = Needles::default();
+        let layout = app
+            .project()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let plus = layout
+            .rect_of_action(action_id("plus"))
+            .expect("increment target");
+        let undo = layout
+            .rect_of_action(action_id("undo"))
+            .expect("undo target");
+        assert_eq!(
+            plus.y, undo.y,
+            "undo is not beside the increment: {plus:?} vs {undo:?}"
+        );
+    }
+
+    #[test]
+    fn the_row_count_is_the_biggest_thing_on_the_screen() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        for _ in 0..7 {
+            app.on_action(&mut context, action_id("plus"));
+        }
+        let drawn = format!("{:?}", app.project());
+        assert!(
+            drawn.contains("Heading") && drawn.contains("Row 7"),
+            "the row count is not the heading: {drawn}"
+        );
+    }
+
+    #[test]
+    fn the_repeat_progress_is_drawn_not_only_said() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        // Six rows into a twelve-row repeat is half way.
+        for _ in 0..6 {
+            app.on_action(&mut context, action_id("plus"));
+        }
+        let drawn = format!("{:?}", app.project());
+        assert!(
+            drawn.contains("Progress") && drawn.contains("50"),
+            "the repeat progress is not drawn: {drawn}"
+        );
     }
 
     #[test]
