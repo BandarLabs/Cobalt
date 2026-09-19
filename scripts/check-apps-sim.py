@@ -45,6 +45,7 @@ def seed(app, state, kobo, env, log):
         shelf = Path(state) / 'cobalt-sim-data' / 'needles'
         shelf.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'apps/needles/fixtures/pattern.md', shelf / 'pattern.md')
+        shutil.copyfile(ROOT / 'apps/needles/fixtures/chart-main.png', shelf / 'chart-main.png')
     elif app == 'birds':
         shelf = Path(state) / 'cobalt-sim-data' / 'birds'
         shelf.mkdir(parents=True, exist_ok=True)

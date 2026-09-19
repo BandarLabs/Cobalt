@@ -5,11 +5,11 @@ use kobo_bookview::{BookView, Step};
 use kobo_json::Value;
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp, RowLead,
-    Screen, ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, Task, TaskError, TaskId,
-    TaskOutcome,
+    action_id, is_valid_key, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp,
+    RowLead, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, Task, TaskError,
+    TaskId, TaskOutcome,
 };
-use std::{process::ExitCode, time::Duration};
+use std::{collections::VecDeque, process::ExitCode, time::Duration};
 
 const STATE: &str = "counter-state-v1";
 const PATTERN_BLOB: &str = "pattern.md";
@@ -172,6 +172,11 @@ struct Needles {
     notice: Option<String>,
     task: Option<(TaskId, Collection)>,
     loading: Option<ShelfDownload>,
+    /// The charts the open pattern refers to, waiting their turn to be read
+    /// off the shelf.
+    charts: VecDeque<String>,
+    /// The chart being read off the shelf, and its transfer.
+    chart: Option<(String, ShelfDownload)>,
     book: BookView,
 }
 
@@ -477,10 +482,31 @@ impl Needles {
         if self.loading.is_some() {
             return;
         }
+        self.charts.clear();
+        self.chart = None;
         let mut loading = ShelfDownload::new(PATTERN_BLOB).at_most(MAX_PATTERN);
         loading.start(context);
         self.loading = Some(loading);
         self.notice = Some("Opening the pattern transferred from your computer.".to_owned());
+    }
+
+    /// Reads the pattern's charts off the shelf one at a time. A chart only
+    /// has bytes to read when the transfer brought them across under the same
+    /// name, so anything that is not a shelf name -- a link out to the web --
+    /// keeps its caption and no frame.
+    fn load_next_chart(&mut self, context: &mut Context) {
+        while let Some(name) = self.charts.pop_front() {
+            if !is_valid_key(&name) {
+                continue;
+            }
+            let mut download =
+                ShelfDownload::new(&name).at_most(kobo_bookview::MAX_PICTURE_BYTES as usize);
+            download.start(context);
+            self.chart = Some((name, download));
+            return;
+        }
+        self.chart = None;
+        self.book.settle_pictures(context);
     }
 
     fn restore(&mut self, bytes: &[u8]) {
@@ -616,6 +642,8 @@ impl Default for Needles {
             notice: None,
             task: None,
             loading: None,
+            charts: VecDeque::new(),
+            chart: None,
             book: BookView::new(),
         }
     }
@@ -799,6 +827,8 @@ impl KoboApp for Needles {
                                 self.projects[counting].adopt_sections(sections);
                             }
                             self.save(context);
+                            self.charts = self.book.missing_pictures().into_iter().collect();
+                            self.load_next_chart(context);
                             self.route = Route::Reading;
                             self.notice = None;
                         }
@@ -820,6 +850,26 @@ impl KoboApp for Needles {
                 ShelfProgress::Elsewhere | ShelfProgress::Moving { .. } => {}
             }
         }
+
+        if let Some((_, download)) = &mut self.chart {
+            match download.advance(context, &result) {
+                ShelfProgress::Done => {
+                    let Some((name, download)) = self.chart.take() else {
+                        self.show(context);
+                        return;
+                    };
+                    self.book.provide_picture(&name, download.take());
+                    self.load_next_chart(context);
+                }
+                // A chart that never made it across keeps its caption rather
+                // than holding the page up.
+                ShelfProgress::Failed(_) => {
+                    self.chart = None;
+                    self.load_next_chart(context);
+                }
+                ShelfProgress::Elsewhere | ShelfProgress::Moving { .. } => {}
+            }
+        }
         self.show(context);
     }
 
@@ -828,6 +878,8 @@ impl KoboApp for Needles {
             if let Some(outcome) = self.book.act(context, action) {
                 if matches!(outcome, Outcome::Close) {
                     self.book.close(context);
+                    self.charts.clear();
+                    self.chart = None;
                     self.route = Route::Project;
                     context.device().allow_sleep();
                 }
@@ -1107,6 +1159,40 @@ mod tests {
             parse_pattern(b"# Just a title\n\nPlain rows.\n").1,
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn a_patterns_charts_come_off_the_shelf_by_name() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        let document = kobo_doc::markdown::parse(
+            "# Winter socks\n\n![Main chart](chart-main.png)\n\n![Web chart](https://shared.example/chart.png)\n",
+        );
+        app.book
+            .open(&mut context, document, kobo_read::Memory::default());
+        app.charts = app.book.missing_pictures().into_iter().collect();
+        app.load_next_chart(&mut context);
+        // The shelf-named chart starts its transfer; the web address waits
+        // its turn.
+        let Some((name, _)) = &app.chart else {
+            panic!("the named chart is being read");
+        };
+        assert_eq!(name, "chart-main.png");
+        // When it lands, the web address has no bytes on the shelf: it is
+        // passed over and keeps its caption, and the queue drains.
+        let bytes = b"not really a png".to_vec();
+        let size = bytes.len() as u32;
+        app.on_store(
+            &mut context,
+            StoreResult::ShelfRead {
+                name: "chart-main.png".to_owned(),
+                offset: 0,
+                bytes,
+                size,
+            },
+        );
+        assert!(app.chart.is_none());
+        assert!(app.charts.is_empty());
     }
 
     #[test]

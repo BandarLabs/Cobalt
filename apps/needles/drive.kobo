@@ -23,7 +23,9 @@ tap-id project-0
 expect Row 0
 expect Sleeve
 tap Read synced pattern
-wait 800
+wait 1500
+clean
+shot reading-chart
 tap Back
 expect Winter socks
 expect Cuff

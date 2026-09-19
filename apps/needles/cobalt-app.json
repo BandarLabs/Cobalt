@@ -5,7 +5,7 @@
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
   "version": "0.1.5",
-  "release_notes": "Count several projects at once, each with its own sections, and let an imported pattern bring its own section names.",
+  "release_notes": "Count several projects at once, each with its own sections, let an imported pattern bring its own section names, and read its charts.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

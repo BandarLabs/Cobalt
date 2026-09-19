@@ -1,5 +1,7 @@
 # Winter socks
 
+![Main chart](chart-main.png)
+
 Warm worsted socks, cuff down. Cast on and join in the round.
 
 ## Cuff
