@@ -1,4 +1,4 @@
-Kobo app simulator: http://127.0.0.1:42519
+Kobo app simulator: http://127.0.0.1:37277
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-home.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
@@ -43,7 +43,7 @@ drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evide
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-export.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
-Kobo app simulator: http://127.0.0.1:33193
+Kobo app simulator: http://127.0.0.1:42263
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook
 shot /home/sandbox/cobalt/docs/quality/evidence/fieldbook/fieldbook-home-restored.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fieldbook

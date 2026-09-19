@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "2aed4a35763f4f8fe68708d9ac09f5a7f203780eae34642229cece8adac46430",
+    "sha256": "db5943e9d2a1053578cce6ce1240edbf311d347e045c8a4ea8cac63c8aff551f",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -54,10 +54,10 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-17",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "947",
-      "unixMillis": "1789683526484",
+      "monotonicMillis": "1008",
+      "unixMillis": "1789824522584",
       "utcOffsetMinutes": 0
     },
     "dirtyPixelsSinceClean": 0,
@@ -89,13 +89,13 @@
       "completed": "1",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "535",
+      "finishedAtMillis": "574",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "1",
-      "submittedAtMillis": "533",
+      "submittedAtMillis": "573",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -145,11 +145,11 @@
     }
   },
   "source": {
-    "binarySha256": "69683f47073e57adbc825d83f597655a97d465995ec86130c343ed5357c54a49",
+    "binarySha256": "e51d9261649b7436dedbec1eca7f3960f1c78044099b24b76ba428373a547818",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "4d420982a9b82d6376b3b40813e8279518a6428a"
+    "revision": "042aea98d1731c7d5fd0e5d62969b1f628511806"
   },
   "version": 1
 }
