@@ -453,9 +453,14 @@ impl Machine {
             }
             9 => {
                 if self.info.version >= 5 {
+                    // catch -> (result): the frame id throw can unwind to.
+                    let store = self.fetch_byte()?;
+                    let frame = self.frames.len().saturating_sub(1);
+                    self.set_variable(store, u16::try_from(frame).unwrap_or(u16::MAX))
+                } else {
                     let _ = self.pop()?;
+                    Ok(())
                 }
-                Ok(())
             }
             10 => {
                 self.halted = true;
@@ -546,16 +551,17 @@ impl Machine {
                 self.output.push_str(&text.0);
                 Ok(())
             }
-            14 => {
-                let byte = self.read_byte(usize::from(value))?;
+            14 if self.info.version <= 4 => {
+                // load (variable) -> result: the operand is a variable NUMBER.
+                let loaded = self.variable(value as u8)?;
                 let store = self.fetch_byte()?;
-                self.set_variable(store, u16::from(byte))
+                self.set_variable(store, loaded)
             }
-            15 => {
-                let word = self.read_word(usize::from(value))?;
+            15 if self.info.version <= 4 => {
                 let store = self.fetch_byte()?;
-                self.set_variable(store, word)
+                self.set_variable(store, !value)
             }
+            15 => self.call(value, &[], None), // v5+: call_1n discards the result
             _ => self.unsupported("1OP", opcode),
         }
     }
@@ -632,37 +638,18 @@ impl Machine {
                 let store = self.fetch_byte()?;
                 self.call(a, &values[1..], Some(store))
             }
-            26 => {
-                let routine = self.frames.len().saturating_sub(1);
-                self.store_result(u16::try_from(routine).unwrap_or(u16::MAX))
-            }
-            27 => {
-                let requested = usize::from(a);
+            26 if self.info.version >= 5 => self.call(a, &values[1..], None), // call_2n
+            27 if self.info.version >= 5 => Ok(()), // set_colour: display-only
+            28 if self.info.version >= 5 => {
+                // throw value frame-id: unwind to the caught frame, then return value.
+                let requested = usize::from(b);
                 if requested >= self.frames.len() {
-                    return Err(StoryError::Fault("invalid catch token".to_owned()));
+                    return Err(StoryError::Fault("invalid throw frame".to_owned()));
                 }
                 while self.frames.len().saturating_sub(1) > requested {
                     self.frames.pop();
                 }
-                self.return_from_routine(b)
-            }
-            28 => {
-                let shift = b as i16;
-                let result = if shift >= 0 {
-                    a.wrapping_shl(u32::from(shift.unsigned_abs().min(15)))
-                } else {
-                    a.wrapping_shr(u32::from(shift.unsigned_abs().min(15)))
-                };
-                self.store_result(result)
-            }
-            29 => {
-                let shift = b as i16;
-                let result = if shift >= 0 {
-                    (a as i16).wrapping_shl(u32::from(shift.unsigned_abs().min(15)))
-                } else {
-                    (a as i16).wrapping_shr(u32::from(shift.unsigned_abs().min(15)))
-                };
-                self.store_result(result as u16)
+                self.return_from_routine(a)
             }
             _ => self.unsupported("2OP", opcode),
         }
@@ -746,50 +733,16 @@ impl Machine {
             }
             13 => Ok(()),
             14 => Ok(()),
-            15 => {
-                let table = usize::from(*values.first().unwrap_or(&0));
-                let width = usize::from(*values.get(1).unwrap_or(&0));
-                let height = usize::from(*values.get(2).unwrap_or(&1));
-                let skip = usize::from(*values.get(3).unwrap_or(&0));
-                for row in 0..height {
-                    for column in 0..width {
-                        let byte = self.read_byte(table + row * (width + skip) + column)?;
-                        self.output.push(char::from(byte));
-                    }
-                    if row + 1 < height {
-                        self.output.push('\n');
-                    }
+            15..=18 if self.info.version >= 4 => {
+                // set_cursor / get_cursor / set_text_style / buffer_mode are
+                // windowed-display operations; the single-panel screen is a
+                // no-op target for 15, 17 and 18, and 16 (get_cursor) is not
+                // modelled yet, so it reports honestly instead of inventing.
+                if opcode == 16 {
+                    self.unsupported("VAR", opcode)
+                } else {
+                    Ok(())
                 }
-                Ok(())
-            }
-            16 => {
-                let table = usize::from(*values.first().unwrap_or(&0));
-                let width = usize::from(*values.get(1).unwrap_or(&0));
-                let height = usize::from(*values.get(2).unwrap_or(&1));
-                let skip = usize::from(*values.get(3).unwrap_or(&0));
-                for row in 0..height {
-                    for column in 0..width {
-                        self.write_byte(table + row * (width + skip) + column, b' ')?;
-                    }
-                }
-                Ok(())
-            }
-            17 => {
-                let mut index = 0;
-                let Some(character) = self.output.chars().last() else {
-                    return self.store_result(0);
-                };
-                if character == '\n' {
-                    index = 1;
-                }
-                self.store_result(index)
-            }
-            18 => {
-                let mode = *values.first().unwrap_or(&0);
-                if mode == u16::MAX {
-                    self.output.clear();
-                }
-                Ok(())
             }
             19 => Ok(()),
             20 => Ok(()),
@@ -810,34 +763,44 @@ impl Machine {
                 let form = *values.get(3).unwrap_or(&0);
                 self.scan_table(value, table, entries, form)
             }
-            24 => self.store_result(u16::from(
-                self.frames.last().map_or(0, |frame| frame.argument_count)
-                    >= *values.first().unwrap_or(&0) as u8,
-            )),
-            25 => {
-                let store = self.fetch_byte()?;
-                self.call(*values.first().unwrap_or(&0), &values[1..], Some(store))
+            25 | 26 if self.info.version >= 5 => {
+                // call_vn / call_vn2: the result is discarded, no store byte.
+                self.call(*values.first().unwrap_or(&0), &values[1..], None)
             }
-            26 => {
-                let store = self.fetch_byte()?;
-                self.call(*values.first().unwrap_or(&0), &values[1..], Some(store))
-            }
-            27 => {
-                let count = usize::from(*values.get(2).unwrap_or(&0));
-                let source = usize::from(*values.first().unwrap_or(&0));
-                let destination = usize::from(*values.get(1).unwrap_or(&0));
-                self.copy_table(source, destination, count)
-            }
-            28 => self.encode_text(&values),
-            29 => {
+            27 if self.info.version >= 5 => {
                 if values.len() >= 2 {
                     self.tokenize(usize::from(values[0]), usize::from(values[1]))
                 } else {
                     Ok(())
                 }
             }
-            30 => Ok(()),
-            31 => self.branch(true),
+            28 => self.encode_text(&values),
+            29 if self.info.version >= 5 => {
+                let count = usize::from(*values.get(2).unwrap_or(&0));
+                let source = usize::from(*values.first().unwrap_or(&0));
+                let destination = usize::from(*values.get(1).unwrap_or(&0));
+                self.copy_table(source, destination, count)
+            }
+            30 if self.info.version >= 5 => {
+                let table = usize::from(*values.first().unwrap_or(&0));
+                let width = usize::from(*values.get(1).unwrap_or(&0));
+                let height = usize::from(*values.get(2).unwrap_or(&1));
+                let skip = usize::from(*values.get(3).unwrap_or(&0));
+                for row in 0..height {
+                    for column in 0..width {
+                        let byte = self.read_byte(table + row * (width + skip) + column)?;
+                        self.output.push(char::from(byte));
+                    }
+                    if row + 1 < height {
+                        self.output.push('\n');
+                    }
+                }
+                Ok(())
+            }
+            31 if self.info.version >= 5 => self.store_result(u16::from(
+                self.frames.last().map_or(0, |frame| frame.argument_count)
+                    >= *values.first().unwrap_or(&0) as u8,
+            )),
             _ => self.unsupported("VAR", opcode),
         }
     }
@@ -1909,5 +1872,87 @@ mod tests {
             StoryInfo::inspect(&bytes, "game.z6"),
             Err(kobo_zstory::StoryError::UnsupportedVersion(6))
         );
+    }
+    /// A story whose initial routine runs `code`, then quits.
+    /// Conformance fixtures for the opcode map: every case encodes the
+    /// Standard 1.1 sect15 behaviour for one opcode at one version.
+    fn code_story(version: u8, code: &[u8]) -> Vec<u8> {
+        let mut bytes = story(version);
+        bytes[0x40..0x40 + code.len()].copy_from_slice(code);
+        bytes[0x40 + code.len()] = 0xba; // quit
+        bytes
+    }
+
+    fn global(bytes_machine: &Machine, index: usize) -> u16 {
+        bytes_machine.read_word(0x140 + index * 2).unwrap()
+    }
+
+    #[test]
+    fn catch_stores_the_frame_id_in_v5_and_pop_is_v1_to_v4_only() {
+        // 2OP 13: store 0xad into global 0; 0OP 9 v5: catch -> (result).
+        let code = [0x0d, 0x10, 0xad, 0xb9, 0x10];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_ne!(
+            global(&machine, 0),
+            0xad,
+            "catch must overwrite the store slot"
+        );
+        // v3: 0OP 9 is pop, not catch - no store byte follows it.
+        // VAR 8 pushes 0x55, 0OP 9 pops it, and the stack is left empty.
+        let code = [0xe8, 0x7f, 0x55, 0xb9];
+        let mut machine = Machine::new(code_story(3, &code), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert!(machine.stack.is_empty(), "v3: 0OP 9 is pop");
+    }
+
+    #[test]
+    fn not_is_1op_15_in_v3_and_v4() {
+        // 1OP 15 with small 0 stores !0 = 0xffff (v1-4). Standard: v5+ is call_1n.
+        // The loader accepts 3/5/8 only, so v3 pins the v1-4 numbering.
+        let code = [0x9f, 0x00, 0x11]; // 1OP 15, small const 0, store global 1
+        let mut machine = Machine::new(code_story(3, &code), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 0xffff, "v3: 1OP 15 is not");
+    }
+
+    #[test]
+    fn load_is_an_indirect_variable_read_in_v3_and_v4() {
+        // 2OP 13: store 0x42 into global 0 (variable 16); 1OP 14: load(16) -> global 1.
+        // The loader accepts 3/5/8 only, so v3 pins the v1-4 numbering.
+        let code = [0x0d, 0x10, 0x42, 0x9e, 0x10, 0x11];
+        let mut machine = Machine::new(code_story(3, &code), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 0x42, "v3: 1OP 14 is load");
+    }
+
+    #[test]
+    fn call_vn_discards_the_result_in_v5() {
+        // Routine at 0x200 (packed 0x80 in v5): prints "x" and rtrue.
+        // VAR 25 = call_vn: no store byte follows the operands.
+        let mut bytes = code_story(5, &[0xf9, 0x3f, 0x00, 0x80]);
+        bytes[0x200] = 0; // no locals
+        bytes[0x201] = 0xb2; // print
+        let encoded = encode_dictionary_word(b"x", 5);
+        bytes[0x202..0x202 + encoded.len()].copy_from_slice(&encoded);
+        bytes[0x202 + encoded.len()] = 0xb0; // rtrue
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "x");
+    }
+
+    #[test]
+    fn copy_table_is_var_29_in_v5() {
+        // VAR 29: copy_table first second size. Source prefilled in static memory.
+        let mut bytes = code_story(5, &[0xfd, 0x03, 0x02, 0x00, 0x00, 0x80, 0x00, 0x04]);
+        bytes[0x200..0x204].copy_from_slice(&[9, 8, 7, 6]);
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(machine.read_byte(0x80).unwrap(), 9);
+        assert_eq!(machine.read_byte(0x83).unwrap(), 6);
     }
 }
