@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "163579da1a0664cb43b574042c4fb4ad74e2e32ae67c983f6e75b41f7bcb752c",
+    "sha256": "425bb3303443d3760457f0817c324974eeaed76d64c26c66e39e8c8b39ee6aad",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -38,7 +38,7 @@
   "paints": "2",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -54,10 +54,10 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-11",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "3356",
-      "unixMillis": "1789111531613",
+      "monotonicMillis": "16364",
+      "unixMillis": "1789828074655",
       "utcOffsetMinutes": 0
     },
     "dirtyPixelsSinceClean": 86536,
@@ -89,13 +89,13 @@
       "completed": "2",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "782",
+      "finishedAtMillis": "980",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "2",
-      "submittedAtMillis": "762",
+      "submittedAtMillis": "955",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -181,11 +181,11 @@
     }
   },
   "source": {
-    "binarySha256": "e3a62dd569d5387fd2a5bdad7801c401ac75fab4d9b81447dae2875a7d502fc0",
+    "binarySha256": "090c58c36d7d2186f1d2e214f12404a0784c99a945edffcf8e92440a6ecb1d7e",
     "dirty": true,
     "fixture": "srd-corpus",
     "requestedSeed": "0",
-    "revision": "a7e7e0a360f19620b8ae3e9827375e85adab5558"
+    "revision": "2cae6b19b36958cb7a9e20b6bbe95c75a7fa1b0d"
   },
   "version": 1
 }

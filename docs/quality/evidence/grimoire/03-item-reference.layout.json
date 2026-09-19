@@ -1,0 +1,213 @@
+{
+  "paints": 3,
+  "content": {
+    "x": 0,
+    "y": 116,
+    "width": 1072,
+    "height": 1285
+  },
+  "pageTurns": {
+    "previous": 123572910,
+    "next": 1727113454
+  },
+  "nodes": [
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 50
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 50
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(2359859083), Light)",
+      "x": 925,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 50
+      },
+      "action": 2359859083,
+      "lines": [
+        "Front light"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(282227963))",
+      "x": 801,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 851,
+        "y": 50
+      },
+      "action": 282227963,
+      "lines": [
+        "Aa"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 27,
+      "width": 606,
+      "height": 46,
+      "centre": {
+        "x": 474,
+        "y": 50
+      },
+      "action": null,
+      "lines": [
+        "Adamantine Armor"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 100,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 102
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 116,
+      "width": 317,
+      "height": 55,
+      "centre": {
+        "x": 205,
+        "y": 143
+      },
+      "action": 123572910,
+      "lines": [
+        "Armor \u00b7 Uncommon"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 116,
+      "width": 978,
+      "height": 55,
+      "centre": {
+        "x": 536,
+        "y": 143
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 183,
+      "width": 826,
+      "height": 55,
+      "centre": {
+        "x": 460,
+        "y": 210
+      },
+      "action": 282227963,
+      "lines": [
+        "Armor (medium or heavy, but not hide), uncommon"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 183,
+      "width": 978,
+      "height": 55,
+      "centre": {
+        "x": 536,
+        "y": 210
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 250,
+      "width": 966,
+      "height": 55,
+      "centre": {
+        "x": 530,
+        "y": 277
+      },
+      "action": 282227963,
+      "lines": [
+        "This suit of armor is reinforced with adamantine, one of the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 305,
+      "width": 914,
+      "height": 55,
+      "centre": {
+        "x": 504,
+        "y": 332
+      },
+      "action": 282227963,
+      "lines": [
+        "hardest substances in existence. While you're wearing it,"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 360,
+      "width": 797,
+      "height": 55,
+      "centre": {
+        "x": 445,
+        "y": 387
+      },
+      "action": 282227963,
+      "lines": [
+        "any critical hit against you becomes a normal hit."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 250,
+      "width": 978,
+      "height": 165,
+      "centre": {
+        "x": 536,
+        "y": 332
+      },
+      "action": 282227963,
+      "lines": []
+    }
+  ]
+}

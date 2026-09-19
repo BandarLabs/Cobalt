@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "c16d800e3dbaa9471174f214e888120e96f1d97f93422691746f97cbdc7c22f0",
+    "sha256": "5a00741b35a71679b8d9cd3c8f9cd51f9259818d2bbd12893a9d66ebcea6a8fc",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -38,7 +38,7 @@
   "paints": "66",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-11",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "18813",
-      "unixMillis": "1789111547070",
+      "monotonicMillis": "33166",
+      "unixMillis": "1789828091458",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 8741065,
+    "dirtyPixelsSinceClean": 8766171,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "66",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "16164",
+      "finishedAtMillis": "17660",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "66",
-      "submittedAtMillis": "16164",
+      "submittedAtMillis": "17659",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 8741065,
+      "dirty": 8766171,
       "full": false,
       "refresh": 66,
       "region": {
@@ -163,11 +163,11 @@
     }
   },
   "source": {
-    "binarySha256": "e3a62dd569d5387fd2a5bdad7801c401ac75fab4d9b81447dae2875a7d502fc0",
+    "binarySha256": "090c58c36d7d2186f1d2e214f12404a0784c99a945edffcf8e92440a6ecb1d7e",
     "dirty": true,
     "fixture": "srd-corpus",
     "requestedSeed": "0",
-    "revision": "a7e7e0a360f19620b8ae3e9827375e85adab5558"
+    "revision": "2cae6b19b36958cb7a9e20b6bbe95c75a7fa1b0d"
   },
   "version": 1
 }

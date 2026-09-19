@@ -35,7 +35,7 @@
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "64",
+  "paints": "5",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.18",
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "32695",
-      "unixMillis": "1789828090986",
+      "monotonicMillis": "2163",
+      "unixMillis": "1789828094036",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 8412397,
+    "dirtyPixelsSinceClean": 268638,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "441",
+      "rawEvents": "28",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "64",
+      "completed": "5",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "17183",
+      "finishedAtMillis": "1612",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "64",
-      "submittedAtMillis": "17182",
+      "submitted": "5",
+      "submittedAtMillis": "1590",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,35 +117,53 @@
       },
       "width": 1072
     },
-    "refreshCount": 64,
+    "refreshCount": 5,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 786,
-        "y": 642
+        "x": 558,
+        "y": 728
       },
       "raw": {
-        "x": 642,
-        "y": 285
+        "x": 728,
+        "y": 513
       }
     },
     "transition": {
-      "dirty": 8412397,
+      "dirty": 268638,
       "full": false,
-      "refresh": 64,
+      "refresh": 5,
       "region": {
-        "height": 40,
-        "width": 144,
-        "x": 408,
-        "y": 384
+        "height": 1304,
+        "width": 992,
+        "x": 40,
+        "y": 96
       },
       "regions": [
         {
           "region": {
+            "height": 992,
+            "width": 992,
+            "x": 40,
+            "y": 96
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 32,
+            "width": 472,
+            "x": 504,
+            "y": 1248
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
             "height": 40,
-            "width": 144,
-            "x": 408,
-            "y": 384
+            "width": 224,
+            "x": 424,
+            "y": 1360
           },
           "waveform": "GL16"
         }

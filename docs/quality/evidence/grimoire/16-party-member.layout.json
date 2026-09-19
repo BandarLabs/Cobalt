@@ -1,0 +1,396 @@
+{
+  "paints": 64,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1048
+  },
+  "pageTurns": {
+    "previous": 4099663144,
+    "next": 1555467752
+  },
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "14:28"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Party member"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 80,
+      "centre": {
+        "x": 536,
+        "y": 215
+      },
+      "action": 1555467752,
+      "lines": [
+        "Delphine"
+      ]
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 278,
+      "width": 149,
+      "height": 35,
+      "centre": {
+        "x": 121,
+        "y": 295
+      },
+      "action": 4099663144,
+      "lines": [
+        "AC"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 220,
+      "y": 267,
+      "width": 805,
+      "height": 46,
+      "centre": {
+        "x": 622,
+        "y": 290
+      },
+      "action": 1555467752,
+      "lines": [
+        "14"
+      ]
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 336,
+      "width": 149,
+      "height": 35,
+      "centre": {
+        "x": 121,
+        "y": 353
+      },
+      "action": 4099663144,
+      "lines": [
+        "HP"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 220,
+      "y": 325,
+      "width": 805,
+      "height": 46,
+      "centre": {
+        "x": 622,
+        "y": 348
+      },
+      "action": 1555467752,
+      "lines": [
+        "24/26"
+      ]
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 394,
+      "width": 149,
+      "height": 35,
+      "centre": {
+        "x": 121,
+        "y": 411
+      },
+      "action": 4099663144,
+      "lines": [
+        "Death saves"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 220,
+      "y": 383,
+      "width": 805,
+      "height": 46,
+      "centre": {
+        "x": 622,
+        "y": 406
+      },
+      "action": 1555467752,
+      "lines": [
+        "0 success \u00b7 1 failure"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 453,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 512
+      },
+      "action": 1555467752,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(3006183748), Enabled, Normal)",
+      "x": 198,
+      "y": 453,
+      "width": 174,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 512
+      },
+      "action": 3006183748,
+      "lines": [
+        "\u2212 HP"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3079215077), Enabled, Normal)",
+      "x": 699,
+      "y": 453,
+      "width": 174,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 512
+      },
+      "action": 3079215077,
+      "lines": [
+        "+ HP"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 583,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 642
+      },
+      "action": 1555467752,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(1393321250), Enabled, Normal)",
+      "x": 171,
+      "y": 583,
+      "width": 228,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 642
+      },
+      "action": 1393321250,
+      "lines": [
+        "Success"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3715956295), Enabled, Normal)",
+      "x": 684,
+      "y": 583,
+      "width": 205,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 642
+      },
+      "action": 3715956295,
+      "lines": [
+        "Failure"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 167219501,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(167219501), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 167219501,
+      "lines": [
+        "Party"
+      ]
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1223,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1264
+      },
+      "action": null,
+      "lines": [
+        "1 of 2"
+      ]
+    },
+    {
+      "kind": "PageNext(ActionId(1555467752))",
+      "x": 907,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 966,
+        "y": 1264
+      },
+      "action": 1555467752,
+      "lines": []
+    }
+  ]
+}

@@ -1,0 +1,275 @@
+{
+  "paints": 32,
+  "content": {
+    "x": 0,
+    "y": 116,
+    "width": 1072,
+    "height": 1202
+  },
+  "pageTurns": {
+    "previous": 123572910,
+    "next": 1727113454
+  },
+  "nodes": [
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 50
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 50
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(2359859083), Light)",
+      "x": 925,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 50
+      },
+      "action": 2359859083,
+      "lines": [
+        "Front light"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(282227963))",
+      "x": 801,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 851,
+        "y": 50
+      },
+      "action": 282227963,
+      "lines": [
+        "Aa"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 27,
+      "width": 606,
+      "height": 46,
+      "centre": {
+        "x": 474,
+        "y": 50
+      },
+      "action": null,
+      "lines": [
+        "Traps"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 100,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 102
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 116,
+      "width": 629,
+      "height": 55,
+      "centre": {
+        "x": 361,
+        "y": 143
+      },
+      "action": 282227963,
+      "lines": [
+        "mouth. This effect is otherwise like the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: true, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 676,
+      "y": 116,
+      "width": 163,
+      "height": 55,
+      "centre": {
+        "x": 757,
+        "y": 143
+      },
+      "action": 1727113454,
+      "lines": [
+        " sympathy"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 839,
+      "y": 116,
+      "width": 161,
+      "height": 55,
+      "centre": {
+        "x": 919,
+        "y": 143
+      },
+      "action": 1727113454,
+      "lines": [
+        " aspect of"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 171,
+      "width": 52,
+      "height": 55,
+      "centre": {
+        "x": 73,
+        "y": 198
+      },
+      "action": 123572910,
+      "lines": [
+        "the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: true, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 99,
+      "y": 171,
+      "width": 328,
+      "height": 55,
+      "centre": {
+        "x": 263,
+        "y": 198
+      },
+      "action": 123572910,
+      "lines": [
+        " antipathy/sympathy"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 427,
+      "y": 171,
+      "width": 307,
+      "height": 55,
+      "centre": {
+        "x": 580,
+        "y": 198
+      },
+      "action": 282227963,
+      "lines": [
+        " spell. A successful"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: true, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 734,
+      "y": 171,
+      "width": 219,
+      "height": 55,
+      "centre": {
+        "x": 843,
+        "y": 198
+      },
+      "action": 1727113454,
+      "lines": [
+        " dispel magic"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 953,
+      "y": 171,
+      "width": 71,
+      "height": 55,
+      "centre": {
+        "x": 988,
+        "y": 198
+      },
+      "action": 1727113454,
+      "lines": [
+        " (DC"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 226,
+      "width": 499,
+      "height": 55,
+      "centre": {
+        "x": 296,
+        "y": 253
+      },
+      "action": 123572910,
+      "lines": [
+        "18) removes this enchantment."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 116,
+      "width": 978,
+      "height": 165,
+      "centre": {
+        "x": 536,
+        "y": 198
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1318,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1359
+      },
+      "action": null,
+      "lines": [
+        "19 of 19"
+      ]
+    },
+    {
+      "kind": "PagePrevious(ActionId(123572910))",
+      "x": 47,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 106,
+        "y": 1359
+      },
+      "action": 123572910,
+      "lines": []
+    }
+  ]
+}

@@ -38,7 +38,7 @@
   "paints": "14",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-11",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "6053",
-      "unixMillis": "1789111534310",
+      "monotonicMillis": "19563",
+      "unixMillis": "1789828077855",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 1554614,
+    "dirtyPixelsSinceClean": 1554146,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "14",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "3499",
+      "finishedAtMillis": "4206",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "14",
-      "submittedAtMillis": "3479",
+      "submittedAtMillis": "4176",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 1554614,
+      "dirty": 1554146,
       "full": false,
       "refresh": 14,
       "region": {
@@ -190,11 +190,11 @@
     }
   },
   "source": {
-    "binarySha256": "e3a62dd569d5387fd2a5bdad7801c401ac75fab4d9b81447dae2875a7d502fc0",
+    "binarySha256": "090c58c36d7d2186f1d2e214f12404a0784c99a945edffcf8e92440a6ecb1d7e",
     "dirty": true,
     "fixture": "srd-corpus",
     "requestedSeed": "0",
-    "revision": "a7e7e0a360f19620b8ae3e9827375e85adab5558"
+    "revision": "2cae6b19b36958cb7a9e20b6bbe95c75a7fa1b0d"
   },
   "version": 1
 }
