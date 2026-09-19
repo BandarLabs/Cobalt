@@ -63,25 +63,17 @@ pub fn choose(
             "5" => vec!["--help".into()],
             "6" => {
                 let apps = kobo_catalog::bundled()?;
-                for (index, app) in apps.iter().enumerate() {
-                    writeln!(output, "{}. {}", index + 1, app.title).map_err(|e| e.to_string())?;
-                }
-                loop {
-                    let Some(number) = answer(input, output, "App number (blank cancels): ")?
-                    else {
-                        return Ok(None);
-                    };
-                    if let Some(app) = number
-                        .parse::<usize>()
-                        .ok()
-                        .and_then(|number| number.checked_sub(1))
-                        .and_then(|index| apps.get(index))
-                    {
-                        break vec!["apps".into(), "setup".into(), app.id.clone()];
-                    }
-                    writeln!(output, "Choose an app number from the list.")
-                        .map_err(|e| e.to_string())?;
-                }
+                let titles: Vec<String> = apps.iter().map(|app| app.title.clone()).collect();
+                let Some(index) = crate::console::choose_numbered(
+                    input,
+                    output,
+                    &titles,
+                    "App number (blank cancels): ",
+                )?
+                else {
+                    return Ok(None);
+                };
+                vec!["apps".into(), "setup".into(), apps[index].id.clone()]
             }
             _ => {
                 writeln!(output, "Enter a number from 0 to 6.").map_err(|e| e.to_string())?;
@@ -154,7 +146,7 @@ mod tests {
         );
         assert!(String::from_utf8(output)
             .unwrap()
-            .contains("Choose an app number"));
+            .contains("Enter a number from 1 to"));
         for input in ["6\n", "6\n\n"] {
             assert!(choose(&mut input.as_bytes(), &mut Vec::new())
                 .unwrap()

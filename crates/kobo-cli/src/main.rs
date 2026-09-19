@@ -16,6 +16,7 @@ mod beta_store_smoke;
 mod birds;
 mod bootstrap;
 mod connect;
+mod console;
 mod deck;
 mod devsession;
 mod drive;
@@ -49,6 +50,7 @@ mod setup;
 mod sha256;
 mod sidekick;
 mod sync;
+mod targets;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 const SYNCTHING_SOURCE_RECORD: &str = "\
@@ -433,8 +435,8 @@ fn main() -> ExitCode {
     match run(&arguments) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("kobo: {error}");
-            ExitCode::FAILURE
+            eprintln!("kobo: {}", console::display(&error));
+            ExitCode::from(console::category_of(&error))
         }
     }
 }
@@ -496,14 +498,16 @@ fn canonical(command: &str) -> &str {
 }
 
 fn run_owner_menu() -> Result<(), String> {
-    use std::io::IsTerminal;
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+    let console = console::Console::detect();
+    if console.interactive() {
         let selected =
             owner_start::choose(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?;
         if let Some(selected) = selected {
             return run(&selected);
         }
     } else {
+        // A bare `kobo` in a pipe prints what there is to know and exits,
+        // rather than blocking on answers nobody can give.
         println!("{}", owner_start::COMPACT_HELP);
     }
     Ok(())
@@ -542,10 +546,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
         #[cfg(feature = "device-write")]
         "stop" => panel::stop(&arguments[1..]),
         #[cfg(not(feature = "device-write"))]
-        "present" | "stop" => Err(format!(
+        "present" | "stop" => Err(console::unsupported(format!(
             "{command} takes the panel, so it is not compiled in; rebuild the CLI with \
              --features device-write"
-        )),
+        ))),
         "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
@@ -566,15 +570,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
         #[cfg(feature = "device-write")]
         "guard-test" => guard_test(&arguments[1..]),
         #[cfg(not(feature = "device-write"))]
-        "guard-test" => Err(
-            "guard-test is not compiled in; rebuild the CLI with --features device-write"
-                .to_owned(),
-        ),
+        "guard-test" => Err(console::unsupported(
+            "guard-test is not compiled in; rebuild the CLI with --features device-write",
+        )),
         #[cfg(not(feature = "device-write"))]
-        "smoke-display" => Err(
-            "smoke-display is not compiled in; rebuild the CLI with --features device-write"
-                .to_owned(),
-        ),
+        "smoke-display" => Err(console::unsupported(
+            "smoke-display is not compiled in; rebuild the CLI with --features device-write",
+        )),
         "package" => build_package(&arguments[1..]),
         "app-key" => app_key(&arguments[1..]),
         "app-bundle" => app_bundle(&arguments[1..]),
@@ -2324,9 +2326,9 @@ fn doctor(arguments: &[String]) -> Result<(), String> {
                 program: RemoteProgram::DoctorJson,
                 ..RemoteArtifact::doctor()
             };
-            return run_remote_fixed_artifact(host, &artifact);
+            return run_remote_fixed_artifact(&host, &artifact);
         }
-        return remote_doctor(host);
+        return remote_doctor(&host);
     }
     let binary = sibling_binary("kobo-doctor");
     let mut command = Command::new(&binary);
@@ -2336,22 +2338,34 @@ fn doctor(arguments: &[String]) -> Result<(), String> {
     run_status(&mut command, format!("{}", binary.display()))
 }
 
-fn parse_doctor(arguments: &[String]) -> Result<(Option<&str>, bool), String> {
-    let usage = "usage: kobo doctor [--device HOST] [--json]";
+fn parse_doctor(arguments: &[String]) -> Result<(Option<String>, bool), String> {
+    let usage = "usage: kobo doctor [--device HOST | --reader NAME] [--json]";
+    let (flags, rest) = targets::TargetArgs::parse(arguments)?;
     let mut host = None;
     let mut json = false;
-    let mut args = arguments.iter();
-    while let Some(arg) = args.next() {
+    if !flags.is_empty() {
+        host = Some(match flags.resolve() {
+            Ok(targets::Target::Address(address)) => address,
+            Ok(targets::Target::Nickname(name)) => targets::resolve_nickname(&name)?,
+            Ok(targets::Target::Simulator) => {
+                return Err(
+                    "usage: the simulator has no hardware to diagnose; doctor is for a reader"
+                        .to_owned(),
+                );
+            }
+            Err(_) => return Err(usage.into()),
+        });
+    }
+    for arg in &rest {
         if arg == "--json" && !json {
             json = true;
-        } else if is_device_flag(arg) && host.is_none() {
-            let value = args.next().ok_or(usage)?;
-            if !valid_device_host(value) {
-                return Err("device host contains unsupported characters".into());
-            }
-            host = Some(value.as_str());
         } else {
             return Err(usage.into());
+        }
+    }
+    if let Some(host) = &host {
+        if !valid_device_host(host) {
+            return Err("device host contains unsupported characters".into());
         }
     }
     Ok((host, json))
@@ -2411,23 +2425,48 @@ fn remote_doctor(host: &str) -> Result<(), String> {
 /// home network when they asked where their e-reader went has answered a
 /// question nobody asked.
 fn list_devices(arguments: &[String]) -> Result<(), String> {
-    let subnet = parse_devices(arguments)?;
-    println!(
+    let (subnet, json) = parse_devices(arguments)?;
+    let console = console::Console::detect();
+    console.progress(&format!(
         "scanning {subnet}.1-254 on port {} for readers",
         connect::SSH_PORT
-    );
+    ));
     let answered = connect::sweep(&subnet, connect::PROBE_TIMEOUT);
     let mut readers = Vec::new();
     let mut others = 0_usize;
     for address in &answered {
         match identify_device(&address.to_string()) {
             Some(identity) if identity.is_kobo() => {
-                println!("{address}  {}", identity.summary());
-                readers.push(*address);
+                readers.push((*address, identity.summary()));
             }
 
             _ => others += 1,
         }
+    }
+    if json {
+        console.print_json(
+            "devices",
+            serde_json::json!({
+                "subnet": format!("{subnet}.0/24"),
+                "readers": readers
+                    .iter()
+                    .map(|(address, summary)| serde_json::json!({
+                        "address": address.to_string(),
+                        "summary": summary,
+                    }))
+                    .collect::<Vec<_>>(),
+                "other_hosts": others,
+            }),
+        );
+        if readers.is_empty() {
+            return Err(unreachable_device(format!(
+                "no reader answered on {subnet}.0/24"
+            )));
+        }
+        return Ok(());
+    }
+    for (address, summary) in &readers {
+        println!("{address}  {summary}");
     }
     if others > 0 {
         println!(
@@ -2435,7 +2474,7 @@ fn list_devices(arguments: &[String]) -> Result<(), String> {
             connect::SSH_PORT
         );
     }
-    let Some(first) = readers.first() else {
+    let Some((first, _)) = readers.first() else {
         return Err(unreachable_device(format!(
             "no reader answered on {subnet}.0/24"
         )));
@@ -2504,15 +2543,26 @@ fn identify_device(host: &str) -> Option<connect::Identity> {
     )))
 }
 
-fn parse_devices(arguments: &[String]) -> Result<String, String> {
-    const USAGE: &str = "usage: kobo devices [--subnet A.B.C]";
-    let subnet = match arguments {
-        [] => connect::local_subnet().ok_or(
+fn parse_devices(arguments: &[String]) -> Result<(String, bool), String> {
+    const USAGE: &str = "usage: kobo devices [--subnet A.B.C] [--json]";
+    let mut subnet = None;
+    let mut json = false;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--json" && !json {
+            json = true;
+        } else if argument == "--subnet" && subnet.is_none() {
+            subnet = Some(arguments.next().ok_or(USAGE)?.clone());
+        } else {
+            return Err(USAGE.to_owned());
+        }
+    }
+    let subnet = match subnet {
+        Some(value) => value,
+        None => connect::local_subnet().ok_or(
             "this machine has no route to a network, so there is nothing to scan; \
              connect to the same Wi-Fi as the reader, or pass --subnet A.B.C",
         )?,
-        [flag, value] if flag == "--subnet" => (*value).clone(),
-        _ => return Err(USAGE.to_owned()),
     };
     if !connect::valid_subnet(&subnet) {
         return Err(format!(
@@ -2520,7 +2570,7 @@ fn parse_devices(arguments: &[String]) -> Result<String, String> {
              not {subnet:?}"
         ));
     }
-    Ok(subnet)
+    Ok((subnet, json))
 }
 
 /// Controls how long a connected device stays reachable while developing.
@@ -2983,16 +3033,25 @@ fn device_answers(remote: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-fn parse_wait(arguments: &[String]) -> Result<(&str, Duration), String> {
-    const USAGE: &str = "usage: kobo wait --device <host> [--timeout <seconds>]";
-    let (host, rest) = match arguments {
-        [device, host, rest @ ..] if is_device_flag(device) => (host, rest),
-        _ => return Err(USAGE.to_owned()),
+fn parse_wait(arguments: &[String]) -> Result<(String, Duration), String> {
+    const USAGE: &str =
+        "usage: kobo wait (--device <host> | --reader <name>) [--timeout <seconds>]";
+    let (flags, rest) = targets::TargetArgs::parse(arguments)?;
+    let host = match flags.resolve() {
+        Ok(targets::Target::Address(host)) => host,
+        Ok(targets::Target::Nickname(name)) => targets::resolve_nickname(&name)?,
+        Ok(targets::Target::Simulator) => {
+            return Err(
+                "usage: the simulator is already here; wait is for a reader on the network"
+                    .to_owned(),
+            );
+        }
+        Err(_) => return Err(USAGE.to_owned()),
     };
-    if !valid_device_host(host) {
+    if !valid_device_host(&host) {
         return Err("device host contains unsupported characters".to_owned());
     }
-    let seconds = match rest {
+    let seconds = match rest.as_slice() {
         [] => 300,
         [flag, value] if flag == "--timeout" => value
             .parse::<u64>()
@@ -3667,7 +3726,7 @@ fn cleanup_remote_fixed_artifact(
 fn unreachable_device(mut error: String) -> String {
     error.push_str("\n\n");
     error.push_str(connect::OFFLINE_HELP);
-    error
+    console::target(error)
 }
 
 /// The same, for a session that ssh itself gave up on.
@@ -6923,8 +6982,11 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
     reason = "the flat command reference stays grep-friendly and one line per command"
 )]
 fn print_help() {
+    let console = console::Console::detect();
     println!(
-        "Kobo application SDK\n\n\
+        "{}",
+        console.wrap(
+            "Kobo application SDK\n\n\
          Usage: kobo <command>\n\n\
          Commands:\n\
            apps [search WORD | setup APP]  Find apps and read offline setup guides\n\
@@ -6978,12 +7040,12 @@ fn print_help() {
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
-           doctor [--device IP] [--json]   Run read-only device diagnostics\n\
-           devices [--subnet A.B.C]  Find every reader on the local network\n\
+           doctor [--device IP | --reader NAME] [--json]   Run read-only device diagnostics\n\
+           devices [--subnet A.B.C] [--json]  Find every reader on the local network\n\
            app-link status|unpair --device IP  Inspect or revoke browser pairing\n\
            session --device IP    Keep a device awake and on Wi-Fi while developing\n\
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
-           wait --device IP       Block until a device answers again\n\
+           wait (--device IP | --reader NAME)  Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
            shell --device IP [command ...]  Run one command on the reader, or open a\n\
            \x20                             session when no command is given. Exits with\n\
@@ -7024,8 +7086,31 @@ fn print_help() {
            run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
            run                    Device execution remains safety-gated\n\
            version                Print version"
+        )
     );
+    print_output_contract();
     print_other_names();
+}
+
+/// Which stream carries what, what `--json` prints, and how an exit status
+/// is meant to be read. Split from the command list for the same reason the
+/// aliases are: the list is at the length the lints allow.
+fn print_output_contract() {
+    let console = console::Console::detect();
+    println!(
+        "{}",
+        console.wrap(
+            "\nReading the output:\n\
+             Progress and explanations print on stderr; results print on stdout,\n\
+             so kobo devices > readers.txt holds only readers. --json prints one\n\
+             JSON object on stdout, with a version field, for programs to read.\n\
+             Exit status is a category, stable enough to test in a script:\n\
+               0 done   2 the command was misspelled   3 the reader or simulator\n\
+               could not be reached   4 this build or host cannot do it   1 anything else\n\
+             Verbs stay the same across commands: check reads, preview shows,\n\
+             prepare writes on this computer, push sends, status reports."
+        )
+    );
 }
 
 /// The aliases, and the note about what this build can and cannot write.
@@ -7764,7 +7849,11 @@ mod tests {
         };
         assert_eq!(
             parse_devices(&arguments(&["--subnet", "192.168.1"])),
-            Ok("192.168.1".to_owned())
+            Ok(("192.168.1".to_owned(), false))
+        );
+        assert_eq!(
+            parse_devices(&arguments(&["--json", "--subnet", "192.168.1"])),
+            Ok(("192.168.1".to_owned(), true))
         );
         for rejected in [
             vec!["--subnet", "192.168.1.10"],
@@ -7833,9 +7922,94 @@ mod tests {
     #[test]
     fn an_unreachable_device_keeps_its_error_and_gains_the_checklist() {
         let reported = unreachable_device("device 192.168.1.15 did not answer".to_owned());
-        assert!(reported.starts_with("device 192.168.1.15 did not answer"));
-        assert!(reported.contains("kobo devices"));
-        assert!(reported.contains("asleep"));
+        assert_eq!(
+            crate::console::category_of(&reported),
+            crate::console::EXIT_TARGET
+        );
+        let shown = crate::console::display(&reported);
+        assert!(shown.starts_with("device 192.168.1.15 did not answer"));
+        assert!(shown.contains("kobo devices"));
+        assert!(shown.contains("asleep"));
+    }
+
+    #[test]
+    fn exit_categories_hold_for_the_families_of_failure() {
+        fn arguments(values: &[&str]) -> Vec<String> {
+            values.iter().map(|v| (*v).to_owned()).collect()
+        }
+        // A misspelling, a missing value and an unknown command are usage.
+        assert_eq!(
+            crate::console::category_of(
+                &super::run(&arguments(&["nonsense"])).expect_err("unknown")
+            ),
+            crate::console::EXIT_USAGE
+        );
+        for args in [
+            vec!["wait"],
+            vec!["wait", "--device"],
+            vec!["wait", "--sim"],
+            vec!["doctor", "--sim"],
+            vec!["devices", "--subnet"],
+            vec!["devices", "--bogus"],
+        ] {
+            let error = super::run(&arguments(&args)).expect_err("refused");
+            assert_eq!(
+                crate::console::category_of(&error),
+                crate::console::EXIT_USAGE,
+                "{args:?} gave {error}"
+            );
+        }
+        // A saved name that has no reader behind it is a target problem.
+        let error = super::run(&arguments(&[
+            "wait",
+            "--reader",
+            "nobody",
+            "--timeout",
+            "1",
+        ]))
+        .expect_err("no such reader");
+        assert_eq!(
+            crate::console::category_of(&error),
+            crate::console::EXIT_TARGET
+        );
+        assert!(
+            crate::console::display(&error).contains("nobody"),
+            "{error}"
+        );
+        // A command this build lacks is unsupported, not a generic failure.
+        #[cfg(not(feature = "device-write"))]
+        {
+            let error = super::run(&arguments(&["guard-test"])).expect_err("compiled out");
+            assert_eq!(
+                crate::console::category_of(&error),
+                crate::console::EXIT_UNSUPPORTED
+            );
+            assert!(crate::console::display(&error).contains("not compiled in"));
+        }
+    }
+
+    #[test]
+    fn wait_and_doctor_take_the_shared_target_flags() {
+        fn arguments(values: &[&str]) -> Vec<String> {
+            values.iter().map(|v| (*v).to_owned()).collect()
+        }
+        assert_eq!(
+            super::parse_wait(&arguments(&["--device", "192.0.2.10", "--timeout", "5"])).unwrap(),
+            ("192.0.2.10".to_owned(), Duration::from_secs(5))
+        );
+        // The adb spelling still works, wherever it appears.
+        assert_eq!(
+            super::parse_wait(&arguments(&["--timeout", "5", "-s", "192.0.2.11"])).unwrap(),
+            ("192.0.2.11".to_owned(), Duration::from_secs(5))
+        );
+        let error = super::parse_wait(&arguments(&["--device", "192.0.2.10", "--sim"]))
+            .expect_err("two targets");
+        assert!(error.starts_with("usage: kobo wait"), "{error}");
+        assert!(super::parse_doctor(&arguments(&["--reader", "clara"])).is_err());
+        assert_eq!(
+            super::parse_doctor(&arguments(&["--device", "192.0.2.1"])).unwrap(),
+            (Some("192.0.2.1".to_owned()), false)
+        );
     }
 
     #[test]
@@ -8276,7 +8450,7 @@ mod tests {
         }
         assert_eq!(
             super::parse_doctor(&arguments(&["--json", "--device", "192.0.2.1"])),
-            Ok((Some("192.0.2.1"), true))
+            Ok((Some("192.0.2.1".to_owned()), true))
         );
         for invalid in [
             vec!["--json", "--json"],
