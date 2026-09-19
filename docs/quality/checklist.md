@@ -429,7 +429,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **QUIZ-03** Show pack source and freshness.
 - [x] **QUIZ-04** Clarify pass-device and answer-reveal screens.
 - [x] **QUIZ-05** Export a scorecard.
-- [ ] **QUIZ-06** Test full rounds, repeats and offline refreshed packs.
+- [x] **QUIZ-06** Test full rounds, repeats and offline refreshed packs.
 
 ## PR 3 · Read Later (APP-5/6)
 

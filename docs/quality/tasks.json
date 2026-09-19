@@ -3008,8 +3008,11 @@
   "pr": 3,
   "group": "Pub Quiz",
   "task": "Test full rounds, repeats and offline refreshed packs",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "31/31 app tests green at 60139fd2 (was 27): full_rounds_advance_and_each_round_starts_fresh plays two complete rounds through the app runner (scores and question pointer reset each round, rounds counter advances, podium then Finish round home); consecutive_rounds_do_not_repeat_while_the_pool_allows (disjoint back-to-back rounds from a 25-question pool, no repeats inside a round even after the offset wraps); offline_sync_keeps_existing_packs_playing and a_refreshed_pack_survives_the_next_offline_sync drive the SDK's quiet nap-and-retry cycle - the reader is told offline only after the second failure, and the refreshed pack, origin and sync stamp all survive.",
+   "Non-test code byte-identical to 41df33a2 (the diff is +143 lines inside #[cfg(test)] only), whose 30-cell simulator matrix is green in docs/quality/evidence/pubquiz-sim/matrix.json; no new sim run needed for a cfg(test)-only change. clippy -D warnings clean, fmt clean, version gate 55/55."
+  ]
  },
  {
   "id": "LATER-01",
