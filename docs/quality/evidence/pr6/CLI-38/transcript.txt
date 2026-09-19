@@ -1,0 +1,28 @@
+=== no required AI/chat surface in CLI copy (greps over the CLI sources) ===
+no matches
+
+=== the one agent-adjacent feature is optional and named plainly ===
+sidekick setup [AGENT] Install the Sidekick hook for a coding agent
+sidekick run [--foreground]          Start the helper the reader answers through
+sidekick status|stop                 Inspect or stop that helper
+sidekick sample                      See it work with nothing else set up
+
+=== help copy is factual verbs, no slogans: first and last lines ===
+Kobo application SDK
+
+Usage: kobo <command>
+
+Commands:
+logcat -> logs   install -> deploy   wait-for-device -> wait
+sim, simulator -> dev   init, create -> new
+
+Built without --features device-write, so the commands that write to a panel
+(tap, smoke-display) are not in this binary.
+
+=== no decorative dashboard: bare kobo in a pipe prints compact help and exits ===
+Cobalt - tools for your reader
+
+  kobo setup
+    Set up a reader connected by USB
+  kobo apps
+    Find apps and read setup guides
