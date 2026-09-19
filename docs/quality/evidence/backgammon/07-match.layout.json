@@ -1,0 +1,447 @@
+{
+  "paints": 11,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1131
+  },
+  "pageTurns": null,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "13:14"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Match"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 186,
+      "width": 96,
+      "height": 35,
+      "centre": {
+        "x": 95,
+        "y": 203
+      },
+      "action": null,
+      "lines": [
+        "Players"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 167,
+      "y": 175,
+      "width": 858,
+      "height": 46,
+      "centre": {
+        "x": 596,
+        "y": 198
+      },
+      "action": null,
+      "lines": [
+        "Pass and play"
+      ]
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 244,
+      "width": 96,
+      "height": 35,
+      "centre": {
+        "x": 95,
+        "y": 261
+      },
+      "action": null,
+      "lines": [
+        "Plays to"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 167,
+      "y": 233,
+      "width": 858,
+      "height": 46,
+      "centre": {
+        "x": 596,
+        "y": 256
+      },
+      "action": null,
+      "lines": [
+        "5"
+      ]
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 302,
+      "width": 96,
+      "height": 35,
+      "centre": {
+        "x": 95,
+        "y": 319
+      },
+      "action": null,
+      "lines": [
+        "Score"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 167,
+      "y": 291,
+      "width": 858,
+      "height": 46,
+      "centre": {
+        "x": 596,
+        "y": 314
+      },
+      "action": null,
+      "lines": [
+        "White 0 \u00b7 Black 0"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 361,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 378
+      },
+      "action": null,
+      "lines": [
+        "Fixture dice, seed 7."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 408,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 467
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3966689298), Key, false)",
+      "x": 47,
+      "y": 408,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 467
+      },
+      "action": 3966689298,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 47,
+      "y": 408,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 467
+      },
+      "action": 3966689298,
+      "lines": [
+        "Players: Pass and play"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2116038550), Key, false)",
+      "x": 542,
+      "y": 408,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 467
+      },
+      "action": 2116038550,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 542,
+      "y": 408,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 467
+      },
+      "action": 2116038550,
+      "lines": [
+        "Plays to 5"
+      ]
+    },
+    {
+      "kind": "Section",
+      "x": 47,
+      "y": 562,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 579
+      },
+      "action": null,
+      "lines": [
+        "Turn history"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 621,
+      "width": 978,
+      "height": 46,
+      "centre": {
+        "x": 536,
+        "y": 644
+      },
+      "action": null,
+      "lines": [
+        "Black 24/20 24/18"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 679,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 738
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1524496950), Key, false)",
+      "x": 47,
+      "y": 679,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 738
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 47,
+      "y": 679,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 738
+      },
+      "action": 1524496950,
+      "lines": [
+        "How to play"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1136685485), Key, false)",
+      "x": 542,
+      "y": 679,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 738
+      },
+      "action": 1136685485,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 542,
+      "y": 679,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 738
+      },
+      "action": 1136685485,
+      "lines": [
+        "New match"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 819637563,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(819637563), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 819637563,
+      "lines": [
+        "Board"
+      ]
+    }
+  ]
+}
