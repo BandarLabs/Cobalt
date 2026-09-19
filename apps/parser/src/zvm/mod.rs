@@ -743,8 +743,9 @@ impl Machine {
                 self.set_variable(variable, value)
             }
             10 => {
-                let lines = *values.first().unwrap_or(&0);
-                self.branch(lines == 1)
+                // split_window (v3+): no store and no branch byte. The
+                // single-panel screen treats the split as display-only.
+                Ok(())
             }
             11 => Ok(()),
             12 => {
@@ -775,6 +776,10 @@ impl Machine {
                     store: Some(store),
                 });
                 Ok(())
+            }
+            24 if self.info.version >= 5 => {
+                // not (v5/6): bitwise NOT with a store; v1-4 has it at 1OP 15.
+                self.store_result(!*values.first().unwrap_or(&0))
             }
             23 => {
                 let value = *values.first().unwrap_or(&0);
@@ -1976,6 +1981,32 @@ mod tests {
         assert_eq!(machine.read_byte(0x80).unwrap(), 9);
         assert_eq!(machine.read_byte(0x83).unwrap(), 6);
     }
+    #[test]
+    fn not_is_var_24_in_v5() {
+        // VAR 24 v5: not value -> (result). not(0) = 0xffff into global 1.
+        let code = [0xf8, 0x7f, 0x00, 0x11];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 0xffff, "v5: VAR 24 is not");
+    }
+
+    #[test]
+    fn split_window_consumes_no_branch_byte() {
+        // VAR 10 split_window has no branch and no store. The next byte must
+        // decode as the next instruction: print "s" then quit.
+        let code = [0xea, 0x7f, 0x01, 0xb2, 0xe4, 0xa5, 0xba];
+        let mut bytes = code_story(3, &code);
+        // "s" as a one-word z-string, same encoding as the throw fixture's "t".
+        let encoded = encode_dictionary_word(b"s", 3);
+        bytes[0x44..0x44 + encoded.len()].copy_from_slice(&encoded);
+        bytes[0x44 + encoded.len()] = 0xba;
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "s");
+    }
+
     #[test]
     fn throw_resumes_after_catch_with_the_thrown_value() {
         // v5: catch arms global 0 with the frame id, then a called routine
