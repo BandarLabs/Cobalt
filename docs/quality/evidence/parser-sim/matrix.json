@@ -1,6 +1,6 @@
 {
   "app": "parser",
-  "head": "a03b7689+route-fix",
+  "head": "4a45238c",
   "profiles": 9,
   "scales": [
     "default",
@@ -37,5 +37,5 @@
     "libra-h2o-384-large"
   ],
   "route": "apps/parser/drive.kobo: seeded Zork I - library, opening, story save (Ok.), story restore via picker (Story checkpoint row), restored room description",
-  "notes": "large/extra-large cells initially failed on a scale-fragile wait-for (room title paginates off the landing page); route now waits on the description last line. All 27 cells pass."
+  "notes": "PARSER-03: the slot picker now opens with a one-line what-a-slot-is guidance; three slot rows a page keeps the checkpoint row, banner and guidance on the panel at every text scale (extra-large previously overflowed and the renderer refused the screen). Picker screenshots inspected at default and extra-large. All 27 cells pass."
 }

@@ -2838,8 +2838,12 @@
   "pr": 3,
   "group": "Parser",
   "task": "Clarify import and save slots",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "f0ddadad: save/restore slot screens open with a one-line what-a-slot-is guidance; 4a45238c: three rows a page keeps checkpoint + banner + guidance on the panel at every text scale",
+   "docs/quality/evidence/parser-sim/matrix.json: 27/27 cells (9 profiles x 3 text scales) green at 4a45238c on the seeded Zork I save/restore drive route; picker shots inspected at default and extra-large",
+   "27/27 parser tests incl. the_slots_screen_says_what_a_slot_is and a worst-case slot-picker diagnostics test (checkpoint + banner + guidance at all scales)"
+  ]
  },
  {
   "id": "PARSER-04",
