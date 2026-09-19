@@ -1,6 +1,6 @@
 //! Validate and transfer Fieldbook packs, and receive prepared eBird checklists.
 use kobo_json::Value;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -785,9 +785,9 @@ mod tests {
     #[test]
     fn rejects_wrong_schema_and_incomplete_species() {
         assert!(inspect(b"{}").is_err());
-        assert!(
-            inspect(br#"{"format":"fieldbook-shelf","version":"1","packs":[],"failures":null}"#)
-                .is_err()
-        );
+        assert!(inspect(
+            br#"{"format":"fieldbook-shelf","version":"1","packs":[],"failures":null}"#
+        )
+        .is_err());
     }
 }
