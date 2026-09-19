@@ -82,14 +82,14 @@ State-by-state 1072×1448 golden captures are under `screenshots/states/`.
 
 | A card with its own image |
 | --- |
-| ![A merged, imported card showing its embedded image above the question](screenshots/media.png) |
+| ![A card imported from the computer and merged into the deck, answer revealed with Again, Hard, Good and Easy controls](screenshots/media.png) |
 
 *Captured by `scripts/quality/check-flashcards-sim.py` on the simulator's Clara
 BW profile, end to end with no network at all.*
 
 | Question | Answer |
 | --- | --- |
-| ![Japanese question with bounded SVG media and one Reveal answer action](screenshots/states/question-japanese-svg.png) | ![Revealed answer with stable Again, Hard, Good and Easy controls](screenshots/states/answer-reveal.png) |
+| ![A Japanese question card with one Reveal answer action](screenshots/states/question-japanese-svg.png) | ![Revealed answer with stable Again, Hard, Good and Easy controls](screenshots/states/answer-reveal.png) |
 
 The standalone importer requires Rust 1.88 or newer and `protoc`. The device
 workspace continues to support Rust 1.85.1.
