@@ -136,6 +136,22 @@
   "readlater": {
    "status": "pass",
    "notes": "Main list: tabs (Unread/Starred/Archive) + row tap dominant, splashes for empty states, plain 'Sync'/'Add address' on setup/connect states, Archive/Back action_bar in reading view. The unauthenticated state pairs connect splash with primary 'Add address' - single CTA. Evidence: screens.json + apps/readlater/screenshots/readlater-setup.png."
+  },
+  "rss": {
+   "status": "pass",
+   "notes": "Shelf: feed rows dominant + single primary 'Add a feed' on empty state / 'Try again' on error; rss-found double-primary is a confirmed per-state match (error branch 'Try again' vs empty-result branch 'Try another address', main.rs:577-590); found-feeds list is one_line_row tap idiom; reading screen uses page_turns. Evidence: screens.json + examples/rss/screenshots/browse-feeds.png + source."
+  },
+  "rss-miniflux": {
+   "status": "pass",
+   "notes": "Tabs + rows dominant; unauthenticated state pairs connect splash with single primary 'Add address'; 'Suggested feeds' plain; Back chrome. Evidence: screens.json + apps/rss-miniflux/screenshots/unread.png."
+  },
+  "sidekick": {
+   "status": "pass",
+   "notes": "Watching state: splash + plain 'Change pairing'; asking screen: one state button 'Send these answers' + plain Allow/Deny/Leave it for the terminal (a question-answering idiom, no competing primaries); opening/sending are transient activity screens. Evidence: screens.json + examples/sidekick/screenshots/asking.png."
+  },
+  "sudoku": {
+   "status": "pass",
+   "notes": "Game: board + digit move-pad with visible disabled digits, Digits/Undo/More secondaries (move-pad idiom, same class as nonograms); new-game difficulty buttons are the single purpose of that screen; save-recovery 'Retry save' single action. Verified game.png. Evidence: screens.json + apps/sudoku/screenshots/."
   }
  },
  "findings": [
