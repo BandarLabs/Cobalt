@@ -1,6 +1,16 @@
+wait 800
 expect Needles
-expect +1 row
+expect Row 0
+expect ready for 1 of 12
 tap +1 row
-expect Row
+expect Row 1
+expect row 1 of 12
+tap +1 row
+expect Row 2
+tap Undo
+expect Row 1
 clean
 shot project
+tap Change section
+expect Sleeve
+expect Row 0

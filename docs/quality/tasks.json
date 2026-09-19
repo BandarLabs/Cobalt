@@ -2479,24 +2479,30 @@
   "pr": 3,
   "group": "Needles",
   "task": "Emphasize current row count",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Row count is now the screen heading rather than one fact among four (8de0d9ca); test the_row_count_is_the_biggest_thing_on_the_screen. Sim evidence docs/quality/evidence/needles-sim/matrix.json (27/27 cells)."
+  ]
  },
  {
   "id": "NEEDLES-03",
   "pr": 3,
   "group": "Needles",
   "task": "Keep Undo adjacent to increment",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Undo sits in the same button row as +1 row, verified by layout test undo_sits_beside_the_increment_it_reverses (same y band) and visible in the sim project shot at every scale."
+  ]
  },
  {
   "id": "NEEDLES-04",
   "pr": 3,
   "group": "Needles",
   "task": "Show pattern location and repeat progress",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Repeat progress is drawn as a bar under the facts (row n of N stays as text too) and the Section fact keeps the pattern location on the counter screen; test the_repeat_progress_is_drawn_not_only_said; sim route expects row 1 of 12 with the bar."
+  ]
  },
  {
   "id": "NEEDLES-05",
