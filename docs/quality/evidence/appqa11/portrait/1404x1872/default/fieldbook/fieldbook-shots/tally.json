@@ -1,0 +1,182 @@
+{
+  "app": "fieldbook",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "e85aa4dfeff3769ab29514f63194ba272a0a2313b1672a3d13f621f9f689c2ee",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "27",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.18",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-19",
+      "mode": "real",
+      "monotonicMillis": "6494",
+      "unixMillis": "1789820471427",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 2287162,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "182",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "fieldbook",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "26",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "6112",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "26",
+      "submittedAtMillis": "6112",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1872,
+      "id": "elipsa-2e-389",
+      "model": "Kobo Elipsa 2E",
+      "pixelsPerInch": 227,
+      "rotation": 1,
+      "touch": {
+        "name": "Elan Touchscreen",
+        "xMax": 1872,
+        "xMin": 0,
+        "yMax": 1404,
+        "yMin": 0
+      },
+      "width": 1404
+    },
+    "refreshCount": 26,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 718,
+        "y": 204
+      },
+      "raw": {
+        "x": 1668,
+        "y": 719
+      }
+    },
+    "transition": {
+      "dirty": 2287162,
+      "full": false,
+      "refresh": 26,
+      "region": {
+        "height": 112,
+        "width": 568,
+        "x": 168,
+        "y": 136
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 24,
+            "width": 176,
+            "x": 560,
+            "y": 136
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 40,
+            "width": 32,
+            "x": 168,
+            "y": 184
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 24,
+            "width": 184,
+            "x": 288,
+            "y": 224
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "e51d9261649b7436dedbec1eca7f3960f1c78044099b24b76ba428373a547818",
+    "dirty": true,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "137627ea7eed6cc212555396fe2e7eae98152534"
+  },
+  "version": 1
+}

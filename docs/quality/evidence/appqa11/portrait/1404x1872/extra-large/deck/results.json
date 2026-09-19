@@ -1,0 +1,13 @@
+{
+  "source_sha": "137627ea7eed6cc212555396fe2e7eae98152534",
+  "dirty": true,
+  "results": [
+    {
+      "app": "deck",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/deck/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

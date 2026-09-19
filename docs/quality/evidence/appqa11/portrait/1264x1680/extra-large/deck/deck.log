@@ -1,0 +1,9 @@
+Deck config directory ready: /tmp/cb-0bmczxrd/deck-config
+Assign pads with kobo deck set, then kobo deck push --sim or --device IP.
+Or start from one: kobo deck init --preset build, or --preset home.
+Assigned pad 1 on 'Home': Todo · launch todo
+Assigned pad 2 on 'Home': Example · example.com
+Staged 2 pad(s) in the simulator. Existing pairing is kept; an unpaired simulator opens a static preview.
+Kobo app simulator: http://127.0.0.1:46811
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/deck/deck-shots/grid.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/deck/deck-shots

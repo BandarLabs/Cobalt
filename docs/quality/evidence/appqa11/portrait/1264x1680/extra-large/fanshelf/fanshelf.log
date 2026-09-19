@@ -1,0 +1,12 @@
+Kobo app simulator: http://127.0.0.1:35595
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/shelf.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/work.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/work-unchecked.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/updates.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/fandoms.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/fandom-filter.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/manage.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/manage-confirm.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/followed-tags.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots/tag-feed.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/extra-large/fanshelf/fanshelf-shots
