@@ -1,0 +1,363 @@
+{
+  "paints": 34,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1226
+  },
+  "pageTurns": null,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "13:27"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(3665406649), Refresh)",
+      "x": 925,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 109
+      },
+      "action": 3665406649,
+      "lines": [
+        "Refresh"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 730,
+      "height": 46,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Build"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Tab(ActionId(1530814015), true)",
+      "x": 47,
+      "y": 175,
+      "width": 489,
+      "height": 118,
+      "centre": {
+        "x": 291,
+        "y": 234
+      },
+      "action": 1530814015,
+      "lines": [
+        "Build"
+      ]
+    },
+    {
+      "kind": "Tab(ActionId(722371298), false)",
+      "x": 536,
+      "y": 175,
+      "width": 489,
+      "height": 118,
+      "centre": {
+        "x": 780,
+        "y": 234
+      },
+      "action": 722371298,
+      "lines": [
+        "Home"
+      ]
+    },
+    {
+      "kind": "TabRule",
+      "x": 47,
+      "y": 293,
+      "width": 978,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 295
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 309,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 326
+      },
+      "action": null,
+      "lines": [
+        "Paired with 127.0.0.1:37381."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 48,
+      "y": 356,
+      "width": 976,
+      "height": 176,
+      "centre": {
+        "x": 536,
+        "y": 444
+      },
+      "action": 542607792,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2197441551), Pad, false)",
+      "x": 48,
+      "y": 356,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 136,
+        "y": 444
+      },
+      "action": 2197441551,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Check, false)",
+      "x": 101,
+      "y": 392,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 136,
+        "y": 427
+      },
+      "action": 2197441551,
+      "lines": [
+        "Test"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 62,
+      "y": 461,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 136,
+        "y": 489
+      },
+      "action": 2197441551,
+      "lines": [
+        "Test"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(963722270), Pad, false)",
+      "x": 248,
+      "y": 356,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 336,
+        "y": 444
+      },
+      "action": 963722270,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Terminal, false)",
+      "x": 301,
+      "y": 392,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 336,
+        "y": 427
+      },
+      "action": 963722270,
+      "lines": [
+        "Format"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 262,
+      "y": 461,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 336,
+        "y": 489
+      },
+      "action": 963722270,
+      "lines": [
+        "Format"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(542607792), Pad, false)",
+      "x": 448,
+      "y": 356,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 536,
+        "y": 444
+      },
+      "action": 542607792,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Terminal, false)",
+      "x": 501,
+      "y": 392,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 536,
+        "y": 427
+      },
+      "action": 542607792,
+      "lines": [
+        "Deploy"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 462,
+      "y": 461,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 536,
+        "y": 489
+      },
+      "action": 542607792,
+      "lines": [
+        "Deploy"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 544,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 561
+      },
+      "action": null,
+      "lines": [
+        "Test finished."
+      ]
+    }
+  ]
+}

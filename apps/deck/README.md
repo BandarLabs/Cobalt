@@ -4,7 +4,7 @@ A text-only command deck for the existing `kobo-sidekickd` pairing. It polls
 `/deck`, posts named key presses to `/deck/press`, and keeps the last good grid
 visible when the computer is off the air.
 
-<img width="300" src="screenshots/deck.png" alt="Deck on a Clara BW showing a 3 by 5 grid of square command pads">
+<img width="300" src="screenshots/deck.png" alt="Deck paired with a computer, showing Test, Format and Deploy command pads">
 
 ![A command finishes and the deck shows its result](screenshots/run-finished.png)
 

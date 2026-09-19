@@ -6,11 +6,13 @@
     "/deck?version=0&token=abc123",
     "/deck/press?token=abc123",
     "/deck?version=4&token=abc123",
+    "/deck/result?key=test&token=abc123",
     "/deck?version=4&token=abc123",
     "/deck/result?key=test&token=abc123",
     "/deck?version=4&token=abc123",
     "/deck/press?token=abc123",
     "/deck?version=4&token=abc123",
+    "/deck/result?key=deploy&token=abc123",
     "/deck?version=0&token=abc123"
   ],
   "checks": [

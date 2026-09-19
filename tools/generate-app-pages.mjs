@@ -38,7 +38,7 @@ const screenshots = {
   "calibre-web": ["calibre-web.png", "Private-library list with an Add control and an empty-state explanation."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
   crossword: ["crossword.png", "Crossword grid on a Kobo with the first answer filled in and numbered cells."],
-  deck: ["deck.png", "Deck paired with a computer, showing Check, Format, Rust analyzer, Calculator and Documentation commands."],
+  deck: ["deck.png", "Deck paired with a computer, showing Test, Format and Deploy command pads."],
   fanshelf: ["fanshelf.png", "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."],
   fieldbook: ["fieldbook.png", "Fieldbook outing screen tallying an American Robin from a pushed field pack."],
   flashcards: ["flashcards.png", "A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."],
