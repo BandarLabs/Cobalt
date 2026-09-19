@@ -294,14 +294,8 @@ fn set_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> std::io::Result<()> {
-    fs::File::open(path)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> std::io::Result<()> {
-    Ok(())
+    kobo_protocol::durability::sync_directory(path)
 }
 
 #[cfg(test)]

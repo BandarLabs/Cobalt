@@ -925,8 +925,7 @@ fn identity_dir() -> Result<PathBuf, String> {
 fn pairing_code() -> Result<String, String> {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut bytes = [0_u8; 6];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("read randomness: {error}"))?;
     Ok(bytes
         .iter()
@@ -1182,8 +1181,7 @@ fn random_session() -> Result<u64, String> {
     // so the value sent back on /screen and /keys is byte-for-byte equivalent.
     const MAX_EXACT_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
     let mut bytes = [0_u8; 8];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("read randomness: {error}"))?;
     Ok((u64::from_le_bytes(bytes) & MAX_EXACT_JSON_INTEGER).max(1))
 }
@@ -1650,18 +1648,33 @@ mod tests {
 
     #[test]
     fn pty_output_keeps_terminal_escape_sequences_for_the_screen_model() {
-        let mut pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "printf '\\033[2Jready'"],
             &[("TERM", "xterm-256color")],
-            12,
-            2,
-        )
-        .expect("start a PTY command");
-        let bytes = pty
+        );
+        // The same observable under ConPTY: a clear issued by the hosted
+        // program, then text, which must land on the first row.
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) =
+            ("cmd.exe", &["/c", "cls & echo ready"], &[]);
+        let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 12, 2)
+            .expect("start a PTY command");
+        // ConPTY delivers the clear and the text as separate writes, so
+        // collect until the answer arrives rather than assuming one read is
+        // everything; on Unix the whole output lands in the first read.
+        let mut bytes = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
             .expect("PTY output");
+        while !String::from_utf8_lossy(&bytes).contains("ready") {
+            bytes.extend_from_slice(
+                &pty.output()
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("PTY output"),
+            );
+        }
         let session = Session::new(Grid {
             columns: 12,
             rows: 2,
@@ -1674,20 +1687,42 @@ mod tests {
 
     #[test]
     fn child_exit_drains_pty_eof_and_exposes_uncapped_final_output() {
-        let pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "printf first; sleep 1; printf final"],
             &[("TERM", "xterm-256color")],
-            20,
-            2,
-        )
-        .expect("start final-output command");
+        );
+        // PowerShell is stock on Windows and its Console.Write is exact:
+        // both halves without a newline, so they share a row exactly as
+        // sh's printf makes them. (cmd's newline-free echo|set /p idiom
+        // proved unreliable under ConPTY.)
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
+            "powershell.exe",
+            &[
+                "-NoProfile",
+                "-Command",
+                "[Console]::Write('first'); Start-Sleep -Milliseconds 800; [Console]::Write('final')",
+            ],
+            &[],
+        );
+        let pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 20, 2)
+            .expect("start final-output command");
         let input = Mutex::new(pty);
         let session = Session::new(Grid {
             columns: 20,
             rows: 2,
         });
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // ConPTY process startup and cmd's own pacing stretch the same
+        // sequence; the assertion (both halves arrive before EOF) is
+        // unchanged.
+        let deadline = Instant::now()
+            + if cfg!(windows) {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(3)
+            };
         let mut before = None;
         let mut exit = None;
         loop {
@@ -1724,20 +1759,34 @@ mod tests {
 
     #[test]
     fn pty_accepts_control_input_without_waiting_for_a_snapshot() {
-        let mut pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "read answer; printf 'answer:%s' \"$answer\""],
             &[("TERM", "xterm-256color")],
-            24,
-            2,
-        )
-        .expect("start PTY command");
+        );
+        // `set /p` reads a line; ConPTY echoes what was typed, which is the
+        // whole assertion below.
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) =
+            ("cmd.exe", &["/c", "set /p answer="], &[]);
+        let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 24, 2)
+            .expect("start PTY command");
         pty.write(b"yes\r").expect("write terminal input");
-        let output = pty
+        // ConPTY can deliver the echo in a later write than the first
+        // output burst, so collect until it arrives instead of trusting a
+        // single read; on Unix the whole echo lands in the first chunk.
+        let mut output = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
             .expect("PTY echoed the answer");
-        assert!(String::from_utf8_lossy(&output).contains("yes"));
+        while !String::from_utf8_lossy(&output).contains("yes") {
+            output.extend_from_slice(
+                &pty.output()
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("PTY echoed the answer"),
+            );
+        }
         let _ = pty.finished().expect("reap PTY command");
     }
     #[test]

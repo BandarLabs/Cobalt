@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -896,7 +897,11 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     eprintln!("{pairing}\n");
-    let (command, title) = stream_preset(&arguments[0], std::env::var("SHELL").ok().as_deref())?;
+    #[cfg(unix)]
+    let shell = std::env::var("SHELL").ok();
+    #[cfg(windows)]
+    let shell = std::env::var("COMSPEC").ok();
+    let (command, title) = stream_preset(&arguments[0], shell.as_deref())?;
     eprintln!(
         "Open Paperterm on your reader and connect to this computer. Keep the computer awake."
     );
@@ -931,13 +936,32 @@ fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'stat
             ))
         }
         "terminal" => {
-            let shell = shell.unwrap_or("/bin/sh");
+            // The login-shell flag is a Unix convention; cmd.exe takes none,
+            // and its home is COMSPEC rather than SHELL.
+            #[cfg(unix)]
+            let fallback = "/bin/sh";
+            #[cfg(windows)]
+            let fallback = "C:\\Windows\\System32\\cmd.exe";
+            let shell = shell.unwrap_or(fallback);
             if !Path::new(shell).is_absolute() || !Path::new(shell).is_file() {
+                #[cfg(unix)]
                 return Err("Your default shell is unavailable. Set SHELL to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
+                #[cfg(windows)]
+                return Err("Your default shell is unavailable. Set COMSPEC to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
             }
-            Ok((vec![shell.into(), "-l".into()], "Terminal"))
+            #[cfg(unix)]
+            return Ok((vec![shell.into(), "-l".into()], "Terminal"));
+            #[cfg(windows)]
+            return Ok((vec![shell.into()], "Terminal"));
         }
+        #[cfg(unix)]
         "monitor" => Ok((vec!["top".into()], "System monitor")),
+        // top(1) has no Windows equivalent; fail loudly rather than spawn a
+        // missing program.
+        #[cfg(windows)]
+        "monitor" => Err(
+            "the monitor preset runs top(1), which has no Windows equivalent; use kobo stream -- <command> with an explicit command".into(),
+        ),
         _ => Err(
             "Choose demo, terminal or monitor. Use kobo stream --help for custom commands.".into(),
         ),
@@ -2065,6 +2089,9 @@ impl DevSessionGuard {
             socket: root.join("app.sock"),
             root,
         };
+        // Windows has no mode bits; the temp directory inherits the user
+        // profile ACL, which is the same account boundary.
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&session.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", session.root.display());
             drop(session);
@@ -3428,8 +3455,7 @@ fn remote_artifact_session(artifact: &RemoteArtifact) -> Result<RemoteArtifactSe
 fn remote_owner_token() -> Result<String, String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut bytes = [0_u8; 16];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("create remote cleanup ownership token: {error}"))?;
     let mut token = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -4413,25 +4439,58 @@ fn confirmed_setup(
     if options.non_interactive {
         return Err("noninteractive setup was not explicitly confirmed with --yes".to_owned());
     }
-    let tty = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .map_err(|error| {
-            format!(
-                "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
-            )
-        })?;
-    let mut writer = &tty;
+    // The prompt bypasses stdio so redirected input cannot approve a device
+    // write. /dev/tty is the Unix controlling terminal; CONIN$/CONOUT$ are
+    // the corresponding Windows console devices and fail closed when this
+    // process has no attached console.
+    #[cfg(unix)]
+    {
+        let tty = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .map_err(|error| {
+                format!(
+                    "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(&tty, &tty)
+    }
+    #[cfg(windows)]
+    {
+        let input = fs::OpenOptions::new()
+            .read(true)
+            .open("CONIN$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        let output = fs::OpenOptions::new()
+            .write(true)
+            .open("CONOUT$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(input, output)
+    }
+}
+
+fn prompt_confirmation(
+    reader: impl std::io::Read,
+    mut writer: impl std::io::Write,
+) -> Result<bool, String> {
     writer
         .write_all(b"Continue? [y/N] ")
         .map_err(|error| format!("write confirmation prompt: {error}"))?;
     writer
         .flush()
         .map_err(|error| format!("flush confirmation prompt: {error}"))?;
-    let mut reader_tty = std::io::BufReader::new(tty);
+    let mut buffered = std::io::BufReader::new(reader);
     let mut answer = String::new();
-    std::io::BufRead::read_line(&mut reader_tty, &mut answer)
+    std::io::BufRead::read_line(&mut buffered, &mut answer)
         .map_err(|error| format!("read confirmation: {error}"))?;
     Ok(confirmation_answer(&answer))
 }
@@ -5379,6 +5438,7 @@ impl SimulationGuard {
             daemon: None,
             daemon_frame_temporary: None,
         };
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&guard.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", guard.root.display());
             drop(guard);
@@ -5454,21 +5514,35 @@ fn find_rust_lld() -> Result<PathBuf, String> {
     for entry in
         fs::read_dir(&rustlib).map_err(|error| format!("read {}: {error}", rustlib.display()))?
     {
-        let candidate = entry
-            .map_err(|error| error.to_string())?
-            .path()
-            .join("bin/rust-lld");
+        let candidate = rust_lld_candidate(&entry.map_err(|error| error.to_string())?.path());
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err("rust-lld was not found in the active Rust toolchain".to_owned())
+    // rust-lld is part of the rustc component, so a rustup toolchain always
+    // carries it; a from-source or repackaged rustc may not.
+    Err(format!(
+        "rust-lld was not found in the active Rust toolchain under {}; a          rustup-managed toolchain carries it in the rustc component",
+        root.display()
+    ))
+}
+
+/// The linker executable is `rust-lld.exe` on Windows; probing the bare Unix
+/// name there always misses.
+fn rust_lld_candidate(target_dir: &Path) -> PathBuf {
+    target_dir
+        .join("bin")
+        .join(format!("rust-lld{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// The C cross-compiler `ring` needs to build its own sources for the reader.
 ///
 /// Several distributions and taps spell the same toolchain differently, so
-/// every name in use is tried before the build is refused.
+/// every name in use is tried. When none of them exists, `zig cc` is the
+/// fallback: zig is a single download on every host (winget on Windows), and
+/// it cross-compiles C for armv7 musl out of the box. cc-rs appends a
+/// Rust-style `--target` triple that zig rejects, so the zig path is offered
+/// through a small wrapper script that drops that flag.
 fn find_device_cc() -> Result<String, String> {
     const NAMES: [&str; 4] = [
         "armv7-unknown-linux-musleabihf-gcc",
@@ -5476,23 +5550,25 @@ fn find_device_cc() -> Result<String, String> {
         "arm-linux-musleabihf-gcc",
         "arm-linux-gnueabihf-gcc",
     ];
-    for name in NAMES {
-        let found = Command::new(name)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if found {
-            return Ok(name.to_owned());
-        }
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (cc, _) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(cc.to_string_lossy().into_owned());
     }
     Err(format!(
         "no ARM C cross-compiler was found, and one is needed because the TLS \
-         stack builds C for the reader. Tried: {}.\n  macOS:  brew install \
-         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf\n  \
-         Debian: sudo apt-get install gcc-arm-linux-gnueabihf\nSet \
-         CC_armv7_unknown_linux_musleabihf to override.",
+         stack builds C for the reader. Tried: {}, and zig.\n  Windows: winget \
+         install zig.zig, then open a new terminal. If winget itself is \
+         missing, install App Installer from the Microsoft Store first, or \
+         download zig from https://ziglang.org/download/ and put it on PATH.\n  \
+         macOS:  brew install \
+         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf (or: \
+         brew install zig)\n  Debian: sudo apt-get install \
+         gcc-arm-linux-gnueabihf (or: download zig from \
+         https://ziglang.org/download/)\nSet CC_armv7_unknown_linux_musleabihf \
+         to override.",
         NAMES.join(", ")
     ))
 }
@@ -5504,7 +5580,28 @@ fn find_device_ar() -> Result<String, String> {
         "arm-linux-musleabihf-ar",
         "arm-linux-gnueabihf-ar",
     ];
-    for name in NAMES {
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (_, ar) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(ar.to_string_lossy().into_owned());
+    }
+    Err(format!(
+        "no ARM cross-archiver was found, and one is needed for C dependencies. \
+         Tried: {}, and zig.\n  Windows: winget install zig.zig (if winget \
+         itself is missing, install App Installer from the Microsoft Store \
+         first, or download zig from https://ziglang.org/download/ and put it \
+         on PATH), then open a new terminal\n  macOS:  brew install zig\n  \
+         Debian: download zig from \
+         https://ziglang.org/download/\nSet AR_armv7_unknown_linux_musleabihf \
+         to override.",
+        NAMES.join(", ")
+    ))
+}
+
+fn probe_tool(names: &[&str]) -> Option<String> {
+    for name in names {
         let found = Command::new(name)
             .arg("--version")
             .stdout(Stdio::null())
@@ -5512,14 +5609,63 @@ fn find_device_ar() -> Result<String, String> {
             .status()
             .is_ok_and(|status| status.success());
         if found {
-            return Ok(name.to_owned());
+            return Some((*name).to_owned());
         }
     }
-    Err(format!(
-        "no ARM cross-archiver was found, and one is needed for C dependencies. \
-         Tried: {}.\nSet AR_armv7_unknown_linux_musleabihf to override.",
-        NAMES.join(", ")
-    ))
+    None
+}
+
+fn zig_available() -> bool {
+    Command::new("zig")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn zig_device_wrapper_dir() -> PathBuf {
+    workspace_target_directory().join("device-toolchain")
+}
+
+/// Zig speaks its own target spelling (`arm-linux-musleabihf`), while cc-rs
+/// appends the Rust triple as `--target=armv7-unknown-linux-musleabihf`, which
+/// zig rejects outright. The `cc` wrapper filters that flag out and supplies
+/// zig's target itself, with `UBSan` off: current zig instruments by default
+/// and does not link its runtime, which leaves C dependencies referencing
+/// undefined `__ubsan_handle_*` symbols. The `ar` wrapper only adapts the name. Written under
+/// the target directory so a stale wrapper is never picked up across
+/// checkouts. Returns the (cc, ar) wrapper paths.
+fn write_zig_device_wrappers(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    fs::create_dir_all(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+    let (cc_name, ar_name, cc_body, ar_body) = if cfg!(windows) {
+        (
+            "zig-cc.cmd",
+            "zig-ar.cmd",
+            "@echo off\r\nrem cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\r\nset kept=\r\n:filter\r\nif \"%~1\"==\"\" goto build\r\nset arg=%~1\r\nif not \"%arg:~0,9%\"==\"--target=\" set kept=%kept% \"%~1\"\r\nshift\r\ngoto filter\r\n:build\r\nzig cc -target arm-linux-musleabihf -fno-sanitize=undefined %kept%\r\nexit /b %errorlevel%\r\n",
+            "@echo off\r\nzig ar %*\r\n",
+        )
+    } else {
+        (
+            "zig-cc",
+            "zig-ar",
+            "#!/bin/sh\n# cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\ncount=$#\nwhile [ $count -gt 0 ]; do\n    arg=$1\n    shift\n    case $arg in\n        --target=*) ;;\n        *) set -- \"$@\" \"$arg\" ;;\n    esac\n    count=$((count - 1))\ndone\nexec zig cc -target arm-linux-musleabihf -fno-sanitize=undefined \"$@\"\n",
+            "#!/bin/sh\nexec zig ar \"$@\"\n",
+        )
+    };
+    let cc = dir.join(cc_name);
+    let ar = dir.join(ar_name);
+    fs::write(&cc, cc_body).map_err(|error| format!("write {}: {error}", cc.display()))?;
+    fs::write(&ar, ar_body).map_err(|error| format!("write {}: {error}", ar.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&cc, &ar] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("chmod {}: {error}", path.display()))?;
+        }
+    }
+    Ok((cc, ar))
 }
 
 fn verify_arm_elf(path: &Path) -> Result<(), String> {
@@ -6481,16 +6627,19 @@ fn secret_install_script(name: &str, value: &str) -> String {
 }
 
 fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt as _;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("Invalid credential name")?;
     let partial = path.with_file_name(format!(".{name}.writing"));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("Prepare credential (previous value unchanged): {error}"))?;
     let result = writeln!(file, "{value}")
@@ -7308,6 +7457,7 @@ mod tests {
     }
 
     /// A session is what somebody asked for by not asking for anything else.
+    #[cfg(unix)]
     #[test]
     fn paperterm_presets_are_literal_commands_with_clear_titles() {
         let (command, title) = super::stream_preset("terminal", Some("/bin/sh")).unwrap();
@@ -7317,6 +7467,23 @@ mod tests {
         let (command, title) = super::stream_preset("monitor", None).unwrap();
         assert_eq!(command, ["top"]);
         assert_eq!(title, "System monitor");
+        assert!(super::stream_preset("unknown", None).is_err());
+        assert!(super::STREAM_START.contains("kobo stream demo"));
+        super::stream_command(&[]).unwrap();
+    }
+
+    /// The Windows presets: cmd.exe with no login flag, and monitor's
+    /// explicit unsupported error instead of a missing top(1).
+    #[cfg(windows)]
+    #[test]
+    fn paperterm_presets_are_literal_commands_with_clear_titles() {
+        let shell = std::env::var("COMSPEC")
+            .unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".to_owned());
+        let (command, title) = super::stream_preset("terminal", Some(shell.as_str())).unwrap();
+        assert_eq!(command, [shell.as_str()]);
+        assert_eq!(title, "Terminal");
+        assert!(super::stream_preset("terminal", Some("cmd & echo unsafe")).is_err());
+        assert!(super::stream_preset("monitor", None).is_err());
         assert!(super::stream_preset("unknown", None).is_err());
         assert!(super::STREAM_START.contains("kobo stream demo"));
         super::stream_command(&[]).unwrap();
@@ -7462,9 +7629,9 @@ mod tests {
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
+        TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -7475,9 +7642,16 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
+    // Only the unix-gated fixtures drive child processes and timeouts.
+    #[cfg(unix)]
+    use super::wait_for_remote_child;
+    #[cfg(unix)]
     use std::process::Command;
+    #[cfg(any(unix, feature = "device-write"))]
     use std::time::Duration;
 
+    // The fixture drives /bin/sh and mode bits, so it is Unix-only.
+    #[cfg(unix)]
     #[test]
     fn secret_remote_publish_preserves_old_value_on_failed_or_occupied_stage() {
         use std::os::unix::fs::PermissionsExt;
@@ -7749,6 +7923,10 @@ mod tests {
         fs::remove_file(path).expect("remove fixture");
     }
 
+    // Builds device binaries with the ARM musl toolchain, which the Windows
+    // job does not install; the device-build and device-emulated jobs cover
+    // these builds on Linux.
+    #[cfg(unix)]
     #[test]
     fn every_uploaded_artifact_is_built_from_this_workspace() {
         let command =
@@ -7795,6 +7973,8 @@ mod tests {
     /// as long as the packager existed, so `--present` was not compiled in and
     /// `start.sh` answered the owner with a usage message. Everything else
     /// about that binary was correct, which is why nothing else caught it.
+    // Needs the ARM musl toolchain; covered by the Linux device jobs.
+    #[cfg(unix)]
     #[test]
     fn every_packaged_binary_is_built_with_what_it_needs() {
         let features = super::INSTALLED_PACKAGES
@@ -8519,6 +8699,8 @@ mod tests {
         assert!(message.contains("stderr: doctor stderr"));
     }
 
+    // The fixture spawns the unix `sleep` utility.
+    #[cfg(unix)]
     #[test]
     fn remote_child_timeout_kills_the_local_process() {
         let mut child = Command::new("/bin/sleep")
@@ -8742,10 +8924,11 @@ mod tests {
     mod preparing {
         use super::super::{
             choose_reader_list, confirmation_answer, dry_run_plan, gzip,
-            load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-            undo_setup, SetupMode, SetupPayload,
+            load_release_package_from_manifest, parse_setup, prompt_confirmation,
+            rust_lld_candidate, setup, setup_device_with_confirmation, undo_setup,
+            write_zig_device_wrappers, SetupMode, SetupPayload,
         };
-        use std::path::PathBuf;
+        use std::path::{Path, PathBuf};
 
         fn arguments(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()
@@ -8836,6 +9019,110 @@ mod tests {
                 assert!(!confirmation_answer(declined));
             }
             assert!(confirmation_answer("yes\n"));
+        }
+
+        #[test]
+        fn confirmation_prompts_and_reads_the_given_streams() {
+            let mut prompt = Vec::new();
+            let accepted = prompt_confirmation(&b"y\n"[..], &mut prompt).expect("answered");
+            assert!(accepted);
+            assert_eq!(prompt, b"Continue? [y/N] ");
+
+            // An empty line is a decline, including the end of a closed pipe.
+            let declined = prompt_confirmation(&b"\n"[..], Vec::new()).expect("empty line");
+            assert!(!declined);
+            let closed = prompt_confirmation(&b""[..], Vec::new()).expect("closed pipe");
+            assert!(!closed);
+        }
+
+        #[test]
+        fn rust_lld_probe_uses_the_platform_executable_name() {
+            let candidate = rust_lld_candidate(Path::new("toolchain-target"));
+            let name = candidate.file_name().expect("file name").to_string_lossy();
+            #[cfg(windows)]
+            assert_eq!(name, "rust-lld.exe");
+            #[cfg(not(windows))]
+            assert_eq!(name, "rust-lld");
+        }
+
+        #[test]
+        fn zig_cc_wrapper_carries_zigs_target_and_drops_the_rust_one() {
+            let volume = TempVolume::new("zigwrap");
+            let (cc, ar) = write_zig_device_wrappers(&volume.path).expect("wrappers");
+            let cc_body = std::fs::read_to_string(&cc).expect("cc wrapper");
+            assert!(cc_body.contains("-target arm-linux-musleabihf"));
+            assert!(cc_body.contains("-fno-sanitize=undefined"));
+            #[cfg(unix)]
+            assert!(cc_body.contains("--target=*)"));
+            #[cfg(windows)]
+            assert!(cc_body.contains("\"--target=\""));
+            assert!(std::fs::read_to_string(&ar)
+                .expect("ar wrapper")
+                .contains("zig ar"));
+            #[cfg(windows)]
+            assert_eq!(cc.extension().and_then(|e| e.to_str()), Some("cmd"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    cc.metadata().expect("metadata").permissions().mode() & 0o111,
+                    0o111
+                );
+                assert_eq!(cc.extension(), None);
+            }
+        }
+
+        /// The shell wrapper must drop cc-rs's Rust-style `--target` and keep
+        /// every other argument intact, including ones with spaces.
+        #[cfg(unix)]
+        #[test]
+        fn zig_cc_wrapper_filters_only_the_target_flag() {
+            use std::os::unix::fs::PermissionsExt;
+            let volume = TempVolume::new("zigwrap-exec");
+            let (cc, _) = write_zig_device_wrappers(&volume.path).expect("wrappers");
+            let bin = volume.path.join("bin");
+            std::fs::create_dir_all(&bin).expect("bin");
+            std::fs::write(
+                bin.join("zig"),
+                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n",
+            )
+            .expect("stub zig");
+            std::fs::set_permissions(bin.join("zig"), std::fs::Permissions::from_mode(0o755))
+                .expect("chmod stub");
+            let output = std::process::Command::new("sh")
+                .arg(&cc)
+                .args([
+                    "-O2",
+                    "--target=armv7-unknown-linux-musleabihf",
+                    "two words",
+                ])
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        bin.display(),
+                        std::env::var("PATH").unwrap_or_default()
+                    ),
+                )
+                .output()
+                .expect("run wrapper");
+            assert!(output.status.success());
+            let args: Vec<String> = String::from_utf8(output.stdout)
+                .expect("utf8")
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            assert_eq!(
+                args,
+                vec![
+                    "cc",
+                    "-target",
+                    "arm-linux-musleabihf",
+                    "-fno-sanitize=undefined",
+                    "-O2",
+                    "two words"
+                ]
+            );
         }
 
         #[test]
