@@ -193,6 +193,11 @@ impl Machine {
         }))
     }
 
+    /// True while the story waits on a restore the app has not resolved.
+    pub fn awaiting_restore(&self) -> bool {
+        self.pending_file == Some(PendingFile::Restore)
+    }
+
     /// The app finished the save the story asked for (or the reader
     /// cancelled it). Resolves the suspended branch/store and resumes.
     pub fn complete_save(&mut self, succeeded: bool) -> Result<RunState, StoryError> {

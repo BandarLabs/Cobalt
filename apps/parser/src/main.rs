@@ -357,20 +357,13 @@ impl Parser {
                 }
             }
         } else if *state == RunState::NeedRestore {
-            if let Some(machine) = &mut self.machine {
-                match machine.complete_restore(false) {
-                    Ok(_) => {
-                        self.transcript.push_str(&machine.take_output());
-                        self.message = Some(
-                            "The story asked to restore - pick a slot from Save/Restore."
-                                .to_owned(),
-                        );
-                        self.repaginate(context);
-                        self.page = self.last_content_page();
-                    }
-                    Err(error) => self.message = Some(error.to_string()),
-                }
-            }
+            // Route the story's restore to the slot picker. Loading a slot
+            // resolves the suspension on restore_quetzal; an empty slot or
+            // backing out resumes the story with the spec's failure result.
+            self.slot_action = SlotAction::Restore;
+            self.view = View::Slots;
+            self.slots_page = 0;
+            self.message = Some("The story asked to restore a game - pick a slot.".to_owned());
         }
     }
 
@@ -527,6 +520,18 @@ impl KoboApp for Parser {
             return;
         }
         if action == action_id("play") {
+            if self.view == View::Slots {
+                if let Some(machine) = &mut self.machine {
+                    if machine.awaiting_restore() {
+                        if let Ok(state) = machine.complete_restore(false) {
+                            self.transcript.push_str(&machine.take_output());
+                            self.repaginate(context);
+                            self.page = self.last_content_page();
+                            self.finish_file_request(context, &state);
+                        }
+                    }
+                }
+            }
             self.view = View::Play;
             self.show(context);
             return;
@@ -561,6 +566,22 @@ impl KoboApp for Parser {
                                     self.view = View::Play;
                                 } else {
                                     self.message = Some(format!("Slot {slot} is empty."));
+                                }
+                            }
+                        }
+                        if self.slot_action == SlotAction::Restore
+                            && self.pending_restore.is_none()
+                            && self.machine.as_ref().is_some_and(Machine::awaiting_restore)
+                        {
+                            // Tapped an empty slot while the story waits on a
+                            // restore: resume it as failed and go back.
+                            if let Some(machine) = &mut self.machine {
+                                if let Ok(state) = machine.complete_restore(false) {
+                                    self.transcript.push_str(&machine.take_output());
+                                    self.repaginate(context);
+                                    self.page = self.last_content_page();
+                                    self.view = View::Play;
+                                    self.finish_file_request(context, &state);
                                 }
                             }
                         }
