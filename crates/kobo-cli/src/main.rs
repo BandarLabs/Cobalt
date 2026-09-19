@@ -6903,8 +6903,11 @@ fn print_help() {
            sidekick test                        Ask the reader a harmless question, print the answer\n\
            feeds check FILE                     Read an OPML subscription list here\n\
            feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
-           needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
-           needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
+           needles prepare PATTERN --out FILE   Turn a pattern PDF or text into Needles Markdown\n\
+           needles preview PATTERN              See the outline and charts a pattern will make\n\
+           needles push PATTERN (--sim | --device IP | --out PATH)\n\
+                                             Put a pattern and its charts on a Needles shelf\n\
+           needles setup                        Install the PDF text extractor\n\
            nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
                                              Prepare and atomically transfer a photo puzzle\n\
            parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
