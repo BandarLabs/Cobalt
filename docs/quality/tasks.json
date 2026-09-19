@@ -3716,8 +3716,12 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Exercise install/sample/own-data/task/offline-reopen for each app",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Lifecycle pass: docs/quality/evidence/appqa07/lifecycles.json + runs/ - 45/45 journeys (install + sample + own data + task via committed route on a seeded fresh simulator), 44/44 reopen (relaunch from kept state) and 44/44 offline (scenario offline) green at clara-bw-391; zotero-reader stages skipped per APPQA-13",
+   "Verdicts: docs/quality/evidence/appqa07/verdicts.json - 28 apps wrote their own data and rendered the with-state home on relaunch; 16 apps are read-only, session-only, setup-demo or network apps with nothing owed to disk (notes per app); 0 findings",
+   "Runner grew --seed-root/--state-dir for multi-run state audits (scripts/check-apps-sim.py); audit lives at scripts/quality/audit-lifecycle.py"
+  ]
  },
  {
   "id": "APPQA-08",

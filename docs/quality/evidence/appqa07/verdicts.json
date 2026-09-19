@@ -1,0 +1,420 @@
+{
+ "item": "APPQA-07",
+ "method": "three simulator runs per app at clara-bw-391: journey (fresh sim, default seed, committed route), reopen (relaunch from kept state), offline (relaunch under scenario offline); scripts/quality/audit-lifecycle.py",
+ "counts": {
+  "apps": 45,
+  "journey_pass": 45,
+  "reopen_pass": 44,
+  "offline_pass": 44,
+  "own_data_written": 28,
+  "findings": 0
+ },
+ "shot_review": "all 88 reopen/offline captures triaged (none blank; only hn diverges between reopen and offline, the expected live-news skeleton); flashcards, todo, grimoire, hn and rss-miniflux eyeballed directly",
+ "verdicts": {
+  "arxiv": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "network reader; journey reads live content, reopen renders, offline covered by APPQA-02/03 states"
+  },
+  "audiobook": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 2 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "backgammon": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "birds": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 2 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "brief": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "calibre-web": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "network library; no account in sim, setup screen is the honest empty state, APPQA-02/03 own the offline states"
+  },
+  "chat": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 4 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "crossword": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "deck": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 3 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "fanshelf": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "demo shelf is bundled synthetic works; route reads only, nothing owed to disk"
+  },
+  "fieldbook": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 3 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "flashcards": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "frame": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 2 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "gallery": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "example viewer over bundled art; read-only by design"
+  },
+  "grimoire": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "bundled reference data; the route creates no party, so no state is owed"
+  },
+  "gutenbird": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 4 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "habits": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "hn": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "live news; reopen shows the loaded front page, offline capture is the mid-fetch skeleton whose terminal states APPQA-02/03 proved"
+  },
+  "homepanel": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey demonstrates the setup field; no account to persist in sim"
+  },
+  "inkling": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "kitchencard": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 2 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "lichess": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "network board; no account in sim, APPQA-02/03 own the offline states"
+  },
+  "logicpack": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "magnet": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "morse": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "practice is a session; typing demonstrates the keyboard, nothing is owed to disk"
+  },
+  "musicstand": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "viewer over the bundled score; read-only by design"
+  },
+  "needles": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 3 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "nonograms": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "panels": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "empty shelf and the Komga setup are the honest state without a server"
+  },
+  "paperterm": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "terminal sessions are transient by design"
+  },
+  "parlor": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "parser": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 3 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "post": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey demonstrates the gateway field; no account to persist in sim"
+  },
+  "pubquiz": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "readlater": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "rss": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "network reader; reopen renders, APPQA-02/03 own the offline states"
+  },
+  "rss-miniflux": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "offline renders the honest Connect Miniflux guidance; no account in sim"
+  },
+  "sidekick": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "pairing flow demonstrated; pairing never completes in sim, so no state is owed"
+  },
+  "sudoku": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "syncthing": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 2 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "tictactoe": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "todo": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "vault": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 1 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "verses": {
+   "verdict": "pass",
+   "stages": {
+    "journey": "pass",
+    "reopen": "pass",
+    "offline": "pass"
+   },
+   "note": "journey wrote 3 state file(s); relaunch and offline relaunch render the with-state home without refusal"
+  },
+  "zotero-reader": {
+   "verdict": "skip",
+   "stages": {
+    "journey": "pass",
+    "reopen": "skip",
+    "offline": "skip"
+   },
+   "note": "outside this catalog review per APPQA-13"
+  }
+ }
+}
