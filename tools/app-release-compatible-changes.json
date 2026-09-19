@@ -358,12 +358,66 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-music-host, kobo-vault-host, kobo-zstory, and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. Host tooling only: no package identity a published Store app resolves moved, and no app crate gains a dependency.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
+     "compatible_blob": "452c14ab3110b0b7ac41b3caa8b0edfa5d969f60"
+    }
+   ]
+  },
+  {
+   "protocol_version": 14,
+   "reason": "Kitchen Card reads its Mealie server from owner-configured settings instead of a fixed address, so the credential policy validates the request by path shape (the recipe list and one recipe by slug) rather than one pinned URL, and the app gains a kobo-json dependency for response parsing. Protocol bytes are untouched; only the kitchencard package is rebuilt.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
+     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+    },
+    {
+     "path": "crates/kobo-policy/src/credentials.rs",
+     "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
+     "compatible_blob": "4360c364379bf351465d4e1aa8c339d63086de1f"
+    }
+   ]
+  },
+  {
+   "protocol_version": 14,
+   "reason": "Kitchen Card reads its Mealie server from owner-configured settings instead of a fixed address, so the credential policy validates the request by path shape (the recipe list and one recipe by slug) rather than one pinned URL, and the app gains a kobo-json dependency for response parsing. Protocol bytes are untouched; only the kitchencard package is rebuilt. Same change, pinned against the published catalog's source base while a catalog republish is pending.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
+     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+    },
+    {
+     "path": "crates/kobo-policy/src/credentials.rs",
+     "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
+     "compatible_blob": "4360c364379bf351465d4e1aa8c339d63086de1f"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes.",
+   "files": [
+    {
+     "path": "crates/kobo-ui/src/lib.rs",
+     "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
+     "compatible_blob": "58cffb6a0b820055751b15f9a6232252945906f8"
+    }
+   ]
+  },
+  {
+   "protocol_version": 11,
+   "reason": "Parser installs the runtime typeface through the kobo-sdk text feature so its page breaks are measured with the same face the panel draws with; the lock gains the parser's kobo-text edge only.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696",
+     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
     }
    ]
   }
