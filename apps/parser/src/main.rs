@@ -244,9 +244,21 @@ impl Parser {
             })
             .chain(rows)
             .collect();
+        // One line up top says what a slot is before anybody has to guess:
+        // a position of this story kept on this reader, with the story
+        // itself resuming where it was left whether a slot was used or not.
+        let guidance = match self.slot_action {
+            SlotAction::Save => {
+                "Keep this position in a slot. The story also resumes where you left off."
+            }
+            SlotAction::Restore => {
+                "Return to a position you kept. The newest play waits where it is."
+            }
+        };
         let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
             .top_bar_action("play", "Back")
+            .text(guidance)
             .rows(rows);
         if page_count > 1 {
             builder = builder
@@ -1074,6 +1086,33 @@ mod tests {
                     diagnostics.issues
                 );
             }
+        }
+    }
+
+    fn shown(screen: &Screen) -> Vec<String> {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_slots_screen_says_what_a_slot_is() {
+        for (action, expected) in [
+            (SlotAction::Save, "Keep this position in a slot"),
+            (SlotAction::Restore, "Return to a position you kept"),
+        ] {
+            let parser = Parser {
+                slot_action: action,
+                ..Parser::default()
+            };
+            let lines = shown(&parser.slots_screen());
+            assert!(
+                lines.iter().any(|line| line.contains(expected)),
+                "the {action:?} screen does not explain slots: {lines:?}"
+            );
         }
     }
 

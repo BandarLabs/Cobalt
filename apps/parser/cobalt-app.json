@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.4",
-  "release_notes": "The play screen now swaps the keyboard and the command palette behind a top-bar toggle, so every supported panel, pose and text size leaves room for the story. The library instructions were shortened to fit the largest text size.",
+  "version": "0.1.5",
+  "release_notes": "The save and restore screens now say what a slot is before you pick one: a kept position of the story, with the story resuming where you left off either way.",
   "glyph": "book",
   "capabilities": []
 }
