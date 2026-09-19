@@ -940,6 +940,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-clippings"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-image",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+ "pulldown-cmark",
+]
+
+[[package]]
 name = "kobo-comic"
 version = "0.3.19"
 dependencies = [
