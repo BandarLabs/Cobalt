@@ -39,6 +39,7 @@ mod panels;
 mod post;
 mod readers;
 mod readlater;
+mod receipts;
 mod runtime_dev;
 mod stream_demo;
 mod vault;
@@ -522,87 +523,233 @@ fn run_owner_menu() -> Result<(), String> {
 /// path is the command line's half of the bargain (the guided surface asks
 /// for one when it is driving), an ambiguous container is settled by `--app`
 /// or by asking, and the target flags are the shared ones, so a saved reader
-/// name works here exactly as it does everywhere else.
+/// name works here exactly as it does everywhere else. `--preview` looks
+/// before anything is sent, and every acknowledged send leaves a receipt,
+/// so re-sending an unchanged file is reported as already done rather than
+/// pushed twice.
 fn send_file(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo send FILE [--app APP] (--sim | --device IP | --reader NAME)\n\
+                         \x20      kobo send --preview FILE --out DIRECTORY [--app APP] [--profile PROFILE]\n\
                          \x20      send routes a file to the companion that reads it:\n\
                          \x20      photos to Frame, OPML lists to Feeds, CBZ comics to Panels,\n\
                          \x20      story files to Parser, APKG/COLPKG decks to Flashcards.\n\
-                         \x20      --app settles a container more than one companion reads.";
+                         \x20      --app settles a container more than one companion reads.\n\
+                         \x20      --preview renders or checks the content locally; nothing is sent.";
     if wants_help(arguments) {
         return print_command_help(USAGE);
     }
     let (target, rest) = targets::TargetArgs::parse(arguments)?;
-    let mut file = None;
-    let mut app = None;
-    let mut rest = rest.iter();
-    while let Some(argument) = rest.next() {
-        match argument.as_str() {
-            "--app" if app.is_none() => {
-                app = Some(
-                    rest.next()
-                        .ok_or_else(|| console::usage("--app takes a companion name"))?
-                        .clone(),
-                );
-            }
-            _ if file.is_none() && !argument.starts_with('-') => file = Some(argument.clone()),
-            _ => return Err(console::usage(USAGE)),
-        }
-    }
-    let file = file.ok_or_else(|| console::usage(USAGE))?;
+    let options = SendOptions::parse(&rest, USAGE)?;
+    let file = options.file.ok_or_else(|| console::usage(USAGE))?;
     let path = Path::new(&file);
     if !path.is_file() {
         return Err(console::usage(format!(
             "{file}: no such file on this computer"
         )));
     }
-    let target_flags = match target.resolve()? {
+    let candidates = detect::candidates(path);
+    let chosen = match detect::choose(&candidates, options.app.as_deref()) {
+        Ok(app) => app.to_owned(),
+        Err(error) if error.starts_with("several companions") => {
+            match pick_companion(&candidates, &error)? {
+                Some(chosen) => chosen,
+                None => return Ok(()),
+            }
+        }
+        Err(error) => return Err(error),
+    };
+
+    // Preview is local by definition: it renders or checks for the owner's
+    // eyes on this computer, so target flags are a misunderstanding.
+    if options.preview {
+        if target != targets::TargetArgs::default() {
+            return Err(console::usage(
+                "a preview is local; it takes no target flags",
+            ));
+        }
+        return send_preview(
+            &chosen,
+            &file,
+            options.out.as_deref(),
+            options.profile.as_deref(),
+        );
+    }
+    if options.out.is_some() || options.profile.is_some() {
+        return Err(console::usage("--out and --profile belong to --preview"));
+    }
+
+    let target_label = match target.resolve()? {
+        targets::Target::Simulator => "sim".to_owned(),
+        targets::Target::Address(host) => host,
+        targets::Target::Nickname(name) => name,
+    };
+    let device_flags = match target.resolve()? {
         targets::Target::Simulator => vec!["--sim".to_owned()],
         targets::Target::Address(host) => vec!["--device".to_owned(), host],
         targets::Target::Nickname(name) => {
             vec!["--device".to_owned(), targets::resolve_nickname(&name)?]
         }
     };
-    let candidates = detect::candidates(path);
-    let chosen = match detect::choose(&candidates, app.as_deref()) {
-        Ok(app) => app.to_owned(),
-        Err(error) if error.starts_with("several companions") => {
-            if !std::io::stdin().is_terminal() {
-                return Err(console::usage(format!(
-                    "{error} - name one with --app ({})",
-                    candidates.join("|")
-                )));
-            }
-            let names: Vec<String> = candidates.iter().map(|name| (*name).to_owned()).collect();
-            let stdin = std::io::stdin();
-            let mut input = stdin.lock();
-            let mut output = std::io::stdout();
-            let Some(index) = console::choose_numbered(
-                &mut input,
-                &mut output,
-                &names,
-                "Send it to which companion (blank cancels): ",
-            )?
-            else {
-                return Ok(());
-            };
-            names[index].clone()
+
+    // Preparing is real work: hashing the content is what makes "already
+    // sent" mean the same bytes, and it is what a resumed send compares.
+    console::Console::progress(&format!("preparing {file} for {chosen}"));
+    let sha = receipts::hash_file(path)?;
+    let receipts_path = receipts::receipts_path();
+    let mut ledger = receipts::Receipts::load(&receipts_path)?;
+    if chosen != "flashcards" {
+        if let Some(receipt) = ledger.find(&chosen, &target_label, &sha) {
+            println!(
+                "{file} is unchanged since it was sent to {target_label} (receipt at {}); nothing to do",
+                receipt.at
+            );
+            return Ok(());
         }
-        Err(error) => return Err(error),
-    };
+    }
+
     let mut forwarded = vec!["push".to_owned(), file.clone()];
-    forwarded.extend(target_flags);
+    forwarded.extend(device_flags);
     match chosen.as_str() {
-        "frame" => frame::command(&forwarded),
-        "feeds" => feeds::command(&forwarded),
-        "panels" => panels::command(&forwarded),
-        "parser" => parser_command(&forwarded),
+        "frame" => frame::command(&forwarded)?,
+        "feeds" => feeds::command(&forwarded)?,
+        "panels" => panels::command(&forwarded)?,
+        "parser" => parser_command(&forwarded)?,
         "flashcards" => {
             // Decks are a two-step import, not a push: the helper merges into
             // a collection, and staging needs a mounted reader. Say so with
             // the real commands rather than pretending a push happened.
             println!(
                 "{file} is a study deck. Decks import into a collection first, then stage:\n  kobo flashcards import {file} --merge COLLECTION.cobfc\n  kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
+            );
+            return Ok(());
+        }
+        _ => unreachable!("choose returns only detected companions"),
+    }
+
+    // The receipt lands only past the companion's own acknowledgement - an
+    // interrupted transfer leaves none, which is what lets the next send of
+    // the same file resume instead of duplicate.
+    ledger.record(receipts::Receipt {
+        file: file.clone(),
+        app: chosen.clone(),
+        target: target_label.clone(),
+        sha256: sha,
+        at: steps::now(),
+    });
+    if let Err(error) = ledger.save(&receipts_path) {
+        println!(
+            "note: the send's receipt could not be written ({error}); the send itself finished"
+        );
+    }
+    console::Console::progress(&format!("sent to {target_label}"));
+    Ok(())
+}
+
+/// What a send run was asked for, beyond the shared target flags.
+#[derive(Default)]
+struct SendOptions {
+    file: Option<String>,
+    app: Option<String>,
+    preview: bool,
+    out: Option<String>,
+    profile: Option<String>,
+}
+
+impl SendOptions {
+    fn parse(arguments: &[String], usage: &str) -> Result<Self, String> {
+        let mut options = Self::default();
+        let mut arguments = arguments.iter();
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--app" if options.app.is_none() => {
+                    options.app = Some(
+                        arguments
+                            .next()
+                            .ok_or_else(|| console::usage("--app takes a companion name"))?
+                            .clone(),
+                    );
+                }
+                "--preview" if !options.preview => options.preview = true,
+                "--out" if options.out.is_none() => {
+                    options.out = Some(
+                        arguments
+                            .next()
+                            .ok_or_else(|| console::usage("--out takes a directory"))?
+                            .clone(),
+                    );
+                }
+                "--profile" if options.profile.is_none() => {
+                    options.profile = Some(
+                        arguments
+                            .next()
+                            .ok_or_else(|| console::usage("--profile takes a profile id"))?
+                            .clone(),
+                    );
+                }
+                _ if options.file.is_none() && !argument.starts_with('-') => {
+                    options.file = Some(argument.clone());
+                }
+                _ => return Err(console::usage(usage)),
+            }
+        }
+        Ok(options)
+    }
+}
+
+/// Asks which companion an ambiguous container goes to. A pipe cannot ask,
+/// so it gets a usage error naming `--app`; a blank answer cancels.
+fn pick_companion(candidates: &[&'static str], error: &str) -> Result<Option<String>, String> {
+    if !std::io::stdin().is_terminal() {
+        return Err(console::usage(format!(
+            "{error} - name one with --app ({})",
+            candidates.join("|")
+        )));
+    }
+    let names: Vec<String> = candidates.iter().map(|name| (*name).to_owned()).collect();
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut output = std::io::stdout();
+    Ok(console::choose_numbered(
+        &mut input,
+        &mut output,
+        &names,
+        "Send it to which companion (blank cancels): ",
+    )?
+    .map(|index| names[index].clone()))
+}
+
+/// The local half of send: render or check the content, transfer nothing.
+fn send_preview(
+    app: &str,
+    file: &str,
+    out: Option<&str>,
+    profile: Option<&str>,
+) -> Result<(), String> {
+    match app {
+        "frame" | "panels" => {
+            let out = out
+                .ok_or_else(|| console::usage(format!("a {app} preview needs --out DIRECTORY")))?;
+            let mut forwarded = vec![
+                "preview".to_owned(),
+                file.to_owned(),
+                "--out".to_owned(),
+                out.to_owned(),
+            ];
+            if let Some(profile) = profile {
+                forwarded.push("--profile".to_owned());
+                forwarded.push(profile.to_owned());
+            }
+            if app == "frame" {
+                frame_preview::command(&forwarded)
+            } else {
+                panels::command(&forwarded)
+            }
+        }
+        "feeds" => feeds::command(&["check".to_owned(), file.to_owned()]),
+        "parser" => parser_command(&["inspect".to_owned(), file.to_owned()]),
+        "flashcards" => {
+            println!(
+                "{file} is a study deck. Preview the collection it merges into:\n  kobo flashcards preview COLLECTION.cobfc --out PREVIEW.html"
             );
             Ok(())
         }
