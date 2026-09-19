@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "b4cd8a7ca71f43d4482a7f1bc0b9f03791e9f9c494d6b7d4c20b9a31e3376fe5",
+    "sha256": "65df367f248460658b22ea71359a65794a169761376aae937413f1c0512e10f9",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
@@ -38,7 +38,7 @@
   "paints": "2",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 505027,
+    "dirtyPixelsSinceClean": 207472,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "3",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "363",
+      "finishedAtMillis": "657",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "3",
-      "submittedAtMillis": "349",
+      "submittedAtMillis": "637",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -121,7 +121,7 @@
     "scenario": "normal",
     "touch": null,
     "transition": {
-      "dirty": 505027,
+      "dirty": 207472,
       "full": false,
       "refresh": 3,
       "region": {
@@ -142,8 +142,8 @@
         },
         {
           "region": {
-            "height": 1032,
-            "width": 976,
+            "height": 704,
+            "width": 816,
             "x": 48,
             "y": 184
           },
@@ -181,11 +181,11 @@
     }
   },
   "source": {
-    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": "original-crossword-pack",
     "requestedSeed": "0",
-    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

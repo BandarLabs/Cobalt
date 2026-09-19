@@ -35,10 +35,10 @@
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "23",
+  "paints": "25",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 8323858,
+    "dirtyPixelsSinceClean": 5578671,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "140",
+      "rawEvents": "154",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "24",
+      "completed": "26",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "4058",
+      "finishedAtMillis": "5605",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "24",
-      "submittedAtMillis": "4047",
+      "submitted": "26",
+      "submittedAtMillis": "5582",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 24,
+    "refreshCount": 26,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 8323858,
+      "dirty": 5578671,
       "full": false,
-      "refresh": 24,
+      "refresh": 26,
       "region": {
         "height": 1352,
         "width": 1072,
@@ -172,11 +172,11 @@
     }
   },
   "source": {
-    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": "original-crossword-pack",
     "requestedSeed": "0",
-    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

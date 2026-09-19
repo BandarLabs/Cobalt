@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "e33c52ca2e8a4f8c3f00d81795571d44069357eb9a7a2b9eee83b556c82b4998",
+    "sha256": "4419cb0b8f1942741f11cd920a0a4904dad09e227b9387c582fd270de4416d1b",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "30",
+  "paints": "34",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.14",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-12",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "4906",
-      "unixMillis": "1789213812018",
+      "monotonicMillis": "6445",
+      "unixMillis": "1789824382726",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 8470476,
+    "dirtyPixelsSinceClean": 6618315,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "196",
+      "rawEvents": "224",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "31",
+      "completed": "35",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "4067",
+      "finishedAtMillis": "5594",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "31",
-      "submittedAtMillis": "4041",
+      "submitted": "35",
+      "submittedAtMillis": "5547",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 31,
+    "refreshCount": 35,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 8470476,
+      "dirty": 6618315,
       "full": false,
-      "refresh": 31,
+      "refresh": 35,
       "region": {
         "height": 1304,
         "width": 1072,
@@ -172,11 +172,11 @@
     }
   },
   "source": {
-    "binarySha256": "7bb6a3ac33e3a843af4a7fa0669761e480e7d797558cebe34900172512e98d1b",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "79e943387000682dcaa74c2f7d40b9f4c03361a3"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

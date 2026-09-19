@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "5a6af23e90265132ac2a334108b5797cd30345d2e8facb757eca2d851e48d364",
+    "sha256": "ef505cb21fbe43722bdfaebeb49aa58cc83e636cf5602d04da53d915a31e6f48",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
@@ -38,7 +38,7 @@
   "paints": "2",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 55675,
+    "dirtyPixelsSinceClean": 64429,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "3",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "340",
+      "finishedAtMillis": "677",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "3",
-      "submittedAtMillis": "336",
+      "submittedAtMillis": "670",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -121,13 +121,13 @@
     "scenario": "normal",
     "touch": null,
     "transition": {
-      "dirty": 55675,
+      "dirty": 64429,
       "full": false,
       "refresh": 3,
       "region": {
-        "height": 1304,
-        "width": 1072,
-        "x": 0,
+        "height": 744,
+        "width": 952,
+        "x": 48,
         "y": 88
       },
       "regions": [
@@ -142,17 +142,8 @@
         },
         {
           "region": {
-            "height": 128,
-            "width": 496,
-            "x": 256,
-            "y": 168
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 56,
-            "width": 192,
+            "height": 64,
+            "width": 408,
             "x": 48,
             "y": 184
           },
@@ -160,37 +151,46 @@
         },
         {
           "region": {
-            "height": 176,
-            "width": 736,
+            "height": 40,
+            "width": 552,
+            "x": 112,
+            "y": 272
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 104,
+            "width": 640,
             "x": 48,
-            "y": 312
+            "y": 384
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 96,
+            "width": 656,
+            "x": 48,
+            "y": 560
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 48,
+            "width": 504,
+            "x": 48,
+            "y": 728
           },
           "waveform": "GL16"
         },
         {
           "region": {
             "height": 40,
-            "width": 464,
-            "x": 48,
-            "y": 504
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 8,
-            "width": 1072,
-            "x": 0,
-            "y": 1304
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 32,
-            "width": 656,
-            "x": 192,
-            "y": 1360
+            "width": 592,
+            "x": 112,
+            "y": 792
           },
           "waveform": "GL16"
         }
@@ -199,11 +199,11 @@
     }
   },
   "source": {
-    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": "original-crossword-pack",
     "requestedSeed": "0",
-    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

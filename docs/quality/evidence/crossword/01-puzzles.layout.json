@@ -1,5 +1,12 @@
 {
   "paints": 2,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1226
+  },
+  "pageTurns": null,
   "nodes": [
     {
       "kind": "StatusBand",
@@ -138,14 +145,40 @@
       "lines": []
     },
     {
-      "kind": "Button(ActionId(2887882793), Enabled, Normal)",
-      "x": 319,
+      "kind": "Row(ActionId(2887882793))",
+      "x": 47,
       "y": 175,
-      "width": 433,
-      "height": 118,
+      "width": 978,
+      "height": 162,
       "centre": {
-        "x": 535,
-        "y": 234
+        "x": 536,
+        "y": 256
+      },
+      "action": 2887882793,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 209,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 231
+      },
+      "action": 2887882793,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 199,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 231
       },
       "action": 2887882793,
       "lines": [
@@ -153,29 +186,55 @@
       ]
     },
     {
-      "kind": "Secondary",
-      "x": 47,
-      "y": 305,
-      "width": 978,
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 263,
+      "width": 886,
       "height": 50,
       "centre": {
-        "x": 536,
-        "y": 330
+        "x": 558,
+        "y": 288
       },
-      "action": null,
+      "action": 2887882793,
       "lines": [
-        "Easy \u00b7 5\u00d75 \u00b7 0/17 squares"
+        "Crossword \u00b7 5\u00d75 \u00b7 0/21 squares"
       ]
     },
     {
-      "kind": "Button(ActionId(2837549936), Enabled, Normal)",
-      "x": 295,
-      "y": 367,
-      "width": 482,
-      "height": 118,
+      "kind": "Row(ActionId(2837549936))",
+      "x": 47,
+      "y": 349,
+      "width": 978,
+      "height": 162,
       "centre": {
         "x": 536,
-        "y": 426
+        "y": 430
+      },
+      "action": 2837549936,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 383,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 405
+      },
+      "action": 2837549936,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 373,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 405
       },
       "action": 2837549936,
       "lines": [
@@ -183,74 +242,130 @@
       ]
     },
     {
-      "kind": "Secondary",
-      "x": 47,
-      "y": 497,
-      "width": 978,
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 437,
+      "width": 886,
       "height": 50,
       "centre": {
-        "x": 536,
-        "y": 522
+        "x": 558,
+        "y": 462
       },
-      "action": null,
+      "action": 2837549936,
       "lines": [
-        "Starter \u00b7 3\u00d73 \u00b7 0/9 squares"
+        "Word square \u00b7 3\u00d73 \u00b7 0/9 squares"
       ]
     },
     {
-      "kind": "NavBar",
-      "x": 0,
-      "y": 1306,
-      "width": 1072,
-      "height": 142,
+      "kind": "Row(ActionId(2854327555))",
+      "x": 47,
+      "y": 523,
+      "width": 978,
+      "height": 162,
       "centre": {
         "x": 536,
-        "y": 1377
+        "y": 604
       },
-      "action": 640855928,
+      "action": 2854327555,
       "lines": []
     },
     {
-      "kind": "Divider",
-      "x": 0,
-      "y": 1306,
-      "width": 1072,
-      "height": 4,
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 557,
+      "width": 44,
+      "height": 44,
       "centre": {
-        "x": 536,
-        "y": 1308
+        "x": 69,
+        "y": 579
       },
-      "action": 640855928,
+      "action": 2854327555,
       "lines": []
     },
     {
-      "kind": "NavDestination(ActionId(1392938200), None)",
-      "x": 0,
-      "y": 1306,
-      "width": 536,
-      "height": 142,
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 547,
+      "width": 886,
+      "height": 64,
       "centre": {
-        "x": 268,
-        "y": 1377
+        "x": 558,
+        "y": 579
       },
-      "action": 1392938200,
+      "action": 2854327555,
       "lines": [
-        "Previous"
+        "In the square"
       ]
     },
     {
-      "kind": "NavDestination(ActionId(640855928), None)",
-      "x": 536,
-      "y": 1306,
-      "width": 536,
-      "height": 142,
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 611,
+      "width": 886,
+      "height": 50,
       "centre": {
-        "x": 804,
-        "y": 1377
+        "x": 558,
+        "y": 636
       },
-      "action": 640855928,
+      "action": 2854327555,
       "lines": [
-        "Next"
+        "Word square \u00b7 4\u00d74 \u00b7 0/16 squares"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(2871105174))",
+      "x": 47,
+      "y": 697,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 778
+      },
+      "action": 2871105174,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 731,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 753
+      },
+      "action": 2871105174,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 721,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 753
+      },
+      "action": 2871105174,
+      "lines": [
+        "Heart of the matter"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 785,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 810
+      },
+      "action": 2871105174,
+      "lines": [
+        "Word square \u00b7 5\u00d75 \u00b7 0/25 squares"
       ]
     }
   ]

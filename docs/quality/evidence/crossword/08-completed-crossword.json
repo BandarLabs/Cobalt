@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "482a7a5335894a3d39f18ae2aa5f0aed76e4f314d4beedb83e70e08af9940d8c",
+    "sha256": "848205ed9e2284d7995841fb58f177a1e38f8c7b56aa44fb656d16c937009418",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "43",
+  "paints": "47",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 2203886,
+    "dirtyPixelsSinceClean": 10443030,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "280",
+      "rawEvents": "308",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "44",
+      "completed": "48",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "6736",
+      "finishedAtMillis": "9245",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "44",
-      "submittedAtMillis": "6717",
+      "submitted": "48",
+      "submittedAtMillis": "9203",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 44,
+    "refreshCount": 48,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 2203886,
+      "dirty": 10443030,
       "full": false,
-      "refresh": 44,
+      "refresh": 48,
       "region": {
         "height": 1304,
         "width": 1072,
@@ -172,11 +172,11 @@
     }
   },
   "source": {
-    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": "original-crossword-pack",
     "requestedSeed": "0",
-    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

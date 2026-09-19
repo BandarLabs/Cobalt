@@ -1,5 +1,12 @@
 {
   "paints": 12,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1131
+  },
+  "pageTurns": null,
   "nodes": [
     {
       "kind": "StatusBand",
@@ -95,33 +102,33 @@
       "lines": []
     },
     {
-      "kind": "BarAction(ActionId(3748513642))",
-      "x": 925,
+      "kind": "BarAction(ActionId(4019387947))",
+      "x": 882,
       "y": 59,
-      "width": 100,
+      "width": 143,
       "height": 100,
       "centre": {
-        "x": 975,
+        "x": 953,
         "y": 109
       },
-      "action": 3748513642,
+      "action": 4019387947,
       "lines": [
-        "\u2193"
+        "Grid"
       ]
     },
     {
       "kind": "TopBarTitle",
       "x": 171,
       "y": 77,
-      "width": 730,
+      "width": 687,
       "height": 64,
       "centre": {
-        "x": 536,
+        "x": 514,
         "y": 109
       },
       "action": null,
       "lines": [
-        "Across"
+        "Clues"
       ]
     },
     {
@@ -138,63 +145,298 @@
       "lines": []
     },
     {
-      "kind": "Button(ActionId(3410645277), Enabled, Normal)",
-      "x": 396,
-      "y": 175,
-      "width": 280,
-      "height": 118,
+      "kind": "Section",
+      "x": 47,
+      "y": 199,
+      "width": 978,
+      "height": 50,
       "centre": {
         "x": 536,
-        "y": 234
+        "y": 224
+      },
+      "action": null,
+      "lines": [
+        "Across"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(3410645277))",
+      "x": 47,
+      "y": 273,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 354
+      },
+      "action": 3410645277,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Number(1))",
+      "x": 47,
+      "y": 311,
+      "width": 26,
+      "height": 50,
+      "centre": {
+        "x": 60,
+        "y": 336
+      },
+      "action": 3410645277,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 97,
+      "y": 297,
+      "width": 904,
+      "height": 64,
+      "centre": {
+        "x": 549,
+        "y": 329
       },
       "action": 3410645277,
       "lines": [
-        "1 Across"
+        "Place down"
       ]
     },
     {
-      "kind": "Text",
+      "kind": "RowSummary",
+      "x": 97,
+      "y": 361,
+      "width": 904,
+      "height": 50,
+      "centre": {
+        "x": 549,
+        "y": 386
+      },
+      "action": 3410645277,
+      "lines": [
+        "3 letters"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(3393867658))",
       "x": 47,
-      "y": 305,
+      "y": 447,
       "width": 978,
-      "height": 64,
+      "height": 162,
       "centre": {
         "x": 536,
-        "y": 337
+        "y": 528
       },
-      "action": null,
-      "lines": [
-        "Small pet with retractable claws"
-      ]
+      "action": 3393867658,
+      "lines": []
     },
     {
-      "kind": "Button(ActionId(3393867658), Enabled, Normal)",
-      "x": 390,
-      "y": 381,
-      "width": 291,
-      "height": 118,
+      "kind": "RowLead(Number(4))",
+      "x": 47,
+      "y": 485,
+      "width": 26,
+      "height": 50,
       "centre": {
-        "x": 535,
-        "y": 440
+        "x": 60,
+        "y": 510
+      },
+      "action": 3393867658,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 97,
+      "y": 471,
+      "width": 904,
+      "height": 64,
+      "centre": {
+        "x": 549,
+        "y": 503
       },
       "action": 3393867658,
       "lines": [
-        "4 Across"
+        "Lesser of two"
       ]
     },
     {
-      "kind": "Text",
+      "kind": "RowSummary",
+      "x": 97,
+      "y": 535,
+      "width": 904,
+      "height": 50,
+      "centre": {
+        "x": 549,
+        "y": 560
+      },
+      "action": 3393867658,
+      "lines": [
+        "5 letters"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(3377090039))",
       "x": 47,
-      "y": 511,
+      "y": 621,
       "width": 978,
-      "height": 64,
+      "height": 162,
       "centre": {
         "x": 536,
-        "y": 543
+        "y": 702
       },
-      "action": null,
+      "action": 3377090039,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Number(6))",
+      "x": 47,
+      "y": 659,
+      "width": 26,
+      "height": 50,
+      "centre": {
+        "x": 60,
+        "y": 684
+      },
+      "action": 3377090039,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 97,
+      "y": 645,
+      "width": 904,
+      "height": 64,
+      "centre": {
+        "x": 549,
+        "y": 677
+      },
+      "action": 3377090039,
       "lines": [
-        "Rock containing a useful metal"
+        "Much the same"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 97,
+      "y": 709,
+      "width": 904,
+      "height": 50,
+      "centre": {
+        "x": 549,
+        "y": 734
+      },
+      "action": 3377090039,
+      "lines": [
+        "5 letters"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(3360312420))",
+      "x": 47,
+      "y": 795,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 876
+      },
+      "action": 3360312420,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Number(7))",
+      "x": 47,
+      "y": 833,
+      "width": 26,
+      "height": 50,
+      "centre": {
+        "x": 60,
+        "y": 858
+      },
+      "action": 3360312420,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 97,
+      "y": 819,
+      "width": 904,
+      "height": 64,
+      "centre": {
+        "x": 549,
+        "y": 851
+      },
+      "action": 3360312420,
+      "lines": [
+        "Well known"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 97,
+      "y": 883,
+      "width": 904,
+      "height": 50,
+      "centre": {
+        "x": 549,
+        "y": 908
+      },
+      "action": 3360312420,
+      "lines": [
+        "5 letters"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(3343534801))",
+      "x": 47,
+      "y": 969,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 1050
+      },
+      "action": 3343534801,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Number(8))",
+      "x": 47,
+      "y": 1007,
+      "width": 26,
+      "height": 50,
+      "centre": {
+        "x": 60,
+        "y": 1032
+      },
+      "action": 3343534801,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 97,
+      "y": 993,
+      "width": 904,
+      "height": 64,
+      "centre": {
+        "x": 549,
+        "y": 1025
+      },
+      "action": 3343534801,
+      "lines": [
+        "Fingers on two hands"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 97,
+      "y": 1057,
+      "width": 904,
+      "height": 50,
+      "centre": {
+        "x": 549,
+        "y": 1082
+      },
+      "action": 3343534801,
+      "lines": [
+        "Solving now"
       ]
     },
     {

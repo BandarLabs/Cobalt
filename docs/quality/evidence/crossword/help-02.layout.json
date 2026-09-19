@@ -1,5 +1,12 @@
 {
   "paints": 10,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1131
+  },
+  "pageTurns": null,
   "nodes": [
     {
       "kind": "StatusBand",

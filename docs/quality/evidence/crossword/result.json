@@ -3,7 +3,7 @@
   "profile": "clara-bw-391",
   "scale": "extra-large",
   "basis": "simulator-sdk-ipc",
-  "source_head": "bdbd4056b64db6841b5836e607be0e14713f3ce5",
+  "source_head": "47ec9d9bac01eecec913ecc4a97daa844ade8d75",
   "source_dirty": true,
   "checks": [
     "numbered blocked crossword",

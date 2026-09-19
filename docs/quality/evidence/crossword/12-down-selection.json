@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "09c5d4d0f75364ea1e77a171ce761087c20b9b0c6533785524849df7314f7b1b",
+    "sha256": "848205ed9e2284d7995841fb58f177a1e38f8c7b56aa44fb656d16c937009418",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
@@ -38,7 +38,7 @@
   "paints": "20",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 7184887,
+    "dirtyPixelsSinceClean": 4265965,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "140",
+      "rawEvents": "133",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -89,13 +89,13 @@
       "completed": "21",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "5277",
+      "finishedAtMillis": "5899",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "21",
-      "submittedAtMillis": "5258",
+      "submittedAtMillis": "5857",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 7184887,
+      "dirty": 4265965,
       "full": false,
       "refresh": 21,
       "region": {
@@ -172,11 +172,11 @@
     }
   },
   "source": {
-    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": "original-crossword-pack",
     "requestedSeed": "0",
-    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

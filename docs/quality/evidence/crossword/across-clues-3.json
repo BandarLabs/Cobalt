@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "b516d335981f503bbb0e7af33dc4fec41396927391d9023653bfbc83724e4277",
+    "sha256": "2f96a38a9a5517ec9a6470cd13b41d19c1dd99c0597a5b06448945b7a4354ee2",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "14",
+  "paints": "13",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.18",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 5776881,
+    "dirtyPixelsSinceClean": 3083561,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "15",
+      "completed": "14",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "3928",
+      "finishedAtMillis": "4830",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "15",
-      "submittedAtMillis": "3925",
+      "submitted": "14",
+      "submittedAtMillis": "4825",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 15,
+    "refreshCount": 14,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,58 +130,76 @@
       }
     },
     "transition": {
-      "dirty": 5776881,
+      "dirty": 3083561,
       "full": false,
-      "refresh": 15,
+      "refresh": 14,
       "region": {
-        "height": 392,
-        "width": 648,
+        "height": 896,
+        "width": 536,
         "x": 40,
-        "y": 168
+        "y": 208
       },
       "regions": [
         {
           "region": {
-            "height": 128,
-            "width": 24,
-            "x": 664,
-            "y": 168
-          },
-          "waveform": "DU"
-        },
-        {
-          "region": {
-            "height": 48,
-            "width": 200,
-            "x": 440,
+            "height": 32,
+            "width": 144,
+            "x": 40,
             "y": 208
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 192,
-            "width": 648,
-            "x": 40,
-            "y": 312
+            "height": 96,
+            "width": 336,
+            "x": 96,
+            "y": 304
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 40,
-            "width": 296,
+            "height": 56,
+            "width": 376,
             "x": 48,
-            "y": 520
+            "y": 480
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 48,
+            "width": 400,
+            "x": 48,
+            "y": 656
           },
           "waveform": "GL16"
         },
         {
           "region": {
             "height": 40,
-            "width": 184,
-            "x": 360,
-            "y": 520
+            "width": 320,
+            "x": 48,
+            "y": 832
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 40,
+            "width": 152,
+            "x": 96,
+            "y": 888
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 104,
+            "width": 528,
+            "x": 48,
+            "y": 1000
           },
           "waveform": "GL16"
         }
@@ -190,11 +208,11 @@
     }
   },
   "source": {
-    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "binarySha256": "ca1703443f9cdd35696beaa7dc0f8a4ecc6e7d558f77887a31a19f01392e5a78",
     "dirty": true,
     "fixture": "original-crossword-pack",
     "requestedSeed": "0",
-    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+    "revision": "47ec9d9bac01eecec913ecc4a97daa844ade8d75"
   },
   "version": 1
 }

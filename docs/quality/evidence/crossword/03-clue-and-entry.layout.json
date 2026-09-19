@@ -1,5 +1,12 @@
 {
-  "paints": 12,
+  "paints": 14,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1226
+  },
+  "pageTurns": null,
   "nodes": [
     {
       "kind": "StatusBand",
@@ -149,7 +156,7 @@
       },
       "action": null,
       "lines": [
-        "Rock containing a useful metal"
+        "Lesser of two"
       ]
     },
     {
@@ -162,17 +169,17 @@
         "x": 536,
         "y": 310
       },
-      "action": 1956652356,
+      "action": 1973429975,
       "lines": []
     },
     {
       "kind": "Cell(ActionId(2006985213), Key, true)",
       "x": 47,
       "y": 251,
-      "width": 318,
+      "width": 186,
       "height": 118,
       "centre": {
-        "x": 206,
+        "x": 140,
         "y": 310
       },
       "action": 2006985213,
@@ -182,10 +189,10 @@
       "kind": "CellLabel(false)",
       "x": 47,
       "y": 251,
-      "width": 318,
+      "width": 186,
       "height": 118,
       "centre": {
-        "x": 206,
+        "x": 140,
         "y": 310
       },
       "action": 2006985213,
@@ -195,12 +202,12 @@
     },
     {
       "kind": "Cell(ActionId(1956652356), Key, false)",
-      "x": 377,
+      "x": 245,
       "y": 251,
-      "width": 318,
+      "width": 186,
       "height": 118,
       "centre": {
-        "x": 536,
+        "x": 338,
         "y": 310
       },
       "action": 1956652356,
@@ -208,12 +215,12 @@
     },
     {
       "kind": "CellLabel(false)",
-      "x": 377,
+      "x": 245,
       "y": 251,
-      "width": 318,
+      "width": 186,
       "height": 118,
       "centre": {
-        "x": 536,
+        "x": 338,
         "y": 310
       },
       "action": 1956652356,
@@ -223,12 +230,12 @@
     },
     {
       "kind": "Cell(ActionId(1973429975), Key, false)",
-      "x": 707,
+      "x": 443,
       "y": 251,
-      "width": 318,
+      "width": 186,
       "height": 118,
       "centre": {
-        "x": 866,
+        "x": 536,
         "y": 310
       },
       "action": 1973429975,
@@ -236,15 +243,71 @@
     },
     {
       "kind": "CellLabel(false)",
-      "x": 707,
+      "x": 443,
       "y": 251,
-      "width": 318,
+      "width": 186,
       "height": 118,
       "centre": {
-        "x": 866,
+        "x": 536,
         "y": 310
       },
       "action": 1973429975,
+      "lines": [
+        " "
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1788876166), Key, false)",
+      "x": 641,
+      "y": 251,
+      "width": 186,
+      "height": 118,
+      "centre": {
+        "x": 734,
+        "y": 310
+      },
+      "action": 1788876166,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 641,
+      "y": 251,
+      "width": 186,
+      "height": 118,
+      "centre": {
+        "x": 734,
+        "y": 310
+      },
+      "action": 1788876166,
+      "lines": [
+        " "
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1805653785), Key, false)",
+      "x": 839,
+      "y": 251,
+      "width": 186,
+      "height": 118,
+      "centre": {
+        "x": 932,
+        "y": 310
+      },
+      "action": 1805653785,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 839,
+      "y": 251,
+      "width": 186,
+      "height": 118,
+      "centre": {
+        "x": 932,
+        "y": 310
+      },
+      "action": 1805653785,
       "lines": [
         " "
       ]
@@ -261,7 +324,7 @@
       },
       "action": null,
       "lines": [
-        "ore"
+        "minor"
       ]
     },
     {
