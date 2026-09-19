@@ -1,5 +1,5 @@
-wait 800
-wait-for Your stand is empty
-expect kobo musicstand init
+# An empty stand points at the companion push command.
+wait-for Music Stand
+expect Your stand is empty
 clean
-shot empty-shelf
+shot musicstand-empty
