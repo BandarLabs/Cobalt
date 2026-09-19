@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-zstory"
-version = "0.3.18"
+version = "0.3.19"
 
 [[package]]
 name = "kobod"
