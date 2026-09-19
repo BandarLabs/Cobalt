@@ -3981,8 +3981,10 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Use consistent verbs and reader/simulator/output target resolution",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-25/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-26",
@@ -4021,32 +4023,40 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Provide numbered plain terminal alternative",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-30/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-31",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-31/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-32",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Keep progress on stderr with versioned JSON on stdout",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-32/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-33",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Use stable exit categories and bounded noninteractive behavior",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-33/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-34",
