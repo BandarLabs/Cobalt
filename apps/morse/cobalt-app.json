@@ -3,11 +3,11 @@
   "display_name": "Morse",
   "short_label": "Morse",
   "summary": "Type a message and send it in Morse code with the front light.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "glyph": "light",
   "capabilities": [
     "frontlight-control",
     "keep-awake"
   ],
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for."
+  "release_notes": "State how fast the light moves beside how long a message takes, learn as it sends with each letter named in its code, and look any letter up in the new reference; resending a message is now labeled Send again."
 }
