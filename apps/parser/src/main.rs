@@ -240,11 +240,7 @@ impl Parser {
             SlotAction::Save => "Save game",
             SlotAction::Restore => "Restore game",
         };
-        let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
-        let page = self.slots_page.min(page_count - 1);
-        let first = page * SLOT_PAGE_ROWS + 1;
-        let last = (first + SLOT_PAGE_ROWS - 1).min(10);
-        let rows = (first..=last).map(|slot| {
+        let slot_rows = (1..=10).map(|slot| {
             let occupied = self.machine.as_ref().is_some_and(|machine| {
                 self.saves
                     .contains(&save_name(machine.info(), &slot.to_string()))
@@ -257,7 +253,10 @@ impl Parser {
             )
         });
         // The story's own checkpoint (its "save" command) is restorable from
-        // here too, so a story-initiated restore can find it.
+        // here too, so a story-initiated restore can find it. It is paged
+        // with the slots rather than added beside them: an extra row beyond
+        // the page budget crowds the guidance line off the largest text
+        // scale, and the renderer refuses the screen.
         let checkpoint = if self.slot_action == SlotAction::Restore {
             self.machine
                 .as_ref()
@@ -266,7 +265,7 @@ impl Parser {
         } else {
             None
         };
-        let rows: Vec<_> = checkpoint
+        let all_rows: Vec<_> = checkpoint
             .into_iter()
             .map(|_| {
                 (
@@ -276,8 +275,13 @@ impl Parser {
                     Glyph::Bookmark,
                 )
             })
-            .chain(rows)
+            .chain(slot_rows)
             .collect();
+        let page_count = all_rows.len().div_ceil(SLOT_PAGE_ROWS);
+        let page = self.slots_page.min(page_count - 1);
+        let first = page * SLOT_PAGE_ROWS;
+        let last = (first + SLOT_PAGE_ROWS).min(all_rows.len());
+        let rows: Vec<_> = all_rows[first..last].to_vec();
         // One line up top says what a slot is before anybody has to guess:
         // a position of this story kept on this reader, with the story
         // itself resuming where it was left whether a slot was used or not.
@@ -1234,6 +1238,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn play_screen_status_fits_every_panel_and_text_size() {
+        install_real_face();
+        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let mut parser = Parser {
+            transcript: machine.take_output(),
+            machine: Some(machine),
+            // The name the store gives a pushed story: serial and checksum
+            // included, far longer than a title anybody would type.
+            open_blob: Some("story-zork1-119-880429-bf44.z3".to_owned()),
+            ..Parser::default()
+        };
+        for (width, height, ppi) in [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)] {
+            for scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch: ppi,
+                    text_scale: scale,
+                };
+                for keyboard_open in [false, true] {
+                    parser.keyboard_open = keyboard_open;
+                    // Production repaginates inside show(), so the split always
+                    // matches the keyboard state on screen. Mirror that here.
+                    parser.repaginate_for_metrics(metrics);
+                    let landing = parser.last_content_page();
+                    let (start, end) = parser.pages[landing];
+                    let text = parser.transcript[start..end].to_owned();
+                    let screen = parser.play_screen_for(&text, landing + 1, parser.pages.len());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{width}x{height}@{ppi} {scale:?} keyboard_open={keyboard_open}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
+    }
+
     fn shown(screen: &Screen) -> Vec<String> {
         screen
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
@@ -1275,6 +1320,7 @@ mod tests {
             slot_subtitle(SlotAction::Restore, false),
             "Empty: nothing to restore"
         );
+        install_real_face();
         let machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
         let mut parser = Parser {
             saves: vec!["save-zork1-3".to_owned(), save_name(machine.info(), "game")],

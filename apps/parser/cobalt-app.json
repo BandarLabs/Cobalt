@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.8",
-  "release_notes": "The command palette now only suggests verbs, directions and meta commands the loaded story actually knows, so a tap never meets \"The story does not know that word.\"",
+  "version": "0.1.9",
+  "release_notes": "Save and restore slots stay on the panel at the largest text size.",
   "glyph": "book",
   "capabilities": []
 }
