@@ -1,0 +1,5 @@
+Kobo app simulator: http://127.0.0.1:33617
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/nonograms/nonograms-shots/nonograms-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/nonograms/nonograms-shots/nonograms-clue.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/nonograms/nonograms-shots/nonograms-play.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/nonograms/nonograms-shots

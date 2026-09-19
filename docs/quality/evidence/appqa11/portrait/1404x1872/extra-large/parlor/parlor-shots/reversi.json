@@ -1,0 +1,164 @@
+{
+  "app": "parlor",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "34bdc8e09bb754d5134d66bf594265ce5a1aa305d2b9892b74ac3e6a3e5f459e",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "5",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.18",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-19",
+      "mode": "real",
+      "monotonicMillis": "2392",
+      "unixMillis": "1789822473362",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 849378,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "28",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "parlor",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "5",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "2210",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "5",
+      "submittedAtMillis": "2145",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1872,
+      "id": "elipsa-2e-389",
+      "model": "Kobo Elipsa 2E",
+      "pixelsPerInch": 227,
+      "rotation": 1,
+      "touch": {
+        "name": "Elan Touchscreen",
+        "xMax": 1872,
+        "xMin": 0,
+        "yMax": 1404,
+        "yMin": 0
+      },
+      "width": 1404
+    },
+    "refreshCount": 5,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 702,
+        "y": 589
+      },
+      "raw": {
+        "x": 1283,
+        "y": 703
+      }
+    },
+    "transition": {
+      "dirty": 849378,
+      "full": false,
+      "refresh": 5,
+      "region": {
+        "height": 1536,
+        "width": 1336,
+        "x": 32,
+        "y": 144
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 1536,
+            "width": 1336,
+            "x": 32,
+            "y": 144
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "32f69c9760b25966a71eea49661c969b53d707323440a1124f15d5ce5a0d93e5",
+    "dirty": true,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "5e76296cc1078cfac742b5d78ca7bf081c376f3e"
+  },
+  "version": 1
+}

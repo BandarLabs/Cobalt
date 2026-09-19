@@ -1,0 +1,182 @@
+{
+  "app": "needles",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "8d9df2ac9e4e279a84800e2d11b4613ad165e84422e03c95d67e4eb1ffc35c2b",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "single-app",
+  "orientation": "landscape",
+  "paints": "4",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.18",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-19",
+      "mode": "real",
+      "monotonicMillis": "2729",
+      "unixMillis": "1789822636652",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 153644,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "landscape",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "21",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "needles",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "5",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "2173",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "5",
+      "submittedAtMillis": "2172",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 5,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 499,
+        "y": 1068
+      },
+      "raw": {
+        "x": 1068,
+        "y": 572
+      }
+    },
+    "transition": {
+      "dirty": 153644,
+      "full": false,
+      "refresh": 5,
+      "region": {
+        "height": 248,
+        "width": 232,
+        "x": 568,
+        "y": 152
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 120,
+            "width": 24,
+            "x": 568,
+            "y": 152
+          },
+          "waveform": "DU"
+        },
+        {
+          "region": {
+            "height": 40,
+            "width": 48,
+            "x": 752,
+            "y": 248
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 112,
+            "width": 32,
+            "x": 624,
+            "y": 288
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "fa0d75c19eaee090cdc66713557b67501b73d08789d49db204cdea39653c3226",
+    "dirty": true,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "5e76296cc1078cfac742b5d78ca7bf081c376f3e"
+  },
+  "version": 1
+}

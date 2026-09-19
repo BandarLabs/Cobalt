@@ -1,0 +1,13 @@
+{
+  "source_sha": "5e76296cc1078cfac742b5d78ca7bf081c376f3e",
+  "dirty": true,
+  "results": [
+    {
+      "app": "arxiv",
+      "launched": true,
+      "status": "fail",
+      "route": "/tmp/appqa11-arxiv-landscape.kobo",
+      "exit_code": 1
+    }
+  ]
+}

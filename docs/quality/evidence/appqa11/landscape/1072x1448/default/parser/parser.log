@@ -1,0 +1,3 @@
+Kobo app simulator: http://127.0.0.1:34907
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/parser/parser-shots/parser-library.png
+kobo: line 8: tap Zork1: the renderer refused this screen: node 2: text does not fit its rectangle; node 2: interactive control is outside the visible panel (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/parser/parser-shots/failed-line-8.png)
