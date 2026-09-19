@@ -3955,7 +3955,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Export diagnostic reports without secrets or content by default",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
