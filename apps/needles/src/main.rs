@@ -164,7 +164,6 @@ impl Needles {
                         format!("row {} of {}", counter.repeat, counter.repeat_total)
                     },
                 ),
-                ("Stand", "Screen stays awake while counting".to_owned()),
             ])
             // Where in the repeat the row sits, drawn rather than only said.
             .progress(if counter.repeat == 0 {
@@ -176,7 +175,6 @@ impl Needles {
                     .try_into()
                     .unwrap_or(100)
             })
-            .text("Counters and synced pattern text stay available offline.")
             // Undo sits beside the increment it reverses: a miscount is fixed
             // with a tap next to the tap that made it, not one a screen away.
             .buttons([("plus", "+1 row"), ("undo", "Undo")])
