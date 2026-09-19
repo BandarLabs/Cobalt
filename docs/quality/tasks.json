@@ -3814,24 +3814,30 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Name readers by stable identity and owner nickname",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-05/ (real binary invocations against a 2-reader store, lane A batch 2; reviewed and reverified live: unknown name -> exit 3 naming saved readers, name+address -> exit 2, saved-but-unreachable -> exit 3 with serial prefix, no substitute; suite 383+2 ARM-env fails; fmt+clippy -D warnings clean with no allows)"
+  ]
  },
  {
   "id": "CLI-06",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Select among multiple USB/Wi-Fi readers without first-device fallback",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-06/ (real binary invocations against a 2-reader store, lane A batch 2; reviewed and reverified live: unknown name -> exit 3 naming saved readers, name+address -> exit 2, saved-but-unreachable -> exit 3 with serial prefix, no substitute; suite 383+2 ARM-env fails; fmt+clippy -D warnings clean with no allows)"
+  ]
  },
  {
   "id": "CLI-07",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Remember pairing and reconnect after address changes",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-07/ (real binary invocations against a 2-reader store, lane A batch 2; reviewed and reverified live: unknown name -> exit 3 naming saved readers, name+address -> exit 2, saved-but-unreachable -> exit 3 with serial prefix, no substitute; suite 383+2 ARM-env fails; fmt+clippy -D warnings clean with no allows)"
+  ]
  },
  {
   "id": "CLI-08",

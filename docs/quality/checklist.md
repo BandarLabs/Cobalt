@@ -544,9 +544,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-02** Keep plain compact help for noninteractive use.
 - [x] **CLI-03** Separate owner tasks from developer/release commands.
 - [ ] **CLI-04** Provide a desktop/local companion surface using the same operations.
-- [ ] **CLI-05** Name readers by stable identity and owner nickname.
-- [ ] **CLI-06** Select among multiple USB/Wi-Fi readers without first-device fallback.
-- [ ] **CLI-07** Remember pairing and reconnect after address changes.
+- [x] **CLI-05** Name readers by stable identity and owner nickname.
+- [x] **CLI-06** Select among multiple USB/Wi-Fi readers without first-device fallback.
+- [x] **CLI-07** Remember pairing and reconnect after address changes.
 - [ ] **CLI-08** Preserve verified USB setup, eject, reboot and reconnect steps.
 - [ ] **CLI-09** Send and open an original sample for first success.
 - [ ] **CLI-10** Describe installation changes before approval.
@@ -564,15 +564,15 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **CLI-22** Provide understandable background status, pause and quit.
 - [ ] **CLI-23** Notify only useful completion or required action.
 - [ ] **CLI-24** Explain wake/network effects of continuous sync.
-- [ ] **CLI-25** Use consistent verbs and reader/simulator/output target resolution.
+- [x] **CLI-25** Use consistent verbs and reader/simulator/output target resolution.
 - [ ] **CLI-26** Create required storage within validated import.
 - [ ] **CLI-27** Support offline preparation and bundled local help.
 - [ ] **CLI-28** Keep prepared, sent and available-offline states distinct.
 - [ ] **CLI-29** Provide keyboard and screen-reader-friendly forms.
-- [ ] **CLI-30** Provide numbered plain terminal alternative.
-- [ ] **CLI-31** Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion.
-- [ ] **CLI-32** Keep progress on stderr with versioned JSON on stdout.
-- [ ] **CLI-33** Use stable exit categories and bounded noninteractive behavior.
+- [x] **CLI-30** Provide numbered plain terminal alternative.
+- [x] **CLI-31** Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion.
+- [x] **CLI-32** Keep progress on stderr with versioned JSON on stdout.
+- [x] **CLI-33** Use stable exit categories and bounded noninteractive behavior.
 - [ ] **CLI-34** Keep typed operations shared across UI, CLI and agent callers.
 - [ ] **CLI-35** Show host/reader/helper compatibility and signed update status.
 - [ ] **CLI-36** Preserve content, preferences and pairing through updates.
