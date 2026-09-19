@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.6",
-  "release_notes": "First Light, an original three-room tutorial story, is bundled and seeds itself onto an empty shelf, so a first run opens on a library with something in it. Story tiles no longer show the file extension.",
+  "version": "0.1.7",
+  "release_notes": "Tiles and the reading screen title-case story names. The bundled tutorial now seeds - its shelf key had uppercase letters the store rejects. Finishing a story marks the transcript ended.",
   "glyph": "book",
   "capabilities": []
 }

@@ -1,0 +1,36 @@
+# First run on an empty shelf (run with --bare): the bundled tutorial seeds
+# itself, and the walkthrough plays it from the gatehouse to the ending.
+wait-for Interactive fiction
+wait-for First Light
+clean
+shot parser-firstrun-library
+tap First Light
+wait-for Gatehouse
+clean
+shot parser-firstrun-opening
+tap Keyboard
+type examine note
+tap Run
+wait-for stair head
+type north
+tap Run
+wait-for Storeroom
+type take lamp
+tap Run
+wait-for Taken.
+type take matchbox
+tap Run
+type inventory
+tap Run
+wait-for matchbox
+clean
+shot parser-firstrun-inventory
+type light lamp
+tap Run
+wait-for steady flame
+type north
+tap Run
+wait-for learned the moves
+wait-for story has ended
+clean
+shot parser-firstrun-ending

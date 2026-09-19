@@ -1,10 +1,10 @@
 # Seeded with the Zork I fixture: library, opening, and the story's own
 # save/restore round trip through the slot picker.
 wait-for Interactive fiction
-wait-for zork1
+wait-for Zork1
 clean
 shot parser-library
-tap zork1
+tap Zork1
 wait-for West of House
 clean
 shot parser-opening

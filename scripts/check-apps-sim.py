@@ -68,14 +68,14 @@ def seed(app, state, kobo, env, log):
         shutil.copyfile(ROOT / 'apps/parser/fixtures/zork1.z3', shelf / 'story-zork1.z3')
 
 
-def run_app(app, kobo, out, environment, timeout):
+def run_app(app, kobo, out, environment, timeout, bare=False, route_override=None):
     directory = next((ROOT / group / app for group in ('apps', 'examples')
                       if (ROOT / group / app).is_dir()), None)
     result = dict(app=app, launched=False, status='fail')
     if directory is None:
         return dict(result, error='catalog app has no source directory')
-    route = next((directory / name for name in ('drive.kobo', 'drive.txt')
-                  if (directory / name).is_file()), None)
+    route = route_override or next((directory / name for name in ('drive.kobo', 'drive.txt')
+                                    if (directory / name).is_file()), None)
     result['route'] = str(route.relative_to(ROOT)) if route else None
     process = None
     log_path = out / (app + '.log')
@@ -89,7 +89,8 @@ def run_app(app, kobo, out, environment, timeout):
             # what was rolled needs the fixture source rather than chance.
             env['KOBO_BACKGAMMON_SEED'] = '7'
         try:
-            seed(app, state, kobo, env, log)
+            if not bare:
+                seed(app, state, kobo, env, log)
             process = subprocess.Popen([str(kobo), 'dev', '127.0.0.1:0'], cwd=directory,
                                        env=env, stdout=log, stderr=log, start_new_session=True)
             deadline = time.monotonic() + timeout
@@ -125,7 +126,13 @@ def main():
     parser.add_argument('apps', nargs='*', help='catalog IDs; default: all apps')
     parser.add_argument('--out', type=Path, default=ROOT / 'target/sim-check')
     parser.add_argument('--timeout', type=int, default=300)
+    parser.add_argument('--bare', action='store_true',
+                        help='skip seeding, for first-run scenarios')
+    parser.add_argument('--route', type=Path,
+                        help='drive script to run instead of the app default')
     args = parser.parse_args()
+    if args.route is not None:
+        args.route = args.route.resolve()
     if args.timeout < 1:
         parser.error('--timeout must be positive')
     registry = json.loads(subprocess.check_output([
@@ -154,7 +161,8 @@ def main():
         'results': [],
     }
     for app in apps:
-        result = run_app(app, kobo, out, env, args.timeout)
+        result = run_app(app, kobo, out, env, args.timeout,
+                                   bare=args.bare, route_override=args.route)
         report['results'].append(result)
         (out / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(result), flush=True)

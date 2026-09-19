@@ -20,7 +20,7 @@ const SLOT_PAGE_ROWS: usize = 3;
 
 const STORY_PREFIX: &str = "story-";
 /// Shelf name of the bundled tutorial story.
-const TUTORIAL_BLOB: &str = "story-First_Light.z3";
+const TUTORIAL_BLOB: &str = "story-first-light.z3";
 const SAVE_PREFIX: &str = "save-";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -180,7 +180,9 @@ impl Parser {
         let status = match self.machine.as_ref() {
             Some(machine) => {
                 if machine.status().is_empty() {
-                    machine.info().title.clone()
+                    self.open_blob
+                        .as_deref()
+                        .map_or_else(|| machine.info().title.clone(), display_name)
                 } else {
                     machine.status().to_owned()
                 }
@@ -381,10 +383,15 @@ impl Parser {
         match machine.input(command.trim()) {
             Ok(state) => {
                 self.transcript.push_str(&machine.take_output());
+                if state == RunState::Halted {
+                    self.transcript.push_str("\n\n[The story has ended.]\n");
+                }
                 self.repaginate(context);
                 self.page = self.last_content_page();
                 self.finish_file_request(context, &state);
-                self.autosave(context);
+                if state != RunState::Halted {
+                    self.autosave(context);
+                }
             }
             Err(error) => {
                 self.message = Some(error.to_string());
@@ -947,6 +954,16 @@ fn display_name(name: &str) -> String {
         .or_else(|| bare.strip_suffix(".z8"))
         .unwrap_or(bare);
     bare.replace(['_', '-'], " ")
+        .split(' ')
+        .map(|word| {
+            let mut letters = word.chars();
+            match letters.next() {
+                Some(first) => first.to_uppercase().chain(letters).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 
 fn format_size(bytes: u32) -> String {
@@ -1025,6 +1042,13 @@ mod tests {
         assert_eq!(landing, parser.pages.len() - 2);
         let (start, end) = parser.pages[landing];
         assert_ne!(text[start..end].trim(), ">");
+    }
+
+    #[test]
+    fn tutorial_blob_is_a_valid_shelf_key() {
+        assert!(kobo_sdk::is_valid_key(TUTORIAL_BLOB));
+        assert_eq!(display_name(TUTORIAL_BLOB), "First Light");
+        assert_eq!(display_name("story-zork1.z3"), "Zork1");
     }
 
     fn zork1_fixture() -> Vec<u8> {
