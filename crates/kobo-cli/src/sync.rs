@@ -19,7 +19,11 @@ const USAGE: &str = "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books
                      \x20      kobo sync publish --folder vault|frame\n\
                      \x20      kobo sync pause\n\
                      \x20      kobo sync resume\n\
-                     \x20      kobo sync stop";
+                     \x20      kobo sync stop\n\
+                     \x20      \n\
+                     \x20      While the peer runs it uses this computer's network. A sleeping\n\
+                     \x20      reader is not kept awake; it syncs during the windows its owner\n\
+                     \x20      opens on the Kobo.";
 const GUI_ADDRESS: &str = "127.0.0.1:8385";
 const KOBO_KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -143,7 +147,7 @@ fn setup(arguments: &[String]) -> Result<(), String> {
     }
     pair_kobo(device, &host_id, folder)?;
     println!(
-        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
+        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled and wakes only for the windows its owner\nopens; continuous sync does not keep a sleeping reader awake. While the peer runs it\nuses this computer's network. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
         local.display(),
         host_folder_type(folder),
         home.display(),
