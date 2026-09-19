@@ -561,9 +561,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-19** Retain selection and preparation on retry.
 - [x] **CLI-20** Report useful owner errors with optional technical details.
 - [x] **CLI-21** Export diagnostic reports without secrets or content by default.
-- [ ] **CLI-22** Provide understandable background status, pause and quit.
-- [ ] **CLI-23** Notify only useful completion or required action.
-- [ ] **CLI-24** Explain wake/network effects of continuous sync.
+- [x] **CLI-22** Provide understandable background status, pause and quit.
+- [x] **CLI-23** Notify only useful completion or required action.
+- [x] **CLI-24** Explain wake/network effects of continuous sync.
 - [x] **CLI-25** Use consistent verbs and reader/simulator/output target resolution.
 - [ ] **CLI-26** Create required storage within validated import.
 - [ ] **CLI-27** Support offline preparation and bundled local help.
