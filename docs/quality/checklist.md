@@ -341,12 +341,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Morse
 
-- [ ] **MORSE-01** Expose speed, duration and repeat clearly.
-- [ ] **MORSE-02** Keep Stop reachable.
-- [ ] **MORSE-03** Explain unsupported characters.
-- [ ] **MORSE-04** Restore previous light setting.
-- [ ] **MORSE-05** Add visible learning mode and letter reference.
-- [ ] **MORSE-06** Prepare hardware timing checks.
+- [x] **MORSE-01** Expose speed, duration and repeat clearly.
+- [x] **MORSE-02** Keep Stop reachable.
+- [x] **MORSE-03** Explain unsupported characters.
+- [x] **MORSE-04** Restore previous light setting.
+- [x] **MORSE-05** Add visible learning mode and letter reference.
+- [x] **MORSE-06** Prepare hardware timing checks.
 
 ## PR 3 · Music Stand (APP-4)
 
