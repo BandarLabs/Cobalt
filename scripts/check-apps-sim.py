@@ -66,7 +66,7 @@ def seed(app, state, kobo, env, log):
     elif app == 'parser':
         shelf = Path(state) / 'cobalt-sim-data' / 'parser'
         shelf.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / 'apps/parser/fixtures/zork1.z3', shelf / 'story-zork1.z3')
+        shutil.copyfile(ROOT / 'apps/parser/fixtures/lamplight.z3', shelf / 'story-lamplight.z3')
 
 
 def run_app(app, kobo, out, environment, timeout, bare=False, route_override=None,

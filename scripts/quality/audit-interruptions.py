@@ -41,7 +41,7 @@ def seed_panels(root):
 def seed_parser(root):
     shelf = root / 'cobalt-sim-data' / 'parser'
     shelf.mkdir(parents=True)
-    shutil.copyfile(ROOT / 'apps/parser/fixtures/zork1.z3', shelf / 'story-zork1.z3')
+    shutil.copyfile(ROOT / 'apps/parser/fixtures/lamplight.z3', shelf / 'story-lamplight.z3')
 
 
 def seed_none(root):
@@ -63,7 +63,7 @@ CASES = {
                'tap Interrupted\nwait 4000\ndump\nshot panels-storage-full\n')),
     'parser-storage-full': dict(
         app='parser', seed=seed_parser,
-        route=('wait-for Interactive fiction\ntap Zork1\nwait-for small mailbox\n'
+        route=('wait-for Interactive fiction\ntap Lamplight\nwait-for pool of light.\n'
                'scenario storage-full\ntap Keyboard\ntype save\ntap Run\n'
                'wait 3000\ndump\nshot parser-storage-full\n')),
     'todo-storage-full': dict(

@@ -8,7 +8,7 @@
 //! whole game is a read loop with jumps and branches, state kept in globals,
 //! so no call frames or packed routine addresses are needed. Version 3
 //! because its dictionary words and memory layout are the smallest, and the
-//! interpreter's v3 paths are already proven end to end by the Zork I
+//! interpreter's v3 paths are already proven end to end by the Lamplight
 //! fixture.
 
 use std::collections::HashMap;

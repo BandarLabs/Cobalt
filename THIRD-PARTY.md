@@ -65,7 +65,7 @@ application or distributed to readers.
 
 | Application | Fixture | Terms | Notice |
 | --- | --- | --- | --- |
-| `parser` | Compiled Zork I story (`apps/parser/fixtures/zork1.z3`), Z-machine version 3 release 119 serial 880429, from [historicalsource/zork1](https://github.com/historicalsource/zork1) at commit 97b7b3d | MIT | `licenses/LICENSE-Zork1.txt`; provenance in `licenses/SOURCE-Parser-Zork1.md` |
+| `parser` | Compiled Lamplight story (`apps/parser/fixtures/lamplight.z3`), Z-machine version 3 release 1 serial 260919, from the original source in `apps/parser/fixtures/lamplight.inf` built with Inform 6 and the PunyInform library | MIT | `licenses/LICENSE-PunyInform.txt`; provenance in `licenses/SOURCE-Parser-Lamplight.md` |
 
 ## Icons
 

@@ -1097,8 +1097,8 @@ mod tests {
     }
 
     #[test]
-    fn palette_follows_the_zork_dictionary() {
-        let machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+    fn palette_follows_the_story_dictionary() {
+        let machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
         let names: Vec<&str> = palette(Some(&machine))
             .into_iter()
             .map(|(name, _)| name)
@@ -1124,53 +1124,53 @@ mod tests {
     fn tutorial_blob_is_a_valid_shelf_key() {
         assert!(kobo_sdk::is_valid_key(TUTORIAL_BLOB));
         assert_eq!(display_name(TUTORIAL_BLOB), "First Light");
-        assert_eq!(display_name("story-zork1.z3"), "Zork1");
+        assert_eq!(display_name("story-lamplight.z3"), "Lamplight");
     }
 
-    fn zork1_fixture() -> Vec<u8> {
-        include_bytes!("../fixtures/zork1.z3").to_vec()
-    }
-
-    #[test]
-    fn zork1_fixture_facts_match_provenance() {
-        let info = StoryInfo::inspect(&zork1_fixture(), "zork1.z3").expect("fixture inspects");
-        assert_eq!(info.release, 119);
-        assert_eq!(&info.serial, b"880429");
-        assert_eq!(info.checksum, 0xbf44);
-        assert_eq!(info.bytes, 86_838);
+    fn story_fixture() -> Vec<u8> {
+        include_bytes!("../fixtures/lamplight.z3").to_vec()
     }
 
     #[test]
-    fn zork1_opens_answers_and_survives_a_save_round_trip() {
-        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+    fn story_fixture_facts_match_provenance() {
+        let info = StoryInfo::inspect(&story_fixture(), "lamplight.z3").expect("fixture inspects");
+        assert_eq!(info.release, 1);
+        assert_eq!(&info.serial, b"260919");
+        assert_eq!(info.checksum, 0x276d);
+        assert_eq!(info.bytes, 28_160);
+    }
+
+    #[test]
+    fn the_story_opens_answers_and_survives_a_save_round_trip() {
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
         machine.run().expect("opening runs");
         let opening = machine.take_output();
-        assert!(opening.contains("West of House"), "{opening}");
+        assert!(opening.contains("Lamp Square"), "{opening}");
         machine.input("look").expect("look accepted");
         let look = machine.take_output();
-        assert!(look.contains("West of House"), "{look}");
+        assert!(look.contains("Lamp Square"), "{look}");
         machine.input("inventory").expect("inventory accepted");
         let inventory = machine.take_output();
-        assert!(inventory.contains("empty-handed"), "{inventory}");
-        machine.input("open mailbox").expect("open accepted");
+        assert!(inventory.contains("empty handed"), "{inventory}");
+        machine.input("open crate").expect("open accepted");
         machine.take_output();
-        machine.input("take leaflet").expect("take accepted");
+        machine.input("take note").expect("take accepted");
         machine.take_output();
         machine.input("inventory").expect("inventory accepted");
         let inventory = machine.take_output();
-        assert!(inventory.contains("leaflet"), "{inventory}");
+        assert!(inventory.contains("note"), "{inventory}");
         let save = machine.save_quetzal();
-        let mut restored = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture reopens");
+        let mut restored = Machine::new(story_fixture(), "lamplight.z3").expect("fixture reopens");
         restored.restore_quetzal(&save).expect("save restores");
         restored.input("look").expect("restored look accepted");
         let look = restored.take_output();
-        assert!(look.contains("West of House"), "{look}");
+        assert!(look.contains("Lamp Square"), "{look}");
     }
 
     #[test]
-    fn zork1_opening_paginates_cleanly_and_lands_on_the_story() {
+    fn the_story_opening_paginates_cleanly_and_lands_on_the_story() {
         install_real_face();
-        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
         machine.run().expect("opening runs");
         machine.input("look").expect("look accepted");
         let mut parser = Parser {
@@ -1206,9 +1206,9 @@ mod tests {
     }
 
     #[test]
-    fn zork1_landing_fits_elipsa_extra_large_with_display_chrome() {
+    fn the_story_landing_fits_elipsa_extra_large_with_display_chrome() {
         install_real_face();
-        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
         machine.run().expect("opening runs");
         let mut parser = Parser {
             transcript: machine.take_output(),
@@ -1241,14 +1241,14 @@ mod tests {
     #[test]
     fn play_screen_status_fits_every_panel_and_text_size() {
         install_real_face();
-        let mut machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
         machine.run().expect("opening runs");
         let mut parser = Parser {
             transcript: machine.take_output(),
             machine: Some(machine),
             // The name the store gives a pushed story: serial and checksum
             // included, far longer than a title anybody would type.
-            open_blob: Some("story-zork1-119-880429-bf44.z3".to_owned()),
+            open_blob: Some("story-lamplight-1-260919-276d.z3".to_owned()),
             ..Parser::default()
         };
         for (width, height, ppi) in [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)] {
@@ -1321,9 +1321,12 @@ mod tests {
             "Empty: nothing to restore"
         );
         install_real_face();
-        let machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
+        let machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
         let mut parser = Parser {
-            saves: vec!["save-zork1-3".to_owned(), save_name(machine.info(), "game")],
+            saves: vec![
+                "save-lamplight-3".to_owned(),
+                save_name(machine.info(), "game"),
+            ],
             machine: Some(machine),
             ..Parser::default()
         };

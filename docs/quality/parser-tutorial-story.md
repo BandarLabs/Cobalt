@@ -10,7 +10,7 @@ apps/parser/src/zvm/mod.rs (`story()`, `code_story()`).
 A small Rust story-builder module in the app (`apps/parser/src/story.rs`) that emits a
 **v3** story file from a compact room/object/verb description. v3 because the object
 table is 9-byte entries with 4-byte property headers, the dictionary is 4-byte words,
-and the vendored Zork I fixture already proves the interpreter's v3 paths end to end.
+and the compiled Lamplight fixture already proves the interpreter's v3 paths end to end.
 
 The builder owns the layout the test helpers currently hand-fix: header, dictionary,
 object table, property lists, and routines. It grows only what the tutorial needs:

@@ -1,13 +1,13 @@
-# Seeded with the Zork I fixture: library, opening, and the story's own
+# Seeded with the Lamplight fixture: library, opening, and the story's own
 # save/restore round trip through the slot picker.
 wait-for Interactive fiction
-wait-for Zork1
+wait-for Lamplight
 clean
 shot parser-library
-tap Zork1
-# At larger text scales the opening spans the page turn; the mailbox line
+tap Lamplight
+# At larger text scales the opening spans the page turn; the crate line
 # is what lands on the final page at every scale.
-wait-for small mailbox
+wait-for pool of light.
 clean
 shot parser-opening
 tap Keyboard
@@ -24,6 +24,6 @@ shot parser-restore-picker
 tap Story checkpoint
 # At large text scales the room description spans the page turn; the last
 # line is what lands on the final page at every scale.
-wait-for small mailbox
+wait-for pool of light.
 clean
 shot parser-restored

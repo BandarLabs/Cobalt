@@ -123,7 +123,7 @@ def seed_parser(n, env, log):
     shutil.rmtree(shelf, ignore_errors=True)
     shelf.mkdir(parents=True, exist_ok=True)
     for i in range(n):
-        shutil.copyfile(ROOT / 'apps/parser/fixtures/zork1.z3',
+        shutil.copyfile(ROOT / 'apps/parser/fixtures/lamplight.z3',
                         shelf / f'story-{title(i)}.z3')
 
 
