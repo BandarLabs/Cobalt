@@ -1,0 +1,741 @@
+{
+ "scope": "44 routed apps x 3 geometries (1072x1448, 1264x1680, 1404x1872) x 3 text scales, portrait, plus landscape boot smoke per app. 440 runs total.",
+ "totals": {
+  "runs": 440,
+  "pass": 418,
+  "fail": 22
+ },
+ "apps": {
+  "arxiv": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "audiobook": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "backgammon": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "birds": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "brief": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/large",
+    "1264x1680/extra-large"
+   ],
+   "fail": {
+    "1264x1680/default": "route-brittleness",
+    "1404x1872/default": "route-brittleness",
+    "1404x1872/large": "route-brittleness",
+    "1404x1872/extra-large": "route-brittleness",
+    "landscape": "route-brittleness"
+   }
+  },
+  "calibre-web": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "chat": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "crossword": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "deck": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "fanshelf": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "fieldbook": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "flashcards": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "frame": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "gallery": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "grimoire": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "gutenbird": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "habits": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "hn": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "homepanel": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "inkling": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "kitchencard": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "lichess": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "logicpack": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "magnet": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "morse": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "musicstand": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "needles": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "nonograms": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "panels": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "paperterm": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "parlor": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "parser": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "post": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "pubquiz": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "readlater": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "rss": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "rss-miniflux": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "sidekick": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "sudoku": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  },
+  "syncthing": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "tictactoe": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "todo": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "vault": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "fail": {}
+  },
+  "verses": {
+   "pass": [
+    "1072x1448/default",
+    "1072x1448/large",
+    "1072x1448/extra-large",
+    "1264x1680/default",
+    "1264x1680/large",
+    "1264x1680/extra-large",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large"
+   ],
+   "fail": {
+    "landscape": "renderer-refusal"
+   }
+  }
+ },
+ "defect_class": {
+  "landscape_renderer_refusals": {
+   "apps": [
+    "arxiv",
+    "backgammon",
+    "crossword",
+    "fieldbook",
+    "gallery",
+    "grimoire",
+    "hn",
+    "inkling",
+    "lichess",
+    "morse",
+    "needles",
+    "nonograms",
+    "parlor",
+    "parser",
+    "pubquiz",
+    "sudoku",
+    "verses"
+   ],
+   "count": 17,
+   "mode": "renderer refusal: content clipped by panel edge / interactive control outside visible panel / nodes below content area",
+   "line_1_failures": [
+    "arxiv",
+    "hn",
+    "inkling",
+    "lichess",
+    "nonograms",
+    "sudoku",
+    "verses"
+   ],
+   "evidence": "per-app failed-line PNG + log line under landscape/1072x1448/default/<app>/",
+   "visually_confirmed": [
+    "hn failed-line-1.png: list row 5 clipped at bottom panel edge"
+   ],
+   "classification": "REAL LAYOUT DEFECTS - landscape panels do not fit drawn content"
+  },
+  "brief_route_brittleness": {
+   "combos": [
+    "1264x1680/default",
+    "1404x1872/default",
+    "1404x1872/large",
+    "1404x1872/extra-large",
+    "landscape"
+   ],
+   "mode": "route expects pager '1 of 2'; larger panels fit all 6 stories on one page so no pager renders",
+   "visually_confirmed": [
+    "1404x1872/default failed-line-20.png: all 6 stories on one clean page, no defect"
+   ],
+   "classification": "ROUTE BRITTLENESS - app renders correctly; committed route assumed 1072 pagination"
+  }
+ }
+}

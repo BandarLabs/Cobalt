@@ -1,0 +1,13 @@
+{
+  "source_sha": "f3f0e36fd9cfb6147cc438c12bad2a2c51ce82ca",
+  "dirty": true,
+  "results": [
+    {
+      "app": "sudoku",
+      "launched": true,
+      "status": "fail",
+      "route": "/tmp/appqa11-sudoku-landscape.kobo",
+      "exit_code": 1
+    }
+  ]
+}

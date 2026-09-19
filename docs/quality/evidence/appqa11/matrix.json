@@ -640,8 +640,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "crossword",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-crossword-landscape.kobo",
+   "exit_code": 1
   }
  },
  "deck": {
@@ -853,8 +856,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "fieldbook",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-fieldbook-landscape.kobo",
+   "exit_code": 1
   }
  },
  "flashcards": {
@@ -1066,8 +1072,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "gallery",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-gallery-landscape.kobo",
+   "exit_code": 1
   }
  },
  "grimoire": {
@@ -1135,8 +1144,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "grimoire",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-grimoire-landscape.kobo",
+   "exit_code": 1
   }
  },
  "gutenbird": {
@@ -1348,8 +1360,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "hn",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-hn-landscape.kobo",
+   "exit_code": 1
   }
  },
  "homepanel": {
@@ -1489,8 +1504,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "inkling",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-inkling-landscape.kobo",
+   "exit_code": 1
   }
  },
  "kitchencard": {
@@ -1630,8 +1648,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "lichess",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-lichess-landscape.kobo",
+   "exit_code": 1
   }
  },
  "logicpack": {
@@ -1843,8 +1864,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "morse",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-morse-landscape.kobo",
+   "exit_code": 1
   }
  },
  "musicstand": {
@@ -2848,8 +2872,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "sudoku",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-sudoku-landscape.kobo",
+   "exit_code": 1
   }
  },
  "syncthing": {
@@ -3133,8 +3160,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "verses",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-verses-landscape.kobo",
+   "exit_code": 1
   }
  }
 }
