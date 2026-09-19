@@ -63,6 +63,7 @@ struct Frame {
     locals: Vec<u16>,
     stack_base: usize,
     argument_count: u8,
+    catch: Option<(usize, u8)>,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +126,7 @@ impl Machine {
                 locals: Vec::new(),
                 stack_base: 0,
                 argument_count: 0,
+                catch: None,
             }],
             output: String::new(),
             status: String::new(),
@@ -330,6 +332,7 @@ impl Machine {
                 locals,
                 stack_base,
                 argument_count,
+                catch: None,
             });
         }
         self.rng = read_u32(bytes, &mut cursor)?;
@@ -453,9 +456,14 @@ impl Machine {
             }
             9 => {
                 if self.info.version >= 5 {
-                    // catch -> (result): the frame id throw can unwind to.
+                    // catch -> (result): stores the frame id and arms the
+                    // resume point throw jumps back to (setjmp semantics:
+                    // a thrown value lands in catch's own store slot).
                     let store = self.fetch_byte()?;
                     let frame = self.frames.len().saturating_sub(1);
+                    if let Some(current) = self.frames.last_mut() {
+                        current.catch = Some((self.pc, store));
+                    }
                     self.set_variable(store, u16::try_from(frame).unwrap_or(u16::MAX))
                 } else {
                     let _ = self.pop()?;
@@ -641,7 +649,8 @@ impl Machine {
             26 if self.info.version >= 5 => self.call(a, &values[1..], None), // call_2n
             27 if self.info.version >= 5 => Ok(()), // set_colour: display-only
             28 if self.info.version >= 5 => {
-                // throw value frame-id: unwind to the caught frame, then return value.
+                // throw value frame-id: unwind to the frame catch armed and
+                // resume after it with the value in catch's store slot.
                 let requested = usize::from(b);
                 if requested >= self.frames.len() {
                     return Err(StoryError::Fault("invalid throw frame".to_owned()));
@@ -649,7 +658,18 @@ impl Machine {
                 while self.frames.len().saturating_sub(1) > requested {
                     self.frames.pop();
                 }
-                self.return_from_routine(a)
+                let frame = self
+                    .frames
+                    .last()
+                    .ok_or_else(|| StoryError::Fault("invalid throw frame".to_owned()))?;
+                let Some((resume_pc, store)) = frame.catch else {
+                    return Err(StoryError::Fault(
+                        "throw to a frame without catch".to_owned(),
+                    ));
+                };
+                self.stack.truncate(frame.stack_base);
+                self.pc = resume_pc;
+                self.set_variable(store, a)
             }
             _ => self.unsupported("2OP", opcode),
         }
@@ -888,6 +908,7 @@ impl Machine {
             locals,
             stack_base: self.stack.len(),
             argument_count: arguments.len().min(8) as u8,
+            catch: None,
         });
         self.pc = cursor;
         Ok(())
@@ -1954,5 +1975,30 @@ mod tests {
         assert_eq!(machine.run().unwrap(), RunState::Halted);
         assert_eq!(machine.read_byte(0x80).unwrap(), 9);
         assert_eq!(machine.read_byte(0x83).unwrap(), 6);
+    }
+    #[test]
+    fn throw_resumes_after_catch_with_the_thrown_value() {
+        // v5: catch arms global 0 with the frame id, then a called routine
+        // throws 0x99 back to it. Execution resumes after catch with global 0
+        // holding 0x99, so the jump-if-equal falls through to printing "t".
+        let code = [
+            0xb9, 0x10, // 0x40: catch -> global 0
+            0x41, 0x10, 0x00, 0xc8, // 0x42: je global0 0 -> 0x4c while unthrown
+            0xb2, 0xe4, 0xa5, 0xba, // 0x46: print "t"; quit
+            0xbb, 0xbb, // 0x4a: padding
+            0x8f, 0x00, 0x80, 0xba, // 0x4c: call_1n routine at 0x200; quit
+        ];
+        let mut bytes = code_story(5, &code);
+        bytes[0x200] = 0; // no locals
+        bytes[0x201] = 0x3c; // 2OP 28, right operand is a variable: throw
+        bytes[0x202] = 0x99; // value
+        bytes[0x203] = 0x10; // frame id from global 0
+        bytes[0x204] = 0xb0; // rtrue (unreached)
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+        let mut machine = Machine::new(bytes, "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 0), 0x99);
+        assert_eq!(machine.take_output(), "t");
     }
 }
