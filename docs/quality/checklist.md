@@ -360,12 +360,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Needles
 
-- [ ] **NEEDLES-01** Provide projects and named sections.
-- [ ] **NEEDLES-02** Emphasize current row count.
-- [ ] **NEEDLES-03** Keep Undo adjacent to increment.
-- [ ] **NEEDLES-04** Show pattern location and repeat progress.
-- [ ] **NEEDLES-05** Read actual imported pattern sections.
-- [ ] **NEEDLES-06** Support charts through shared image/document reading.
+- [x] **NEEDLES-01** Provide projects and named sections.
+- [x] **NEEDLES-02** Emphasize current row count.
+- [x] **NEEDLES-03** Keep Undo adjacent to increment.
+- [x] **NEEDLES-04** Show pattern location and repeat progress.
+- [x] **NEEDLES-05** Read actual imported pattern sections.
+- [x] **NEEDLES-06** Support charts through shared image/document reading.
 
 ## PR 2 · Nonograms
 
