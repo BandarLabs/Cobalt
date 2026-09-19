@@ -2341,48 +2341,60 @@
   "pr": 3,
   "group": "Morse",
   "task": "Expose speed, duration and repeat clearly",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Writing screen states the estimate and the one-second beat beside the Send key (fd919196); resting key reads Send again. Tests the_speed_is_on_the_screen_the_send_key_is_on and the_resting_key_says_it_repeats_the_message; sim shots writing/resting in docs/quality/evidence/morse-sim/matrix.json (27/27 cells)."
+  ]
  },
  {
   "id": "MORSE-02",
   "pr": 3,
   "group": "Morse",
   "task": "Keep Stop reachable",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Stop stays in the action bar for the whole send, pinned by the_letter_leaves_room_for_the_control_that_stops_it (letter sized at 940 tenths-mm so the bar stays on the panel). Sim route asserts Stop while sending with the banner up, all 27 profile/scale cells."
+  ]
  },
  {
   "id": "MORSE-03",
   "pr": 3,
   "group": "Morse",
   "task": "Explain unsupported characters",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Characters with no code are named in a banner and left out rather than sent as silence (a_character_morse_cannot_send_is_reported_rather_than_dropped_in_silence). Sim route types ! and expects the banner during the send; shots in docs/quality/evidence/morse-sim."
+  ]
  },
  {
   "id": "MORSE-04",
   "pr": 3,
   "group": "Morse",
   "task": "Restore previous light setting",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The reader's brightness is captured before the first beat and put back on finish, stop, exit and light-off (the_light_is_put_back_where_it_was_found; on_device_result keeps only the startup answer)."
+  ]
  },
  {
   "id": "MORSE-05",
   "pr": 3,
   "group": "Morse",
   "task": "Add visible learning mode and letter reference",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Learning chip on the writing screen makes the beacon name each letter and its code in the top bar as it is flashed (fb63b92c); the letter reference lists all 40 sendable characters paged against the panel (the_reference_lists_every_letter_the_beacon_can_send walks every page). Sim shots reference/menu/sending across 27 cells."
+  ]
  },
  {
   "id": "MORSE-06",
   "pr": 3,
   "group": "Morse",
   "task": "Prepare hardware timing checks",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/morse-hardware-timing.md: on-device checklist for beat lengths (dot 1s, dash 3s, gaps 1/3/7s), panel-first ordering, Stop under load, keep-awake and light restore, with the 0.5 Hz photosensitivity margin stated. Beat arithmetic pinned by unit tests (dash held 3x, gap structure, ends on a lit beat)."
+  ]
  },
  {
   "id": "MUSIC-01",
