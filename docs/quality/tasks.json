@@ -2511,8 +2511,10 @@
   "pr": 3,
   "group": "Needles",
   "task": "Read actual imported pattern sections",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "An imported pattern's own outline drives the counter: parse_pattern reads its title and section headings, opening the pattern joins or creates the project named for it, and adopt_sections swaps the everyday sections for the pattern's while keeping counts whose names survive (83c3a524's format becomes v3 with per-project section names, v2 and v1 both migrate). Tests: an_imported_patterns_sections_become_the_projects, a_flat_pattern_counts_by_its_headings_past_the_title, state_round_trips_imported_sections, the_projects_version_of_the_state_keeps_the_everyday_sections. Sim route reads a seeded pattern.md fixture and counts by Cuff/Leg/Heel/Foot; evidence docs/quality/evidence/needles-sim/matrix.json (27/27 cells)."
+  ]
  },
  {
   "id": "NEEDLES-06",
