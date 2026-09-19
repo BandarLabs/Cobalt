@@ -543,13 +543,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-01** Provide guided interactive entry point for bare kobo.
 - [x] **CLI-02** Keep plain compact help for noninteractive use.
 - [x] **CLI-03** Separate owner tasks from developer/release commands.
-- [ ] **CLI-04** Provide a desktop/local companion surface using the same operations.
+- [x] **CLI-04** Provide a desktop/local companion surface using the same operations.
 - [x] **CLI-05** Name readers by stable identity and owner nickname.
 - [x] **CLI-06** Select among multiple USB/Wi-Fi readers without first-device fallback.
 - [x] **CLI-07** Remember pairing and reconnect after address changes.
-- [ ] **CLI-08** Preserve verified USB setup, eject, reboot and reconnect steps.
-- [ ] **CLI-09** Send and open an original sample for first success.
-- [ ] **CLI-10** Describe installation changes before approval.
+- [x] **CLI-08** Preserve verified USB setup, eject, reboot and reconnect steps.
+- [x] **CLI-09** Send and open an original sample for first success.
+- [x] **CLI-10** Describe installation changes before approval.
 - [x] **CLI-11** Provide one app setup card generated from capabilities.
 - [ ] **CLI-12** Persist completed setup steps.
 - [ ] **CLI-13** Choose files/folders through picker or explicit CLI path.

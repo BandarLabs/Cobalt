@@ -3806,7 +3806,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Provide a desktop/local companion surface using the same operations",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3844,7 +3844,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Preserve verified USB setup, eject, reboot and reconnect steps",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3852,7 +3852,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Send and open an original sample for first success",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3860,7 +3860,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Describe installation changes before approval",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
