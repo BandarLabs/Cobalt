@@ -1,0 +1,13 @@
+{
+  "source_sha": "9f0ffcac838135591a3620a5354072013d45549a",
+  "dirty": true,
+  "results": [
+    {
+      "app": "parser",
+      "launched": true,
+      "status": "pass",
+      "route": "/tmp/appqa10-parser-storage-full.kobo",
+      "exit_code": 0
+    }
+  ]
+}
