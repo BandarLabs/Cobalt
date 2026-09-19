@@ -22,3 +22,15 @@ shot projects
 tap-id project-0
 expect Row 0
 expect Sleeve
+tap Read synced pattern
+wait 800
+tap Back
+expect Winter socks
+expect Cuff
+tap Change section
+expect Leg
+clean
+shot project-imported
+tap Projects
+expect Winter socks
+expect Leg - row 0

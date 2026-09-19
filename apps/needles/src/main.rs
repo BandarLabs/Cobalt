@@ -16,6 +16,9 @@ const PATTERN_BLOB: &str = "pattern.md";
 const MAX_JSON: u32 = 256 * 1024;
 const MAX_PATTERN: usize = 4 * 1024 * 1024;
 const MAX_PATTERNS: usize = 60;
+/// More named sections than a pattern reasonably has; past this the heading
+/// list is being read as something it is not.
+const MAX_SECTIONS: usize = 12;
 const SECTIONS: [&str; 3] = ["Body", "Sleeve", "Finishing"];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -99,20 +102,59 @@ struct Pattern {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Project {
     name: String,
+    /// The sections this project counts through: an imported pattern's own
+    /// once one is read, the everyday three until then.
+    sections: Vec<String>,
     section: usize,
-    counters: [Counter; 3],
+    counters: Vec<Counter>,
 }
 
 impl Project {
     fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            sections: SECTIONS
+                .iter()
+                .map(|section| (*section).to_owned())
+                .collect(),
             section: 0,
-            counters: std::array::from_fn(|_| Counter {
-                repeat_total: 12,
-                ..Counter::default()
-            }),
+            counters: SECTIONS
+                .iter()
+                .map(|_| Counter {
+                    repeat_total: 12,
+                    ..Counter::default()
+                })
+                .collect(),
         }
+    }
+
+    /// The imported pattern's sections become this project's. A section
+    /// already being counted keeps its count; the rest start fresh.
+    fn adopt_sections(&mut self, sections: Vec<String>) {
+        if sections.is_empty() {
+            return;
+        }
+        let working = self.sections.get(self.section).cloned();
+        let counters = sections
+            .iter()
+            .map(|name| {
+                self.sections
+                    .iter()
+                    .position(|known| known == name)
+                    .map_or_else(
+                        || Counter {
+                            repeat_total: 12,
+                            ..Counter::default()
+                        },
+                        |index| self.counters[index].clone(),
+                    )
+            })
+            .collect();
+        self.section = working
+            .and_then(|name| sections.iter().position(|section| *section == name))
+            .unwrap_or(0);
+        self.sections = sections;
+        self.counters = counters;
     }
 }
 
@@ -196,7 +238,14 @@ impl Needles {
             // stitches, so it is the heading rather than one fact among four.
             .heading(format!("Row {}", counter.row))
             .facts([
-                ("Section", SECTIONS[project.section].to_owned()),
+                (
+                    "Section",
+                    project
+                        .sections
+                        .get(project.section)
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
                 (
                     "Repeat",
                     if counter.repeat == 0 {
@@ -239,7 +288,11 @@ impl Needles {
                     project.name.clone(),
                     format!(
                         "{} - row {}",
-                        SECTIONS[project.section], project.counters[project.section].row
+                        project
+                            .sections
+                            .get(project.section)
+                            .map_or("", String::as_str),
+                        project.counters[project.section].row
                     ),
                     RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
                 )
@@ -309,8 +362,14 @@ impl Needles {
     }
 
     fn save(&self, context: &mut Context) {
-        let mut out = format!("2\n{}", self.current);
+        let mut out = format!("3\n{}", self.current);
         for project in &self.projects {
+            let sections = project
+                .sections
+                .iter()
+                .map(|section| hex(section))
+                .collect::<Vec<_>>()
+                .join("|");
             let counters = project
                 .counters
                 .iter()
@@ -323,9 +382,10 @@ impl Needles {
                 .collect::<Vec<_>>()
                 .join("|");
             out.push_str(&format!(
-                "\n{}\t{}\t{}",
+                "\n{}\t{}\t{}\t{}",
                 hex(&project.name),
                 project.section,
+                sections,
                 counters
             ));
         }
@@ -429,7 +489,8 @@ impl Needles {
         };
         let mut fields = text.lines();
         match fields.next() {
-            Some("2") => self.restore_projects(fields),
+            Some("3") => self.restore_projects(fields),
+            Some("2") => self.restore_projects_v2(fields),
             // The first version kept one set of counters and the followed
             // pattern's name; that is one project with a little history.
             Some("1") => self.restore_alone(fields),
@@ -438,6 +499,49 @@ impl Needles {
     }
 
     fn restore_projects<'a>(&mut self, mut fields: impl Iterator<Item = &'a str>) {
+        let Some(Ok(current)) = fields.next().map(str::parse::<usize>) else {
+            return;
+        };
+        let mut projects = Vec::new();
+        for line in fields {
+            let mut parts = line.split('\t');
+            let (Some(name), Some(section), Some(sections), Some(counters)) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            else {
+                return;
+            };
+            let sections = sections
+                .split('|')
+                .map(unhex)
+                .collect::<Option<Vec<_>>>()
+                .filter(|sections| !sections.is_empty() && sections.len() <= MAX_SECTIONS);
+            let (Some(name), Ok(section), Some(sections), Some(counters)) = (
+                unhex(name),
+                section.parse::<usize>(),
+                sections,
+                parse_counters(counters),
+            ) else {
+                return;
+            };
+            if name.is_empty() || section >= sections.len() || counters.len() != sections.len() {
+                return;
+            }
+            projects.push(Project {
+                name,
+                sections,
+                section,
+                counters,
+            });
+        }
+        if projects.is_empty() || current >= projects.len() {
+            return;
+        }
+        self.projects = projects;
+        self.current = current;
+    }
+
+    /// Version two kept the same three everyday sections on every project.
+    fn restore_projects_v2<'a>(&mut self, mut fields: impl Iterator<Item = &'a str>) {
         let Some(Ok(current)) = fields.next().map(str::parse::<usize>) else {
             return;
         };
@@ -456,14 +560,13 @@ impl Needles {
             ) else {
                 return;
             };
-            if name.is_empty() || section >= SECTIONS.len() {
+            if name.is_empty() || section >= SECTIONS.len() || counters.len() != SECTIONS.len() {
                 return;
             }
-            projects.push(Project {
-                name,
-                section,
-                counters,
-            });
+            let mut project = Project::new(name);
+            project.section = section;
+            project.counters = counters;
+            projects.push(project);
         }
         if projects.is_empty() || current >= projects.len() {
             return;
@@ -484,17 +587,18 @@ impl Needles {
         if section >= SECTIONS.len() {
             return;
         }
-        let Some(counters) = parse_counters(counters) else {
+        let Some(counters) =
+            parse_counters(counters).filter(|counters| counters.len() == SECTIONS.len())
+        else {
             return;
         };
         let name = unhex(selected)
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| "Row counter".to_owned());
-        self.projects = vec![Project {
-            name,
-            section,
-            counters,
-        }];
+        let mut project = Project::new(name);
+        project.section = section;
+        project.counters = counters;
+        self.projects = vec![project];
         self.current = 0;
     }
 }
@@ -540,10 +644,62 @@ fn pattern_from(value: &Value) -> Option<Pattern> {
     })
 }
 
-/// Three counters as saved, or nothing when any one is off.
-fn parse_counters(text: &str) -> Option<[Counter; 3]> {
-    let parsed = text
-        .split('|')
+/// A transferred pattern's own outline: its title heading and the sections
+/// its counting should follow. Second-level headings are the sections when
+/// the pattern has that much structure; a flat pattern counts by its
+/// top-level headings past the title. A title alone is not a section list.
+fn parse_pattern(markdown: &[u8]) -> (Option<String>, Vec<String>) {
+    let Ok(text) = std::str::from_utf8(markdown) else {
+        return (None, Vec::new());
+    };
+    let headings = text
+        .lines()
+        .filter_map(|line| {
+            let hashes = line.chars().take_while(|c| *c == '#').count();
+            if hashes == 0 || hashes > 6 {
+                return None;
+            }
+            let heading = line[hashes..].trim().trim_end_matches('#').trim();
+            (!heading.is_empty()).then(|| (hashes, heading.chars().take(60).collect::<String>()))
+        })
+        .collect::<Vec<_>>();
+    let title = headings
+        .iter()
+        .find(|(level, _)| *level == 1)
+        .map(|(_, heading)| heading.clone());
+    let at_level = |level: usize| {
+        headings
+            .iter()
+            .filter(|(here, _)| *here == level)
+            .map(|(_, heading)| heading.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut sections = if headings.iter().any(|(level, _)| *level == 2) {
+        at_level(2)
+    } else {
+        let mut flat = at_level(1);
+        if let Some(title) = &title {
+            flat.retain(|heading| heading != title);
+        }
+        if flat.len() > 1 {
+            flat
+        } else {
+            Vec::new()
+        }
+    };
+    let mut seen = Vec::<String>::new();
+    sections.retain(|heading| {
+        let fresh = !seen.contains(heading);
+        seen.push(heading.clone());
+        fresh
+    });
+    sections.truncate(MAX_SECTIONS);
+    (title, sections)
+}
+
+/// The counters as saved, or nothing when any one is off.
+fn parse_counters(text: &str) -> Option<Vec<Counter>> {
+    text.split('|')
         .map(|counter| {
             let mut parts = counter.split(',');
             let (Some(row), Some(repeat), Some(total)) = (parts.next(), parts.next(), parts.next())
@@ -561,8 +717,7 @@ fn parse_counters(text: &str) -> Option<[Counter; 3]> {
                 repeat_total,
             })
         })
-        .collect::<Option<Vec<_>>>()?;
-    <[Counter; 3]>::try_from(parsed).ok()
+        .collect::<Option<Vec<_>>>()
 }
 
 fn hex(text: &str) -> String {
@@ -627,13 +782,23 @@ impl KoboApp for Needles {
                         self.show(context);
                         return;
                     };
-                    match self.book.open_bytes(
-                        context,
-                        PATTERN_BLOB,
-                        &loading.take(),
-                        Memory::default(),
-                    ) {
+                    let bytes = loading.take();
+                    match self
+                        .book
+                        .open_bytes(context, PATTERN_BLOB, &bytes, Memory::default())
+                    {
                         Ok(()) => {
+                            // The pattern being read is the work being
+                            // counted: its own sections take over the project
+                            // it belongs to, named after its title heading.
+                            let (title, sections) = parse_pattern(&bytes);
+                            let counting =
+                                title.map_or(self.current, |title| self.project_for(&title));
+                            self.current = counting;
+                            if !sections.is_empty() {
+                                self.projects[counting].adopt_sections(sections);
+                            }
+                            self.save(context);
                             self.route = Route::Reading;
                             self.notice = None;
                         }
@@ -678,7 +843,7 @@ impl KoboApp for Needles {
             self.undo(context);
         } else if action == action_id("section") {
             let project = &mut self.projects[self.current];
-            project.section = (project.section + 1) % SECTIONS.len();
+            project.section = (project.section + 1) % project.sections.len();
             self.notice = None;
             self.save(context);
         } else if action == action_id("projects") {
@@ -765,7 +930,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{hex, pattern_from, Collection, Counter, Needles, Route, SECTIONS};
+    use super::{hex, parse_pattern, pattern_from, Collection, Counter, Needles, Route, SECTIONS};
     use kobo_sdk::{action_id, Context, KoboApp, StoreResult};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -774,8 +939,12 @@ mod tests {
         let mut app = Needles {
             projects: vec![super::Project {
                 name: "Row counter".to_owned(),
+                sections: SECTIONS
+                    .iter()
+                    .map(|section| (*section).to_owned())
+                    .collect(),
                 section: 0,
-                counters: [
+                counters: vec![
                     Counter {
                         row: 11,
                         repeat: 11,
@@ -846,6 +1015,98 @@ mod tests {
         assert_eq!(restored.projects[0].counters[0].row, 42);
         assert_eq!(restored.projects[1].name, "Warm sweater");
         assert_eq!(restored.projects[1].counters[2].repeat_total, 8);
+    }
+
+    #[test]
+    fn state_round_trips_imported_sections() {
+        let mut app = Needles::default();
+        app.projects[0].adopt_sections(
+            ["Cuff", "Leg", "Heel", "Foot"]
+                .iter()
+                .map(|section| (*section).to_owned())
+                .collect(),
+        );
+        app.projects[0].counters[1].row = 30;
+        app.projects[0].section = 1;
+        let mut context = Context::default();
+        app.save(&mut context);
+        let saved = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                    if key == super::STATE =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("saved state");
+        let mut restored = Needles::default();
+        restored.on_store(
+            &mut Context::default(),
+            StoreResult::Loaded {
+                key: super::STATE.to_owned(),
+                value: Some(saved),
+            },
+        );
+        assert_eq!(
+            restored.projects[0].sections,
+            ["Cuff", "Leg", "Heel", "Foot"]
+        );
+        assert_eq!(restored.projects[0].section, 1);
+        assert_eq!(restored.projects[0].counters[1].row, 30);
+    }
+
+    #[test]
+    fn the_projects_version_of_the_state_keeps_the_everyday_sections() {
+        // As saved before imported sections: hex of the name, the section,
+        // then its three counters.
+        let legacy = format!("2\n0\n{}\t1\t42,0,12|7,7,8|0,0,4", hex("Warm sweater"));
+        let mut restored = Needles::default();
+        restored.on_store(
+            &mut Context::default(),
+            StoreResult::Loaded {
+                key: super::STATE.to_owned(),
+                value: Some(legacy.into()),
+            },
+        );
+        assert_eq!(restored.projects.len(), 1);
+        assert_eq!(restored.projects[0].name, "Warm sweater");
+        assert_eq!(restored.projects[0].section, 1);
+        assert_eq!(restored.projects[0].sections, SECTIONS);
+        assert_eq!(restored.projects[0].counters[0].row, 42);
+    }
+
+    #[test]
+    fn an_imported_patterns_sections_become_the_projects() {
+        let markdown = b"# Winter socks\n\nCast on.\n\n## Cuff\n\nWork 12 rows.\n\n## Leg\n\n## Heel\n\n## Foot\n";
+        let (title, sections) = parse_pattern(markdown);
+        assert_eq!(title.as_deref(), Some("Winter socks"));
+        assert_eq!(sections, ["Cuff", "Leg", "Heel", "Foot"]);
+
+        let mut project = super::Project::new("Winter socks");
+        project.counters[0].row = 14;
+        project.adopt_sections(sections.clone());
+        // None of the everyday names survive, so every section starts fresh.
+        assert_eq!(project.sections, ["Cuff", "Leg", "Heel", "Foot"]);
+        assert_eq!(project.counters[0].row, 0);
+        // Reading the same pattern again keeps the counts it already has.
+        project.counters[1].row = 30;
+        project.adopt_sections(sections);
+        assert_eq!(project.counters[1].row, 30);
+    }
+
+    #[test]
+    fn a_flat_pattern_counts_by_its_headings_past_the_title() {
+        let (title, sections) = parse_pattern(b"# Dishcloth\n\n# Body\n\n# Edging\n");
+        assert_eq!(title.as_deref(), Some("Dishcloth"));
+        assert_eq!(sections, ["Body", "Edging"]);
+        // A title alone is not a section list.
+        assert_eq!(
+            parse_pattern(b"# Just a title\n\nPlain rows.\n").1,
+            Vec::<String>::new()
+        );
     }
 
     #[test]
