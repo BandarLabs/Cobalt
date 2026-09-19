@@ -1643,6 +1643,149 @@ mod regression_tests {
     }
 
     #[test]
+    fn full_rounds_advance_and_each_round_starts_fresh() {
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        for round in 1..=2u16 {
+            runner.action(action_id("solo"));
+            runner.action(action_id("continue-setup"));
+            assert_eq!(runner.app().view, View::Question);
+            assert_eq!(runner.app().question, 0);
+            assert_eq!(runner.app().scores, [0, 0, 0, 0]);
+            let total = runner.app().round_questions.len();
+            for _ in 0..total {
+                let correct = runner.app().round_questions[runner.app().question].correct;
+                runner.action(action_id(&choice(correct)));
+                runner.action(action_id("continue"));
+            }
+            assert_eq!(runner.app().view, View::Podium);
+            assert_eq!(runner.app().rounds, round);
+            assert_eq!(runner.app().scores[0], u8::try_from(total).unwrap());
+            runner.action(action_id("home"));
+            assert_eq!(runner.app().view, View::Home);
+        }
+        assert_eq!(runner.app().rounds, 2);
+    }
+
+    #[test]
+    fn consecutive_rounds_do_not_repeat_while_the_pool_allows() {
+        let mut quiz = Quiz {
+            questions: (0..25)
+                .map(|index| Question {
+                    category: "Generated".to_owned(),
+                    difficulty: Difficulty::Easy,
+                    text: format!("Generated question {index}?"),
+                    answers: ["A".into(), "B".into(), "C".into(), "D".into()],
+                    correct: 0,
+                })
+                .collect(),
+            ..Quiz::default()
+        };
+        quiz.begin(false);
+        let first: Vec<String> = quiz
+            .round_questions
+            .iter()
+            .map(|question| question.text.clone())
+            .collect();
+        quiz.rounds = 1;
+        quiz.begin(false);
+        let second: Vec<String> = quiz
+            .round_questions
+            .iter()
+            .map(|question| question.text.clone())
+            .collect();
+        for round in [&first, &second] {
+            let mut sorted = round.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(sorted.len(), 10, "no repeats inside a round");
+        }
+        assert!(
+            first.iter().all(|text| !second.contains(text)),
+            "round two draws fresh questions while the pool has them"
+        );
+        // Once the offset wraps the pool, questions repeat across rounds,
+        // but never inside one.
+        quiz.rounds = 4;
+        quiz.begin(false);
+        let mut wrapped: Vec<String> = quiz
+            .round_questions
+            .iter()
+            .map(|question| question.text.clone())
+            .collect();
+        wrapped.sort();
+        wrapped.dedup();
+        assert_eq!(wrapped.len(), 10);
+    }
+
+    fn only_spawn(commands: &[kobo_sdk::Command]) -> TaskId {
+        let spawned: Vec<TaskId> = commands
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spawned.len(), 1);
+        spawned[0]
+    }
+
+    // A retrying fetch gets a quiet second chance: the first offline failure
+    // naps, then the retry runs. Only the second failure reaches the app.
+    fn fail_sync_after_retry(runner: &mut kobo_sdk::AppRunner<Quiz>, task: TaskId) {
+        let nap = only_spawn(
+            &runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Offline)),
+        );
+        assert_eq!(
+            runner.app().sync_task,
+            Some(task),
+            "the first offline failure naps instead of alarming the reader"
+        );
+        let retry = only_spawn(&runner.task_outcome(nap, TaskOutcome::Completed(Vec::new())));
+        runner.task_outcome(retry, TaskOutcome::Failed(kobo_sdk::TaskError::Offline));
+    }
+
+    #[test]
+    fn offline_sync_keeps_existing_packs_playing() {
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("sync"));
+        let task = runner.app().sync_task.expect("sync started");
+        let before = runner.app().questions.clone();
+        fail_sync_after_retry(&mut runner, task);
+        assert!(runner.app().sync_task.is_none());
+        assert_eq!(
+            runner.app().note.as_deref(),
+            Some("Off the air. Existing packs still play offline.")
+        );
+        assert_eq!(runner.app().questions, before);
+        assert!(runner.app().pack_updated_min.is_none());
+        runner.action(action_id("solo"));
+        runner.action(action_id("continue-setup"));
+        assert_eq!(runner.app().round_questions.len(), 10);
+    }
+
+    #[test]
+    fn a_refreshed_pack_survives_the_next_offline_sync() {
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("sync"));
+        let task = runner.app().sync_task.expect("sync started");
+        runner.task_outcome(task, TaskOutcome::Completed(pack()));
+        assert_eq!(runner.app().questions[0].category, "New pack");
+        let synced = runner.app().pack_updated_min;
+        runner.action(action_id("sync"));
+        let task = runner.app().sync_task.expect("second sync started");
+        fail_sync_after_retry(&mut runner, task);
+        assert_eq!(runner.app().questions[0].category, "New pack");
+        assert_eq!(runner.app().pack_origin.as_deref(), Some("Open Trivia DB"));
+        assert_eq!(runner.app().pack_updated_min, synced);
+        runner.action(action_id("solo"));
+        runner.action(action_id("continue-setup"));
+        assert_eq!(runner.app().round_questions[0].category, "New pack");
+    }
+
+    #[test]
     fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
         let mut quiz = Quiz::default();
         quiz.begin(false);
