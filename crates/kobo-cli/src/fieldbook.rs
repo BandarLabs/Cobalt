@@ -571,6 +571,7 @@ fn copy_directory_atomic(source: &Path, destination: &Path) -> Result<(), String
         fs::remove_dir_all(&stage).map_err(|error| error.to_string())?;
     }
     copy_tree(source, &stage)?;
+    flatten_photos(&stage)?;
     let backup = parent.join(format!(".fieldbook-pack-{}.old", std::process::id()));
     if destination.exists() {
         fs::rename(destination, &backup).map_err(|error| error.to_string())?;
@@ -585,6 +586,30 @@ fn copy_directory_atomic(source: &Path, destination: &Path) -> Result<(), String
         fs::remove_dir_all(backup).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+/// The reader's shelf answers flat names only, so a pack's photos/
+/// directory becomes root-level files named by content digest. The
+/// manifest keeps the photos/ path; the reader side derives the flat
+/// shelf key from the asset's file name.
+fn flatten_photos(stage: &Path) -> Result<(), String> {
+    let photos = stage.join("photos");
+    if !photos.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&photos).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err("the pack photos directory holds more than files".into());
+        }
+        let name = entry.file_name();
+        fs::rename(entry.path(), stage.join(&name)).map_err(|error| error.to_string())?;
+    }
+    fs::remove_dir(&photos).map_err(|error| error.to_string())
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), String> {
@@ -622,7 +647,7 @@ fn remote_directory(host: &str, source: &Path) -> Result<(), String> {
     }
     let stage = format!("{DEVICE_DATA}.{}.writing", std::process::id());
     let mut script = format!(
-        "set -eu\nstage='{stage}'\nrm -rf \"$stage\"\nmkdir -p \"$stage/photos\"\ntrap 'rm -rf \"$stage\"' EXIT HUP INT TERM\n"
+        "set -eu\nstage='{stage}'\nrm -rf \"$stage\"\nmkdir -p \"$stage\"\ntrap 'rm -rf \"$stage\"' EXIT HUP INT TERM\n"
     );
     for path in files {
         let relative = path
@@ -632,11 +657,14 @@ fn remote_directory(host: &str, source: &Path) -> Result<(), String> {
         if relative.contains('\'') || relative.contains('\n') || relative.contains("..") {
             return Err("unsafe photo pack filename".into());
         }
+        // The reader's shelf answers flat names only; photos/<digest>.jpg
+        // stages as <digest>.jpg and the reader derives the same key.
+        let staged = relative.strip_prefix("photos/").unwrap_or(relative);
         let bytes = bounded(&path, MAX_PHOTO, "photo pack file")?;
         let encoded = super::base64_encode(&bytes);
         let digest = kobo_net::sha256::hex_digest(&bytes);
         script.push_str(&format!(
-            "base64 -d > \"$stage/{relative}\" <<'FIELD_BOOK_FILE'\n{encoded}\nFIELD_BOOK_FILE\nset -- $(sha256sum \"$stage/{relative}\"); test \"$1\" = '{digest}'\n"
+            "base64 -d > \"$stage/{staged}\" <<'FIELD_BOOK_FILE'\n{encoded}\nFIELD_BOOK_FILE\nset -- $(sha256sum \"$stage/{staged}\"); test \"$1\" = '{digest}'\n"
         ));
     }
     script.push_str(&format!(
@@ -781,6 +809,28 @@ mod tests {
         assert!(is_jpeg(&[0xff, 0xd8, 0xff, 0xdb, 0xff, 0xd9]));
         assert!(!is_jpeg(b"not a photo"));
         assert!(!is_jpeg(&[0xff, 0xd8, 0xff]));
+    }
+    #[test]
+    fn pack_directory_publishes_photos_flat() {
+        let unique = format!("fieldbook-flat-{}", std::process::id());
+        let root = std::env::temp_dir().join(&unique);
+        let source = root.join("pack");
+        let photos = source.join("photos");
+        fs::create_dir_all(&photos).unwrap();
+        let digest = "a".repeat(64);
+        fs::write(source.join(MANIFEST), sample()).unwrap();
+        fs::write(
+            source.join("attribution.json"),
+            br#"{"format":"fieldbook-attribution","version":"1","photos":[]}"#,
+        )
+        .unwrap();
+        fs::write(photos.join(format!("{digest}.jpg")), b"jpeg-bytes").unwrap();
+        let destination = root.join("sim-data");
+        copy_directory_atomic(&source, &destination).unwrap();
+        assert!(destination.join(MANIFEST).is_file());
+        assert!(destination.join(format!("{digest}.jpg")).is_file());
+        assert!(!destination.join("photos").exists());
+        let _ = fs::remove_dir_all(&root);
     }
     #[test]
     fn rejects_wrong_schema_and_incomplete_species() {
