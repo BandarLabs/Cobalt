@@ -1,0 +1,23 @@
+=== offline preparation: --preview renders locally, transfers nothing ===
+(this sandbox has no outbound network at all - link-local only - so every run here is offline by construction)
+Prepared 1 photos at 1072 × 1448. Open /tmp/preview-kb2/index.html to compare crop and pad. No photos were transferred.
+exit=0
+0-crop.png
+0-pad.png
+index.html
+receipt written? no
+
+=== bundled local help: every command's help is embedded in the binary ===
+Kobo application SDK
+
+Usage: kobo <command>
+
+Commands:
+apps [search WORD | setup APP]  Find apps and read offline setup guides
+new <name>             Create a Rust application
+dev [--builtin] [address]  Run this SDK app in the browser simulator
+...
+usage: kobo send FILE [--app APP] (--sim | --device IP | --reader NAME)
+       kobo send --preview FILE --out DIRECTORY [--app APP] [--profile PROFILE]
+       send routes a file to the companion that reads it:
+       photos to Frame, OPML lists to Feeds, CBZ comics to Panels,
