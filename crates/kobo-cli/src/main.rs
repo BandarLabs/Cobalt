@@ -41,6 +41,7 @@ mod publish;
 mod readers;
 mod readlater;
 mod receipts;
+mod report;
 mod runtime_dev;
 mod stream_demo;
 mod vault;
@@ -712,6 +713,45 @@ fn send_arguments(arguments: &[String]) -> Result<(Vec<String>, String), String>
     Ok((rebuilt, words))
 }
 
+/// Writes a diagnostic report: redacted by default, `--include-paths` when
+/// the file names are the question, `--out` to a file or stdout without.
+fn report_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo report [--out FILE] [--include-paths]\n\
+                         \x20      A diagnostic snapshot for a helper: versions, counts and kinds.\n\
+                         \x20      Never file contents, trust material, keys or full serials;\n\
+                         \x20      paths only when --include-paths is given.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
+    let mut out = None;
+    let mut include_paths = false;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--out" if out.is_none() => {
+                out = Some(
+                    arguments
+                        .next()
+                        .ok_or_else(|| console::usage("--out takes a file"))?
+                        .clone(),
+                );
+            }
+            "--include-paths" if !include_paths => include_paths = true,
+            _ => return Err(console::usage(USAGE)),
+        }
+    }
+    let text = report::build(include_paths);
+    match out {
+        Some(path) => {
+            std::fs::write(&path, &text)
+                .map_err(|error| format!("{path} cannot be written: {error}"))?;
+            println!("report written to {path}");
+        }
+        None => print!("{text}"),
+    }
+    Ok(())
+}
+
 /// The target flags exactly as given, so a kept send retries the same way.
 fn target_words(arguments: &[String]) -> String {
     let mut words = Vec::new();
@@ -862,6 +902,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "export" => exports::command(&arguments[1..]),
         "feeds" => feeds::command(&arguments[1..]),
         "send" => send_file(&arguments[1..]),
+        "report" => report_command(&arguments[1..]),
         "fieldbook" => fieldbook::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
