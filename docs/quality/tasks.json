@@ -2996,8 +2996,12 @@
   "pr": 3,
   "group": "Pub Quiz",
   "task": "Export a scorecard",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "27/27 app tests green incl. scorecard_csv, podium save flow, points pluralization (41df33a2)",
+   "30-cell simulator matrix green at 41df33a2: 9 profiles x 3 scales drive.kobo + 3 drive-states cells (docs/quality/evidence/pubquiz-sim/matrix.json)",
+   "drive-podium.kobo green at clara-bw-391 default + extra-large; podium/scorecard shots inspected both scales (podium-default.png, podium-extra-large.png, scorecard-default.png, scorecard-extra-large.png)"
+  ]
  },
  {
   "id": "QUIZ-06",

@@ -1,6 +1,6 @@
 {
  "app": "pubquiz",
- "head": "cca07460",
+ "head": "41df33a2",
  "profiles": 9,
  "scales": [
   "default",
@@ -45,5 +45,12 @@
    "clara-bw-391/extra-large"
   ]
  },
- "notes": "Standard route: help, round setup, pass-around players, question. States route: about (with Source and Updated rows), setup, question, locked answer, reveal, on seeded pack state. Rows per page in round setup follow the text scale (3/2/1) after the renderer refused larger pages at extra-large; long pack category names ellipsize at 18 characters. Setup screenshots inspected at default and extra-large on clara-bw-391 (QUIZ-02, 9a785c6b); About screenshots inspected at default and extra-large on clara-bw-391 (QUIZ-03, 04e4f1a8). Pass and result screens reworked (QUIZ-04): pass heads with the next player, result is titled Question result, names the right answer on a miss and who said it on a hit, and offers the podium on the last question; filtered packs shorter than ten deal shorter rounds without repeats. Pass screenshot inspected at default, result at extra-large, clara-bw-391."
+ "notes": "Standard route: help, round setup, pass-around players, question. States route: about (with Source and Updated rows), setup, question, locked answer, reveal, on seeded pack state. Rows per page in round setup follow the text scale (3/2/1) after the renderer refused larger pages at extra-large; long pack category names ellipsize at 18 characters. Setup screenshots inspected at default and extra-large on clara-bw-391 (QUIZ-02, 9a785c6b); About screenshots inspected at default and extra-large on clara-bw-391 (QUIZ-03, 04e4f1a8). Pass and result screens reworked (QUIZ-04): pass heads with the next player, result is titled Question result, names the right answer on a miss and who said it on a hit, and offers the podium on the last question; filtered packs shorter than ten deal shorter rounds without repeats. Pass screenshot inspected at default, result at extra-large, clara-bw-391. Scorecard export (QUIZ-05): the podium offers Save scorecard, which writes pubquiz-scorecard.csv (round,player,points) to the reader and settles to Saved to reader until the next round; point counts pluralize (1 point / N points). Podium and scorecard screenshots inspected at default and extra-large on clara-bw-391 (41df33a2).",
+ "second_run": {
+  "route": "apps/pubquiz/drive-podium.kobo",
+  "cells_green": [
+   "clara-bw-391/default",
+   "clara-bw-391/extra-large"
+  ]
+ }
 }
