@@ -1,0 +1,13 @@
+{
+  "source_sha": "6ab08f3f5abb7698f59af6d3dee20648e6d19d97",
+  "dirty": true,
+  "results": [
+    {
+      "app": "vault",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/vault/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

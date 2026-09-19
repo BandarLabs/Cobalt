@@ -1,0 +1,5 @@
+Kobo app simulator: http://127.0.0.1:45799
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/tictactoe/tictactoe-shots/tictactoe-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/tictactoe/tictactoe-shots/tictactoe-won.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/tictactoe/tictactoe-shots/tictactoe-solo.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/tictactoe/tictactoe-shots
