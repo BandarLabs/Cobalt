@@ -2966,8 +2966,10 @@
   "pr": 3,
   "group": "Pub Quiz",
   "task": "Provide categories and difficulty",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pubquiz-sim/ (matrix.json: 27/27 profile-scale cells plus 3/3 seeded-state cells green at 9a785c6b; setup-default.png and setup-extra-large.png inspected on clara-bw-391): solo and pass-around open a round setup that filters the pack by category and difficulty, an empty mix keeps the player on the packs screen with a note, and round length follows the filtered pool. Seventeen app tests cover difficulty mapping, filtering, the empty-mix refusal and the full setup flow; strict Clippy passes. The renderer refused two earlier layouts (button wall plus six rows; measured diagnostics disagreed with the driver at extra-large), so rows per page follow the text scale and long category names ellipsize."
+  ]
  },
  {
   "id": "QUIZ-03",
