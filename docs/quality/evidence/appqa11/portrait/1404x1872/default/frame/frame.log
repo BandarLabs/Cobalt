@@ -1,0 +1,8 @@
+Frame shelf ready at /tmp/cb-523nv9pl/cobalt-sim-data/frame; transfers stay on this computer.
+1 new, 0 already present, 0 removed; 66670 image bytes to send
+  Add: frame.png / frame.png (photo-a2b4fcd174e3a15b)
+Frame transfer verified: 1 photo(s), 1 new, 0 removed
+Kobo app simulator: http://127.0.0.1:45851
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/frame/frame-shots/shelf.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/frame/frame-shots/photo.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/frame/frame-shots

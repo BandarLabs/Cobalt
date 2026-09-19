@@ -1,0 +1,3 @@
+Kobo app simulator: http://127.0.0.1:40877
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/brief/brief-shots/brief-empty.png
+kobo: line 20: expect 1 of 2: nothing on the screen says "1 of 2" (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/brief/brief-shots/failed-line-20.png)
