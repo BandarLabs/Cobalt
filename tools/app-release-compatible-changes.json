@@ -314,7 +314,7 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Windows host support for the CLI and simulator. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected. Re-pinned at protocol 15 after the beta merge: the 0.3.18 bump and the Windows host additions still move no package identity a Store app resolves.",
+   "reason": "Windows host support for the CLI and simulator. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected. Re-pinned at protocol 15 after the beta merge: the 0.3.18 bump and the Windows host additions still move no package identity a Store app resolves. The review fix that keeps an existing listener's address file when a duplicate bind is refused changes bytes, not the wire protocol or the Unix path.",
    "files": [
     {
      "path": "Cargo.lock",
@@ -359,7 +359,7 @@
     {
      "path": "crates/kobo-protocol/src/channel.rs",
      "base_blob": null,
-     "compatible_blob": "0f56374e01489a59c21a4704483d9c848966fef2"
+     "compatible_blob": "d5d1af6f86c3ab9225e4add3de827d4c1a2c6779"
     },
     {
      "path": "crates/kobo-protocol/src/durability.rs",
