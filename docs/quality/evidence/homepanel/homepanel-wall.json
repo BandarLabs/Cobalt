@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "4a66b8eb5bb5b245eba7f2b1c7a7449e6f4b95ca957be8af416da12093e4ac0c",
+    "sha256": "734668dc497a2fe514ea53049a9c716541ee36c173254d311dd927384f1cc67c",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-17",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "19147",
-      "unixMillis": "1789685598101",
+      "monotonicMillis": "20040",
+      "unixMillis": "1789828245459",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 5725765,
+    "dirtyPixelsSinceClean": 5906473,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "51",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "17659",
+      "finishedAtMillis": "16282",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "51",
-      "submittedAtMillis": "17626",
+      "submittedAtMillis": "16253",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 5725765,
+      "dirty": 5906473,
       "full": false,
       "refresh": 51,
       "region": {
@@ -190,11 +190,11 @@
     }
   },
   "source": {
-    "binarySha256": "236b5ed067558cb7915e6d7aeac34fe88f4b8f6f89c0b212f25476ea30d2adf9",
-    "dirty": true,
+    "binarySha256": "c33261d9999542de50b68180c528d02a1b89e756c85b38aee33db672ad16687f",
+    "dirty": false,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "3c389a8023f3a108b47dfdfb187f6ef761890813"
+    "revision": "a19a223069a8553d01d72e1b3fcf6fb6e35dadfa"
   },
   "version": 1
 }

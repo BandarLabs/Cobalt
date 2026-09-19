@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "e0c1bfed5aed0c2e45dad8bc8e6a4dc02aebfcbf68f6f858a83b9dbfb8053691",
+    "sha256": "3764ed99ef09de27f54d74897694c315f9b3be2dc4044952c1a182ed5043fe6a",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -54,13 +54,13 @@
       "cover-sensor"
     ],
     "clock": {
-      "date": "2026-09-17",
+      "date": "2026-09-19",
       "mode": "real",
-      "monotonicMillis": "34795",
-      "unixMillis": "1789685613749",
+      "monotonicMillis": "36762",
+      "unixMillis": "1789828262181",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 6996477,
+    "dirtyPixelsSinceClean": 7177681,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "56",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "33245",
+      "finishedAtMillis": "32948",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "56",
-      "submittedAtMillis": "33241",
+      "submittedAtMillis": "32944",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,16 +130,34 @@
       }
     },
     "transition": {
-      "dirty": 6996477,
+      "dirty": 7177681,
       "full": false,
       "refresh": 56,
       "region": {
-        "height": 144,
+        "height": 608,
         "width": 992,
         "x": 40,
-        "y": 480
+        "y": 16
       },
       "regions": [
+        {
+          "region": {
+            "height": 24,
+            "width": 24,
+            "x": 104,
+            "y": 16
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 32,
+            "width": 32,
+            "x": 208,
+            "y": 176
+          },
+          "waveform": "GL16"
+        },
         {
           "region": {
             "height": 144,
@@ -154,11 +172,11 @@
     }
   },
   "source": {
-    "binarySha256": "236b5ed067558cb7915e6d7aeac34fe88f4b8f6f89c0b212f25476ea30d2adf9",
-    "dirty": true,
+    "binarySha256": "c33261d9999542de50b68180c528d02a1b89e756c85b38aee33db672ad16687f",
+    "dirty": false,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "3c389a8023f3a108b47dfdfb187f6ef761890813"
+    "revision": "a19a223069a8553d01d72e1b3fcf6fb6e35dadfa"
   },
   "version": 1
 }
