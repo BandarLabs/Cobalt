@@ -1,0 +1,4 @@
+Kobo app simulator: http://127.0.0.1:44321
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/extra-large/flashcards/flashcards-shots/flashcards-empty.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/extra-large/flashcards/flashcards-shots/flashcards-decks.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/extra-large/flashcards/flashcards-shots

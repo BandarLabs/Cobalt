@@ -136,11 +136,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "arxiv",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-arxiv-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "audiobook": {
@@ -280,11 +277,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "backgammon",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-backgammon-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "birds": {
@@ -382,11 +376,8 @@
    "exit_code": 0
   },
   "1264x1680/default": {
-   "app": "brief",
-   "launched": true,
    "status": "fail",
-   "route": "examples/brief/drive.kobo",
-   "exit_code": 1
+   "error": "no report"
   },
   "1264x1680/large": {
    "app": "brief",
@@ -403,32 +394,20 @@
    "exit_code": 0
   },
   "1404x1872/default": {
-   "app": "brief",
-   "launched": true,
    "status": "fail",
-   "route": "examples/brief/drive.kobo",
-   "exit_code": 1
+   "error": "no report"
   },
   "1404x1872/large": {
-   "app": "brief",
-   "launched": true,
    "status": "fail",
-   "route": "examples/brief/drive.kobo",
-   "exit_code": 1
+   "error": "no report"
   },
   "1404x1872/extra-large": {
-   "app": "brief",
-   "launched": true,
    "status": "fail",
-   "route": "examples/brief/drive.kobo",
-   "exit_code": 1
+   "error": "no report"
   },
   "landscape": {
-   "app": "brief",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-brief-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "calibre-web": {
@@ -640,8 +619,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "crossword",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-crossword-landscape.kobo",
+   "exit_code": 1
   }
  },
  "deck": {
@@ -853,8 +835,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "fieldbook",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-fieldbook-landscape.kobo",
+   "exit_code": 1
   }
  },
  "flashcards": {
@@ -873,8 +858,11 @@
    "exit_code": 0
   },
   "1072x1448/extra-large": {
-   "status": "fail",
-   "error": "no report"
+   "app": "flashcards",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/flashcards/drive.kobo",
+   "exit_code": 0
   },
   "1264x1680/default": {
    "app": "flashcards",
@@ -1053,6 +1041,932 @@
    "launched": true,
    "status": "pass",
    "route": "examples/gallery/drive.txt",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "status": "fail",
+   "error": "no report"
+  },
+  "landscape": {
+   "app": "gallery",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa11-gallery-landscape.kobo",
+   "exit_code": 1
+  }
+ },
+ "grimoire": {
+  "1072x1448/default": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa11-grimoire-landscape.kobo",
+   "exit_code": 1
+  }
+ },
+ "gutenbird": {
+  "1072x1448/default": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-gutenbird-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "habits": {
+  "1072x1448/default": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-habits-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "hn": {
+  "1072x1448/default": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "hn",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa11-hn-landscape.kobo",
+   "exit_code": 1
+  }
+ },
+ "homepanel": {
+  "1072x1448/default": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-homepanel-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "inkling": {
+  "1072x1448/default": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "inkling",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa11-inkling-landscape.kobo",
+   "exit_code": 1
+  }
+ },
+ "kitchencard": {
+  "1072x1448/default": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-kitchencard-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "lichess": {
+  "1072x1448/default": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "lichess",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa11-lichess-landscape.kobo",
+   "exit_code": 1
+  }
+ },
+ "logicpack": {
+  "1072x1448/default": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-logicpack-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "magnet": {
+  "1072x1448/default": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-magnet-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "morse": {
+  "1072x1448/default": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "morse",
+   "launched": true,
+   "status": "fail",
+   "route": "/tmp/appqa11-morse-landscape.kobo",
+   "exit_code": 1
+  }
+ },
+ "musicstand": {
+  "1072x1448/default": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/large": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/extra-large": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "landscape": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa11-musicstand-landscape.kobo",
+   "exit_code": 0
+  }
+ },
+ "needles": {
+  "1072x1448/default": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/large": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "1072x1448/extra-large": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/default": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/large": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "1264x1680/extra-large": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "1404x1872/default": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
    "exit_code": 0
   }
  }

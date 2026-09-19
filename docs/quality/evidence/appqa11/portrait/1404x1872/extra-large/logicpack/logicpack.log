@@ -1,0 +1,4 @@
+Kobo app simulator: http://127.0.0.1:35775
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/extra-large/logicpack/logicpack-shots/logicpack-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/extra-large/logicpack/logicpack-shots/logicpack-mines.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/extra-large/logicpack/logicpack-shots

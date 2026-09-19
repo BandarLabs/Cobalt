@@ -1,0 +1,5 @@
+Kobo app simulator: http://127.0.0.1:46697
+task 1 failed: NoCredential
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/lichess/lichess-shots/lichess-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/lichess/lichess-shots/home.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/lichess/lichess-shots

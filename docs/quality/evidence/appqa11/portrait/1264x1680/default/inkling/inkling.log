@@ -1,0 +1,7 @@
+Kobo app simulator: http://127.0.0.1:38919
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/default/inkling/inkling-shots/inkling-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/default/inkling/inkling-shots/inkling-knowledge.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/default/inkling/inkling-shots/inkling-solved.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/default/inkling/inkling-shots/inkling-stats.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/default/inkling/inkling-shots/inkling-archive.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1264x1680/default/inkling/inkling-shots

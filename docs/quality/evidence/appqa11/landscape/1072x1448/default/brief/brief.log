@@ -1,3 +1,0 @@
-Kobo app simulator: http://127.0.0.1:38391
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/brief/brief-shots/brief-empty.png
-kobo: line 19: wait-for as of: the renderer refused this screen: node 7: content is clipped by a panel edge; node 7: interactive control is outside the visible panel (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/brief/brief-shots/failed-line-19.png)
