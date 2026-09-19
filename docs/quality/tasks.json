@@ -3647,8 +3647,10 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Use one dominant task action with stable secondary controls",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/appqa01/"
+  ]
  },
  {
   "id": "APPQA-02",

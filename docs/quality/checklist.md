@@ -523,7 +523,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 ## PR 3 · Catalog-wide release gates
 
 - [x] **SHOTS-01** Ship each app's best screenshots in its README and in the generated apps web pages.
-- [ ] **APPQA-01** Use one dominant task action with stable secondary controls.
+- [x] **APPQA-01** Use one dominant task action with stable secondary controls.
 - [ ] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
 - [ ] **APPQA-03** Keep cached content usable with honest freshness.
 - [ ] **APPQA-04** Show unsaved state before success.
