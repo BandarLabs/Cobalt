@@ -535,7 +535,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **APPQA-10** Test delayed/failed downloads and storage interruption.
 - [ ] **APPQA-11** Check every intermediate state under supported profile/scale/orientation.
 - [ ] **APPQA-12** Regenerate screenshots only from the shipped build.
-- [ ] **APPQA-13** Keep Zotero Reader outside this catalog review.
+- [x] **APPQA-13** Keep Zotero Reader outside this catalog review.
 
 ## PR 4 · Main CLI and companion operation engine
 

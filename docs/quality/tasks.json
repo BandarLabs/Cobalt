@@ -3743,8 +3743,11 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Keep Zotero Reader outside this catalog review",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "The exclusion holds by construction across every review artifact: the checklist scope statement excludes the ten new app ideas and their product pilots (Zotero Reader is a pilot, not a companion-catalog app); the board carries no Zotero app-review group or item other than this guardrail; docs/quality/census.json (the profile x scale review census) has zero zotero mentions; validation.md and census.md never name it.",
+   "Boundary recorded: zotero-reader appears only in public-site and release tooling that is not the catalog review - the generated apps web page, the version gate, CI's launch check, and the shots-census of public site images. No review gate, matrix, route audit or per-app checklist targets it; APPQA-06's per-app route audit will skip zotero-reader by name."
+  ]
  },
  {
   "id": "CLI-01",
