@@ -76,6 +76,26 @@
   "inkling": {
    "status": "pass",
    "notes": "Game screen: single dominant 'Enter guess' button; secondary (Hard mode toggle, stats, today, archive) in stable action bar; guess entry is the SDK keyboard sheet with Guess submit. Evidence: apps/inkling/screenshots/knowledge.png + screens.json."
+  },
+  "kitchencard": {
+   "status": "pass",
+   "notes": "One primary per state (Add address / Sync Mealie / Pick a recipe / Start cooking); tonight screen: primary 'Start cooking' dominant with plain secondaries (Pick recipe, serving steppers) below; Sync + settings in top-right chrome. Evidence: apps/kitchencard/screenshots/tonight.png, cooking.png + screens.json."
+  },
+  "lichess": {
+   "status": "pass",
+   "notes": "Home is a mode-tile launcher; pairing candidate: primary 'Open game' + plain 'Keep waiting'; puzzle result: primary 'Next puzzle'; game screen board-centric with modal dialogs (SDK dialog idiom, one primary each); state-labeled buttons (button_with_state) keep positions stable while disabled. Evidence: apps/lichess/screenshots/home.png, candidate.png + screens.json."
+  },
+  "logicpack": {
+   "status": "pass",
+   "notes": "Collection: puzzle rows dominant + single paging control; play screens board-centric with secondary verbs (Undo/Check/Restart/Rules) grouped in the More sheet; restart confirm is a dialog pair. Evidence: apps/logicpack/screenshots/collection.png, hashi.png + screens.json."
+  },
+  "magnet": {
+   "status": "pass",
+   "notes": "Guided sweep walkthrough: one contextual step button ('Sweep the right edge') reads dominant above a plain 'Reset the count'; facts display otherwise; no-sensor state is a splash. Evidence: examples/magnet/screenshots/counting.png, no-magnet.png."
+  },
+  "morse": {
+   "status": "pass",
+   "notes": "Beacon: the flash area is the screen; single state-dependent action-bar verb (Stop while sending, Edit when idle) + Light toggle; writing uses banner; reference is page_turns reading chrome. Evidence: apps/morse/screenshots/sending.png + screens.json."
   }
  },
  "findings": [
