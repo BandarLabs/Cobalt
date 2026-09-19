@@ -6,16 +6,19 @@
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::process::{Command, Stdio};
 
 const MAX_PDF: usize = 32 * 1024 * 1024;
 const MAX_PATTERN: usize = 4 * 1024 * 1024;
 const BLOB: &str = "pattern.md";
+/// How much of the extracted pattern a printed preview shows against its source.
+const PREVIEW_LINES: usize = 12;
 const USAGE: &str = "usage: kobo needles converter status|install\n\
+                     \x20      kobo needles setup\n\
                      \x20      kobo needles prepare PATTERN.(pdf|md|txt) --out PATTERN.md [--title TITLE] [--section HEADING]\n\
-                     \x20      kobo needles preview PATTERN.(pdf|md|txt) --out DIRECTORY [--title TITLE] [--section HEADING]\n\
+                     \x20      kobo needles preview PATTERN.(pdf|md|txt) [--out DIRECTORY] [--title TITLE] [--section HEADING]\n\
                      \x20      kobo needles push PATTERN.(pdf|md|txt) (--sim | --device IP | --out FILE) [--title TITLE] [--section HEADING]";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
@@ -24,6 +27,14 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     }
     if arguments.first().map(String::as_str) == Some("converter") {
         return converter_command(&arguments[1..]);
+    }
+    if arguments.first().map(String::as_str) == Some("setup") {
+        // The original spelling of `converter install`.
+        return if arguments.len() == 1 {
+            converter_command(&["install".to_owned()])
+        } else {
+            Err(USAGE.to_owned())
+        };
     }
     let verb = arguments.first().ok_or_else(|| USAGE.to_owned())?;
     let input = arguments.get(1).ok_or_else(|| USAGE.to_owned())?;
@@ -77,19 +88,33 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             _ => return Err(USAGE.to_owned()),
         }
     }
-    let report = prepare_any(Path::new(input), title, section)?;
+    let input_path = Path::new(input);
+    let report = prepare_any(input_path, title, section)?;
     match verb.as_str() {
         "prepare" => write_pattern(
             Path::new(out.ok_or_else(|| USAGE.to_owned())?),
             &report.markdown,
             CopyState::Prepared,
         ),
-        "preview" => write_preview(Path::new(out.ok_or_else(|| USAGE.to_owned())?), &report),
+        "preview" => {
+            if let Some(directory) = out {
+                write_preview(Path::new(directory), &report, input_path)
+            } else {
+                print_report(&report, input_path, true);
+                Ok(())
+            }
+        }
         "push" => match (target, out) {
-            (Some(""), None) => publish_local(&report.markdown),
-            (Some(host), None) => transfer(&report.markdown, host),
+            (Some(""), None) => transfer_sim(&report, input_path),
+            (Some(host), None) => transfer(&report, input_path, host),
             (None, Some(path)) => {
-                write_pattern(Path::new(path), &report.markdown, CopyState::Prepared)
+                write_pattern(Path::new(path), &report.markdown, CopyState::Prepared)?;
+                if !report.charts.is_empty() {
+                    println!(
+                        "Charts travel with a push to the reader or simulator, not into one file."
+                    );
+                }
+                Ok(())
             }
             _ => Err(USAGE.to_owned()),
         },
@@ -102,9 +127,17 @@ fn converter_command(arguments: &[String]) -> Result<(), String> {
         [action] if action == "status" => converter_status(),
         [action] if action == "install" => {
             if converter_status().is_ok() {
+                println!("The PDF converter (pdftotext) is already installed.");
                 return Ok(());
             }
-            let (program, args): (&str, &[&str]) = if command_exists("brew") {
+            let (program, args): (&str, &[&str]) = if cfg!(target_os = "windows")
+                && command_exists("winget")
+            {
+                (
+                    "winget",
+                    &["install", "--id", "oschwartz10612.Poppler", "-e"],
+                )
+            } else if command_exists("brew") {
                 ("brew", &["install", "poppler"])
             } else if command_exists("apt-get") {
                 ("sudo", &["apt-get", "install", "-y", "poppler-utils"])
@@ -205,8 +238,13 @@ struct Report {
     pages: usize,
     image_only: Vec<usize>,
     has_images: bool,
+    /// The name the reader counts under.
+    title: String,
+    /// The sections the reader will count by, in the pattern's own words.
     sections: Vec<String>,
     rows: Vec<String>,
+    /// The chart names the pattern refers to, in the order it refers to them.
+    charts: Vec<String>,
 }
 
 fn prepare_any(input: &Path, title: Option<&str>, section: Option<&str>) -> Result<Report, String> {
@@ -229,37 +267,143 @@ fn prepare_any(input: &Path, title: Option<&str>, section: Option<&str>) -> Resu
     if let Some(wanted) = section {
         markdown = select_section(&markdown, wanted)?;
     }
-    let text = String::from_utf8_lossy(&markdown);
-    let sections = text
-        .lines()
-        .filter_map(|line| line.strip_prefix("## ").map(str::to_owned))
-        .take(40)
-        .collect();
-    let rows = text
-        .lines()
-        .filter(|line| {
-            let l = line.to_ascii_lowercase();
-            l.starts_with("row ")
-                || l.starts_with("rows ")
-                || l.starts_with("round ")
-                || l.starts_with("rounds ")
-                || l.starts_with("rnd ")
-        })
-        .map(str::to_owned)
-        .take(200)
-        .collect();
+    let rows = {
+        let text = String::from_utf8_lossy(&markdown);
+        text.lines()
+            .filter(|line| {
+                let l = line.to_ascii_lowercase();
+                l.starts_with("row ")
+                    || l.starts_with("rows ")
+                    || l.starts_with("round ")
+                    || l.starts_with("rounds ")
+                    || l.starts_with("rnd ")
+            })
+            .map(str::to_owned)
+            .take(200)
+            .collect()
+    };
     if markdown.len() > MAX_PATTERN {
         return Err("the prepared pattern is too large for this reader".to_owned());
     }
+    let (title, sections, charts) = outline(&markdown, input);
     Ok(Report {
         markdown: std::mem::take(&mut markdown),
         source: source.to_owned(),
         pages,
         image_only,
         has_images,
+        title,
         sections,
         rows,
+        charts,
     })
+}
+
+/// The title, the sections the reader counts by, and the chart names the
+/// pattern refers to, read with the same Markdown parser the reader uses,
+/// so what the preview says is what the counter does.
+fn outline(markdown: &[u8], input: &Path) -> (String, Vec<String>, Vec<String>) {
+    let text = String::from_utf8_lossy(markdown);
+    let document = kobo_doc::markdown::parse(&text);
+    let mut headings = Vec::new();
+    let mut charts: Vec<String> = Vec::new();
+    for block in &document.blocks {
+        match block {
+            kobo_doc::Block::Heading { level, text } => headings.push((*level, text.clone())),
+            kobo_doc::Block::Picture { name, .. } => {
+                if !charts.contains(name) {
+                    charts.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    let title = headings
+        .iter()
+        .find(|(level, _)| *level == 1)
+        .map_or_else(|| title_from_stem(input), |(_, text)| text.clone());
+    // The reader's rule: second-level headings when the pattern has that
+    // much structure, a flat pattern's own headings past its title otherwise.
+    let sections: Vec<String> = if headings.iter().any(|(level, _)| *level == 2) {
+        headings
+            .iter()
+            .filter(|(level, _)| *level == 2)
+            .map(|(_, text)| text.clone())
+            .collect()
+    } else {
+        let mut past_title: Vec<String> = headings
+            .iter()
+            .filter(|(level, _)| *level == 1)
+            .map(|(_, text)| text.clone())
+            .collect();
+        if let Some(first) = past_title.first().cloned() {
+            if Some(&first) == headings.first().map(|(_, text)| text) {
+                past_title.remove(0);
+            }
+        }
+        if past_title.len() > 1 {
+            past_title
+        } else {
+            Vec::new()
+        }
+    };
+    (title, sections, charts)
+}
+
+fn title_from_stem(input: &Path) -> String {
+    input
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Pattern")
+        .to_owned()
+}
+
+/// The chart file sitting next to the pattern, when one was exported with it.
+fn chart_beside(input: &Path, name: &str) -> Option<PathBuf> {
+    if !kobo_protocol::is_valid_key(name) {
+        return None;
+    }
+    let path = input.parent().unwrap_or_else(|| Path::new(".")).join(name);
+    path.is_file().then_some(path)
+}
+
+/// What the reader will do with the pattern, said before it goes anywhere.
+fn print_report(report: &Report, input: &Path, with_body: bool) {
+    println!("Pattern: {}", report.title);
+    if report.sections.is_empty() {
+        println!(
+            "Sections: none found - the reader counts by Body, Sleeve and Finishing until the pattern names its own with ## headings"
+        );
+    } else {
+        println!("Sections: {}", report.sections.join(", "));
+    }
+    for chart in &report.charts {
+        if chart_beside(input, chart).is_some() {
+            println!("Chart: {chart}");
+        } else {
+            println!(
+                "Chart: {chart} - not found next to the pattern; on the reader it shows as its caption"
+            );
+        }
+    }
+    for page in &report.image_only {
+        println!(
+            "Note: page {page} has no extractable text, so it is probably a chart or a scan; export it as a PNG and keep it next to the pattern when you push"
+        );
+    }
+    if with_body {
+        let body = String::from_utf8_lossy(&report.markdown);
+        println!("---");
+        for line in body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .take(PREVIEW_LINES)
+        {
+            println!("  {line}");
+        }
+    }
 }
 fn normalize_text(input: &Path, body: &str, title: Option<&str>) -> Vec<u8> {
     let fallback = input
@@ -325,12 +469,39 @@ fn write_pattern(path: &Path, bytes: &[u8], state: CopyState) -> Result<(), Stri
     println!("{}", completion(state, path));
     Ok(())
 }
-fn publish_local(bytes: &[u8]) -> Result<(), String> {
+/// Lays the pattern, and the charts that sit next to it, onto the
+/// simulator's shelf the way a device transfer would place them.
+fn transfer_sim(report: &Report, input: &Path) -> Result<(), String> {
     let root = kobo_sim::simulated_data_root("needles");
     std::fs::create_dir_all(&root).map_err(|e| format!("create Needles shelf: {e}"))?;
-    write_pattern(&root.join(BLOB), bytes, CopyState::Simulator)
+    write_blob(&root, BLOB, &report.markdown)?;
+    let mut sent = 0;
+    for chart in &report.charts {
+        let Some(path) = chart_beside(input, chart) else {
+            continue;
+        };
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("could not read chart {}: {error}", path.display()))?;
+        write_blob(&root, chart, &bytes)?;
+        sent += 1;
+    }
+    if sent > 0 {
+        println!(
+            "Sent to simulator: {} and {sent} chart(s)\nAvailable offline in Needles.",
+            root.join(BLOB).display()
+        );
+    } else {
+        println!("{}", completion(CopyState::Simulator, &root.join(BLOB)));
+    }
+    Ok(())
 }
-fn write_preview(path: &Path, report: &Report) -> Result<(), String> {
+
+fn write_blob(root: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    let partial = root.join(format!(".{name}.writing"));
+    std::fs::write(&partial, bytes).map_err(|error| format!("write {name}: {error}"))?;
+    std::fs::rename(&partial, root.join(name)).map_err(|error| format!("publish {name}: {error}"))
+}
+fn write_preview(path: &Path, report: &Report, input: &Path) -> Result<(), String> {
     if path.exists() {
         return Err(format!(
             "preview directory {} already exists",
@@ -357,6 +528,18 @@ fn write_preview(path: &Path, report: &Report) -> Result<(), String> {
             report.image_only
         )
         .unwrap();
+    }
+    for chart in &report.charts {
+        let name = chart.replace('&', "&amp;").replace('<', "&lt;");
+        if chart_beside(input, chart).is_some() {
+            write!(html, "<p>Chart: {name} (travels with the push)</p>").unwrap();
+        } else {
+            write!(
+                html,
+                "<p>Chart: {name} (not found next to the pattern; on the reader it shows as its caption)</p>"
+            )
+            .unwrap();
+        }
     }
     write!(
         html,
@@ -491,21 +674,25 @@ fn read_limited(reader: &mut impl Read, limit: usize) -> Result<Vec<u8>, String>
     }
 }
 
-fn transfer(bytes: &[u8], host: &str) -> Result<(), String> {
-    let encoded = super::base64_encode(bytes);
-    let script = format!(
-        "set -e\n\
-         root=/mnt/onboard/.adds/cobalt/data/needles\n\
-         mkdir -p \"$root\"\n\
-         partial=\"$root/.{BLOB}.writing\"\n\
-         base64 -d > \"$partial\" <<'KOBO_NEEDLES_PATTERN'\n\
-         {encoded}\n\
-         KOBO_NEEDLES_PATTERN\n\
-         chmod 600 \"$partial\"\n\
-         mv -f \"$partial\" \"$root/{BLOB}\"\n\
-         sync\n\
-         printf 'Sent to reader: Needles pattern\\nAvailable offline in Needles.\\n'\n"
-    );
+fn transfer(report: &Report, input: &Path, host: &str) -> Result<(), String> {
+    let mut script =
+        "set -e\nroot=/mnt/onboard/.adds/cobalt/data/needles\nmkdir -p \"$root\"\n".to_owned();
+    script.push_str(&blob_script(BLOB, &report.markdown));
+    let mut sent = 0;
+    for chart in &report.charts {
+        let Some(path) = chart_beside(input, chart) else {
+            continue;
+        };
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("could not read chart {}: {error}", path.display()))?;
+        script.push_str(&blob_script(chart, &bytes));
+        sent += 1;
+    }
+    script.push_str("sync\nprintf 'Sent to reader: Needles pattern'\n");
+    if sent > 0 {
+        script.push_str(&format!(" && printf ' and {sent} chart(s)'"));
+    }
+    script.push_str(" && printf '\\nAvailable offline in Needles.\\n'\n");
     let output = super::run_remote_shell(
         &format!("root@{host}"),
         &script,
@@ -522,6 +709,18 @@ fn transfer(bytes: &[u8], host: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn blob_script(name: &str, bytes: &[u8]) -> String {
+    format!(
+        "partial=\"$root/.{name}.writing\"\n\
+         base64 -d > \"$partial\" <<'KOBO_NEEDLES_BLOB'\n\
+         {}\n\
+         KOBO_NEEDLES_BLOB\n\
+         chmod 600 \"$partial\"\n\
+         mv -f \"$partial\" \"$root/{name}\"\n",
+        super::base64_encode(bytes)
+    )
+}
+
 fn has_extension(path: &Path, extension: &str) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
@@ -536,11 +735,11 @@ fn has_text_extension(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        completion, has_extension, has_text_extension, read_limited, read_pattern, select_section,
-        CopyState, BLOB,
+        command, completion, has_extension, has_text_extension, prepare_any, read_limited,
+        read_pattern, select_section, transfer_sim, CopyState, BLOB,
     };
     use std::io::Cursor;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn completion_keeps_prepared_and_sent_states_distinct() {
@@ -591,5 +790,108 @@ mod tests {
     fn drains_but_never_keeps_more_than_the_pattern_ceiling() {
         let mut source = Cursor::new(vec![b'x'; 17]);
         assert_eq!(read_limited(&mut source, 4).expect("read"), vec![b'x'; 5]);
+    }
+
+    fn write_temp(name: &str, bytes: &[u8]) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("needles-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("fixture directory");
+        let path = directory.join(name);
+        std::fs::write(&path, bytes).expect("fixture");
+        path
+    }
+
+    #[test]
+    fn a_markdown_pattern_keeps_its_own_title_and_sections() {
+        let path = write_temp(
+            "needles-socks.md",
+            b"# Winter socks\n\n## Cuff\n\nWork 12 rows.\n\n## Leg\n\nWork 30 rows.\n",
+        );
+        let report = prepare_any(&path, None, None).expect("prepared");
+        assert_eq!(report.title, "Winter socks");
+        assert_eq!(report.sections, ["Cuff", "Leg"]);
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn a_plain_text_pattern_gets_a_title_to_count_under() {
+        let path = write_temp(
+            "needles-dishcloth.txt",
+            b"Cast on 40 stitches.\nKnit every row.\n",
+        );
+        let report = prepare_any(&path, None, None).expect("prepared");
+        assert_eq!(report.title, "needles-dishcloth");
+        let markdown = String::from_utf8(report.markdown).expect("utf8");
+        assert!(markdown.starts_with("# needles-dishcloth\n\nCast on 40 stitches."));
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn an_explicit_title_names_a_headingless_pattern() {
+        let path = write_temp(
+            "needles-untitled.txt",
+            b"Cast on 40 stitches.\nKnit every row.\n",
+        );
+        let report = prepare_any(&path, Some("Winter socks"), None).expect("prepared");
+        assert_eq!(report.title, "Winter socks");
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn charts_are_named_in_order_without_repeats() {
+        let path = write_temp(
+            "needles-charted.md",
+            b"# Socks\n\n![Main chart](chart-main.png)\n\n## Leg\n\n![Main chart again](chart-main.png)\n\n![Web chart](https://shared.example/chart.png)\n",
+        );
+        let report = prepare_any(&path, None, None).expect("prepared");
+        assert_eq!(
+            report.charts,
+            ["chart-main.png", "https://shared.example/chart.png"]
+        );
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn a_flat_pattern_counts_by_its_headings_past_the_title() {
+        let path = write_temp("needles-flat.md", b"# Dishcloth\n\n# Body\n\n# Edging\n");
+        let report = prepare_any(&path, None, None).expect("prepared");
+        assert_eq!(report.sections, ["Body", "Edging"]);
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn a_title_alone_is_not_a_section_list() {
+        let path = write_temp("needles-bare.md", b"# Just a title\n\nPlain rows.\n");
+        let report = prepare_any(&path, None, None).expect("prepared");
+        assert!(report.sections.is_empty());
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn a_push_to_the_simulator_lays_the_pattern_and_its_charts_on_the_shelf() {
+        let path = write_temp(
+            "needles-sim-chart.md",
+            b"# Simmed\n\n## Cuff\n\n![Cuff chart](chart-cuff.png)\n\nRows.\n",
+        );
+        let chart = path.parent().expect("parent").join("chart-cuff.png");
+        std::fs::write(&chart, b"png-bytes").expect("chart fixture");
+        let report = prepare_any(&path, None, None).expect("prepared");
+        transfer_sim(&report, &path).expect("transfer");
+        let root = kobo_sim::simulated_data_root("needles");
+        let written = std::fs::read(root.join(BLOB)).expect("shelf blob");
+        assert_eq!(written, report.markdown);
+        assert_eq!(
+            std::fs::read(root.join("chart-cuff.png")).expect("shelf chart"),
+            b"png-bytes"
+        );
+        std::fs::remove_file(path).expect("cleanup");
+        std::fs::remove_file(chart).expect("cleanup");
+        std::fs::remove_file(root.join(BLOB)).expect("cleanup");
+        std::fs::remove_file(root.join("chart-cuff.png")).expect("cleanup");
+    }
+
+    #[test]
+    fn setup_is_the_install_alias() {
+        // No package manager runs in the test: an installed converter answers.
+        assert!(command(&["setup".into(), "extra".into()]).is_err());
     }
 }
