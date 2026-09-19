@@ -3,7 +3,7 @@
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
   "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,5 +11,5 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "On an empty shelf, starting your first audiobook is now the clear next step, with the sample kept as a quieter option."
+  "release_notes": "On a reader without audio, Now playing now says so up front and keeps the saved position, instead of showing controls that cannot play."
 }
