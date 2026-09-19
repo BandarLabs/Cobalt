@@ -13,6 +13,8 @@ without underflowing. Following a project keeps the reader awake in stand
 mode, and all counters, Ravelry metadata, and transferred text remain usable
 offline after sleep or reboot.
 
+<img width="300" src="screenshots/project.png" alt="A project section's row counter with the large +1 row control and undo">
+
 ## Preparing a pattern you own
 
 Needles uses the shared `kobo-bookview`/`kobo-doc` reading pipeline for

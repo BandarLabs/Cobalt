@@ -4,6 +4,8 @@ Parser turns a Kobo into an offline interactive-fiction reader. It executes
 text-only Z-machine v3, v5 and v8 story files, typesets the transcript as prose,
 and moves through long sessions with ordinary page turns.
 
+<img width="300" src="screenshots/parser-game.png" alt="A story transcript with typed commands and the on-screen keyboard">
+
 ## Transfer a story
 
 Parser never downloads games or sends play data over the network. Transfer a

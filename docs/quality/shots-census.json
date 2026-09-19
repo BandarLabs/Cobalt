@@ -1,6 +1,6 @@
 {
  "generated": "2026-09-19",
- "head": "f30a6a6a",
+ "head": "38e80301",
  "scope": "49 apps with generated web pages (45 registry + 4 system); provenance = md5 of docs/media/site/apps/<img> matched against every other PNG in the repo",
  "summary": {
   "web_images": 49,
@@ -8,7 +8,12 @@
   "traced_to_evidence_dir": [
    "logicpack"
   ],
-  "untraced_predating_proof_standard": [
+  "untraced_predating_proof_standard": [],
+  "readme_without_gallery": [],
+  "system_app_without_readme": [
+   "store"
+  ],
+  "web_image_resourced_from_real_runs": [
    "arxiv",
    "backgammon",
    "brief",
@@ -24,17 +29,11 @@
    "tictactoe",
    "vault"
   ],
-  "readme_without_gallery": [
-   "arxiv",
-   "birds",
-   "morse",
+  "readme_gallery_added": [
    "needles",
-   "parser",
-   "vault"
+   "parser"
   ],
-  "system_app_without_readme": [
-   "store"
-  ]
+  "census_correction": "First pass matched only markdown image syntax; arxiv, birds, morse and vault already had HTML <img> galleries. brief's web image now comes from examples/brief/screenshots/brief.png (shoot-apps.sh real-reader pipeline). brief still has no committed simulator route - that gap belongs to APPQA-06."
  },
  "plan": "Regenerate the 14 untraced web images from real sim runs (clara-bw-391, default scale, --ideal shots from each app's committed route); add README galleries for the 6 catalog apps missing them from the same runs; re-run this census to confirm 49/49 traced.",
  "apps": [
