@@ -18,16 +18,15 @@
 
 - real-workload harness: 5/5 flows pass for Vault, Nonograms, Parser, Panels and RSS
 - focused Frame, Feeds and Sync recovery acceptances pass without repeated file selection
-- 363 of 365 `kobo-cli` tests pass in the validation container; the remaining two packaging tests require the unavailable ARM C cross-compiler
-- `cargo fmt --all --check` passes
-- strict Clippy reaches an existing `kobo-sim` `format_in_format_args` lint before checking the CLI on Rust 1.98
-- locked dependency metadata reports no third-party package without declared license information; changed source contains no developer-local/reference-source markers
+- 406 of 406 `kobo-cli` tests pass, including the two packaging tests, run with the same ARM C cross-compiler class ci.yml installs
+- `cargo fmt --all -- --check` passes
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes on the repository-pinned Rust 1.85.1
+- locked dependency metadata reports no package without declared license information in either workspace (360 packages in the reader/CLI graph, 443 in the Flashcards importer graph); changed source contains no developer-local/reference-source markers
 
 ### Remaining validation
 
 - no physical reader, Wi-Fi transfer, USB mount/eject, sleep/wake or e-ink panel behavior was certified here
 - run the prepared combined Clara BW hardware script before stable promotion
-- rerun the two packaging tests with the documented ARM cross-compiler and strict Clippy with the shared simulator lint fixed or the repository's pinned toolchain
 - the prepared nontechnical usability and one-week follow-up protocols remain unperformed
 
 This is one companion-CLI PR against `beta`. The app-polish work remains in its separate app PR, so the program stays within the requested two-PR shape.
