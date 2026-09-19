@@ -4069,7 +4069,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Keep typed operations shared across UI, CLI and agent callers",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4077,7 +4077,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Show host/reader/helper compatibility and signed update status",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4085,7 +4085,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Preserve content, preferences and pairing through updates",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4093,7 +4093,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Keep arbitrary commands in explicit advanced controls",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4101,7 +4101,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Avoid required AI/chat, vague slogans and decorative dashboard clutter",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {

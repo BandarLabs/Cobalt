@@ -573,11 +573,11 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-31** Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion.
 - [x] **CLI-32** Keep progress on stderr with versioned JSON on stdout.
 - [x] **CLI-33** Use stable exit categories and bounded noninteractive behavior.
-- [ ] **CLI-34** Keep typed operations shared across UI, CLI and agent callers.
-- [ ] **CLI-35** Show host/reader/helper compatibility and signed update status.
-- [ ] **CLI-36** Preserve content, preferences and pairing through updates.
-- [ ] **CLI-37** Keep arbitrary commands in explicit advanced controls.
-- [ ] **CLI-38** Avoid required AI/chat, vague slogans and decorative dashboard clutter.
+- [x] **CLI-34** Keep typed operations shared across UI, CLI and agent callers.
+- [x] **CLI-35** Show host/reader/helper compatibility and signed update status.
+- [x] **CLI-36** Preserve content, preferences and pairing through updates.
+- [x] **CLI-37** Keep arbitrary commands in explicit advanced controls.
+- [x] **CLI-38** Avoid required AI/chat, vague slogans and decorative dashboard clutter.
 
 ## PR 4 · Deck companion
 
