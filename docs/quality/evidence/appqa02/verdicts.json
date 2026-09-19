@@ -60,6 +60,26 @@
   "grimoire": {
    "status": "pass",
    "notes": "Local reference app, bundled document. Empty states distinct per collection (no match / no reference selected / no combatants / no party); malformed covered by 'This reference has no text in the bundled document'. No network states by design. Evidence: states.json + main.rs:494-808."
+  },
+  "gutenbird": {
+   "status": "pass",
+   "notes": "OPDS failure classes distinct: catalog answer unreadable vs catalog-has-no-search vs download-too-large vs book unreadable; offline dictionary section with honest empty state naming the exact remedy folder. Banners + activity + skeleton. Evidence: states.json + main.rs:1031-2707."
+  },
+  "habits": {
+   "status": "pass",
+   "notes": "Local app. Load failure is honest degraded-mode copy ('Could not open local habits... You can use an empty session, but changes may not persist') distinct from empty states; weekly summary states distinct. Skeleton loading. Evidence: states.json + main.rs:291-530."
+  },
+  "hn": {
+   "status": "pass",
+   "notes": "Malformed distinct per surface ('This article arrived empty', 'That tab came back empty'), save-vs-kept states distinct ('could not be kept' vs 'open but not kept'), no-thread distinct. Empty/skeleton/activity present. Evidence: states.json + main.rs:349-1203."
+  },
+  "homepanel": {
+   "status": "pass",
+   "notes": "Textbook TaskError classifier: NoCredential with exact remedy ('kobo secret set homeassistant') vs Offline ('No network. Join Wi-Fi') vs Denied; stale-data honesty banner ('Offline since HH:MM. Readings may be stale.') - exemplary freshness differentiation. Evidence: states.json + main.rs:127-229."
+  },
+  "inkling": {
+   "status": "pass",
+   "notes": "Deterministic offline daily puzzle, no network by design. Save integrity: full validation before replace ('a bad save cannot replace anything'), LoadState Pending/Ready gates first paint; archive-play honesty ('do not change statistics and are not saved'). Evidence: states.json + main.rs:1-8,478,605,876-932."
   }
  },
  "findings": []
