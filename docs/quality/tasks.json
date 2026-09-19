@@ -3880,7 +3880,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Persist completed setup steps",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3888,7 +3888,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Choose files/folders through picker or explicit CLI path",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3896,7 +3896,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Detect suitable target apps and resolve ambiguity",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {

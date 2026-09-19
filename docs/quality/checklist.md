@@ -551,9 +551,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-09** Send and open an original sample for first success.
 - [x] **CLI-10** Describe installation changes before approval.
 - [x] **CLI-11** Provide one app setup card generated from capabilities.
-- [ ] **CLI-12** Persist completed setup steps.
-- [ ] **CLI-13** Choose files/folders through picker or explicit CLI path.
-- [ ] **CLI-14** Detect suitable target apps and resolve ambiguity.
+- [x] **CLI-12** Persist completed setup steps.
+- [x] **CLI-13** Choose files/folders through picker or explicit CLI path.
+- [x] **CLI-14** Detect suitable target apps and resolve ambiguity.
 - [ ] **CLI-15** Preview content for the selected reader before sending.
 - [ ] **CLI-16** Report real preparing/sending/checking/ready stages.
 - [ ] **CLI-17** Persist receipts and resume approved interrupted transfers.
