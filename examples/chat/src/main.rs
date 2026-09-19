@@ -25,6 +25,7 @@
 mod conversation;
 
 use conversation::{Conversation, Provider, Reply, Role, Turn, PROVIDERS};
+use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
@@ -41,15 +42,14 @@ use std::process::ExitCode;
 /// would mean laying the screen out twice on every repaint.
 const COLUMNS: usize = 48;
 
-/// How many lines of transcript are drawn before older turns are dropped.
+/// How many estimated lines of transcript one page holds.
 ///
-/// Conservative on purpose. The panel holds far more lines than this with the
-/// built-in bitmap type, and roughly this many with the real typeface the
-/// runtime installs, which is the one the reader will be looking at. Nothing
-/// scrolls on an E Ink panel, so a transcript that overflows is not a
-/// transcript the reader can reach: it is one whose newest line is off the
-/// bottom of the screen, which is the only line that matters.
-const TRANSCRIPT_LINES: usize = 18;
+/// Conservative on purpose: a page that overflows its panel drops its oldest
+/// turns off the top, which under a promise that every turn stays reachable
+/// is the one failure this budget exists to prevent. The estimate counts a
+/// byline as a line and wraps at fewer columns than the real face sets, and a
+/// test lays the fullest page out at every text scale to prove the margin.
+const TRANSCRIPT_LINES: usize = 12;
 
 /// The longest option label drawn on a choice row.
 const MAX_OPTION_LABEL: usize = 44;
@@ -62,6 +62,13 @@ const CHOSEN: &str = "provider";
 const CHOICES: [&str; 3] = ["service-0", "service-1", "service-2"];
 const CANCEL: &str = "cancel";
 const RETRY: &str = "retry";
+const MORE: &str = "more";
+const NEW: &str = "new";
+const CONFIRM_NEW: &str = "confirm-new";
+const KEEP: &str = "keep";
+const EXPORT: &str = "export";
+const EARLIER: &str = "earlier";
+const LATER: &str = "later";
 const OPTIONS: [&str; conversation::MAX_OPTIONS] = [
     "option-0", "option-1", "option-2", "option-3", "option-4", "option-5",
 ];
@@ -110,17 +117,34 @@ struct Chat {
     /// What went wrong, if anything. Always recoverable: it is drawn as a
     /// banner above a screen that still has every control it had before.
     trouble: Option<String>,
+    /// Whether the transcript's own menu is open.
+    menu_open: bool,
+    /// Whether the reader has been asked to confirm starting over.
+    confirming_new: bool,
+    /// How many pages back from the newest the reader is reading. Zero while
+    /// a conversation is underway; older pages are for reading back.
+    pages_back: usize,
+    /// A copy being prepared for the paired computer, when asked for one.
+    export: Option<Export>,
 }
 
 impl Chat {
     fn show(&self, context: &mut Context) {
         // The keyboard and the service list are both destinations reached from
         // the transcript, so Back returns to the transcript before it leaves.
-        let owns_back = matches!(self.view, View::Composing | View::Choosing);
+        // A menu, a confirmation and an export are layers over it, so Back
+        // lifts them first.
+        let owns_back = matches!(self.view, View::Composing | View::Choosing)
+            || self.menu_open
+            || self.confirming_new
+            || self.export.is_some();
         context.set_screen(self.screen().with_own_back(owns_back));
     }
 
     fn screen(&self) -> Screen {
+        if let Some(export) = &self.export {
+            return export.screen();
+        }
         match self.view {
             View::Composing => self.compose(),
             View::Choosing => self.choosing(),
@@ -137,12 +161,29 @@ impl Chat {
         let mut screen = ScreenBuilder::new("chat")
             .top_bar(TITLE)
             .nav_bar(0, DESTINATIONS);
+        let turns = self.conversation.turns();
+        if !turns.is_empty() {
+            screen = screen.top_bar_overflow(
+                MORE,
+                self.menu_open,
+                [(NEW, "New conversation"), (EXPORT, "Save a copy")],
+            );
+        }
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
 
-        let turns = self.conversation.turns();
-        let visible = visible_turns(turns, TRANSCRIPT_LINES);
+        // Nothing scrolls on this panel, so a long transcript is paged
+        // rather than trimmed away: every turn stays reachable, and the
+        // newest page is where the conversation happens.
+        let pages = transcript_pages(turns, TRANSCRIPT_LINES);
+        let latest = pages.len().saturating_sub(1);
+        let page = if self.view == View::Waiting {
+            latest
+        } else {
+            latest.saturating_sub(self.pages_back.min(latest))
+        };
+        let on_latest = page >= latest;
         if turns.is_empty() {
             // Centred under a mark rather than ranged left at the top: this
             // is the first thing anybody sees, and a lone paragraph in the
@@ -153,21 +194,25 @@ impl Chat {
                 "Tap Type to start. Answers you can tap appear as buttons, so most \
                  turns need no typing at all.",
             );
-        } else if visible.len() < turns.len() {
-            // Said plainly rather than hidden, because a transcript that
-            // silently begins in the middle reads as a lost conversation.
-            screen = screen.text("Earlier messages are no longer shown.");
         }
 
-        for (position, turn) in visible.iter().enumerate() {
+        let (first, end) = pages.get(page).copied().unwrap_or((0, 0));
+        for (position, turn) in turns[first..end].iter().enumerate() {
             if position > 0 {
                 screen = screen.spacer(Space::Small);
             }
             screen = draw_turn(screen, turn, self.provider.label());
         }
+        if pages.len() > 1 {
+            screen = screen.page_turns(EARLIER, LATER).page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
 
         let offered = self.offered();
         match self.view {
+            _ if !on_latest => {}
             View::Waiting => {
                 // A labelled state of the conversation, not a paragraph
                 // trailing the last turn, so a reply that is on its way is not
@@ -212,8 +257,16 @@ impl Chat {
             }
         }
 
-        if self.view != View::Waiting && self.can_retry() {
+        if on_latest && self.view != View::Waiting && self.can_retry() {
             screen = screen.button(RETRY, "Try again");
+        }
+        if self.confirming_new {
+            screen = screen.confirm(
+                "New conversation",
+                "Start over? What was said so far is replaced.",
+                (CONFIRM_NEW, "Start over"),
+                (KEEP, "Keep talking"),
+            );
         }
         screen.build()
     }
@@ -235,17 +288,19 @@ impl Chat {
             .top_bar("Service")
             .nav_bar(2, DESTINATIONS)
             .text(
-                "The key itself is held by the runtime and never by this \
-                 application. Choosing a service chooses which stored key it \
-                 uses and which address the request goes to.",
+                "Each service answers with its own model. Install a key once \
+                 from your computer, for example `kobo secret set openai`, \
+                 then choose the service here.",
             )
             .section("Talk to")
             .choose(
                 "",
-                PROVIDERS
-                    .iter()
-                    .enumerate()
-                    .map(|(index, provider)| (CHOICES[index], provider.label())),
+                PROVIDERS.iter().enumerate().map(|(index, provider)| {
+                    (
+                        CHOICES[index],
+                        format!("{} ({})", provider.label(), provider.model()),
+                    )
+                }),
             )
             .chosen(
                 PROVIDERS
@@ -281,7 +336,17 @@ impl Chat {
 
     fn say(&mut self, context: &mut Context, text: impl AsRef<str>) {
         self.conversation.push(Role::You, text);
+        self.pages_back = 0;
+        self.persist(context);
         self.submit(context);
+    }
+
+    /// Keeps the transcript where a restart can find it. Saving is silent:
+    /// the panel already shows exactly what was said.
+    fn persist(&self, context: &mut Context) {
+        context
+            .store()
+            .save(conversation::STATE, self.conversation.encode());
     }
 
     /// Hands the whole conversation to the runtime.
@@ -308,6 +373,36 @@ impl Chat {
             self.trouble = Some("Something else is still being sent.".to_owned());
         }
         self.show(context);
+    }
+
+    /// Handles a tap on the transcript's own layer: its menu, the
+    /// start-over confirmation and the copy for the paired computer. Returns
+    /// whether it was one.
+    fn transcript_layer(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(NEW) {
+            self.confirming_new = true;
+        } else if action == action_id(CONFIRM_NEW) {
+            self.confirming_new = false;
+            self.conversation = Conversation::default();
+            self.pages_back = 0;
+            self.trouble = None;
+            self.persist(context);
+        } else if action == action_id(KEEP) {
+            self.confirming_new = false;
+        } else if action == action_id(EXPORT) {
+            let text = self.conversation.transcript_text(self.provider.label());
+            match Export::new("chat-conversation", ExportFormat::Text, text.into_bytes()) {
+                Ok(mut export) => {
+                    export.begin(context);
+                    self.export = Some(export);
+                }
+                Err(error) => self.trouble = Some(error),
+            }
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
     }
 
     /// Handles a tap while the keyboard is up. Returns whether it was one.
@@ -362,24 +457,32 @@ fn draw_turn(screen: ScreenBuilder, turn: &Turn, assistant: &str) -> ScreenBuild
     }
 }
 
-/// The turns that fit, newest last.
+/// The transcript cut into pages that each fit the panel, oldest page first.
 ///
-/// Trimmed from the front rather than the back: the newest message is the one
-/// the reader is waiting for, and it is the one that must be on the panel.
-/// The newest is kept even when it alone exceeds the budget, because showing
-/// nothing at all would be worse than showing a message that runs long.
-fn visible_turns(turns: &[Turn], budget: usize) -> &[Turn] {
+/// Built from the back so the newest message is never cut away mid-turn: a
+/// page grows until the next-older turn would overflow it, and the newest
+/// turn always lands on the last page even when it alone runs long, because
+/// showing nothing at all would be worse than a message that fills the panel.
+fn transcript_pages(turns: &[Turn], budget: usize) -> Vec<(usize, usize)> {
+    let mut pages = Vec::new();
+    let mut end = turns.len();
     let mut used = 0;
     let mut first = turns.len();
-    for (index, turn) in turns.iter().enumerate().rev() {
-        let lines = turn_lines(turn);
-        if index + 1 < turns.len() && used + lines > budget {
-            break;
+    for index in (0..turns.len()).rev() {
+        let lines = turn_lines(&turns[index]);
+        if first < end && used + lines > budget {
+            pages.push((first, end));
+            end = first;
+            used = 0;
         }
         used += lines;
         first = index;
     }
-    &turns[first..]
+    if first < end {
+        pages.push((first, end));
+    }
+    pages.reverse();
+    pages
 }
 
 /// About how many lines a turn will occupy once the renderer has wrapped it.
@@ -417,42 +520,73 @@ fn label(option: &str) -> String {
 /// request. Every one of these leaves the conversation intact and something to
 /// tap, because a chat client that dead-ends on a flat battery or a lapsed key
 /// is a chat client that has to be restarted to be used again.
-const fn explain(error: TaskError) -> &'static str {
+fn explain(error: TaskError, provider: Provider) -> String {
     match error {
         // The one failure this application can say more about than the SDK
         // can: a chat service refuses when the key is missing or spent, which
-        // is a thing the reader can act on.
-        TaskError::Denied => {
-            "No key is installed for this device, or the network was refused. Nothing was sent."
+        // is a thing the reader can act on, so it says how.
+        TaskError::Denied => format!(
+            "No key is installed for {}, or the network was refused. Install one from your computer: kobo secret set {}.",
+            provider.label(),
+            provider.key()
+        ),
+        TaskError::NotFound => {
+            "The service refused the request. The key may be wrong or spent.".to_owned()
         }
-        TaskError::NotFound => "The service refused the request. The key may be wrong or spent.",
-        other => Failure::of(other).advice,
+        other => Failure::of(other).advice.to_owned(),
     }
 }
 
 impl KoboApp for Chat {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(CHOSEN);
+        context.store().load(conversation::STATE);
         self.show(context);
     }
 
-    /// Restores the remembered service.
+    /// Restores the remembered service and the saved conversation.
     ///
     /// A first run, a cleared store and a refusal all land on the default,
     /// because none of them is a reason to put an error in front of someone
     /// who only wanted to ask a question.
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if let StoreResult::Loaded { key, value } = result {
-            if key != CHOSEN {
+        // A copy on its way out answers on its own keys; the transcript and
+        // the chosen service are never handed to it.
+        if let Some(export) = self.export.as_mut() {
+            let key = match &result {
+                StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.as_str(),
+                _ => "",
+            };
+            if key != CHOSEN && key != conversation::STATE && export.on_save(context, key, &result)
+            {
+                self.show(context);
                 return;
             }
-            let restored = value
-                .as_deref()
-                .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                .map(Provider::from_key)
-                .unwrap_or_default();
-            if restored != self.provider {
-                self.provider = restored;
+        }
+        if let StoreResult::Loaded { key, value } = result {
+            if key == CHOSEN {
+                let restored = value
+                    .as_deref()
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .map(Provider::from_key)
+                    .unwrap_or_default();
+                if restored != self.provider {
+                    self.provider = restored;
+                    self.show(context);
+                }
+            } else if key == conversation::STATE {
+                if let Some(restored) = value.as_deref().and_then(Conversation::restore) {
+                    self.conversation = restored;
+                    self.pages_back = 0;
+                    self.show(context);
+                }
+            }
+        }
+    }
+
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if let Some(export) = self.export.as_mut() {
+            if export.on_shelf(context, name, &result) {
                 self.show(context);
             }
         }
@@ -460,13 +594,43 @@ impl KoboApp for Chat {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
-            // Only offered on the keyboard and the service list, both of which
-            // return to the transcript they were opened from.
-            self.view = View::Talking;
+            // A menu, a confirmation and an export are layers over the
+            // transcript; the keyboard and the service list are destinations
+            // reached from it. Back lifts or leaves one layer at a time.
+            if self.menu_open {
+                self.menu_open = false;
+            } else if self.confirming_new {
+                self.confirming_new = false;
+            } else if self.export.is_some() {
+                self.export = None;
+            } else {
+                self.view = View::Talking;
+            }
             self.show(context);
             return;
         }
         if self.view == View::Composing && self.typing(context, action) {
+            return;
+        }
+        if action == action_id(MORE) {
+            self.menu_open = !self.menu_open;
+            self.show(context);
+            return;
+        }
+        // A tap anywhere else closes the menu it came from.
+        self.menu_open = false;
+
+        if self.export.is_some() {
+            if action == action_id("export-confirm") || action == action_id("export-retry") {
+                if let Some(export) = self.export.as_mut() {
+                    export.begin(context);
+                }
+                self.show(context);
+            }
+            return;
+        }
+
+        if self.transcript_layer(context, action) {
             return;
         }
 
@@ -515,6 +679,21 @@ impl KoboApp for Chat {
             return;
         }
 
+        if action == action_id(EARLIER) || action == action_id(LATER) {
+            let count = transcript_pages(self.conversation.turns(), TRANSCRIPT_LINES).len();
+            if count > 1 {
+                let latest = count - 1;
+                let back = self.pages_back.min(latest);
+                self.pages_back = if action == action_id(EARLIER) {
+                    (back + 1).min(latest)
+                } else {
+                    back.saturating_sub(1)
+                };
+                self.show(context);
+            }
+            return;
+        }
+
         if let Some(index) = OPTIONS.iter().position(|name| action == action_id(name)) {
             // Read back out of the transcript, so an option can only ever send
             // text the model actually offered.
@@ -535,6 +714,8 @@ impl KoboApp for Chat {
                 match conversation::read_completion(&bytes, self.provider) {
                     Ok(reply) => {
                         self.conversation.push(Role::Assistant, reply);
+                        self.pages_back = 0;
+                        self.persist(context);
                         self.trouble = None;
                     }
                     Err(trouble) => self.trouble = Some(trouble),
@@ -544,7 +725,7 @@ impl KoboApp for Chat {
                 // The kind of failure, never the conversation: what the reader
                 // said is theirs and has no business in the system log.
                 context.log(LogLevel::Warn, format!("chat request failed: {error}"));
-                self.trouble = Some(explain(error).to_owned());
+                self.trouble = Some(explain(error, self.provider));
             }
             TaskOutcome::Cancelled => {
                 self.trouble = Some("That question was cancelled.".to_owned());
@@ -569,13 +750,13 @@ mod tests {
     use super::{
         conversation::Provider,
         conversation::{Role, Turn},
-        visible_turns, Chat, View, CHOICES, CHOSEN, COLUMNS, OPTIONS, SERVICE, TALK,
+        transcript_pages, Chat, View, CHOICES, CHOSEN, COLUMNS, EARLIER, OPTIONS, SERVICE, TALK,
         TRANSCRIPT_LINES, TYPE,
     };
     use kobo_sdk::keyboard::Keyboard;
     use kobo_sdk::{
-        action_id, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task, TaskId,
-        TaskOutcome,
+        action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
+        TaskId, TaskOutcome,
     };
     use kobo_ui::{Chrome, LayoutKind, QuoteRole, CLARA_BW_METRICS};
 
@@ -869,20 +1050,61 @@ mod tests {
     }
 
     #[test]
-    fn the_transcript_is_trimmed_to_a_budget_rather_than_grown_without_limit() {
+    fn a_long_transcript_is_paged_rather_than_trimmed_away() {
         let turns = (0..30)
             .map(|index| Turn {
                 role: Role::You,
                 text: format!("message {index} {}", "x".repeat(COLUMNS)),
             })
             .collect::<Vec<_>>();
-        let visible = visible_turns(&turns, TRANSCRIPT_LINES);
-        assert!(visible.len() < turns.len(), "nothing was trimmed");
-        assert_eq!(
-            visible.last(),
-            turns.last(),
-            "the trim dropped the newest turn"
-        );
+        let pages = transcript_pages(&turns, TRANSCRIPT_LINES);
+        assert!(pages.len() > 1, "nothing was paged");
+        let (first, end) = pages[0];
+        assert_eq!(first, 0, "the earliest turns are not on a page");
+        assert!(end > first, "the first page is empty");
+        let (_, end) = pages.last().copied().unwrap_or((0, 0));
+        assert_eq!(end, turns.len(), "the newest turn is not on a page");
+    }
+
+    #[test]
+    fn every_page_fits_its_panel_at_every_text_scale() {
+        // The promise the pages make: no turn is dropped off the top of an
+        // overfull page. The fullest page is the one to check, and the
+        // estimate behind it is conservative enough that it is also the
+        // oldest page by construction.
+        let mut chat = Chat::default();
+        for index in 0..24 {
+            chat.conversation
+                .push(Role::You, format!("question {index}"));
+            chat.conversation.push(
+                Role::Assistant,
+                "A reply long enough to wrap onto more than one line of a panel \
+                 that is only a few inches across, which is the whole point.",
+            );
+        }
+        let pages = transcript_pages(chat.conversation.turns(), TRANSCRIPT_LINES);
+        for scale in [
+            kobo_ui::TextScale::Default,
+            kobo_ui::TextScale::Large,
+            kobo_ui::TextScale::ExtraLarge,
+        ] {
+            let mut metrics = CLARA_BW_METRICS;
+            metrics.text_scale = scale;
+            for page in 0..pages.len() {
+                chat.pages_back = pages.len() - 1 - page;
+                let layout = chat
+                    .screen()
+                    .layout_with(&metrics, &Chrome::measuring(true));
+                for node in &layout.nodes {
+                    assert!(
+                        node.rect.y + node.rect.height <= metrics.height,
+                        "page {page} at {scale:?} overflows: {:?} past {}",
+                        node.kind,
+                        metrics.height
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -893,7 +1115,154 @@ mod tests {
             role: Role::You,
             text: "y".repeat(COLUMNS * TRANSCRIPT_LINES * 4),
         }];
-        assert_eq!(visible_turns(&turns, TRANSCRIPT_LINES).len(), 1);
+        assert_eq!(transcript_pages(&turns, TRANSCRIPT_LINES).len(), 1);
+    }
+
+    #[test]
+    fn paging_reaches_the_earliest_turns_and_a_reply_returns_to_the_end() {
+        let mut chat = Chat::default();
+        for index in 0..8 {
+            chat.conversation
+                .push(Role::You, format!("question {index}"));
+            chat.conversation.push(
+                Role::Assistant,
+                "A reply long enough to wrap onto more than one line of a panel \
+                 that is only a few inches across, which is the whole point.",
+            );
+        }
+        let screen = chat.screen();
+        assert_eq!(
+            screen.page_turns.map(|turns| turns.previous),
+            Some(action_id(EARLIER)),
+            "a paged transcript offers the way back"
+        );
+        let mut context = Context::default();
+        let mut lines = Vec::new();
+        for _ in 0..14 {
+            chat.on_action(&mut context, action_id(EARLIER));
+            lines = shown(&last_screen(&context.take_commands()));
+            if lines.iter().any(|line| line.contains("question 0")) {
+                break;
+            }
+        }
+        assert!(
+            lines.iter().any(|line| line.contains("question 0")),
+            "the earliest turn was never reached: {lines:?}"
+        );
+        // Asking something new lands the reader back on the newest page.
+        let mut context = Context::default();
+        chat.say(&mut context, "a fresh question");
+        let lines = shown(&chat.screen());
+        assert!(lines.iter().any(|line| line.contains("a fresh question")));
+        assert!(
+            !lines.iter().any(|line| line.contains("question 0")),
+            "a new message did not return to the end"
+        );
+    }
+
+    #[test]
+    fn the_conversation_is_saved_and_comes_back_after_a_restart() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(&mut context, task, reply("Hello to you too."));
+        let saved = context
+            .take_commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value })
+                    if key == super::conversation::STATE =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("the reply was saved");
+        // A restart is a fresh application handed the saved bytes.
+        let mut restored = Chat::default();
+        let mut context = Context::default();
+        restored.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: super::conversation::STATE.to_owned(),
+                value: Some(saved),
+            },
+        );
+        let lines = shown(&restored.screen());
+        assert!(lines.iter().any(|line| line.contains("hello")));
+        assert!(lines.iter().any(|line| line.contains("Hello to you too.")));
+    }
+
+    #[test]
+    fn a_cancelled_question_can_be_sent_again_with_one_tap() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(&mut context, task, TaskOutcome::Cancelled);
+        let screen = last_screen(&context.take_commands());
+        assert!(shown(&screen).iter().any(|line| line.contains("cancelled")));
+        assert!(screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .rect_of_action(action_id("retry"))
+            .is_some());
+        let commands = act(&mut chat, "retry");
+        assert!(posted(&commands).is_some(), "the question was not resent");
+    }
+
+    #[test]
+    fn a_missing_key_is_answered_with_how_to_install_one() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Denied),
+        );
+        let lines = shown(&last_screen(&context.take_commands()));
+        assert!(
+            lines.join(" ").contains("kobo secret set openai"),
+            "the guidance did not name the command: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_copy_of_the_conversation_is_prepared_for_the_computer() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(&mut context, task, reply("Hi."));
+        let commands = act(&mut chat, "more");
+        let _ = commands;
+        act(&mut chat, super::EXPORT);
+        let export = chat.export.as_ref().expect("a copy was prepared");
+        assert_eq!(export.offer().format, super::ExportFormat::Text);
+        assert!(export.offer().bytes > 0);
+        // Back lifts the export layer and returns the transcript.
+        let mut context = Context::default();
+        chat.on_action(&mut context, ActionId::BACK);
+        assert!(chat.export.is_none());
+        let lines = shown(&chat.screen());
+        assert!(lines.iter().any(|line| line.contains("hello")));
+    }
+
+    #[test]
+    fn starting_over_asks_first_and_then_clears() {
+        let (mut chat, _) = started();
+        type_and_send(&mut chat, "hello");
+        act(&mut chat, super::NEW);
+        assert!(chat.confirming_new, "no confirmation was asked");
+        let commands = act(&mut chat, super::CONFIRM_NEW);
+        assert!(chat.conversation.turns().is_empty());
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::Save { key, .. })
+                if key == super::conversation::STATE
+        )));
     }
 
     #[test]
