@@ -58,6 +58,10 @@ def seed(app, state, kobo, env, log):
     elif app == 'vault':
         run('vault', 'init', '--sim')
         run('vault', 'push', str(ROOT / 'scripts/fixtures/vault'), '--sim')
+    elif app == 'chat':
+        store = Path(state) / 'cobalt-sim-state' / 'chat'
+        store.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'scripts/fixtures/chat/conversation', store / 'conversation')
     elif app == 'parser':
         shelf = Path(state) / 'cobalt-sim-data' / 'parser'
         shelf.mkdir(parents=True, exist_ok=True)

@@ -523,10 +523,10 @@ fn label(option: &str) -> String {
 fn explain(error: TaskError, provider: Provider) -> String {
     match error {
         // The one failure this application can say more about than the SDK
-        // can: a chat service refuses when the key is missing or spent, which
-        // is a thing the reader can act on, so it says how.
-        TaskError::Denied => format!(
-            "No key is installed for {}, or the network was refused. Install one from your computer: kobo secret set {}.",
+        // can: the service's key is not installed, and installing it is a
+        // command the reader can run rather than a mystery to contemplate.
+        TaskError::NoCredential => format!(
+            "No key is installed for {}. Install one from your computer: kobo secret set {}.",
             provider.label(),
             provider.key()
         ),
@@ -635,8 +635,14 @@ impl KoboApp for Chat {
         }
 
         if action == action_id(TALK) {
-            // Already here. Repainting would cost a refresh to show exactly
-            // what is already on the panel.
+            // The nav bar names where it already is; on the service list the
+            // same destination is the way back to the transcript. Answering
+            // it there cost nothing but the refresh the tap asked for.
+            if self.view == View::Choosing || self.menu_open {
+                self.menu_open = false;
+                self.view = View::Talking;
+                self.show(context);
+            }
             return;
         }
 
@@ -1220,7 +1226,7 @@ mod tests {
         chat.on_task(
             &mut context,
             task,
-            TaskOutcome::Failed(kobo_sdk::TaskError::Denied),
+            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
         );
         let lines = shown(&last_screen(&context.take_commands()));
         assert!(
@@ -1340,6 +1346,19 @@ mod tests {
             "the way to the keyboard is too small to tap: {full:?}"
         );
         let _ = &mut context;
+    }
+
+    #[test]
+    fn the_service_screen_s_conversation_destination_leads_back() {
+        // The nav bar is on the chooser too, and the destination that names
+        // the transcript was dead there: a tap on Conversation from Service
+        // repainted nothing and went nowhere.
+        let (mut chat, _) = started();
+        act(&mut chat, SERVICE);
+        assert_eq!(chat.view, View::Choosing);
+        let commands = act(&mut chat, TALK);
+        assert_eq!(chat.view, View::Talking);
+        assert!(!commands.is_empty(), "the way back repainted nothing");
     }
 
     #[test]
