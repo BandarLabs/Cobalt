@@ -2521,8 +2521,10 @@
   "pr": 3,
   "group": "Needles",
   "task": "Support charts through shared image/document reading",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Markdown images now parse to Block::Picture in the shared kobo-doc reader (b01a04e3) instead of being dropped, and needles reads the charts a transferred pattern names off the shelf one at a time, handing them to the shared BookView picture pipeline (provide_picture, settle_pictures, dithering); names that are not shelf keys keep their caption (a22a7dc2). Tests: a_picture_keeps_its_place_and_its_caption, a_picture_without_words_still_names_itself (kobo-doc), a_patterns_charts_come_off_the_shelf_by_name (needles). Sim route reads a seeded chart-main.png fixture and photographs the chart on the pattern page; evidence docs/quality/evidence/needles-sim/matrix.json (27/27 cells)."
+  ]
  },
  {
   "id": "NONO-01",
