@@ -5366,8 +5366,7 @@ mod tests {
         let listener = kobo_protocol::channel::Listener::bind(&socket).expect("listen");
         let client_socket = socket.clone();
         let client = thread::spawn(move || {
-            let mut stream =
-                kobo_protocol::channel::connect(&client_socket).expect("connect");
+            let mut stream = kobo_protocol::channel::connect(&client_socket).expect("connect");
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .expect("timeout");
