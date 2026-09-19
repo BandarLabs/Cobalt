@@ -2812,8 +2812,14 @@
   "pr": 3,
   "group": "Parser",
   "task": "Complete interpreter conformance fixtures",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Z-machine opcode map matches Standard 1.1 sect15 across v3/v5 numbering: red-first conformance fixtures pin catch/throw (0OP 9 / 2OP 28), call_2n/call_vn/call_vn2 discard forms, VAR 24 not (v5), VAR 27 tokenise / 29 copy_table / 30 print_table / 31 check_arg_count, and 1OP 14 load / 15 not (v1-4).",
+   "In-game save/restore is honest end to end: 0OP 5/6 suspend before the branch/store byte, the app persists a real Quetzal checkpoint, restore resumes with the spec's store-2 / branch-taken result; catch frames and pending save state survive the IntD round trip (old saves still load).",
+   "Story restore routes through the slot picker, which lists the story checkpoint when one exists; empty slot or backing out resumes the story with the spec's failure result instead of hanging.",
+   "26/26 parser unit tests green including the Zork I fixture tests; workspace fmt/clippy/test gates clean.",
+   "docs/quality/evidence/parser-sim/matrix.json: 27/27 cells (9 profiles x 3 text scales) green on the seeded Zork I save/restore drive route with per-cell screenshots."
+  ]
  },
  {
   "id": "PARSER-05",

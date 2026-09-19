@@ -20,6 +20,8 @@ wait-for Story checkpoint
 clean
 shot parser-restore-picker
 tap Story checkpoint
-wait-for West of House
+# At large text scales the room description spans the page turn; the last
+# line is what lands on the final page at every scale.
+wait-for small mailbox
 clean
 shot parser-restored
