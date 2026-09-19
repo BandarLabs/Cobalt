@@ -1,2 +1,0 @@
-Kobo app simulator: http://127.0.0.1:36991
-kobo: line 1: device orientation landscape: the renderer refused this screen: node 4: interactive control is outside the visible panel; node 5: interactive control is outside the visible panel; node 4: 2 node(s) are below the content area (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/sudoku/sudoku-shots/failed-line-1.png)

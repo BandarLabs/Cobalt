@@ -1,0 +1,3 @@
+Kobo app simulator: http://127.0.0.1:37147
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/parlor/parlor-shots/parlor-help.png
+kobo: line 11: tap Start game: the renderer refused this screen: node 4: content is clipped by a panel edge; node 4: interactive control is outside the visible panel; node 5: interactive control is outside the visible panel; node 5: 1 node(s) are below the content area (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/parlor/parlor-shots/failed-line-11.png)

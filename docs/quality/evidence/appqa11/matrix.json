@@ -136,8 +136,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "arxiv",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-arxiv-landscape.kobo",
+   "exit_code": 1
   }
  },
  "audiobook": {
@@ -277,8 +280,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "backgammon",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-backgammon-landscape.kobo",
+   "exit_code": 1
   }
  },
  "birds": {
@@ -376,8 +382,11 @@
    "exit_code": 0
   },
   "1264x1680/default": {
+   "app": "brief",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "examples/brief/drive.kobo",
+   "exit_code": 1
   },
   "1264x1680/large": {
    "app": "brief",
@@ -394,20 +403,32 @@
    "exit_code": 0
   },
   "1404x1872/default": {
+   "app": "brief",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "examples/brief/drive.kobo",
+   "exit_code": 1
   },
   "1404x1872/large": {
+   "app": "brief",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "examples/brief/drive.kobo",
+   "exit_code": 1
   },
   "1404x1872/extra-large": {
+   "app": "brief",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "examples/brief/drive.kobo",
+   "exit_code": 1
   },
   "landscape": {
+   "app": "brief",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-brief-landscape.kobo",
+   "exit_code": 1
   }
  },
  "calibre-web": {
@@ -619,11 +640,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "crossword",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-crossword-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "deck": {
@@ -835,11 +853,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "fieldbook",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-fieldbook-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "flashcards": {
@@ -1051,11 +1066,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "gallery",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-gallery-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "grimoire": {
@@ -1123,11 +1135,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "grimoire",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-grimoire-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "gutenbird": {
@@ -1339,11 +1348,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "hn",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-hn-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "homepanel": {
@@ -1483,11 +1489,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "inkling",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-inkling-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "kitchencard": {
@@ -1627,11 +1630,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "lichess",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-lichess-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "logicpack": {
@@ -1843,11 +1843,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "morse",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-morse-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "musicstand": {
@@ -1987,8 +1984,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "needles",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-needles-landscape.kobo",
+   "exit_code": 1
   }
  },
  "nonograms": {
@@ -2056,8 +2056,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "nonograms",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-nonograms-landscape.kobo",
+   "exit_code": 1
   }
  },
  "panels": {
@@ -2269,8 +2272,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "parlor",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-parlor-landscape.kobo",
+   "exit_code": 1
   }
  },
  "parser": {
@@ -2338,8 +2344,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "parser",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-parser-landscape.kobo",
+   "exit_code": 1
   }
  },
  "post": {
@@ -2479,8 +2488,11 @@
    "exit_code": 0
   },
   "landscape": {
+   "app": "pubquiz",
+   "launched": true,
    "status": "fail",
-   "error": "no report"
+   "route": "/tmp/appqa11-pubquiz-landscape.kobo",
+   "exit_code": 1
   }
  },
  "readlater": {
@@ -2836,11 +2848,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "sudoku",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-sudoku-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  },
  "syncthing": {
@@ -3124,11 +3133,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "verses",
-   "launched": true,
    "status": "fail",
-   "route": "/tmp/appqa11-verses-landscape.kobo",
-   "exit_code": 1
+   "error": "no report"
   }
  }
 }

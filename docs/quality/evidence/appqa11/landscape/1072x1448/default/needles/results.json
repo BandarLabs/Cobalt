@@ -1,0 +1,13 @@
+{
+  "source_sha": "df864fc1bc34950225bfd4d942ff95d565a4bd4a",
+  "dirty": true,
+  "results": [
+    {
+      "app": "needles",
+      "launched": true,
+      "status": "fail",
+      "route": "/tmp/appqa11-needles-landscape.kobo",
+      "exit_code": 1
+    }
+  ]
+}

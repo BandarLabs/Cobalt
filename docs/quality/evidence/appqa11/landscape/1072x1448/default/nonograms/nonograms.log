@@ -1,0 +1,2 @@
+Kobo app simulator: http://127.0.0.1:45447
+kobo: line 1: device orientation landscape: the renderer refused this screen: node 3: content is clipped by a panel edge; node 3: interactive control is outside the visible panel (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/nonograms/nonograms-shots/failed-line-1.png)
