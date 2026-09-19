@@ -13,10 +13,10 @@ expect Ada answers
 clean
 shot question
 tap Mercury
-expect Answer locked
+expect Hand to
 clean
 shot pass
 tap Show result
-expect Round result
+expect Question result
 clean
 shot reveal

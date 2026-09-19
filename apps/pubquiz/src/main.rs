@@ -331,7 +331,14 @@ impl Quiz {
         self.note = None;
         self.page = 0;
         let offset = usize::from(self.rounds) * 10 % pool.len();
-        self.round_questions = pool.iter().cycle().skip(offset).take(10).cloned().collect();
+        let length = pool.len().min(10);
+        self.round_questions = pool
+            .iter()
+            .cycle()
+            .skip(offset)
+            .take(length)
+            .cloned()
+            .collect();
     }
     fn sync(&mut self, context: &mut Context) {
         if self.sync_task.is_some() {
@@ -763,22 +770,30 @@ fn players_screen(quiz: &Quiz) -> Screen {
 
 fn reveal_screen(quiz: &Quiz, question: &Question) -> Screen {
     let right = quiz.answer == Some(question.correct);
+    let who = if quiz.party {
+        quiz.player_name()
+    } else {
+        "You"
+    };
     let mut builder = ScreenBuilder::new("pubquiz-reveal")
-        .top_bar("Round result")
+        .top_bar("Question result")
         .heading(if right { "Correct" } else { "Not this time" })
         .secondary(format!(
-            "{} · {}",
-            question.category, question.answers[question.correct]
+            "{} · question {} of {}",
+            question.category,
+            quiz.question + 1,
+            quiz.round_questions.len()
         ));
-    if !right {
-        if let Some(chosen) = quiz.answer {
-            let who = if quiz.party {
-                quiz.player_name()
-            } else {
-                "You"
-            };
-            builder = builder.text(format!("{who} chose {}", question.answers[chosen]));
-        }
+    if right {
+        builder = builder.text(format!(
+            "{who} said {}.",
+            question.answers[question.correct]
+        ));
+    } else if let Some(chosen) = quiz.answer {
+        builder = builder.text(format!(
+            "{who} chose {}. The answer is {}.",
+            question.answers[chosen], question.answers[question.correct]
+        ));
     }
     let players = if quiz.party { quiz.players } else { 1 };
     // Nobody has scored yet: four rows of zeroes say nothing, so the
@@ -794,7 +809,7 @@ fn reveal_screen(quiz: &Quiz, question: &Question) -> Screen {
     builder
         .primary_button(
             "continue",
-            if quiz.question + 1 == 10 {
+            if quiz.question + 1 == quiz.round_questions.len() {
                 "See podium"
             } else {
                 "Next question"
@@ -849,9 +864,9 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
             let next = quiz.name_for((quiz.player + 1) % quiz.players).to_owned();
             ScreenBuilder::new("pubquiz-pass")
                 .top_bar("Pass it on")
-                .heading("Answer locked")
+                .heading(format!("Hand to {next}"))
                 .text(format!(
-                    "{} answered. Hand the Kobo to {next}, who reveals the result.",
+                    "{} answered. {next} taps Show result when ready.",
                     quiz.player_name()
                 ))
                 .primary_button("reveal", "Show result")
@@ -1321,6 +1336,69 @@ mod tests {
     }
 
     #[test]
+    fn short_pools_deal_short_rounds_without_repeats() {
+        let mut quiz = Quiz {
+            setup_category: Some("Nature".to_owned()),
+            ..Quiz::default()
+        };
+        let pool: Vec<_> = quiz
+            .questions
+            .iter()
+            .filter(|question| question.category == "Nature")
+            .cloned()
+            .collect();
+        assert!(pool.len() < 10, "test needs a small category");
+        quiz.begin(false);
+        assert_eq!(quiz.round_questions.len(), pool.len());
+        let mut texts: Vec<_> = quiz
+            .round_questions
+            .iter()
+            .map(|q| q.text.clone())
+            .collect();
+        texts.sort();
+        texts.dedup();
+        assert_eq!(texts.len(), pool.len());
+    }
+
+    #[test]
+    fn reveal_names_the_result_and_the_right_answer() {
+        let mut quiz = Quiz::default();
+        quiz.begin(true);
+        let question = quiz.round_questions[0].clone();
+        quiz.answer = Some((question.correct + 1) % 4);
+        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        assert!(shown.contains("Question result"));
+        assert!(shown.contains("Not this time"));
+        assert!(shown.contains("The answer is"));
+        assert!(shown.contains(&format!("question 1 of {}", quiz.round_questions.len())));
+
+        quiz.answer = Some(question.correct);
+        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        assert!(shown.contains("Correct"));
+        assert!(shown.contains("said"));
+    }
+
+    #[test]
+    fn the_last_question_offers_the_podium() {
+        let mut quiz = Quiz {
+            setup_category: Some("Nature".to_owned()),
+            ..Quiz::default()
+        };
+        quiz.begin(false);
+        quiz.question = quiz.round_questions.len() - 1;
+        let question = quiz.round_questions[quiz.question].clone();
+        quiz.answer = Some(question.correct);
+        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        assert!(shown.contains("See podium"));
+        let mut full = Quiz::default();
+        full.begin(false);
+        let first = full.round_questions[0].clone();
+        full.answer = Some(first.correct);
+        let shown = format!("{:?}", reveal_screen(&full, &first));
+        assert!(shown.contains("Next question"));
+    }
+
+    #[test]
     fn age_labels_cover_minutes_hours_and_days() {
         assert_eq!(age_label(30), "just now");
         assert_eq!(age_label(5 * 60), "5 min ago");
@@ -1384,14 +1462,15 @@ mod regression_tests {
         let correct = runner.app().round_questions[0].correct;
         runner.action(action_id(&choice(correct)));
         let pass = format!("{:?}", screen(runner.app()));
-        assert!(pass.contains("Sam answered. Hand the Kobo to Bert"));
+        assert!(pass.contains("Sam answered."));
+        assert!(pass.contains("Hand to Bert"));
         runner.action(action_id("reveal"));
         runner.action(action_id("continue"));
         let correct = runner.app().round_questions[1].correct;
         runner.action(action_id(&choice(correct)));
         let pass = format!("{:?}", screen(runner.app()));
         // Two players: the turn comes back to Sam, never to Cleo or Dev.
-        assert!(pass.contains("Hand the Kobo to Sam"));
+        assert!(pass.contains("Hand to Sam"));
         assert!(!pass.contains("Cleo"));
     }
 
