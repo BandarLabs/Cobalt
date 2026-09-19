@@ -36,6 +36,54 @@
   "gutenbird": {
    "status": "pass",
    "notes": "restore_cached_feed keeps the last catalog usable; downloads readable offline; offline dictionary section honest about coverage. Evidence: freshness.json + main.rs restore_cached_feed."
+  },
+  "calibre-web": {
+   "status": "pass",
+   "notes": "Cached catalog and downloaded books stay usable offline; every failure names the kept state ('Your current catalog is kept', 'The saved library is kept'); previous account preserved until a checked replacement is acknowledged. Content is user-managed inventory, so no persistent age marker is needed - the sync moment names what changed. Evidence: freshness.json + reading.rs + settings.rs."
+  },
+  "hn": {
+   "status": "pass",
+   "notes": "Saved articles are on-device and open instantly ('Never drawn: the saved list is already on the device'); live tabs require the network and fail with the APPQA-02 taxonomy rather than showing stale content as fresh. Evidence: freshness.json + main.rs saved handling."
+  },
+  "lichess": {
+   "status": "pass",
+   "notes": "Downloaded puzzle sessions are the offline-training cache, labeled as such ('Offline training'); stale stored positions are refused, not restored (stale_pre_fix_puzzle_position_is_not_restored test); stream cancellation cannot clear new state. Evidence: freshness.json + main.rs:5882-7052."
+  },
+  "pubquiz": {
+   "status": "pass",
+   "notes": "Synced packs are the offline cache and stay playable ('Off the air. Existing packs still play offline.'); sync failures keep prior packs. Evidence: freshness.json + main.rs:1018."
+  },
+  "readlater": {
+   "status": "pass",
+   "notes": "Unread/starred/archive lists are the offline reading cache; sync failures keep current articles and say so; storage-limit state names the remedy. Evidence: freshness.json + APPQA-02 notes."
+  },
+  "panels": {
+   "status": "pass",
+   "notes": "Downloads are the offline cache; server-side changes are DETECTED and named ('The comic on your server has changed. Remove this download and start again.') - freshness verification, not silent staleness. Evidence: freshness.json + transfer.rs:143."
+  },
+  "musicstand": {
+   "status": "pass",
+   "notes": "Synced scores/setlists are on-device content; page failures name re-push remedy. Content is user-owned files - no staleness concept needed. Evidence: freshness.json + APPQA-02 notes."
+  },
+  "needles": {
+   "status": "pass",
+   "notes": "Synced patterns are on-device content with per-collection state; sync cancellation named. User-owned files, no staleness concept. Evidence: freshness.json + main.rs:204-362."
+  },
+  "syncthing": {
+   "status": "pass",
+   "notes": "Sync state is age-honest by design: 'Sync has not run' vs first-sync vs retry-next-window vs radio-budget per day; files import after every window once paired. Evidence: freshness.json + main.rs:45-229."
+  },
+  "verses": {
+   "status": "pass",
+   "notes": "Offline shelf is the primary design; daily poem rotates by date honestly (date-driven, chrome-only asserts in routes); search requires network and fails with the APPQA-02 taxonomy. Evidence: freshness.json + APPQA-02 notes."
+  },
+  "vault": {
+   "status": "pass",
+   "notes": "Local notes pushed/ingested via CLI; partial-import failures are counted and named ('{failures} note(s) did not import; see About Vault'); unreadable entries kept intact. Evidence: freshness.json + APPQA-02 notes."
+  },
+  "deck": {
+   "status": "pass",
+   "notes": "No content cache; the 'last action' line honestly reports what the computer answered, which is the only freshness that exists for a remote-control surface. Evidence: freshness.json + main.rs:12-174."
   }
  },
  "findings": []
