@@ -176,7 +176,7 @@ impl Chat {
         // Nothing scrolls on this panel, so a long transcript is paged
         // rather than trimmed away: every turn stays reachable, and the
         // newest page is where the conversation happens.
-        let pages = transcript_pages(turns, TRANSCRIPT_LINES);
+        let pages = transcript_pages(turns, self.page_budget());
         let latest = pages.len().saturating_sub(1);
         let page = if self.view == View::Waiting {
             latest
@@ -326,6 +326,21 @@ impl Chat {
     /// Whether the last thing that happened was a question that never got an
     /// answer, which is the only situation where resending is what the reader
     /// means by trying again.
+    /// How many estimated lines of transcript one page holds right now.
+    ///
+    /// The failure banner and its way back ride on the newest page and are
+    /// not lines of transcript, so while trouble is on the panel each page
+    /// carries fewer turns. Without this the banner and the Try again button
+    /// pushed one another's neighbours off the panel at the larger text
+    /// scales, and the way back was exactly what was no longer visible.
+    fn page_budget(&self) -> usize {
+        if self.trouble.is_some() {
+            TRANSCRIPT_LINES.saturating_sub(5)
+        } else {
+            TRANSCRIPT_LINES
+        }
+    }
+
     fn can_retry(&self) -> bool {
         self.trouble.is_some()
             && self
@@ -686,7 +701,7 @@ impl KoboApp for Chat {
         }
 
         if action == action_id(EARLIER) || action == action_id(LATER) {
-            let count = transcript_pages(self.conversation.turns(), TRANSCRIPT_LINES).len();
+            let count = transcript_pages(self.conversation.turns(), self.page_budget()).len();
             if count > 1 {
                 let latest = count - 1;
                 let back = self.pages_back.min(latest);
@@ -1088,7 +1103,18 @@ mod tests {
                  that is only a few inches across, which is the whole point.",
             );
         }
-        let pages = transcript_pages(chat.conversation.turns(), TRANSCRIPT_LINES);
+        // The fullest page is the one carrying a failure: the banner and the
+        // way to try again take room the turns budget has to give back.
+        chat.conversation.push(Role::You, "question that failed");
+        chat.trouble = Some(super::explain(
+            kobo_sdk::TaskError::NoCredential,
+            Provider::OpenAi,
+        ));
+        assert!(
+            chat.can_retry(),
+            "the worst page is the one with a way back"
+        );
+        let pages = transcript_pages(chat.conversation.turns(), chat.page_budget());
         for scale in [
             kobo_ui::TextScale::Default,
             kobo_ui::TextScale::Large,
