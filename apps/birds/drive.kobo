@@ -1,3 +1,11 @@
-wait 10000
+# The art is the screen; a middle-column tap opens the reading menu, which
+# names the snapshot freshness and its source.
+wait-idle
+tap-at 536 724
+wait-for Birds
+expect Status
+expect Updated
+expect Source
+expect Garden Mac
 clean
-shot birds
+shot birds-menu
