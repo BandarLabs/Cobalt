@@ -222,6 +222,28 @@ impl Parser {
                 Glyph::Bookmark,
             )
         });
+        // The story's own checkpoint (its "save" command) is restorable from
+        // here too, so a story-initiated restore can find it.
+        let checkpoint = if self.slot_action == SlotAction::Restore {
+            self.machine
+                .as_ref()
+                .map(|machine| save_name(machine.info(), "game"))
+                .filter(|name| self.saves.contains(name))
+        } else {
+            None
+        };
+        let rows: Vec<_> = checkpoint
+            .into_iter()
+            .map(|_| {
+                (
+                    "story-checkpoint".to_owned(),
+                    "Story checkpoint".to_owned(),
+                    "Saved by the story itself".to_owned(),
+                    Glyph::Bookmark,
+                )
+            })
+            .chain(rows)
+            .collect();
         let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
             .top_bar_action("play", "Back")
@@ -340,6 +362,11 @@ impl Parser {
                 .as_ref()
                 .map(|machine| save_name(machine.info(), "game"));
             if let Some(name) = name {
+                // Optimistic, like the menu's own "Saved in slot" message:
+                // the restore picker must see the checkpoint immediately.
+                if !self.saves.contains(&name) {
+                    self.saves.push(name.clone());
+                }
                 self.begin_save(context, name);
             }
             if let Some(machine) = &mut self.machine {
@@ -547,6 +574,18 @@ impl KoboApp for Parser {
             }
         }
         if self.view == View::Slots {
+            if action == action_id("story-checkpoint") {
+                if let Some(machine) = &self.machine {
+                    let name = save_name(machine.info(), "game");
+                    let mut restore = ShelfDownload::new(name).at_most(2 * 1024 * 1024);
+                    restore.start(context);
+                    self.pending_restore = Some(restore);
+                    self.message = None;
+                    self.view = View::Play;
+                    self.show(context);
+                }
+                return;
+            }
             for slot in 1..=10 {
                 if action == action_id(&format!("slot-{slot}")) {
                     if let Some(machine) = &self.machine {

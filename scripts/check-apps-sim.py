@@ -53,6 +53,10 @@ def seed(app, state, kobo, env, log):
     elif app == 'vault':
         run('vault', 'init', '--sim')
         run('vault', 'push', str(ROOT / 'scripts/fixtures/vault'), '--sim')
+    elif app == 'parser':
+        shelf = Path(state) / 'cobalt-sim-data' / 'parser'
+        shelf.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'apps/parser/fixtures/zork1.z3', shelf / 'story-zork1.z3')
 
 
 def run_app(app, kobo, out, environment, timeout):

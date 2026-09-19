@@ -1,5 +1,25 @@
-# Empty private shelf: first-run transfer instructions, not a toy story.
-expect Interactive fiction
-expect parser push
+# Seeded with the Zork I fixture: library, opening, and the story's own
+# save/restore round trip through the slot picker.
+wait-for Interactive fiction
+wait-for zork1
 clean
-shot parser-library-empty
+shot parser-library
+tap zork1
+wait-for West of House
+clean
+shot parser-opening
+tap Keyboard
+type save
+tap Run
+wait-for Ok.
+clean
+shot parser-story-save
+type restore
+tap Run
+wait-for Story checkpoint
+clean
+shot parser-restore-picker
+tap Story checkpoint
+wait-for West of House
+clean
+shot parser-restored
