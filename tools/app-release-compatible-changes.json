@@ -29,7 +29,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-     "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     },
     {
      "path": "crates/kobo-abi/src/lib.rs",
@@ -155,7 +155,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-     "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     },
     {
      "path": "crates/kobo-abi/src/lib.rs",
@@ -308,7 +308,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     }
    ]
   },
@@ -319,7 +319,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     }
    ]
   },
@@ -330,7 +330,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     }
    ]
   },
@@ -341,7 +341,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f929b097fe08ec583597e91c14c86ffff189b200",
-     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     }
    ]
   },
@@ -352,7 +352,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "a87031c36f865a116736f6f12486b9659ae30481"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     }
    ]
   },
@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "cac317f4f233ff082bdb668bf729db11d58cfb7c"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     }
    ]
   }
