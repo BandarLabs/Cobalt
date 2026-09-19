@@ -1,13 +1,13 @@
 {
- "id": "gallery",
- "display_name": "Components",
- "short_label": "Components",
- "summary": "See every Cobalt UI component on the device in one reference app.",
- "minimum_cobalt_version": "0.3.14",
- "version": "1.0.13",
- "glyph": "chart",
- "capabilities": [
-  "network"
- ],
- "release_notes": "Declares the new peer flag on the demo board's pencil marks so the gallery builds against the current SDK; the marks render exactly as before."
+  "id": "gallery",
+  "display_name": "Components",
+  "short_label": "Components",
+  "summary": "See every Cobalt UI component on the device in one reference app.",
+  "minimum_cobalt_version": "0.3.14",
+  "version": "1.0.14",
+  "glyph": "chart",
+  "capabilities": [
+    "network"
+  ],
+  "release_notes": "Every enabled specimen control now answers its tap with a caption, so no control in the gallery feels dead."
 }

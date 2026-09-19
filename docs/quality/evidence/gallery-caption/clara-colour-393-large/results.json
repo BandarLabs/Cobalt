@@ -1,0 +1,13 @@
+{
+  "source_sha": "39d4cc0b1a3a734696eb0634f1d1cd5884831968",
+  "dirty": true,
+  "results": [
+    {
+      "app": "gallery",
+      "launched": true,
+      "status": "pass",
+      "route": "target/gal-caption.kobo",
+      "exit_code": 0
+    }
+  ]
+}
