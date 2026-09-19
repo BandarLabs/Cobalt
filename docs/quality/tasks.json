@@ -3679,8 +3679,12 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Show unsaved state before success",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Extraction + 40 verdicts: scripts/quality/audit-unsaved-state.py, docs/quality/evidence/appqa04/{unsaved.json,verdicts.json} - 38 pass, 2 findings",
+   "Findings fixed at dc635508: parlor and backgammon autosaves wrote via store().save but ignored StoreResult::Denied - a refused save was invisible while 'Resume saved game' kept promising. Both now announce 'Progress is not saved...' in place of the usual note until a write lands (AppRunner tests included); parlor v0.1.5, backgammon v0.1.7; gates 55/55; fmt+clippy -D warnings clean; tests 43+43 green",
+   "Matrix proof 27/27 per app (9 profiles x 3 text scales) incl. storage-full refusal and recovery drives: docs/quality/evidence/appqa04/{parlor,backgammon}/<profile>-<scale>/results.json (this commit); extra-large smallest-panel refusal shot eyeballed clean"
+  ]
  },
  {
   "id": "APPQA-05",
