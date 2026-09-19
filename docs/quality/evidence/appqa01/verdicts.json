@@ -96,6 +96,26 @@
   "morse": {
    "status": "pass",
    "notes": "Beacon: the flash area is the screen; single state-dependent action-bar verb (Stop while sending, Edit when idle) + Light toggle; writing uses banner; reference is page_turns reading chrome. Evidence: apps/morse/screenshots/sending.png + screens.json."
+  },
+  "musicstand": {
+   "status": "pass",
+   "notes": "Library: score row tap is dominant (opens on the stand); Setlists/Add scores stacked plain secondaries; stand screen is reading chrome (page_turns, half-turn, zoom, modal page facts). Evidence: apps/musicstand/screenshots/library.png, stand.png + screens.json."
+  },
+  "needles": {
+   "status": "pass",
+   "notes": "Project screen textbook: one big primary '+1 row', plain secondaries in a stable grid (Undo, Change section, Repeat length, Read synced pattern); library tab bar + primary Sync per empty collection; pattern screen primary 'Follow this pattern' + plain 'Open synced pattern'. Evidence: apps/needles/screenshots/project.png + screens.json."
+  },
+  "nonograms": {
+   "status": "pass",
+   "notes": "Play screen: board + explicit move-pad idiom with visible disabled states; Undo/More as stable secondaries; browser uses page_turns + action_bar; photo/detail single-purpose buttons; save-recovery dialog pair. Evidence: apps/nonograms/screenshots/play.png + screens.json."
+  },
+  "panels": {
+   "status": "pass",
+   "notes": "Library: shelf row dominant, stable bottom bar (Add comic / Browse, with state-dependent Retry/Download additions in fixed slots); detail: primary 'Download' + plain reading-order toggle; errors single primary 'Try again'. Evidence: apps/panels/screenshots/library.png + screens.json."
+  },
+  "paperterm": {
+   "status": "finding",
+   "notes": "Preview screen passes (single 'Connect a computer' CTA + Close preview chrome). FINDING: paperterm-welcome pairs 'Connect a computer' (task) with 'Try a preview' (demo) at equal weight - same shape as the audiobook empty-state finding. Setup/trust sheets use a clean single-Next + Back pattern otherwise. Evidence: screens.json + apps/paperterm/screenshots/preview.png."
   }
  },
  "findings": [
@@ -104,6 +124,12 @@
    "screen": "audiobook-library (empty state)",
    "issue": "Two equal-weight buttons: 'Create an audiobook' vs 'Play the sample'. One dominant task action rule: Create should be primary, sample secondary.",
    "proposed_fix": "Make 'Create an audiobook' the primary button in the empty shelf state; keep 'Play the sample' as a plain secondary button."
+  },
+  {
+   "app": "paperterm",
+   "screen": "paperterm-welcome",
+   "issue": "Two equal-weight buttons: 'Connect a computer' (the task) vs 'Try a preview' (demo path).",
+   "proposed_fix": "Make 'Connect a computer' primary; keep 'Try a preview' plain."
   }
  ]
 }
