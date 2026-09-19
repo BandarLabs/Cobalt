@@ -53,7 +53,15 @@ impl From<kobo_zstory::StoryError> for StoryError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunState {
     NeedInput { max_bytes: usize },
+    NeedSave,
+    NeedRestore,
     Halted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingFile {
+    Save,
+    Restore,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +95,7 @@ pub struct Machine {
     status: String,
     halted: bool,
     input: Option<InputRequest>,
+    pending_file: Option<PendingFile>,
     undo: Option<Snapshot>,
     rng: u32,
 }
@@ -132,6 +141,7 @@ impl Machine {
             status: String::new(),
             halted: false,
             input: None,
+            pending_file: None,
             undo: None,
             rng: 0x5eed_1234,
         };
@@ -154,28 +164,72 @@ impl Machine {
     }
 
     pub fn run(&mut self) -> Result<RunState, StoryError> {
-        if self.halted {
-            return Ok(RunState::Halted);
-        }
-        if let Some(request) = self.input {
-            return Ok(RunState::NeedInput {
-                max_bytes: self.input_capacity(request.text)?,
-            });
+        if let Some(state) = self.suspension()? {
+            return Ok(state);
         }
         for _ in 0..MAX_STEPS_PER_TURN {
             self.step()?;
-            if self.halted {
-                return Ok(RunState::Halted);
-            }
-            if let Some(request) = self.input {
-                return Ok(RunState::NeedInput {
-                    max_bytes: self.input_capacity(request.text)?,
-                });
+            if let Some(state) = self.suspension()? {
+                return Ok(state);
             }
         }
         Err(StoryError::Fault(
             "instruction budget exhausted before the next input".to_owned(),
         ))
+    }
+
+    fn suspension(&self) -> Result<Option<RunState>, StoryError> {
+        if self.halted {
+            return Ok(Some(RunState::Halted));
+        }
+        if let Some(request) = self.input {
+            return Ok(Some(RunState::NeedInput {
+                max_bytes: self.input_capacity(request.text)?,
+            }));
+        }
+        Ok(self.pending_file.map(|pending| match pending {
+            PendingFile::Save => RunState::NeedSave,
+            PendingFile::Restore => RunState::NeedRestore,
+        }))
+    }
+
+    /// The app finished the save the story asked for (or the reader
+    /// cancelled it). Resolves the suspended branch/store and resumes.
+    pub fn complete_save(&mut self, succeeded: bool) -> Result<RunState, StoryError> {
+        if self.pending_file.take() != Some(PendingFile::Save) {
+            return Err(StoryError::Fault(
+                "the story did not ask to save".to_owned(),
+            ));
+        }
+        self.resolve_file_result(succeeded, u16::from(succeeded))?;
+        self.run()
+    }
+
+    /// The app could not produce a save file for the story's restore
+    /// request: the story continues past the restore opcode as a failure.
+    /// A successful restore instead loads the file with `restore_quetzal`,
+    /// which resolves the captured suspension itself.
+    pub fn complete_restore(&mut self, restored: bool) -> Result<RunState, StoryError> {
+        if self.pending_file.take() != Some(PendingFile::Restore) {
+            return Err(StoryError::Fault(
+                "the story did not ask to restore".to_owned(),
+            ));
+        }
+        self.resolve_file_result(restored, 0)?;
+        self.run()
+    }
+
+    fn resolve_file_result(
+        &mut self,
+        branch_taken: bool,
+        store_value: u16,
+    ) -> Result<(), StoryError> {
+        if self.info.version <= 3 {
+            self.branch(branch_taken)
+        } else {
+            let store = self.fetch_byte()?;
+            self.set_variable(store, store_value)
+        }
     }
 
     pub fn input(&mut self, text: &str) -> Result<RunState, StoryError> {
@@ -230,6 +284,32 @@ impl Machine {
             parser.push(input.store.unwrap_or(u8::MAX));
         } else {
             parser.push(0);
+        }
+        // Extension section (read only when present, so pre-catch save
+        // files still load): suspended save/restore, then armed catches.
+        parser.push(match self.pending_file {
+            None => 0,
+            Some(PendingFile::Save) => 1,
+            Some(PendingFile::Restore) => 2,
+        });
+        let catches: Vec<(u16, &Frame)> = self
+            .frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| {
+                frame
+                    .catch
+                    .map(|_| (u16::try_from(index).unwrap_or(u16::MAX), frame))
+            })
+            .collect();
+        parser.extend_from_slice(&(catches.len() as u16).to_be_bytes());
+        for (index, frame) in catches {
+            let Some((resume_pc, store)) = frame.catch else {
+                continue;
+            };
+            parser.extend_from_slice(&index.to_be_bytes());
+            parser.extend_from_slice(&(resume_pc as u32).to_be_bytes());
+            parser.push(store);
         }
         chunk(&mut body, b"IntD", &parser);
 
@@ -295,6 +375,15 @@ impl Machine {
             parser.ok_or(StoryError::Invalid("save has no Parser state chunk"))?,
         )?;
         self.halted = false;
+        match self.pending_file.take() {
+            // Captured at a save point: the file exists, so the resume is a
+            // restore - branch taken (v1-3) or store 2 (v4+, Standard 1.1).
+            Some(PendingFile::Save) => self.resolve_file_result(true, 2)?,
+            // Captured while waiting on a restore that never happened:
+            // resume as a failed restore.
+            Some(PendingFile::Restore) => self.resolve_file_result(false, 0)?,
+            None => {}
+        }
         Ok(())
     }
 
@@ -348,6 +437,23 @@ impl Machine {
                 store: (store != u8::MAX).then_some(store),
             })
         };
+        self.pending_file = None;
+        if cursor < bytes.len() {
+            self.pending_file = match take(bytes, &mut cursor)? {
+                1 => Some(PendingFile::Save),
+                2 => Some(PendingFile::Restore),
+                _ => None,
+            };
+            let catch_count = usize::from(read_u16(bytes, &mut cursor)?);
+            for _ in 0..catch_count {
+                let index = usize::from(read_u16(bytes, &mut cursor)?);
+                let resume_pc = read_u32(bytes, &mut cursor)? as usize;
+                let store = take(bytes, &mut cursor)?;
+                if let Some(frame) = frames.get_mut(index) {
+                    frame.catch = Some((resume_pc, store));
+                }
+            }
+        }
         self.stack = stack;
         self.frames = frames;
         Ok(())
@@ -428,20 +534,16 @@ impl Machine {
             }
             4 => Ok(()),
             5 => {
-                if self.info.version <= 3 {
-                    self.branch(true)
-                } else {
-                    let store = self.fetch_byte()?;
-                    self.set_variable(store, 1)
-                }
+                // save: suspend BEFORE the branch/store byte so a Quetzal
+                // captured now resumes at the result. The app completes it.
+                self.pending_file = Some(PendingFile::Save);
+                Ok(())
             }
             6 => {
-                if self.info.version <= 3 {
-                    self.branch(false)
-                } else {
-                    let store = self.fetch_byte()?;
-                    self.set_variable(store, 0)
-                }
+                // restore: suspend; a loaded save resolves itself as 2 /
+                // branch-taken, a refused picker resolves as failure.
+                self.pending_file = Some(PendingFile::Restore);
+                Ok(())
             }
             7 => {
                 self.pc = usize::from(self.header_word(6)?);
@@ -1660,6 +1762,7 @@ impl Machine {
         self.frames = snapshot.frames;
         self.rng = snapshot.rng;
         self.input = None;
+        self.pending_file = None;
         self.halted = false;
     }
 
@@ -1981,6 +2084,113 @@ mod tests {
         assert_eq!(machine.read_byte(0x80).unwrap(), 9);
         assert_eq!(machine.read_byte(0x83).unwrap(), 6);
     }
+    #[test]
+    fn save_suspends_then_branches_on_completion_in_v3() {
+        // 0OP 5 v3: save ?(label). The machine suspends BEFORE the branch
+        // byte; complete_save decides it. Taken: "s". Not taken: "f".
+        // Dictionary-word encoding pads to the full word length (4 bytes in
+        // v3), so the branch offset is sized for it: taken -> 0x48 prints
+        // "s", not taken -> 0x42 prints "f".
+        let mut bytes = code_story(
+            3,
+            &[0xb5, 0xc8, 0xb2, 0, 0, 0, 0, 0xba, 0xb2, 0, 0, 0, 0, 0xba],
+        );
+        let f = encode_dictionary_word(b"f", 3);
+        bytes[0x43..0x43 + f.len()].copy_from_slice(&f);
+        let s = encode_dictionary_word(b"s", 3);
+        bytes[0x49..0x49 + s.len()].copy_from_slice(&s);
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+
+        let mut machine = Machine::new(bytes.clone(), "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        let save = machine.save_quetzal();
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "s");
+
+        let mut restored = Machine::new(bytes.clone(), "fixture.z3").unwrap();
+        restored.restore_quetzal(&save).unwrap();
+        assert_eq!(restored.run().unwrap(), RunState::Halted);
+        assert_eq!(restored.take_output(), "s", "v3 restore takes the branch");
+
+        let mut machine = Machine::new(bytes, "fixture.z3").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        assert_eq!(machine.complete_save(false).unwrap(), RunState::Halted);
+        assert_eq!(machine.take_output(), "f");
+    }
+
+    #[test]
+    fn save_stores_one_and_restore_stores_two_in_v5() {
+        // 0OP 5 v5: save -> (result). Suspend before the store byte;
+        // complete_save stores 1. A Quetzal captured at the suspension
+        // resumes with 2: "the game is being restored" (Standard 1.1).
+        let code = [0xb5, 0x10];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        let save = machine.save_quetzal();
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 0), 1, "save stores 1 on success");
+
+        let mut restored = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        restored.restore_quetzal(&save).unwrap();
+        assert_eq!(restored.run().unwrap(), RunState::Halted);
+        assert_eq!(global(&restored, 0), 2, "restore resumes the store with 2");
+    }
+
+    #[test]
+    fn restore_failure_stores_zero_and_needs_no_file() {
+        // 0OP 6 v5: restore -> (result). complete_restore(false) is how the
+        // app reports "no file picked": store 0, continue.
+        let code = [0xb6, 0x10];
+        let mut machine = Machine::new(code_story(5, &code), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedRestore);
+        assert_eq!(machine.complete_restore(false).unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 0), 0, "failed restore stores 0");
+    }
+
+    #[test]
+    fn catch_state_survives_a_save_round_trip() {
+        // catch arms the base frame BEFORE the save suspends, so the Quetzal
+        // captures an armed frame. setjmp semantics: a throw resumes at the
+        // point right after catch, which re-runs the save - the second
+        // suspension is expected and completed again.
+        let code = vec![
+            0xb9, 0x10, // 0x40: catch -> global0 (resume 0x42)
+            0xb5, 0x11, // 0x42: save -> global1 (suspends before the store byte)
+            0x41, 0x10, 0x00, 0xca, // 0x44: je global0 0 -> 0x50 while unthrown
+            0xb2, 0, 0, 0, 0, 0, 0,    // 0x48: print "t" (6-byte padded z-string)
+            0xba, // 0x4f: quit
+            0x8f, 0x00, 0x80, 0xba, // 0x50: call_1n 0x200; quit
+        ];
+        let mut bytes = code_story(5, &code);
+        let t = encode_dictionary_word(b"t", 5);
+        bytes[0x49..0x49 + t.len()].copy_from_slice(&t);
+        bytes[0x200] = 0;
+        bytes[0x201] = 0x3c; // throw
+        bytes[0x202] = 0x99;
+        bytes[0x203] = 0x10;
+        bytes[0x204] = 0xb0;
+        let checksum = computed_checksum(&bytes);
+        bytes[0x1c..0x1e].copy_from_slice(&checksum.to_be_bytes());
+
+        let mut machine = Machine::new(bytes.clone(), "fixture.z5").unwrap();
+        assert_eq!(machine.run().unwrap(), RunState::NeedSave);
+        let save = machine.save_quetzal();
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::NeedSave);
+        assert_eq!(machine.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(global(&machine, 1), 1);
+        assert_eq!(machine.take_output(), "t");
+
+        let mut restored = Machine::new(bytes, "fixture.z5").unwrap();
+        restored.restore_quetzal(&save).unwrap();
+        assert_eq!(global(&restored, 1), 2, "restored at the save point");
+        assert_eq!(restored.run().unwrap(), RunState::NeedSave);
+        // Without catch in the save file this throw would fault with
+        // "throw to a frame without catch".
+        assert_eq!(restored.complete_save(true).unwrap(), RunState::Halted);
+        assert_eq!(restored.take_output(), "t", "catch survived the round trip");
+    }
+
     #[test]
     fn not_is_var_24_in_v5() {
         // VAR 24 v5: not value -> (result). not(0) = 0xffff into global 1.

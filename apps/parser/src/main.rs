@@ -286,6 +286,7 @@ impl Parser {
                 }
                 self.repaginate(context);
                 self.page = self.last_content_page();
+                self.finish_file_request(context, &state);
             }
             Err(error) => {
                 self.transcript.push_str(&machine.take_output());
@@ -305,10 +306,11 @@ impl Parser {
         };
         let _ = write!(self.transcript, "\n> {}\n", command.trim());
         match machine.input(command.trim()) {
-            Ok(_) => {
+            Ok(state) => {
                 self.transcript.push_str(&machine.take_output());
                 self.repaginate(context);
                 self.page = self.last_content_page();
+                self.finish_file_request(context, &state);
                 self.autosave(context);
             }
             Err(error) => {
@@ -324,6 +326,52 @@ impl Parser {
             return;
         };
         self.begin_save(context, save_name(machine.info(), "auto"));
+    }
+
+    /// The story asked to save or restore a game itself (0OP 5/6). Save:
+    /// persist the suspended state as the "game" checkpoint, then let the
+    /// story continue. Restore: no file is picked here - the reader uses
+    /// the slot picker - so the story resumes with the spec's failure
+    /// result instead of hanging.
+    fn finish_file_request(&mut self, context: &mut Context, state: &RunState) {
+        if *state == RunState::NeedSave {
+            let name = self
+                .machine
+                .as_ref()
+                .map(|machine| save_name(machine.info(), "game"));
+            if let Some(name) = name {
+                self.begin_save(context, name);
+            }
+            if let Some(machine) = &mut self.machine {
+                match machine.complete_save(true) {
+                    Ok(state) => {
+                        self.transcript.push_str(&machine.take_output());
+                        self.message = Some("Saved the story checkpoint.".to_owned());
+                        self.repaginate(context);
+                        self.page = self.last_content_page();
+                        if !matches!(state, RunState::Halted | RunState::NeedInput { .. }) {
+                            self.finish_file_request(context, &state);
+                        }
+                    }
+                    Err(error) => self.message = Some(error.to_string()),
+                }
+            }
+        } else if *state == RunState::NeedRestore {
+            if let Some(machine) = &mut self.machine {
+                match machine.complete_restore(false) {
+                    Ok(_) => {
+                        self.transcript.push_str(&machine.take_output());
+                        self.message = Some(
+                            "The story asked to restore - pick a slot from Save/Restore."
+                                .to_owned(),
+                        );
+                        self.repaginate(context);
+                        self.page = self.last_content_page();
+                    }
+                    Err(error) => self.message = Some(error.to_string()),
+                }
+            }
+        }
     }
 
     fn begin_save(&mut self, context: &mut Context, name: String) {
