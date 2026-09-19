@@ -1,0 +1,33 @@
+{
+ "method": "Per app: read the extracted screen table (screens.json), then eyeball the app's committed README screenshots for the main task screen and key states. Pass = one dominant task action (primary_button, row-tap list idiom, transport control, or by-design art/board screen) with secondary controls in stable chrome slots (app bar, bottom action bar). Finding = anything that reads as two competing dominants or no dominant where a task action exists.",
+ "verdicts": {
+  "arxiv": {
+   "status": "pass",
+   "notes": "Listing screens: row tap opens the paper (dominant); single bottom control per screen (Any time filter, Manage); back in app bar. Evidence: apps/arxiv/screenshots/listing.png, saved.png."
+  },
+  "audiobook": {
+   "status": "finding",
+   "notes": "Player screen passes (transport centered, play dominant by placement; Bluetooth output / Create another in stable bottom bar). FINDING: empty shelf state shows two equal-weight buttons side by side - 'Create an audiobook' (the task) and 'Play the sample' (demo path). Create should read as the one dominant action. Evidence: examples/audiobook/screenshots/shelf.png, player.png."
+  },
+  "backgammon": {
+   "status": "pass",
+   "notes": "Board-centric game screen; the single turn verb (Roll/Double/Undo) lives in a stable bottom action bar; match-over dialog uses primary_button (New match). Evidence: apps/backgammon/screenshots/backgammon-play.png."
+  },
+  "birds": {
+   "status": "pass",
+   "notes": "By design the art plate is the screen (no app bar over it); navigation is the SDK reading chrome (page_turns + reading_menu). Error/empty states use splash + single Refresh button. Evidence: apps/birds/screenshots/birds.png."
+  },
+  "brief": {
+   "status": "pass",
+   "notes": "Story list: row tap opens the story; single Refresh control in bottom bar; Source switcher in stable top-right chrome; sources screen has single Brief return control. Evidence: examples/brief/screenshots/brief.png, sources.png."
+  }
+ },
+ "findings": [
+  {
+   "app": "audiobook",
+   "screen": "audiobook-library (empty state)",
+   "issue": "Two equal-weight buttons: 'Create an audiobook' vs 'Play the sample'. One dominant task action rule: Create should be primary, sample secondary.",
+   "proposed_fix": "Make 'Create an audiobook' the primary button in the empty shelf state; keep 'Play the sample' as a plain secondary button."
+  }
+ ]
+}
