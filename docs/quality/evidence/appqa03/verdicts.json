@@ -1,0 +1,42 @@
+{
+ "method": "Extract cache/freshness strings via scripts/quality/audit-freshness.py into freshness.json, then judge per app: (a) cached content stays usable offline, (b) freshness is stated honestly (timestamp/'since'/stale marker) where content can go stale, (c) cache preservation on failure is explicit. Local-only apps with no cache concept pass by design (save integrity already covered under APPQA-02).",
+ "verdicts": {
+  "arxiv": {
+   "status": "pass",
+   "notes": "Kept papers readable offline with progress; rows that need the network are marked 'offline - ...' so a kept paper is never mistaken for a fresh listing ('the row no longer shows is a kept paper the reader cannot find again without a network'). Evidence: freshness.json + APPQA-02 notes."
+  },
+  "brief": {
+   "status": "pass",
+   "notes": "Gold-standard freshness line: as_of() states 'When this brief was fetched and where from, in one line'; offline shows the saved brief and says so; save-failure vs not-saved states distinct. Evidence: freshness.json + main.rs as_of."
+  },
+  "fanshelf": {
+   "status": "pass",
+   "notes": "Per-work DownloadState drives availability; update checks stamp freshness ('No new chapters as of {date}'); downloaded copies readable offline, removal keeps reading places. Evidence: freshness.json + main.rs:242."
+  },
+  "homepanel": {
+   "status": "pass",
+   "notes": "'Offline since HH:MM. Readings may be stale.' is the freshest honesty in the catalog - age-stamped staleness, cached tiles stay usable. Evidence: freshness.json + main.rs:229."
+  },
+  "kitchencard": {
+   "status": "pass",
+   "notes": "Sync reports kept-vs-unreadable counts ('Kept X of Y recipes; N arrived unreadable'); offline mode keeps saved recipes cookable and says the radio is off. Evidence: freshness.json + APPQA-02 notes."
+  },
+  "post": {
+   "status": "pass",
+   "notes": "Cached letters stay readable; every failure names the cache ('Your cached list is unchanged' / 'Your cached letters are still here'); queued replies survive failure with state named. Evidence: freshness.json + main.rs:303-340."
+  },
+  "rss": {
+   "status": "pass",
+   "notes": "Saved articles and subscriptions survive offline; failure taxonomy (APPQA-02) always names what is kept; feed-status surface shows per-feed fetch state. Evidence: freshness.json + feed-status.png."
+  },
+  "rss-miniflux": {
+   "status": "pass",
+   "notes": "Every failure class names preservation ('Your previous articles are kept'); batch writer includes anything fetched since the sync (no lost updates); per-tab empty states. Evidence: freshness.json + main.rs:191."
+  },
+  "gutenbird": {
+   "status": "pass",
+   "notes": "restore_cached_feed keeps the last catalog usable; downloads readable offline; offline dictionary section honest about coverage. Evidence: freshness.json + main.rs restore_cached_feed."
+  }
+ },
+ "findings": []
+}
