@@ -1,0 +1,1912 @@
+{
+ "arxiv": {
+  "screens": {
+   "arxiv-subjects": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "arxiv-search": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "arxiv-library": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No saved papers",
+      "Save a paper to read it later."
+     ]
+    }
+   ],
+   "arxiv-saved": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing saved",
+      "Save a search or follow a subject to see it here."
+     ]
+    }
+   ],
+   "arxiv-listing": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No papers found",
+      "Change the date range or search words."
+     ]
+    }
+   ],
+   "arxiv-paper": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Fetching the full text"
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening the kept paper"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "This paper is too long to open completely, so only the beginning is shown."
+     ]
+    }
+   ],
+   "arxiv-paper-head": []
+  },
+  "signals": [
+   "401",
+   "credential",
+   "malformed",
+   "network",
+   "offline"
+  ]
+ },
+ "backgammon": {
+  "screens": {
+   "backgammon-help": [],
+   "backgammon-double": [],
+   "backgammon-cube": [],
+   "backgammon-drop": [],
+   "backgammon-game-over": [],
+   "backgammon-match-over": [],
+   "backgammon": [],
+   "backgammon-match": []
+  },
+  "signals": [
+   "unreachable"
+  ]
+ },
+ "birds": {
+  "screens": {
+   "birds-home": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening the latest birds"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "The snapshot could not be read"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No birds yet",
+      "On your computer, run `kobo birds listen --source http://HOST:PORT --device IP`."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "The collage needs a refresh"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": [
+   "invalid",
+   "offline"
+  ]
+ },
+ "calibre-web": {
+  "screens": {
+   "calibre-library": [],
+   "calibre-libraries": [
+    {
+     "kind": "splash",
+     "text": [
+      "No libraries",
+      "Add the HTTPS address of your calibre-web library."
+     ]
+    }
+   ],
+   "calibre-url": [],
+   "calibre-account-choice": [],
+   "calibre-book": [],
+   "calibre-failure": [],
+   "calibre-offline": []
+  },
+  "signals": [
+   "credential",
+   "credentials",
+   "invalid",
+   "network",
+   "offline",
+   "unauthorized",
+   "unreachable"
+  ]
+ },
+ "crossword": {
+  "screens": {
+   "crossword": []
+  },
+  "signals": [
+   "offline",
+   "unreachable"
+  ]
+ },
+ "deck": {
+  "screens": {
+   "deck-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening"
+     ]
+    }
+   ],
+   "deck-address": [],
+   "deck-code": [],
+   "deck-grid": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "deck-result": []
+  },
+  "signals": [
+   "credential",
+   "token",
+   "unreachable"
+  ]
+ },
+ "fanshelf": {
+  "screens": {
+   "fs-add": [],
+   "fs-adult": [],
+   "fs-add-tag": [],
+   "fs-reader": [],
+   "fs-fandoms": [
+    {
+     "kind": "splash",
+     "text": [
+      "No works on the shelf",
+      "Fandoms appear once works are added."
+     ]
+    }
+   ],
+   "fs-shelf": [
+    {
+     "kind": "splash",
+     "text": [
+      "Your shelf is empty",
+      "Add an AO3 work, review its rating and warnings, then download it."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No works in this fandom",
+      "All shows the whole shelf."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "fs-manage": [
+    {
+     "kind": "splash",
+     "text": [
+      "Remove {downloaded} downloaded copies?",
+      "Works stay on the shelf and can be downloaded again. Reading places are kept."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing to manage",
+      "Downloaded copies and updates appear once works are added."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "fs-work": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "Working…"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "fs-follow": [
+    {
+     "kind": "splash",
+     "text": [
+      "No followed tags",
+      "Follow a tag to see its newest works."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "fs-feed": [
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No feed entries",
+      "AO3 returned no readable Atom entries for this tag."
+     ]
+    }
+   ],
+   "fs-updates": [
+    {
+     "kind": "splash",
+     "text": [
+      "No works in progress",
+      "Works in progress appear here."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "malformed",
+   "offline",
+   "unauthorized"
+  ]
+ },
+ "fieldbook": {
+  "screens": {
+   "fieldbook": [
+    {
+     "kind": "banner",
+     "text": [
+      "Not saved. The last write failed."
+     ]
+    }
+   ]
+  },
+  "signals": []
+ },
+ "flashcards": {
+  "screens": {
+   "flashcards-decks": [
+    {
+     "kind": "empty_state",
+     "text": []
+    }
+   ],
+   "flashcards-notice-index": [],
+   "flashcards-notices": [],
+   "flashcards-loading": [
+    {
+     "kind": "splash",
+     "text": [
+      "Opening collection",
+      "Checking the prepared offline bundle."
+     ]
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    }
+   ],
+   "flashcards-first-use": [],
+   "flashcards-problem": [
+    {
+     "kind": "error_state",
+     "text": [
+      "{title}\\n\\n{message}"
+     ]
+    }
+   ],
+   "flashcards-settings": [],
+   "flashcards-done": [
+    {
+     "kind": "splash",
+     "text": [
+      "Review complete",
+      "{completed} of {total} due cards recorded locally."
+     ]
+    }
+   ],
+   "flashcards-review": []
+  },
+  "signals": [
+   "network",
+   "offline"
+  ]
+ },
+ "frame": {
+  "screens": {
+   "frame-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening your photo shelf"
+     ]
+    }
+   ],
+   "frame-home": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening your photo shelf"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Your frame is empty",
+      "On your computer, run `kobo frame init --device IP`, then `kobo frame push PHOTO_OR_FOLDER --device IP`."
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening this photograph"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No photograph can be opened",
+      "Re-push the album from your computer."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "{} photo(s) unreadable — re-push them from your computer."
+     ]
+    }
+   ],
+   "frame-show": [
+    {
+     "kind": "activity",
+     "text": [
+      "Loading photo"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "This photograph could not be opened."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "invalid",
+   "malformed"
+  ]
+ },
+ "grimoire": {
+  "screens": {
+   "grimoire-filters": [],
+   "grimoire": [
+    {
+     "kind": "empty_state",
+     "text": [
+      "This reference has no text in the bundled document."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "offline"
+  ]
+ },
+ "habits": {
+  "screens": {
+   "hb-add": [
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing due",
+      "Add a habit, or return when one is due."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No streaks yet",
+      "Add a habit to begin."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No habits yet",
+      "Tap Add to name one. Completions stay on this reader."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing to edit",
+      "Pick a habit on Manage."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "could not open",
+   "network"
+  ]
+ },
+ "homepanel": {
+  "screens": {
+   "homepanel-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening"
+     ]
+    }
+   ],
+   "homepanel-setup": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "homepanel-grid": [
+    {
+     "kind": "splash",
+     "text": [
+      "No tiles",
+      "Add a Home Assistant device."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "homepanel-settings": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "homepanel-edit": [
+    {
+     "kind": "splash",
+     "text": [
+      "No tiles",
+      "Add a tile first."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "homepanel-tile": [
+    {
+     "kind": "splash",
+     "text": [
+      "Tile is gone",
+      "It was removed."
+     ]
+    }
+   ],
+   "homepanel-climate": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "homepanel-add": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Finding devices"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No devices found",
+      "No matches",
+      "Check Home Assistant and try again."
+     ]
+    }
+   ],
+   "homepanel-search": []
+  },
+  "signals": [
+   "credential",
+   "network",
+   "offline",
+   "token",
+   "unauthorized",
+   "unreachable"
+  ]
+ },
+ "inkling": {
+  "screens": {
+   "inkling": [],
+   "inkling-help": [],
+   "inkling-stats": [],
+   "inkling-archive": []
+  },
+  "signals": [
+   "offline",
+   "token"
+  ]
+ },
+ "kitchencard": {
+  "screens": {
+   "kitchencard": [
+    {
+     "kind": "splash",
+     "text": [
+      "Connect Mealie",
+      "On your computer run `kobo secret set mealie`, then add the HTTPS address here."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "Off the air."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No recipes yet",
+      "Sync Mealie to bring tonight's dinner here."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Pick tonight's dinner",
+      "{} recipe{} from Mealie {} waiting.",
+      "are"
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "Nothing from Mealie yet."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing on the go",
+      "Pick a recipe before cooking."
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "No steps came with this recipe."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "Timer running: {minutes} min, set on step {}."
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "Pick a recipe first."
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "No ingredient list came with this recipe."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Dinner's ready"
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "offline",
+   "token"
+  ]
+ },
+ "lichess": {
+  "screens": {
+   "lichess-home": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-puzzles": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-help": [],
+   "lichess-solve": [
+    {
+     "kind": "empty_state",
+     "text": [
+      "No puzzle is ready. Download a session on Wi-Fi."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-puzzle-result": [],
+   "lichess-play": [
+    {
+     "kind": "activity",
+     "text": [
+      "Checking account"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "Token rejected"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-challenge-player": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-challenge-setup": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-pairing-candidate": [],
+   "lichess-pairing": [
+    {
+     "kind": "activity",
+     "text": [
+      "Checking games",
+      "Finding an opponent",
+      "Waiting to check again"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-challenge": [
+    {
+     "kind": "empty_state",
+     "text": [
+      "That challenge is no longer active."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "This client accepts standard clock games only."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "lichess-game": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening your game"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "Takebacks are unavailable here. The board updates if moves change on Lichess."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "Opponent disconnected.",
+      "Opponent left; victory may now be claimed.",
+      "Opponent left; claim available in {seconds}s."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "could not open",
+   "could not read",
+   "credential",
+   "expire",
+   "expired",
+   "invalid",
+   "network",
+   "offline",
+   "token",
+   "unauthorized",
+   "unreachable"
+  ]
+ },
+ "logicpack": {
+  "screens": {
+   "logicpack-collection": [],
+   "logicpack-more": [],
+   "logicpack-digit": [],
+   "logicpack-opening": [],
+   "logicpack-save-failed": [],
+   "logicpack-restart": [],
+   "logicpack": [],
+   "logicpack-difficulty": [],
+   "logicpack-help": [],
+   "logicpack-pencil": [],
+   "logicpack-mines": []
+  },
+  "signals": [
+   "offline",
+   "unreachable"
+  ]
+ },
+ "morse": {
+  "screens": {
+   "morse-writing": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "morse-beacon": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "morse-reference": []
+  },
+  "signals": []
+ },
+ "musicstand": {
+  "screens": {
+   "music-library": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening your music shelf"
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "{input} did not import: {reason}"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Your stand is empty",
+      "On your computer, run `kobo musicstand init --device IP`, then `kobo musicstand push SCORE.pdf --device IP`."
+     ]
+    }
+   ],
+   "music-stand": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "This score is no longer on the shelf."
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Turning the page"
+     ]
+    }
+   ],
+   "music-setlists": [],
+   "music-setlist": [],
+   "music-about": []
+  },
+  "signals": [
+   "invalid"
+  ]
+ },
+ "needles": {
+  "screens": {
+   "needles-reader": [],
+   "needles-project": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "needles-projects": [],
+   "needles-library": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No {} patterns",
+      "Add your Ravelry sign-in during setup, then sync this collection."
+     ]
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    }
+   ],
+   "needles-pattern": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "credentials",
+   "unauthorized"
+  ]
+ },
+ "nonograms": {
+  "screens": {
+   "nonograms-loading": [],
+   "nonograms-size-gate": [],
+   "nonograms-restart": [],
+   "nonograms-browser": [],
+   "nonograms-photo": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "nonograms-reveal": [],
+   "nonograms-play": [],
+   "nonograms-no-room": [],
+   "nonograms-save-recovery": [],
+   "nonograms-menu": [],
+   "nonograms-clue": [],
+   "nonograms-help": []
+  },
+  "signals": [
+   "credential",
+   "invalid"
+  ]
+ },
+ "panels": {
+  "screens": {
+   "panels-catalog": [
+    {
+     "kind": "splash",
+     "text": [
+      "Library unavailable",
+      "Return to Browse to check the server address and account details."
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening library"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No comics here yet",
+      "No matching titles",
+      "Try another section of your library."
+     ]
+    }
+   ],
+   "panels-import-loading": [
+    {
+     "kind": "activity",
+     "text": [
+      "Checking the file from your computer…"
+     ]
+    }
+   ],
+   "panels-library-error": [],
+   "panels-library": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening your shelf"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Your shelf is empty",
+      "Browse your home library or add a comic from your computer."
+     ]
+    }
+   ],
+   "panels-search": [],
+   "panels-detail": [],
+   "panels-download": [],
+   "panels-saving-library": [
+    {
+     "kind": "activity",
+     "text": [
+      "Adding comic to your shelf"
+     ]
+    }
+   ],
+   "panels-server-storage": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening server settings…"
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Saving server address…"
+     ]
+    }
+   ],
+   "panels-import-help": []
+  },
+  "signals": [
+   "credential",
+   "invalid",
+   "network",
+   "offline"
+  ]
+ },
+ "paperterm": {
+  "screens": {
+   "paperterm-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Reading pairing"
+     ]
+    }
+   ],
+   "paperterm-load-failed": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "paperterm-grid": [],
+   "paperterm-pairing-menu": [],
+   "paperterm-welcome": [],
+   "paperterm-setup": [],
+   "paperterm-trust": [],
+   "paperterm-start": [],
+   "paperterm-preview": []
+  },
+  "signals": [
+   "credential",
+   "malformed",
+   "network",
+   "token"
+  ]
+ },
+ "parlor": {
+  "screens": {
+   "parlor-menu": [],
+   "parlor-setup": [],
+   "parlor-help": [],
+   "parlor-board": [],
+   "parlor-record": []
+  },
+  "signals": []
+ },
+ "parser": {
+  "screens": {
+   "parser": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "empty_state",
+     "text": []
+    }
+   ],
+   "parser-play": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "parser-slots": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": [
+   "invalid",
+   "offline",
+   "token",
+   "unreachable"
+  ]
+ },
+ "post": {
+  "screens": {
+   "post-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening"
+     ]
+    }
+   ],
+   "post-setup": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "post-inbox": [
+    {
+     "kind": "splash",
+     "text": [
+      "No letters yet",
+      "Letters appear here when your Hermes gateway delivers one."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "post-letter": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "post-compose": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "malformed",
+   "token",
+   "unauthorized"
+  ]
+ },
+ "pubquiz": {
+  "screens": {
+   "pubquiz-about": [],
+   "pubquiz-question": [],
+   "pubquiz-choices": [],
+   "pubquiz-setup": [],
+   "pubquiz-players": [],
+   "pubquiz-reveal": [],
+   "pubquiz-rename": [],
+   "pubquiz-home": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "pubquiz-pass": [],
+   "pubquiz-podium": [],
+   "pubquiz-help": []
+  },
+  "signals": [
+   "credential",
+   "offline"
+  ]
+ },
+ "readlater": {
+  "screens": {
+   "readlater": [
+    {
+     "kind": "splash",
+     "text": [
+      "Choose an article",
+      "Open one from your reading list."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Connect Wallabag",
+      "On your computer run `kobo readlater login`, or install a credential named wallabag and add the HTTPS address here."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No saved articles",
+      "No starred articles",
+      "No archived articles"
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "expired",
+   "offline",
+   "token",
+   "unauthorized",
+   "unreachable"
+  ]
+ },
+ "rss-miniflux": {
+  "screens": {
+   "rss-miniflux": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "This article arrived empty. Load the full article to read it."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Connect Miniflux",
+      "On your computer run `kobo secret set miniflux`, then add the HTTPS address here."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "invalid",
+   "malformed",
+   "offline",
+   "token",
+   "unreachable"
+  ]
+ },
+ "sudoku": {
+  "screens": {
+   "sudoku": []
+  },
+  "signals": [
+   "invalid",
+   "offline"
+  ]
+ },
+ "syncthing": {
+  "screens": {
+   "syncthing": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": []
+ },
+ "vault": {
+  "screens": {
+   "vault-search": [],
+   "vault-home": [
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No vault yet",
+      "Run kobo vault init, then kobo vault push ~/Notes. Notes Sync delivers are ingested with kobo vault ingest."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": [
+      "{failures} note{} did not import; see About Vault."
+     ]
+    }
+   ],
+   "vault-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening the note"
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Loading notes to search ({} left)"
+     ]
+    }
+   ],
+   "vault-browse": [],
+   "vault-tags": [],
+   "vault-tag-notes": [],
+   "vault-recent": [],
+   "vault-search-results": [],
+   "vault-backlinks": [],
+   "vault-about": [],
+   "vault-note": [
+    {
+     "kind": "banner",
+     "text": [
+      "This note is no longer on the shelf."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "invalid"
+  ]
+ },
+ "verses": {
+  "screens": {
+   "verses-poem": [],
+   "verses-online": [
+    {
+     "kind": "splash",
+     "text": [
+      "Choose a poem",
+      "Open one from Search."
+     ]
+    }
+   ],
+   "verses-browse": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "verses-search": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "verses-results": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No poems found",
+      "Try a poet, title, or memorable line."
+     ]
+    }
+   ],
+   "verses-settings": [
+    {
+     "kind": "splash",
+     "text": [
+      "Daily poem on",
+      "Daily poem off",
+      "Tomorrow's poem will appear when the reader sleeps."
+     ]
+    }
+   ],
+   "verses-card": []
+  },
+  "signals": [
+   "credential",
+   "offline",
+   "unauthorized"
+  ]
+ },
+ "audiobook": {
+  "screens": {
+   "audiobook-compose": [],
+   "audiobook-player-missing": [
+    {
+     "kind": "error_state",
+     "text": [
+      "The player could not be prepared."
+     ]
+    }
+   ],
+   "audiobook-progress": [
+    {
+     "kind": "activity",
+     "text": []
+    }
+   ],
+   "audiobook-failed": [],
+   "audiobook-library": [
+    {
+     "kind": "activity",
+     "text": [
+      "Looking on the shelf"
+     ]
+    },
+    {
+     "kind": "error_state",
+     "text": [
+      "The shelf could not be read, so what is saved cannot be listed."
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "No audiobooks yet. One made here stays on the reader and plays offline."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "malformed",
+   "network",
+   "offline",
+   "token"
+  ]
+ },
+ "brief": {
+  "screens": {
+   "brief": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing yet",
+      "Tap Refresh once the device is online."
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Collecting stories, {done} of {STORIES}"
+     ]
+    }
+   ],
+   "brief-reading": [
+    {
+     "kind": "empty_state",
+     "text": [
+      "This story arrived empty."
+     ]
+    }
+   ],
+   "brief-sources": []
+  },
+  "signals": [
+   "credential",
+   "network",
+   "offline"
+  ]
+ },
+ "chat": {
+  "screens": {
+   "chat": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing said yet"
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Reaching the model"
+     ]
+    }
+   ],
+   "chat-compose": [],
+   "chat-service": []
+  },
+  "signals": [
+   "credential",
+   "credentials",
+   "malformed",
+   "token"
+  ]
+ },
+ "gallery": {
+  "screens": {
+   "gallery": [
+    {
+     "kind": "banner",
+     "text": [
+      "Mrs Dalloway is on this device."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "credential",
+   "invalid",
+   "malformed",
+   "network",
+   "offline",
+   "unreachable"
+  ]
+ },
+ "gutenbird": {
+  "screens": {
+   "gutenbird-catalogs": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "gutenbird-shelf": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Fetching the catalog"
+     ]
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    }
+   ],
+   "gutenbird-search": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "gutenbird-note": [],
+   "gutenbird-lookup": [
+    {
+     "kind": "activity",
+     "text": [
+      "Looking up the selected word"
+     ]
+    }
+   ],
+   "gutenbird-book": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "gutenbird-formats": []
+  },
+  "signals": [
+   "credential",
+   "invalid",
+   "malformed",
+   "network",
+   "offline",
+   "unreachable"
+  ]
+ },
+ "hn": {
+  "screens": {
+   "hn-article": [
+    {
+     "kind": "empty_state",
+     "text": [
+      "This article arrived empty."
+     ]
+    }
+   ],
+   "hn": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": []
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    }
+   ],
+   "hn-thread": [
+    {
+     "kind": "activity",
+     "text": [
+      "Fetching the comments"
+     ]
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    }
+   ],
+   "hn-facts": []
+  },
+  "signals": [
+   "credential",
+   "network"
+  ]
+ },
+ "magnet": {
+  "screens": {
+   "magnet": [
+    {
+     "kind": "splash",
+     "text": [
+      "Asking the sensor",
+      "One moment."
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No sensor"
+     ]
+    }
+   ]
+  },
+  "signals": []
+ },
+ "rss": {
+  "screens": {
+   "rss-shelf": [
+    {
+     "kind": "splash",
+     "text": [
+      "Could not open feeds",
+      "Your saved subscriptions could not be opened. The saved file has been left unchanged."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Opening your feeds"
+     ]
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "No feeds yet"
+     ]
+    }
+   ],
+   "rss-starters": [],
+   "rss-search": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "rss-found": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Looking for feeds at {}"
+     ]
+    },
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "empty_state",
+     "text": []
+    }
+   ],
+   "rss-import": [
+    {
+     "kind": "banner",
+     "text": []
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Looking for OPML files"
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Saving subscriptions"
+     ]
+    },
+    {
+     "kind": "activity",
+     "text": [
+      "Reading OPML file"
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "No OPML files are available in the Feeds app folder."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "rss-article-search": [],
+   "rss-items": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "rss-reading": [
+    {
+     "kind": "empty_state",
+     "text": [
+      "This article arrived empty."
+     ]
+    }
+   ]
+  },
+  "signals": [
+   "could not open",
+   "credential",
+   "credentials",
+   "invalid",
+   "malformed",
+   "network",
+   "offline",
+   "unreachable"
+  ]
+ },
+ "sidekick": {
+  "screens": {
+   "sidekick-opening": [
+    {
+     "kind": "activity",
+     "text": [
+      "Opening"
+     ]
+    }
+   ],
+   "sidekick-sending": [
+    {
+     "kind": "activity",
+     "text": [
+      "Sending your answer"
+     ]
+    }
+   ],
+   "sidekick-address": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "sidekick-code": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "sidekick-watching": [
+    {
+     "kind": "splash",
+     "text": [
+      "Watching",
+      "Questions from your coding agents appear here the moment they ask."
+     ]
+    },
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "sidekick-board": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ],
+   "sidekick-asking": [
+    {
+     "kind": "banner",
+     "text": []
+    }
+   ]
+  },
+  "signals": [
+   "403",
+   "credential",
+   "network",
+   "token"
+  ]
+ },
+ "tictactoe": {
+  "screens": {
+   "tictactoe-help": [],
+   "tictactoe": []
+  },
+  "signals": []
+ },
+ "todo": {
+  "screens": {
+   "Todo": [
+    {
+     "kind": "skeleton",
+     "text": []
+    },
+    {
+     "kind": "splash",
+     "text": [
+      "Nothing to do",
+      "Tap Add to put something on the list."
+     ]
+    },
+    {
+     "kind": "empty_state",
+     "text": [
+      "Nothing on the list yet."
+     ]
+    }
+   ]
+  },
+  "signals": []
+ }
+}

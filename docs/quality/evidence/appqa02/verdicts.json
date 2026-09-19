@@ -1,0 +1,26 @@
+{
+ "method": "Extract per-screen state constructors (activity/skeleton = loading, empty_state/splash = empty, error_state/banner = failure) via scripts/quality/audit-state-surfaces.py into states.json, then judge per app whether loading, empty, offline, expired-credential and malformed-content failures read as distinct states with honest copy, using the error-producer strings in source. Local-only apps need empty + malformed/save-error only; credential apps must also distinguish missing/rejected credentials from network failure.",
+ "verdicts": {
+  "arxiv": {
+   "status": "pass",
+   "notes": "Public API, no credentials needed. Loading: skeleton + activity. Empty: three distinct splashes (library/saved/listing). Malformed distinct: 'arXiv sent something unreadable' + 'That rendering was not text'. Offline: row-level 'offline - summary' markers plus listing trouble strings; in-flight guards ('already loading') are a separate truthful class. Evidence: states.json + main.rs:612-1209."
+  },
+  "audiobook": {
+   "status": "pass",
+   "notes": "Loading: activity. Empty: empty_state distinct from shelf-unreadable error_state. Malformed distinct per stage ('The script/research came back malformed'). Credentials: checked_secrets() gates before anything is spent; missing key reads 'Permission needed' and names the file. Offline: created books play offline; creation needs network and says so. Evidence: states.json + main.rs:88,241,286,562-570 + pipeline.rs:271-359."
+  },
+  "backgammon": {
+   "status": "pass",
+   "notes": "Local game, no network/credentials by design. Save is versioned (autosave-v4 with v3 migration); restore parsers are Option-based so a corrupt snapshot falls back instead of showing a false state. No loading state needed (instant). Evidence: states.json + main.rs:13-14,512,930-949."
+  },
+  "birds": {
+   "status": "pass",
+   "notes": "Loading: activity. Empty vs failure distinct: splash 'The snapshot could not be read' carries the detail text (malformed snapshot), while fetch errors surface as attention banners from the error string (network class). Offline named in signals. Evidence: states.json + main.rs:51-201."
+  },
+  "brief": {
+   "status": "pass",
+   "notes": "Textbook differentiation: offline ('The reader is offline. The brief below is the one already saved.') vs empty-result ('The refresh brought back nothing.') vs save-failure ('could not be saved for offline reading') vs malformed ('This story arrived empty.') vs empty shelf splash. Evidence: states.json + main.rs:595,685,995,1327."
+  }
+ },
+ "findings": []
+}
