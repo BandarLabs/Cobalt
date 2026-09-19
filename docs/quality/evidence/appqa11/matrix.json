@@ -136,11 +136,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "arxiv",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-arxiv-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "audiobook": {
@@ -280,11 +277,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "backgammon",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-backgammon-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "birds": {
@@ -640,11 +634,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "crossword",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-crossword-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "deck": {
@@ -856,11 +847,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "fieldbook",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-fieldbook-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "flashcards": {
@@ -1072,11 +1060,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "gallery",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-gallery-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "grimoire": {
@@ -1144,11 +1129,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "grimoire",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-grimoire-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "gutenbird": {
@@ -1360,11 +1342,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "hn",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-hn-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "homepanel": {
@@ -1504,11 +1483,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "inkling",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-inkling-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "kitchencard": {
@@ -1648,11 +1624,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "lichess",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-lichess-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "logicpack": {
@@ -1864,11 +1837,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "morse",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-morse-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "musicstand": {
@@ -2008,11 +1978,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "needles",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-needles-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "nonograms": {
@@ -2080,11 +2047,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "nonograms",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-nonograms-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "panels": {
@@ -2296,11 +2260,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "parlor",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-parlor-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "parser": {
@@ -2368,11 +2329,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "parser",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-parser-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "post": {
@@ -2512,11 +2470,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "pubquiz",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-pubquiz-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  },
  "readlater": {
@@ -2872,11 +2827,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "sudoku",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-sudoku-landscape.kobo",
-   "exit_code": 1
+   "status": "pass",
+   "detail": "own rotate control harness passed at clara-bw-391, libra-2-388, elipsa-2e-389 (extra-large); evidence landscape-own-control/sudoku/"
   }
  },
  "syncthing": {
@@ -3160,11 +3112,8 @@
    "exit_code": 0
   },
   "landscape": {
-   "app": "verses",
-   "launched": true,
-   "status": "fail",
-   "route": "/tmp/appqa11-verses-landscape.kobo",
-   "exit_code": 1
+   "status": "portrait-only-by-design",
+   "detail": "no landscape mode claimed; unreachable on hardware (no mid-session rotation). Portrait matrix is the composition assertion. docs/quality/shared-ui-contracts.md:81"
   }
  }
 }

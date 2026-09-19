@@ -533,7 +533,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **APPQA-08** Test 0, 1, 20 and 100 items with long Unicode titles.
 - [x] **APPQA-09** Test long bodies, supported fonts and CJK where applicable.
 - [x] **APPQA-10** Test delayed/failed downloads and storage interruption.
-- [ ] **APPQA-11** Check every intermediate state under supported profile/scale/orientation.
+- [x] **APPQA-11** Check every intermediate state under supported profile/scale/orientation.
 - [ ] **APPQA-12** Regenerate screenshots only from the shipped build.
 - [x] **APPQA-13** Keep Zotero Reader outside this catalog review.
 

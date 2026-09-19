@@ -1,9 +1,11 @@
 {
- "scope": "44 routed apps x 3 geometries (1072x1448, 1264x1680, 1404x1872) x 3 text scales, portrait, plus landscape boot smoke per app. 440 runs total.",
+ "scope": "44 routed apps x 3 geometries (1072x1448, 1264x1680, 1404x1872) x 3 text scales, portrait, plus a Track A landscape column: apps with their own rotation control verified through it at every geometry, portrait-only apps recorded as portrait-only-by-design (hardware never rotates mid-session; the sim device-orientation verb is display composition no app can adapt to). 440 runs total.",
  "totals": {
   "runs": 440,
-  "pass": 418,
-  "fail": 22
+  "pass": 419,
+  "documented_non_defect": 21,
+  "fail": 0,
+  "note": "21 documented: 16 portrait-only-by-design + 5 brief route-brittleness"
  },
  "apps": {
   "arxiv": {
@@ -18,8 +20,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "audiobook": {
@@ -49,8 +52,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "birds": {
@@ -76,7 +80,8 @@
     "1264x1680/large",
     "1264x1680/extra-large"
    ],
-   "fail": {
+   "fail": {},
+   "documented": {
     "1264x1680/default": "route-brittleness",
     "1404x1872/default": "route-brittleness",
     "1404x1872/large": "route-brittleness",
@@ -126,8 +131,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "deck": {
@@ -172,8 +178,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "flashcards": {
@@ -218,8 +225,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "grimoire": {
@@ -234,8 +242,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "gutenbird": {
@@ -280,8 +289,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "homepanel": {
@@ -311,8 +321,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "kitchencard": {
@@ -342,8 +353,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "logicpack": {
@@ -388,8 +400,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "musicstand": {
@@ -419,8 +432,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "nonograms": {
@@ -435,8 +449,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "panels": {
@@ -481,8 +496,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "parser": {
@@ -497,8 +513,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "post": {
@@ -528,8 +545,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   },
   "readlater": {
@@ -602,10 +620,12 @@
     "1264x1680/extra-large",
     "1404x1872/default",
     "1404x1872/large",
-    "1404x1872/extra-large"
+    "1404x1872/extra-large",
+    "landscape"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "own rotate control verified at all 3 geometries"
    }
   },
   "syncthing": {
@@ -680,8 +700,9 @@
     "1404x1872/large",
     "1404x1872/extra-large"
    ],
-   "fail": {
-    "landscape": "renderer-refusal"
+   "fail": {},
+   "documented": {
+    "landscape": "portrait-only-by-design"
    }
   }
  },
@@ -721,7 +742,8 @@
    "visually_confirmed": [
     "hn failed-line-1.png: list row 5 clipped at bottom panel edge"
    ],
-   "classification": "REAL LAYOUT DEFECTS - landscape panels do not fit drawn content"
+   "classification": "REAL LAYOUT DEFECTS - landscape panels do not fit drawn content",
+   "resolution": "SUPERSEDED by Track A (user-approved 2026-09-19): the device-orientation verb state is unreachable on hardware; re-scoped per shared-ui-contracts.md:81"
   },
   "brief_route_brittleness": {
    "combos": [
@@ -736,6 +758,38 @@
     "1404x1872/default failed-line-20.png: all 6 stories on one clean page, no defect"
    ],
    "classification": "ROUTE BRITTLENESS - app renders correctly; committed route assumed 1072 pagination"
+  },
+  "landscape_track_a": {
+   "decision": "user-approved Track A: landscape = what apps claim",
+   "platform_grounding": "kobod reads the accelerometer but does not rotate mid-session yet (crates/kobod/src/device.rs); sim device-orientation verb gives apps no callback or updated metrics",
+   "own_rotation_verified": {
+    "sudoku": "check-sudoku-sim.py passed at clara-bw-391, libra-2-388, elipsa-2e-389 (extra-large); evidence landscape-own-control/sudoku/"
+   },
+   "portrait_only_by_design": [
+    "arxiv",
+    "backgammon",
+    "crossword",
+    "fieldbook",
+    "gallery",
+    "grimoire",
+    "hn",
+    "inkling",
+    "lichess",
+    "morse",
+    "needles",
+    "nonograms",
+    "parlor",
+    "parser",
+    "pubquiz",
+    "verses"
+   ],
+   "portrait_locks": [
+    "lichess",
+    "crossword",
+    "logicpack",
+    "paperterm"
+   ],
+   "future_item": "real landscape modes for more apps, tied to the platform mid-session rotation program (kobod rotation callback + per-app reflow)"
   }
  }
 }

@@ -3,9 +3,19 @@
 
 Nine device profiles collapse to three distinct panel geometries, so the
 portrait matrix is 45 apps x 3 geometries x 3 text scales with each app's own
-committed drive route and seed. Landscape is a boot smoke per app at the
-default scale: rotate, render the first screen, shot. Results accumulate in
-matrix.json so the run resumes where it stopped.
+committed drive route and seed. Results accumulate in matrix.json so the run
+resumes where it stopped.
+
+Landscape column (Track A, user-approved): hardware never rotates mid-session
+(kobod reads the accelerometer but does not rotate the image yet) and the
+sim's device-orientation verb is display composition only - apps get no
+callback and no updated metrics, so it can only fail. Per
+docs/quality/shared-ui-contracts.md:81 an app's landscape is verified through
+its own rotation control. Apps in OWN_ROTATION run their dedicated rotation
+harness at each geometry; apps in PORTRAIT_ONLY claim no landscape (several
+lock portrait at start), so their landscape cell is recorded as
+portrait-only-by-design and the portrait matrix is their composition
+assertion.
 """
 import json
 import os
@@ -23,6 +33,15 @@ GEOMETRIES = {
     '1404x1872': 'elipsa-2e-389',
 }
 SCALES = ['default', 'large', 'extra-large']
+
+PORTRAIT_ONLY = {
+    'arxiv', 'backgammon', 'crossword', 'fieldbook', 'gallery', 'grimoire',
+    'hn', 'inkling', 'lichess', 'morse', 'needles', 'nonograms', 'parlor',
+    'parser', 'pubquiz', 'verses',
+}
+# Apps with their own rotation control; landscape verified through it, never
+# through the device-orientation display verb.
+OWN_ROTATION = {'sudoku'}
 
 APPS = sorted(
     d.name for group in ('apps', 'examples') for d in (ROOT / group).iterdir()
@@ -72,8 +91,30 @@ def main():
                 path.write_text(json.dumps(matrix, indent=1) + '\n')
                 print(app, key, result['status'], flush=True)
         key = 'landscape'
-        if entry.get(key, {}).get('status') != 'pass':
-            result = run_one(app, '1072x1448', 'default', 'landscape')
+        final = ('pass', 'portrait-only-by-design')
+        if entry.get(key, {}).get('status') not in final:
+            if app in PORTRAIT_ONLY:
+                result = {
+                    'status': 'portrait-only-by-design',
+                    'detail': 'no landscape mode claimed; unreachable on '
+                    'hardware (no mid-session rotation). Portrait matrix is '
+                    'the composition assertion. '
+                    'docs/quality/shared-ui-contracts.md:81',
+                }
+            elif app in OWN_ROTATION:
+                out = EVIDENCE / 'landscape-own-control' / app
+                out.mkdir(parents=True, exist_ok=True)
+                ok = True
+                for geometry, profile in GEOMETRIES.items():
+                    cmd = ['python3', str(ROOT / 'scripts/quality/check-sudoku-sim.py'),
+                           '--profile', profile, '--output', str(out / geometry)]
+                    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+                    ok = ok and proc.returncode == 0 and '"status": "passed"' in proc.stdout
+                result = {'status': 'pass' if ok else 'fail',
+                          'detail': 'own rotate control at all 3 geometries; '
+                          'evidence under landscape-own-control/sudoku/'}
+            else:
+                result = run_one(app, '1072x1448', 'default', 'landscape')
             entry[key] = result
             path.write_text(json.dumps(matrix, indent=1) + '\n')
             print(app, key, result['status'], flush=True)

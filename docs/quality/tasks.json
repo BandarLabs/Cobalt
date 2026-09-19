@@ -3752,8 +3752,8 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Check every intermediate state under supported profile/scale/orientation",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "440/440 runs classified: 419 pass incl. sudoku landscape via its own rotate control at all 3 geometries (evidence/appqa11/landscape-own-control/sudoku/); 21 documented non-defects (16 portrait-only-by-design per Track A, user-approved 2026-09-19; 5 brief route-brittleness, visually confirmed). verdicts.json + matrix.json under evidence/appqa11/."
  },
  {
   "id": "APPQA-12",
