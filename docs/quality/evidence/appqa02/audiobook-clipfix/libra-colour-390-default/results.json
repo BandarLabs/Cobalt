@@ -1,0 +1,13 @@
+{
+  "source_sha": "8bd4cbfffdab6dd24c54caa50ec5af2792b751aa",
+  "dirty": true,
+  "results": [
+    {
+      "app": "audiobook",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/audiobook/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

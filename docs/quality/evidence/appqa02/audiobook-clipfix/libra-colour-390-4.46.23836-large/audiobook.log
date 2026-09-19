@@ -1,0 +1,5 @@
+Kobo app simulator: http://127.0.0.1:41875
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa02/audiobook-clipfix/libra-colour-390-4.46.23836-large/audiobook-shots/audiobook-empty.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa02/audiobook-clipfix/libra-colour-390-4.46.23836-large/audiobook-shots/audiobook-playing.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa02/audiobook-clipfix/libra-colour-390-4.46.23836-large/audiobook-shots/audiobook-shelf.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa02/audiobook-clipfix/libra-colour-390-4.46.23836-large/audiobook-shots

@@ -1,0 +1,493 @@
+{
+ "arxiv": {
+  "success_strings": [
+   " => Field::Published,\n        ",
+   " => Field::Updated,\n        ",
+   " before any listing exists\n    /// to ask it from.\n    fn saved(&self, context: &Context) -> Screen {\n        let mut screen = ScreenBuilder::new(",
+   ", paper.published)\n            } else {\n                format!(",
+   ";\n\n/// The store keys the saved searches and the followed subjects are written\n/// under.\nconst SEARCHES_KEY: &str = ",
+   "Followed subjects hold {MAX_SAVED}. Remove one in Saved.",
+   "No saved papers",
+   "Nothing saved",
+   "Saved searches hold {MAX_SAVED}. Remove one in Saved.",
+   "arXiv sent something unreadable."
+  ],
+  "pending_strings": [
+   ");\n        }\n        // Saving and following are offered where the thing they keep is on\n        // screen: ",
+   ".to_owned(),\n        (TaskError::NotFound, Awaiting::Listing) => ",
+   "a download in progress"
+  ],
+  "persist_callsites": 28
+ },
+ "birds": {
+  "success_strings": [],
+  "pending_strings": [],
+  "persist_callsites": 2
+ },
+ "calibre-web": {
+  "success_strings": [
+   "Account connected",
+   "Finishing the saved file…",
+   "Library changes are not saved. Free some space, then retry saving.",
+   "Library changes are not saved. The saved library is kept.",
+   "Library changes not saved",
+   "Library setup is not saved.",
+   "Loading downloaded books…",
+   "No downloaded books. Open a book in your library and choose Download.",
+   "Opening saved book…",
+   "Reading changes are not saved. Close the book and choose Retry saving.",
+   "The book file was saved, but the library could not be updated.",
+   "The book was not saved. Free some space and download again.",
+   "The downloaded book is empty or has invalid details.",
+   "The downloaded library could not be loaded. Retry to keep your saved books.",
+   "The downloaded library has reached its 64-book limit.",
+   "The saved book could not be loaded. Try opening it again.",
+   "The saved book is incomplete or unreadable. Download it again.",
+   "The saved library could not be read. It has been left untouched.",
+   "This download leaves your library. Its account cannot be sent to another server.",
+   "This link leaves your library. Its account cannot be sent to another server."
+  ],
+  "pending_strings": [
+   "Connect the library this book came from before downloading it again.",
+   "Library changes are not saved. Free some space, then retry saving.",
+   "Reading changes are not saved. Close the book and choose Retry saving.",
+   "Retry saving",
+   "Retry saving setup",
+   "Wait for the library to finish loading or saving."
+  ],
+  "persist_callsites": 12
+ },
+ "crossword": {
+  "success_strings": [
+   "Present form of ‘be’, with ‘you’",
+   "Progress is not saved",
+   "Your latest letters are still here. Keep the app open while you make room on your reader, then retry.",
+   "Your saved game has been kept."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 0
+ },
+ "fanshelf": {
+  "success_strings": [
+   " => DownloadState::Downloaded,\n                    ",
+   " => DownloadState::Removed,\n                    _ => DownloadState::NotDownloaded,\n                },\n                adult: fields[13] == ",
+   "),\n            ]\n        } else if work.downloaded() {\n            vec![(",
+   ",\n                DownloadState::Downloaded => ",
+   ",\n            DownloadState::Downloaded => ",
+   ",\n            DownloadState::Downloaded if reading.contains(&work.id) => ",
+   ",\n            DownloadState::NotDownloaded => ",
+   ", SUMMARY_MAX).unwrap_or_default();\n    let updated = dd_class_text(body, ",
+   ".into(),\n                    updated: ",
+   "Chapters {} · Updated {} · {}",
+   "Downloaded copies and updates appear once works are added.",
+   "Fandoms appear once works are added.",
+   "Remove downloaded copies",
+   "Remove {downloaded} downloaded copies?",
+   "The EPUB could not be saved. The previous shelf copy is unchanged.",
+   "The downloaded EPUB could not be opened.",
+   "This downloaded EPUB is no longer on the reader.",
+   "Updated EPUB saved. Reading position kept.",
+   "Works stay on the shelf and can be downloaded again. Reading places are kept."
+  ],
+  "pending_strings": [
+   ", waiting.len()));\n            }\n        } else if action == action_id(",
+   "A synthetic work in progress.",
+   "No updates waiting.",
+   "No works in progress",
+   "Works in progress appear here.",
+   "{updates} waiting"
+  ],
+  "persist_callsites": 22
+ },
+ "fieldbook": {
+  "success_strings": [
+   "Not saved. The last write failed."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 7
+ },
+ "flashcards": {
+  "success_strings": [
+   "),\n            ],\n        );\n        if total == 0 {\n            let message = if imported_total == 0 {\n                ",
+   "Across {} decks · imported due order",
+   "Review not saved. Export or repair the local review log, then try again.",
+   "Review not saved. The imported schedule was left unchanged.",
+   "The sample deck could not be saved on this Kobo. Try again."
+  ],
+  "pending_strings": [
+   ")\n            .skeleton(5)\n            .transfer(\n                if sample_saving {\n                    ",
+   "Review log is full. Export it before adding more reviews."
+  ],
+  "persist_callsites": 37
+ },
+ "frame": {
+  "success_strings": [],
+  "pending_strings": [],
+  "persist_callsites": 3
+ },
+ "homepanel": {
+  "success_strings": [
+   ").into_bytes());\n    }\n\n    fn save_states(&self, context: &mut Context) {\n        let saved = self\n            .states\n            .iter()\n            .map(|(id, state)| format!(",
+   "Not connected",
+   "Not connected yet.",
+   "{} · Not connected"
+  ],
+  "pending_strings": [
+   "Updated. Checking status…"
+  ],
+  "persist_callsites": 1
+ },
+ "inkling": {
+  "success_strings": [
+   ")));\n        }\n        if !absent.is_empty() {\n            parts.push(format!(",
+   "),\n                            Mark::Absent => format!(",
+   "),\n                            Mark::Present => format!(",
+   "),\n                Mark::Absent => format!(",
+   "),\n                Mark::Present => format!(",
+   ", absent.join(",
+   ", present.join(",
+   ", slots.iter().collect::<String>()));\n        }\n        if !present.is_empty() {\n            parts.push(format!(",
+   "Play a past day. Archive games do not change statistics and are not saved.",
+   "Progress could not be saved. Check available storage.",
+   "[A] is in the right spot. (A) is elsewhere in the word. A\\u{00d7} is absent."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 7
+ },
+ "kitchencard": {
+  "success_strings": [
+   "Off the air. Saved recipes still cook.",
+   "Recipes could not be saved or opened. Retry saving before closing.",
+   "Tonight's card is saved for offline cooking."
+  ],
+  "pending_strings": [
+   "Recipes could not be saved or opened. Retry saving before closing.",
+   "{} recipe{} from Mealie {} waiting."
+  ],
+  "persist_callsites": 15
+ },
+ "lichess": {
+  "success_strings": [
+   " => winner_sentence(self.state.winner, ",
+   "A 32-puzzle session is ready offline.",
+   "Board updated.",
+   "Challenge sent to {username}",
+   "Lichess sent a move list that could not be replayed.",
+   "Move sent",
+   "No puzzle is ready. Download a session on Wi-Fi.",
+   "Opponent disconnected.",
+   "The board did not match the saved game."
+  ],
+  "pending_strings": [
+   "),\n            AccountState::Checking => screen.activity(",
+   ".to_owned()\n            }\n            AccountState::Checking => ",
+   "Could not load the position. Reconnecting.",
+   "Could not read the board update. Reconnecting.",
+   "Could not read the game update. Reconnecting.",
+   "Game in progress",
+   "Keep waiting",
+   "Lichess asked this board to wait {remaining}s before reconnecting.",
+   "Pairing in progress",
+   "Reconnecting",
+   "Reconnecting to Lichess.",
+   "Saved connection settings could not be read. Checking your game again.",
+   "Saved connection settings could not be read. Connecting again.",
+   "The action was cancelled with an unknown server outcome; reconnecting.",
+   "{} Checking whether the action completed.",
+   "{} Checking whether your game started."
+  ],
+  "persist_callsites": 6
+ },
+ "musicstand": {
+  "success_strings": [],
+  "pending_strings": [],
+  "persist_callsites": 3
+ },
+ "needles": {
+  "success_strings": [
+   "Open synced pattern",
+   "Opening the pattern transferred from your computer.",
+   "Opening your synced pattern…",
+   "Read synced pattern",
+   "The transferred pattern is not readable Markdown or text. Run `kobo needles push` again."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 6
+ },
+ "nonograms": {
+  "success_strings": [
+   "));\n    let saved = written(r.action(action_id(",
+   ".into(),\n            Status::Saved if self.run_start.is_some() => ",
+   ".to_vec(),\n        future,\n        changed,\n        vec![b'x'; saved::LIMIT + 1],\n    ] {\n        let mut r = ready(0);\n        r.action(action_id(",
+   "Not saved",
+   "Not saved · More to retry"
+  ],
+  "pending_strings": [
+   ".into(),\n            Status::Saving | Status::Unsaved => "
+  ],
+  "persist_callsites": 5
+ },
+ "panels": {
+  "success_strings": [
+   ")\n                .build(),\n            Some(Status::Saving | Status::Unsaved) => {\n                base.activity(",
+   ")); // Coalesced while page 2 is being saved.\n    let key = super::progress_key(",
+   ", comic.pages),\n            Some(Position::Saved(page)) => format!(",
+   "Address not saved",
+   "Checking saved pages against your server",
+   "Checking the saved download.",
+   "Choose Connect on your reader. Open the reader drive on your computer.",
+   "Download progress was not saved. Free some space, then retry.",
+   "Reading position was not saved. Free some space and retry.",
+   "The comic list was not saved. Free some space, then retry.",
+   "The download could not be saved. Free some space, then retry.",
+   "The last download was interrupted. Your saved comics are available.",
+   "The saved download could not be read. Retry when storage is available, or remove it.",
+   "The saved reading position could not be read. Try opening this comic again.",
+   "The server address was not saved. Free some space, then retry.",
+   "This comic could not be added: {error}",
+   "This download could not be saved. Remove it and try again.",
+   "This saved download could not be verified. Remove it and download the comic again.",
+   "Your saved comics are still available offline."
+  ],
+  "pending_strings": [
+   ");\n        }\n        screen.build()\n    }\n\n    fn saving_library_screen(&self) -> Screen {\n        let screen = ScreenBuilder::new(",
+   "Finish adding your comic before starting another download.",
+   "Reading position could not be prepared for saving.",
+   "Retry saving"
+  ],
+  "persist_callsites": 97
+ },
+ "paperterm": {
+  "success_strings": [
+   " · Not saved",
+   "Pairing is saved for next time.",
+   "Pairing was not saved. Your previous pairing is unchanged. This session can continue.",
+   "The computer sent an unreadable screen. Reconnecting.",
+   "This connection will not be remembered. Reopen Paperterm to retry reading your saved pairing.",
+   "Waiting for this computer to confirm pairing. Your saved connection has not been changed.",
+   "Your saved pairing has not been changed. Retry, or continue without saving a connection."
+  ],
+  "pending_strings": [
+   "Connection lost. Reconnecting.",
+   "Continue without saving",
+   "Reconnecting",
+   "Retry saving",
+   "The computer sent an unreadable screen. Reconnecting.",
+   "Your saved pairing has not been changed. Retry, or continue without saving a connection."
+  ],
+  "persist_callsites": 0
+ },
+ "parser": {
+  "success_strings": [
+   "The saved game could not be restored.",
+   "local variable {variable} is absent"
+  ],
+  "pending_strings": [],
+  "persist_callsites": 6
+ },
+ "post": {
+  "success_strings": [
+   "1 reply waiting to be sent.",
+   "{queued} replies waiting to be sent."
+  ],
+  "pending_strings": [
+   " => Self::Sending,\n            ",
+   ",\n            Self::Sending => ",
+   "1 reply waiting to be sent.",
+   "Reply queued; sending on this connection.",
+   "{queued} replies waiting to be sent."
+  ],
+  "persist_callsites": 0
+ },
+ "pubquiz": {
+  "success_strings": [
+   "Not synced yet."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 0
+ },
+ "readlater": {
+  "success_strings": [
+   ";\n/// The store key holding the imported session after the shelf file is gone.\npub const STORE_KEY: &str = ",
+   "Articles could not be saved or opened. Retry saving before closing.",
+   "No saved articles",
+   "Reading list synced."
+  ],
+  "pending_strings": [
+   "Archived; sending on the next sync.",
+   "Articles could not be saved or opened. Retry saving before closing.",
+   "Finish saving articles before changing the server. Retry saving if needed.",
+   "Retry saving",
+   "Starred; sending on the next sync.",
+   "Unstarred; sending on the next sync."
+  ],
+  "persist_callsites": 6
+ },
+ "rss-miniflux": {
+  "success_strings": [
+   "A feed is added to your Miniflux account after you choose it.",
+   "Articles could not be saved or opened. Retry saving before closing.",
+   "Could not sync. Your saved articles are still here; connect to Wi-Fi and retry.",
+   "New articles are not saved. Retry saving before closing.",
+   "Opening saved articles. Choose Sync when they are ready.",
+   "Reading positions are not saved.",
+   "Saved articles are still being opened or updated. Try Sync again shortly.",
+   "Some article images are not saved.",
+   "This Kobo cannot hold more unsent changes. Sync first.",
+   "Your changes are not saved on this Kobo yet.",
+   "entries?limit={depth}&{filter}&order=published_at&direction=desc",
+   "{} was added to your Miniflux account. Sync to read it.",
+   "{} was not added. Check the feed in Miniflux before trying again."
+  ],
+  "pending_strings": [
+   ".into(),\n            ),\n            (waiting, true) => Some(format!(\n                ",
+   "1 change waiting for Miniflux.",
+   "Articles could not be saved or opened. Retry saving before closing.",
+   "Finish saving and syncing before changing accounts.",
+   "Finish the request in progress, then try again.",
+   "New articles are not saved. Retry saving before closing.",
+   "Retry saving",
+   "{waiting} changes waiting for Miniflux."
+  ],
+  "persist_callsites": 3
+ },
+ "sudoku": {
+  "success_strings": [
+   ".to_vec(),\n        vec![0; saved::LIMIT + 1],\n        text.replace("
+  ],
+  "pending_strings": [
+   ")?,\n        checking: flag(",
+   ", game.checking)\n            .set("
+  ],
+  "persist_callsites": 0
+ },
+ "syncthing": {
+  "success_strings": [
+   "Folders are fixed: sync/vault, sync/frame and sync/books arrive; sync/out leaves. Transferred packages import into Vault and Frame after each window.",
+   "{} imported"
+  ],
+  "pending_strings": [],
+  "persist_callsites": 2
+ },
+ "vault": {
+  "success_strings": [
+   ");\n        if synced > 0 {\n            heading.push_str(&format!(",
+   ")?,\n                added: number(",
+   ",\n            Self::Synced => "
+  ],
+  "pending_strings": [],
+  "persist_callsites": 2
+ },
+ "audiobook": {
+  "success_strings": [
+   ";\n/// The sample's place in the library once it is saved.\nconst SAMPLE_NAME: &str = ",
+   "No audiobooks yet. One made here stays on the reader and plays offline.",
+   "The shelf could not be read, so what is saved cannot be listed."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 19
+ },
+ "brief": {
+  "success_strings": [
+   ",\n        }\n    }\n\n    fn saved(self) -> &'static str {\n        match self {\n            Self::Top => ",
+   ", source.saved(), fetched.unwrap_or(",
+   ", story.url))\n            .at_most(ARTICLE_CEILING as usize);\n        saved.start(context);\n        self.article = Some(saved);\n        self.note = Some(",
+   "This story could not be saved for offline reading.",
+   "This story is open but not saved for offline reading.",
+   "{why} The brief below is the one already saved.",
+   "{why} There is nothing saved to fall back on."
+  ],
+  "pending_strings": [],
+  "persist_callsites": 1
+ },
+ "chat": {
+  "success_strings": [
+   " glued to the front of a\n/// sentence. The reader's own words sat at depth 0 under ",
+   "Something else is still being sent."
+  ],
+  "pending_strings": [
+   ");\n                }\n            }\n        }\n\n        if on_latest && self.view != View::Waiting && self.can_retry() {\n            screen = screen.button(RETRY, "
+  ],
+  "persist_callsites": 6
+ },
+ "gallery": {
+  "success_strings": [
+   ",\n                Vec::new(),\n                ParagraphPresentation::default(),\n                1,\n                0,\n                [(",
+   "A mark, a title and a sentence, centred in whatever is left of the panel.",
+   "Everything downloaded and not yet read",
+   "Nothing has been downloaded yet.",
+   "Secondary, for the sentence under the sentence.",
+   "Size not sent by the server"
+  ],
+  "pending_strings": [],
+  "persist_callsites": 15
+ },
+ "gutenbird": {
+  "success_strings": [],
+  "pending_strings": [
+   "));\n            self.task = Some((task, Awaiting::Feed(purpose, url)));\n        } else {\n            context.log(LogLevel::Warn, format!(",
+   ", self.fetched));\n                self.task = Some((task, Awaiting::Book));\n            }\n            None => self.problem = Some(",
+   "a download in progress",
+   "{task:?} {} arrived with nothing waiting",
+   "{task:?} {} for {awaiting:?}"
+  ],
+  "persist_callsites": 24
+ },
+ "hn": {
+  "success_strings": [
+   ").top_bar(story.title.clone());\n        screen = if self.marks.was_saved(&story.id) {\n            screen.top_bar_action(",
+   "Read, saved \\u{b7} {summary}",
+   "tab-saved"
+  ],
+  "pending_strings": [],
+  "persist_callsites": 0
+ },
+ "rss": {
+  "success_strings": [
+   "No saved articles match this search.",
+   "Nothing published yet",
+   "Nothing published yet.",
+   "Opening saved articles",
+   "Reading progress is not saved.",
+   "Reading progress is not saved. Go back to retry.",
+   "Refresh history is not saved. Retry saving.",
+   "Saved articles could not be read or updated. Try saving again.",
+   "Saved articles could not be read or updated. Your open articles are still available.",
+   "Search saved articles",
+   "Some images and reading progress are not saved.",
+   "Some images are not saved.",
+   "Subscriptions were not saved.",
+   "Subscriptions were not saved. Go back to Feeds to retry saving.",
+   "Subscriptions were not saved. Retry saving before closing Feeds.",
+   "These articles could not be saved for offline reading.",
+   "Your saved subscriptions could not be opened.",
+   "Your saved subscriptions could not be opened. The saved file has been left unchanged.",
+   "date_published"
+  ],
+  "pending_strings": [
+   "Refresh history is not saved. Retry saving.",
+   "Retry saving",
+   "Saved articles could not be read or updated. Try saving again.",
+   "Subscriptions were not saved. Go back to Feeds to retry saving.",
+   "Subscriptions were not saved. Retry saving before closing Feeds."
+  ],
+  "persist_callsites": 12
+ },
+ "sidekick": {
+  "success_strings": [
+   "),\n        choices,\n        // Absent means a permission, which is what almost every ask is.\n        permission: ask.get("
+  ],
+  "pending_strings": [
+   "Still sending the last answer.",
+   "sidekick-sending"
+  ],
+  "persist_callsites": 0
+ },
+ "todo": {
+  "success_strings": [
+   "the list could not be saved: {reason}"
+  ],
+  "pending_strings": [],
+  "persist_callsites": 2
+ }
+}
