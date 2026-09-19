@@ -6,10 +6,13 @@ clean
 shot about
 tap Back to packs
 tap Start pass-around
+expect setup
+tap Continue
+tap Start round
 expect Ada answers
 clean
 shot question
-tap A · Mercury
+tap Mercury
 expect Answer locked
 clean
 shot pass

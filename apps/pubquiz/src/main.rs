@@ -19,6 +19,7 @@ const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Home,
+    Setup,
     Players,
     Question,
     Choices,
@@ -28,17 +29,48 @@ enum View {
     HowTo,
     About,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Difficulty {
+    Easy,
+    Medium,
+    Hard,
+}
+impl Difficulty {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Easy => "Easy",
+            Self::Medium => "Medium",
+            Self::Hard => "Hard",
+        }
+    }
+    fn from_pack(value: &str) -> Self {
+        match value {
+            "easy" => Self::Easy,
+            "hard" => Self::Hard,
+            _ => Self::Medium,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Question {
     category: String,
+    difficulty: Difficulty,
     text: String,
     answers: [String; 4],
     correct: usize,
 }
 
-fn question(category: &str, text: &str, answers: [&str; 4], correct: usize) -> Question {
+fn question(
+    category: &str,
+    difficulty: Difficulty,
+    text: &str,
+    answers: [&str; 4],
+    correct: usize,
+) -> Question {
     Question {
         category: category.into(),
+        difficulty,
         text: text.into(),
         answers: answers.map(Into::into),
         correct,
@@ -49,42 +81,49 @@ fn bundled_questions() -> Vec<Question> {
     [
         question(
             "Science",
+            Difficulty::Easy,
             "Which planet has the shortest year?",
             ["Mercury", "Mars", "Venus", "Earth"],
             0,
         ),
         question(
             "General knowledge",
+            Difficulty::Easy,
             "What is the capital of Finland?",
             ["Oslo", "Helsinki", "Tallinn", "Stockholm"],
             1,
         ),
         question(
             "History",
+            Difficulty::Hard,
             "Which ship carried Charles Darwin on his voyage?",
             ["Beagle", "Endeavour", "Victory", "Resolution"],
             0,
         ),
         question(
             "Arts",
+            Difficulty::Medium,
             "Who painted The Persistence of Memory?",
             ["Miró", "Dalí", "Picasso", "Kahlo"],
             1,
         ),
         question(
             "Geography",
+            Difficulty::Easy,
             "Which river runs through Budapest?",
             ["Rhine", "Danube", "Seine", "Tagus"],
             1,
         ),
         question(
             "Science",
+            Difficulty::Easy,
             "What is the chemical symbol for gold?",
             ["Ag", "Gd", "Au", "Go"],
             2,
         ),
         question(
             "Literature",
+            Difficulty::Medium,
             "Who wrote Frankenstein?",
             [
                 "Mary Shelley",
@@ -96,18 +135,21 @@ fn bundled_questions() -> Vec<Question> {
         ),
         question(
             "Music",
+            Difficulty::Easy,
             "How many strings does a standard violin have?",
             ["Three", "Four", "Five", "Six"],
             1,
         ),
         question(
             "Nature",
+            Difficulty::Medium,
             "Which animal is the largest living bird?",
             ["Emu", "Albatross", "Ostrich", "Condor"],
             2,
         ),
         question(
             "Sport",
+            Difficulty::Easy,
             "How many players start on a football team?",
             ["Nine", "Ten", "Eleven", "Twelve"],
             2,
@@ -131,6 +173,10 @@ struct Quiz {
     rounds: u16,
     questions: Vec<Question>,
     round_questions: Vec<Question>,
+    setup_party: bool,
+    setup_category: Option<String>,
+    setup_difficulty: Option<Difficulty>,
+    setup_page: usize,
     page: usize,
     sync_task: Option<TaskId>,
     pack_synced: bool,
@@ -153,6 +199,10 @@ impl Default for Quiz {
             rounds: 0,
             questions: bundled_questions(),
             round_questions: bundled_questions(),
+            setup_party: true,
+            setup_category: None,
+            setup_difficulty: None,
+            setup_page: 0,
             page: 0,
             sync_task: None,
             pack_synced: false,
@@ -187,7 +237,66 @@ impl Quiz {
             .into_bytes(),
         );
     }
+    fn setup_action(&mut self, action: ActionId) -> bool {
+        if action == action_id("diff-cycle") {
+            self.setup_difficulty = match self.setup_difficulty {
+                None => Some(Difficulty::Easy),
+                Some(Difficulty::Easy) => Some(Difficulty::Medium),
+                Some(Difficulty::Medium) => Some(Difficulty::Hard),
+                Some(Difficulty::Hard) => None,
+            };
+        } else if action == action_id("cat-any") {
+            self.setup_category = None;
+        } else if action == action_id("next-page") {
+            let pages = setup_categories(self).len().max(1).div_ceil(SETUP_ROWS);
+            self.setup_page = (self.setup_page + 1).min(pages - 1);
+        } else if action == action_id("previous-page") {
+            self.setup_page = self.setup_page.saturating_sub(1);
+        } else if action == action_id("continue-setup") {
+            if self.setup_party {
+                self.view = View::Players;
+            } else {
+                self.begin(false);
+            }
+        } else if action != ActionId::BACK && action != action_id("home") {
+            let categories = setup_categories(self);
+            let pages = categories.len().max(1).div_ceil(SETUP_ROWS);
+            let page = self.setup_page.min(pages - 1);
+            let offset = usize::from(page == 0);
+            let Some(index) = (0..SETUP_ROWS.saturating_sub(offset))
+                .find(|i| action == action_id(&format!("cat-{i}")))
+            else {
+                return false;
+            };
+            if let Some(name) = categories.get(page * SETUP_ROWS + index) {
+                self.setup_category = Some(name.clone());
+            }
+        } else {
+            return false;
+        }
+        true
+    }
+
     fn begin(&mut self, party: bool) {
+        let pool: Vec<Question> = self
+            .questions
+            .iter()
+            .filter(|question| {
+                self.setup_category
+                    .as_ref()
+                    .is_none_or(|category| &question.category == category)
+                    && self
+                        .setup_difficulty
+                        .is_none_or(|difficulty| question.difficulty == difficulty)
+            })
+            .cloned()
+            .collect();
+        if pool.is_empty() {
+            self.note =
+                Some("No questions match that mix yet. Sync packs or widen the choice.".into());
+            self.view = View::Home;
+            return;
+        }
         self.party = party;
         self.view = View::Question;
         self.question = 0;
@@ -196,15 +305,8 @@ impl Quiz {
         self.scores = [0; 4];
         self.note = None;
         self.page = 0;
-        let offset = usize::from(self.rounds) * 10 % self.questions.len();
-        self.round_questions = self
-            .questions
-            .iter()
-            .cycle()
-            .skip(offset)
-            .take(10)
-            .cloned()
-            .collect();
+        let offset = usize::from(self.rounds) * 10 % pool.len();
+        self.round_questions = pool.iter().cycle().skip(offset).take(10).cloned().collect();
     }
     fn sync(&mut self, context: &mut Context) {
         if self.sync_task.is_some() {
@@ -308,6 +410,10 @@ fn parse_pack(bytes: &[u8]) -> Option<Vec<Question>> {
         .iter()
         .filter_map(|item| {
             let category = clean_text(item.get("category")?.as_str()?, 48);
+            let difficulty = item
+                .get("difficulty")
+                .and_then(Value::as_str)
+                .map_or(Difficulty::Medium, Difficulty::from_pack);
             let text = clean_text(item.get("question")?.as_str()?, 240);
             let correct = clean_text(item.get("correct_answer")?.as_str()?, 80);
             let wrong = item.get("incorrect_answers")?.as_array()?;
@@ -328,6 +434,7 @@ fn parse_pack(bytes: &[u8]) -> Option<Vec<Question>> {
             let answers: [String; 4] = answers.try_into().ok()?;
             Some(Question {
                 category,
+                difficulty,
                 text,
                 answers,
                 correct: slot,
@@ -345,9 +452,10 @@ fn screen(quiz: &Quiz) -> Screen {
 fn question_text(quiz: &Quiz) -> String {
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     let mut text = format!(
-        "{} · question {} of 10\n\n{}",
+        "{} · question {} of {}\n\n{}",
         question.category,
         quiz.question + 1,
+        quiz.round_questions.len(),
         question.text
     );
     for (index, answer) in question.answers.iter().enumerate() {
@@ -380,9 +488,10 @@ fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
     let compact = ScreenBuilder::new("pubquiz-question")
         .top_bar(question_title(quiz))
         .secondary(format!(
-            "{} · question {} of 10",
+            "{} · question {} of {}",
             question.category,
-            quiz.question + 1
+            quiz.question + 1,
+            quiz.round_questions.len()
         ))
         .text(&question.text)
         .rows(answer_rows(question))
@@ -465,6 +574,73 @@ fn clean_name(name: &str) -> Option<String> {
     }
 }
 
+const SETUP_ROWS: usize = 3;
+
+fn setup_categories(quiz: &Quiz) -> Vec<String> {
+    let mut categories: Vec<String> = quiz
+        .questions
+        .iter()
+        .map(|question| question.category.clone())
+        .collect();
+    categories.sort();
+    categories.dedup();
+    categories
+}
+
+fn setup_screen(quiz: &Quiz) -> Screen {
+    let categories = setup_categories(quiz);
+    let pages = categories.len().max(1).div_ceil(SETUP_ROWS);
+    let page = quiz.setup_page.min(pages - 1);
+    let window = &categories[page * SETUP_ROWS..categories.len().min((page + 1) * SETUP_ROWS)];
+    let difficulty = quiz.setup_difficulty.map_or("Any", Difficulty::label);
+    let mut rows: Vec<(String, String, String, Glyph)> = vec![(
+        "diff-cycle".to_owned(),
+        "Difficulty".to_owned(),
+        difficulty.to_owned(),
+        Glyph::Grid,
+    )];
+    if page == 0 {
+        rows.push((
+            "cat-any".to_owned(),
+            "Any category".to_owned(),
+            if quiz.setup_category.is_none() {
+                "Chosen".to_owned()
+            } else {
+                "Choose".to_owned()
+            },
+            Glyph::Grid,
+        ));
+    }
+    for (index, name) in window.iter().enumerate() {
+        let title = if name.chars().count() > 18 {
+            format!("{}…", name.chars().take(17).collect::<String>())
+        } else {
+            name.clone()
+        };
+        rows.push((
+            format!("cat-{index}"),
+            title,
+            if quiz.setup_category.as_ref() == Some(name) {
+                "Chosen".to_owned()
+            } else {
+                "Choose".to_owned()
+            },
+            Glyph::Grid,
+        ));
+    }
+    ScreenBuilder::new("pubquiz-setup")
+        .top_bar("Pub Quiz")
+        .heading("Round setup")
+        .rows(rows)
+        .page_position(
+            u16::try_from(page + 1).unwrap_or(u16::MAX),
+            u16::try_from(pages).unwrap_or(u16::MAX),
+        )
+        .action_bar([("previous-page", "Previous"), ("next-page", "Next")])
+        .primary_button("continue-setup", "Continue")
+        .build()
+}
+
 fn players_screen(quiz: &Quiz) -> Screen {
     ScreenBuilder::new("pubquiz-players")
         .top_bar("Pub Quiz")
@@ -535,6 +711,7 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
     }
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     match quiz.view {
+        View::Setup => setup_screen(quiz),
         View::Players => players_screen(quiz),
         View::Home => {
             let mut b = ScreenBuilder::new("pubquiz-home")
@@ -599,10 +776,10 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
         View::HowTo => ScreenBuilder::new("pubquiz-help")
             .top_bar("How to play")
             .owns_back(true)
-            .heading("Ten questions, one Kobo")
+            .heading("One Kobo, every player")
             .text("Solo: choose an answer and see the result right away.")
             .text("Pass-around: answer, pass the Kobo, then reveal the result.")
-            .text("Players take turns. The highest score after ten questions wins.")
+            .text("Players take turns. The highest score after the last question wins.")
             .bottom_action("home", "Play")
             .build(),
         View::About => ScreenBuilder::new("pubquiz-about")
@@ -718,7 +895,10 @@ impl KoboApp for Quiz {
         {
             self.page = self.page.saturating_sub(1);
         } else if action == action_id("party") && self.view == View::Home {
-            self.view = View::Players;
+            self.setup_party = true;
+            self.setup_page = 0;
+            self.view = View::Setup;
+        } else if self.view == View::Setup && self.setup_action(action) {
         } else if self.view == View::Players && action == action_id("start") {
             self.begin(true);
         } else if self.view == View::Players && action == action_id("count-2") {
@@ -738,7 +918,9 @@ impl KoboApp for Quiz {
                 self.entry.open();
             }
         } else if action == action_id("solo") && self.view == View::Home {
-            self.begin(false);
+            self.setup_party = false;
+            self.setup_page = 0;
+            self.view = View::Setup;
         } else if action == action_id("sync") && self.view == View::Home {
             self.sync(context);
         } else if action == action_id("about") {
@@ -766,7 +948,7 @@ impl KoboApp for Quiz {
             };
             self.page = 0;
             self.answer = None;
-            if self.question >= 10 {
+            if self.question >= self.round_questions.len() {
                 self.view = View::Podium;
                 self.rounds = self.rounds.saturating_add(1);
                 self.save(context);
@@ -869,6 +1051,8 @@ mod tests {
         assert_eq!(runner.app().view, View::About);
         runner.action(action_id("home"));
         runner.action(action_id("party"));
+        assert_eq!(runner.app().view, View::Setup);
+        runner.action(action_id("continue-setup"));
         assert_eq!(runner.app().view, View::Players);
         runner.action(action_id("start"));
         assert_eq!(runner.app().view, View::Question);
@@ -881,6 +1065,76 @@ mod tests {
         assert_eq!(runner.app().view, View::Podium);
         runner.action(action_id("home"));
         assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn pack_difficulty_is_mapped_when_present() {
+        let easy = r#"{"category":"Science","difficulty":"easy","question":"Q?","correct_answer":"Right","incorrect_answers":["W1","W2","W3"]}"#;
+        let hard = r#"{"category":"Science","difficulty":"hard","question":"Q?","correct_answer":"Right","incorrect_answers":["W1","W2","W3"]}"#;
+        let plain = r#"{"category":"Science","question":"Q?","correct_answer":"Right","incorrect_answers":["W1","W2","W3"]}"#;
+        let body = format!(
+            r#"{{"response_code":0,"results":[{}]}}"#,
+            [easy, hard, plain].repeat(4).join(",")
+        );
+        let questions = parse_pack(body.as_bytes()).expect("valid pack");
+        assert_eq!(questions.len(), 12);
+        assert_eq!(questions[0].difficulty, Difficulty::Easy);
+        assert_eq!(questions[1].difficulty, Difficulty::Hard);
+        assert_eq!(questions[2].difficulty, Difficulty::Medium);
+    }
+
+    #[test]
+    fn setup_filters_the_round_and_refuses_an_empty_mix() {
+        let mut quiz = Quiz {
+            setup_category: Some("Science".to_owned()),
+            ..Quiz::default()
+        };
+        quiz.begin(false);
+        assert!(!quiz.round_questions.is_empty());
+        assert!(quiz
+            .round_questions
+            .iter()
+            .all(|question| question.category == "Science"));
+
+        let mut quiz = Quiz {
+            setup_category: Some("No such category".to_owned()),
+            ..Quiz::default()
+        };
+        let kept = quiz.round_questions.clone();
+        quiz.begin(false);
+        assert_eq!(quiz.round_questions, kept);
+        assert_eq!(quiz.view, View::Home);
+        assert!(quiz.note.is_some());
+
+        let mut quiz = Quiz {
+            setup_difficulty: Some(Difficulty::Easy),
+            ..Quiz::default()
+        };
+        quiz.begin(false);
+        assert!(quiz
+            .round_questions
+            .iter()
+            .all(|question| question.difficulty == Difficulty::Easy));
+    }
+
+    #[test]
+    fn setup_flow_applies_the_chosen_mix() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("party"));
+        assert_eq!(runner.app().view, View::Setup);
+        runner.action(action_id("diff-cycle"));
+        assert_eq!(runner.app().setup_difficulty, Some(Difficulty::Easy));
+        runner.action(action_id("continue-setup"));
+        assert_eq!(runner.app().view, View::Players);
+        runner.action(action_id("start"));
+        assert_eq!(runner.app().view, View::Question);
+        assert!(runner
+            .app()
+            .round_questions
+            .iter()
+            .all(|question| question.difficulty == Difficulty::Easy));
     }
 }
 
@@ -904,6 +1158,8 @@ mod regression_tests {
         let mut runner = AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("solo"));
+        assert_eq!(runner.app().view, View::Setup);
+        runner.action(action_id("continue-setup"));
         for _ in 0..10 {
             let quiz = runner.app();
             let correct = quiz.round_questions[quiz.question].correct;
@@ -923,6 +1179,7 @@ mod regression_tests {
         let mut runner = AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("party"));
+        runner.action(action_id("continue-setup"));
         runner.action(action_id("count-2"));
         assert_eq!(runner.app().players, 2);
         runner.action(action_id("rename-0"));
@@ -983,6 +1240,7 @@ mod regression_tests {
         let mut runner = AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("party"));
+        runner.action(action_id("continue-setup"));
         runner.action(action_id("start"));
         let correct = runner.app().round_questions[0].correct;
         let wrong = (correct + 1) % 4;
@@ -1007,6 +1265,7 @@ mod regression_tests {
         runner.action(action_id("sync"));
         let task = runner.app().sync_task.expect("sync started");
         runner.action(action_id("solo"));
+        runner.action(action_id("continue-setup"));
         let round = runner.app().round_questions.clone();
         runner.store_result(StoreResult::Loaded {
             key: PACK.into(),
@@ -1017,6 +1276,7 @@ mod regression_tests {
         assert_eq!(runner.app().round_questions, round);
         runner.action(action_id("home"));
         runner.action(action_id("solo"));
+        runner.action(action_id("continue-setup"));
         assert_eq!(runner.app().round_questions[0].category, "New pack");
     }
 
