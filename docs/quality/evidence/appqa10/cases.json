@@ -26,5 +26,12 @@
   "status": "pass",
   "route": "/tmp/appqa10-parser-storage-full.kobo",
   "exit_code": 0
+ },
+ "rss-network-timeout": {
+  "app": "rss",
+  "launched": true,
+  "status": "pass",
+  "route": "/tmp/appqa10-rss-network-timeout.kobo",
+  "exit_code": 0
  }
 }

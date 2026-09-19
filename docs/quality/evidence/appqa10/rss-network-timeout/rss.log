@@ -1,0 +1,13 @@
+Kobo app simulator: http://127.0.0.1:38295
+task 1 failed: TimedOut
+task 3 failed: TimedOut
+             StatusClock  ["12:07"]
+BarGlyph(ActionId(3683784189), Trash)  ["Unfollow"]
+BarGlyph(ActionId(3572655668), Refresh)  ["Refresh"]
+             TopBarTitle  ["Interrompu Weekly"]
+       Banner(Attention)  ["The request took too long. Try again."]
+             SplashTitle  ["Something went wrong"]
+              SplashText  ["The request took too long. Try again."]
+Button(ActionId(3572655668), Enabled, Primary)  ["Try again"]
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa10/rss-network-timeout/rss-shots/rss-network-timeout.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa10/rss-network-timeout/rss-shots

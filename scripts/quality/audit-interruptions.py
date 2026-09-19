@@ -53,6 +53,10 @@ CASES = {
         app='rss', seed=seed_rss,
         route=('wait-for Feeds\nexpect Interrompu Weekly\nscenario host-down\n'
                'tap Interrompu Weekly\nwait 4000\ndump\nshot rss-host-down\n')),
+    'rss-network-timeout': dict(
+        app='rss', seed=seed_rss,
+        route=('wait-for Feeds\nexpect Interrompu Weekly\nscenario network-timeout\n'
+               'tap Interrompu Weekly\nwait 4000\ndump\nshot rss-network-timeout\n')),
     'panels-storage-full': dict(
         app='panels', seed=seed_panels,
         route=('wait-for Panels\nexpect Interrupted\nscenario storage-full\n'

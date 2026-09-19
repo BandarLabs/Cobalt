@@ -3744,8 +3744,8 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Test delayed/failed downloads and storage interruption",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "audit-interruptions.py: host-down, network-timeout and storage-full cases all fail gracefully with reader-visible copy. One real bug found and fixed: todo swallowed refused saves (9039a641, 1.0.10). docs/quality/evidence/appqa10/"
  },
  {
   "id": "APPQA-11",

@@ -1,0 +1,13 @@
+{
+  "source_sha": "9039a641105a8686c8761de4c17f6e79b01f12cc",
+  "dirty": true,
+  "results": [
+    {
+      "app": "rss",
+      "launched": true,
+      "status": "pass",
+      "route": "/tmp/appqa10-rss-network-timeout.kobo",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+ "item": "APPQA-10",
+ "method": "scripts/quality/audit-interruptions.py boots an app, switches the simulator scenario mid-session (host-down, network-timeout, storage-full), then drives the flow that must fail gracefully. Shots are visually verified; the sim log confirms the fault reached the app.",
+ "cases": {
+  "rss-host-down": "pass: \"The service did not answer. Try again.\" with a retry; feed list intact",
+  "rss-network-timeout": "pass: \"The request took too long. Try again.\", distinct from host-down, with a retry",
+  "panels-storage-full": "pass: \"This comic is missing from the reader.\"; library intact, no crash",
+  "parser-storage-full": "pass: \"The save could not be written. Check free space.\"; the story continues",
+  "todo-storage-full": "found and fixed: a refused save showed nothing and a relaunch would lose the item. Root cause: on_save routed only export keys, so the list save answer never reached on_store. Fix forwards answers, banners both list screens until a save lands, and measures around the banner (9039a641, todo 1.0.10)."
+ },
+ "offline": "covered by the APPQA-07 relaunch audit (44/44 apps reopen after offline)",
+ "delayed": "the sim has no slow-transfer scenario; the timeout path is the delayed case and is covered above",
+ "verdict": "pass with one fix"
+}
