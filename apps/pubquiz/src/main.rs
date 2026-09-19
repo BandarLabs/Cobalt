@@ -1,6 +1,7 @@
 //! Pub Quiz keeps its question packs and play state on the reader.
 
 use kobo_json::Value;
+use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
 use kobo_sdk::{
     action_id,
     keyboard::{TextEntry, Typing},
@@ -174,6 +175,8 @@ struct Quiz {
     rounds: u16,
     questions: Vec<Question>,
     round_questions: Vec<Question>,
+    pack_origin: Option<String>,
+    pack_updated_min: Option<i64>,
     setup_party: bool,
     setup_category: Option<String>,
     setup_difficulty: Option<Difficulty>,
@@ -200,6 +203,8 @@ impl Default for Quiz {
             rounds: 0,
             questions: bundled_questions(),
             round_questions: bundled_questions(),
+            pack_origin: None,
+            pack_updated_min: None,
             setup_party: true,
             setup_category: None,
             setup_difficulty: None,
@@ -225,18 +230,35 @@ impl Quiz {
             "You"
         }
     }
+    fn state_line(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}|{}",
+            self.packs,
+            self.rounds,
+            self.players,
+            self.names.join(","),
+            self.pack_origin.as_deref().unwrap_or(""),
+            self.pack_updated_min
+                .map_or_else(String::new, |minutes| minutes.to_string())
+        )
+    }
+    fn source_label(&self) -> &str {
+        self.pack_origin.as_deref().unwrap_or("Bundled")
+    }
+    fn updated_label(&self) -> String {
+        match (self.pack_origin.is_some(), self.pack_updated_min) {
+            (false, _) => "Not synced yet.".to_owned(),
+            (true, None) => "Synced earlier.".to_owned(),
+            (true, Some(minutes)) => match now_minutes() {
+                Some(now) if now >= minutes => {
+                    format!("Synced {}.", age_label((now - minutes) * 60))
+                }
+                _ => "Synced earlier.".to_owned(),
+            },
+        }
+    }
     fn save(&self, context: &mut Context) {
-        context.store().save(
-            STATE,
-            format!(
-                "{}|{}|{}|{}",
-                self.packs,
-                self.rounds,
-                self.players,
-                self.names.join(",")
-            )
-            .into_bytes(),
-        );
+        context.store().save(STATE, self.state_line().into_bytes());
     }
     fn setup_action(&mut self, action: ActionId, context: &Context) -> bool {
         if action == action_id("diff-cycle") {
@@ -447,6 +469,45 @@ fn parse_pack(bytes: &[u8]) -> Option<Vec<Question>> {
         .collect::<Vec<_>>();
     (questions.len() >= 10).then_some(questions)
 }
+fn reader_clock() -> Box<dyn Clock> {
+    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
+        .ok()
+        .and_then(|value| value.parse::<i16>().ok())
+        .unwrap_or(0);
+    SystemClock::new(minutes).map_or_else(
+        |_| {
+            Box::new(
+                ManualClock::new(Snapshot {
+                    unix_millis: 0,
+                    monotonic_millis: 0,
+                    utc_offset_minutes: 0,
+                })
+                .expect("a valid fixed clock"),
+            ) as Box<dyn Clock>
+        },
+        |clock| Box::new(clock) as Box<dyn Clock>,
+    )
+}
+
+fn now_minutes() -> Option<i64> {
+    reader_clock()
+        .now()
+        .ok()
+        .map(|snapshot| i64::try_from(snapshot.unix_millis / 60_000).unwrap_or(i64::MAX))
+}
+
+fn age_label(seconds: i64) -> String {
+    if seconds < 60 {
+        "just now".into()
+    } else if seconds < 3600 {
+        format!("{} min ago", seconds / 60)
+    } else if seconds < 86400 {
+        format!("{} hr ago", seconds / 3600)
+    } else {
+        format!("{} days ago", seconds / 86400)
+    }
+}
+
 #[cfg(test)]
 fn screen(quiz: &Quiz) -> Screen {
     screen_with(quiz, &Context::default())
@@ -484,6 +545,30 @@ fn answer_rows(question: &Question) -> impl Iterator<Item = (String, String, &st
             u16::try_from(index + 1).expect("four answers"),
         )
     })
+}
+
+fn about_screen(quiz: &Quiz) -> Screen {
+    ScreenBuilder::new("pubquiz-about")
+        .top_bar("Pub Quiz")
+        .heading("About")
+        .text("Question packs use Open Trivia DB content, licensed CC-BY-SA 4.0.")
+        .text("opentdb.com · cached packs are redistributed under the same license.")
+        .rows([
+            (
+                "about-source".to_owned(),
+                "Source".to_owned(),
+                quiz.source_label().to_owned(),
+                Glyph::Download,
+            ),
+            (
+                "about-updated".to_owned(),
+                "Updated".to_owned(),
+                quiz.updated_label(),
+                Glyph::Clock,
+            ),
+        ])
+        .button("home", "Back to packs")
+        .build()
 }
 
 fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
@@ -735,8 +820,9 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                 .top_bar("Pub Quiz")
                 .heading("Question packs")
                 .secondary(format!(
-                    "{} questions ready · {} rounds completed",
+                    "{} questions · {} · {} rounds completed",
                     quiz.questions.len(),
+                    quiz.source_label(),
                     quiz.rounds
                 ));
             if let Some(note) = &quiz.note {
@@ -799,13 +885,7 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
             .text("Players take turns. The highest score after the last question wins.")
             .bottom_action("home", "Play")
             .build(),
-        View::About => ScreenBuilder::new("pubquiz-about")
-            .top_bar("Pub Quiz")
-            .heading("About")
-            .text("Question packs use Open Trivia DB content, licensed CC-BY-SA 4.0.")
-            .text("opentdb.com · cached packs are redistributed under the same license.")
-            .button("home", "Back to packs")
-            .build(),
+        View::About => about_screen(quiz),
     }
 }
 impl KoboApp for Quiz {
@@ -835,6 +915,12 @@ impl KoboApp for Quiz {
                                 }
                             }
                         }
+                        if let Some(origin) = p.get(4) {
+                            self.pack_origin = (!origin.is_empty()).then(|| (*origin).to_string());
+                        }
+                        if let Some(minutes) = p.get(5).and_then(|m| m.parse().ok()) {
+                            self.pack_updated_min = Some(minutes);
+                        }
                     }
                 }
             } else if key == PACK && !self.pack_synced {
@@ -842,6 +928,9 @@ impl KoboApp for Quiz {
                     if let Some(questions) = parse_pack(&bytes) {
                         self.questions = questions;
                         self.packs = 1;
+                        if self.pack_origin.is_none() {
+                            self.pack_origin = Some("Open Trivia DB".to_owned());
+                        }
                     } else {
                         context.store().forget(PACK);
                         self.note =
@@ -863,6 +952,8 @@ impl KoboApp for Quiz {
                     self.questions = questions;
                     self.pack_synced = true;
                     self.packs = 1;
+                    self.pack_origin = Some("Open Trivia DB".to_owned());
+                    self.pack_updated_min = now_minutes();
                     context.store().save(PACK, bytes);
                     self.note = Some(format!(
                         "{} fresh questions saved for offline play.",
@@ -1153,6 +1244,89 @@ mod tests {
             .iter()
             .all(|question| question.difficulty == Difficulty::Easy));
     }
+
+    #[test]
+    fn pack_source_and_freshness_survive_save_and_load() {
+        let quiz = Quiz {
+            packs: 1,
+            rounds: 4,
+            players: 2,
+            pack_origin: Some("Open Trivia DB".to_owned()),
+            pack_updated_min: Some(31_556_000),
+            ..Quiz::default()
+        };
+        assert!(quiz.state_line().ends_with("|Open Trivia DB|31556000"));
+
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(b"1|4|2|Sam,Bo,Cleo,Dev|Open Trivia DB|31556000".to_vec()),
+        });
+        assert_eq!(runner.app().pack_origin.as_deref(), Some("Open Trivia DB"));
+        assert_eq!(runner.app().pack_updated_min, Some(31_556_000));
+        assert_eq!(runner.app().updated_label(), "Synced earlier.");
+
+        // States saved before freshness tracking still load, as bundled.
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(b"1|5".to_vec()),
+        });
+        assert_eq!(runner.app().pack_origin, None);
+        assert_eq!(runner.app().source_label(), "Bundled");
+        assert_eq!(runner.app().updated_label(), "Not synced yet.");
+    }
+
+    #[test]
+    fn about_names_the_pack_source() {
+        let bundled = format!(
+            "{:?}",
+            screen(&Quiz {
+                view: View::About,
+                ..Quiz::default()
+            })
+        );
+        assert!(bundled.contains("Source"));
+        assert!(bundled.contains("Bundled"));
+        assert!(bundled.contains("Not synced yet."));
+
+        let synced = Quiz {
+            view: View::About,
+            pack_origin: Some("Open Trivia DB".to_owned()),
+            pack_updated_min: Some(1),
+            ..Quiz::default()
+        };
+        let shown = format!("{:?}", screen(&synced));
+        assert!(shown.contains("Open Trivia DB"));
+        assert!(shown.contains("Synced "));
+    }
+
+    #[test]
+    fn sync_stamps_origin_and_time() {
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("sync"));
+        let task = runner.app().sync_task.expect("sync started");
+        let item = r#"{"category":"Science","difficulty":"easy","question":"Q?","correct_answer":"Right","incorrect_answers":["W1","W2","W3"]}"#;
+        let body = format!(
+            r#"{{"response_code":0,"results":[{}]}}"#,
+            [item; 10].join(",")
+        );
+        runner.task_outcome(task, TaskOutcome::Completed(body.into_bytes()));
+        assert_eq!(runner.app().pack_origin.as_deref(), Some("Open Trivia DB"));
+        assert!(runner.app().pack_updated_min.is_some());
+        assert!(runner.app().state_line().contains("Open Trivia DB"));
+    }
+
+    #[test]
+    fn age_labels_cover_minutes_hours_and_days() {
+        assert_eq!(age_label(30), "just now");
+        assert_eq!(age_label(5 * 60), "5 min ago");
+        assert_eq!(age_label(3 * 3600), "3 hr ago");
+        assert_eq!(age_label(2 * 86400), "2 days ago");
+    }
 }
 
 #[cfg(test)]
@@ -1172,7 +1346,7 @@ mod regression_tests {
 
     #[test]
     fn solo_round_credits_only_the_solo_player_once() {
-        let mut runner = AppRunner::new(Quiz::default());
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("solo"));
         assert_eq!(runner.app().view, View::Setup);
@@ -1193,7 +1367,7 @@ mod regression_tests {
 
     #[test]
     fn pass_around_renames_and_counts_players() {
-        let mut runner = AppRunner::new(Quiz::default());
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("party"));
         runner.action(action_id("continue-setup"));
@@ -1223,7 +1397,7 @@ mod regression_tests {
 
     #[test]
     fn saved_state_carries_names_and_player_count() {
-        let mut runner = AppRunner::new(Quiz::default());
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
         runner.start();
         runner.store_result(StoreResult::Loaded {
             key: STATE.into(),
@@ -1254,7 +1428,7 @@ mod regression_tests {
 
     #[test]
     fn zero_scoreboard_condenses_until_the_first_point() {
-        let mut runner = AppRunner::new(Quiz::default());
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("party"));
         runner.action(action_id("continue-setup"));
@@ -1277,7 +1451,7 @@ mod regression_tests {
 
     #[test]
     fn late_cache_and_sync_do_not_replace_an_active_round() {
-        let mut runner = AppRunner::new(Quiz::default());
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
         runner.start();
         runner.action(action_id("sync"));
         let task = runner.app().sync_task.expect("sync started");

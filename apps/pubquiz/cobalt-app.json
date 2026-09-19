@@ -4,8 +4,8 @@
  "short_label": "Pub Quiz",
  "summary": "Play offline solo or pass-around trivia rounds.",
  "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
- "version": "0.1.7",
- "release_notes": "Pick a category and difficulty before each round: solo and pass-around now open a round setup that filters the pack, with Any keeping the full mix.",
+ "version": "0.1.8",
+ "release_notes": "See where your questions come from: the packs screen names the source, and About shows the source and when the pack was last synced.",
  "glyph": "chat",
  "capabilities": [
   "network"
