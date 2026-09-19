@@ -3,7 +3,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -18,6 +18,7 @@ mod bootstrap;
 mod connect;
 mod console;
 mod deck;
+mod detect;
 mod devsession;
 mod drive;
 mod exports;
@@ -515,6 +516,100 @@ fn run_owner_menu() -> Result<(), String> {
     Ok(())
 }
 
+/// Sends a file to the companion that reads it.
+///
+/// The owner names the file; [`detect`] names the companion. An explicit
+/// path is the command line's half of the bargain (the guided surface asks
+/// for one when it is driving), an ambiguous container is settled by `--app`
+/// or by asking, and the target flags are the shared ones, so a saved reader
+/// name works here exactly as it does everywhere else.
+fn send_file(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo send FILE [--app APP] (--sim | --device IP | --reader NAME)\n\
+                         \x20      send routes a file to the companion that reads it:\n\
+                         \x20      photos to Frame, OPML lists to Feeds, CBZ comics to Panels,\n\
+                         \x20      story files to Parser, APKG/COLPKG decks to Flashcards.\n\
+                         \x20      --app settles a container more than one companion reads.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
+    let (target, rest) = targets::TargetArgs::parse(arguments)?;
+    let mut file = None;
+    let mut app = None;
+    let mut rest = rest.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--app" if app.is_none() => {
+                app = Some(
+                    rest.next()
+                        .ok_or_else(|| console::usage("--app takes a companion name"))?
+                        .clone(),
+                );
+            }
+            _ if file.is_none() && !argument.starts_with('-') => file = Some(argument.clone()),
+            _ => return Err(console::usage(USAGE)),
+        }
+    }
+    let file = file.ok_or_else(|| console::usage(USAGE))?;
+    let path = Path::new(&file);
+    if !path.is_file() {
+        return Err(console::usage(format!(
+            "{file}: no such file on this computer"
+        )));
+    }
+    let target_flags = match target.resolve()? {
+        targets::Target::Simulator => vec!["--sim".to_owned()],
+        targets::Target::Address(host) => vec!["--device".to_owned(), host],
+        targets::Target::Nickname(name) => {
+            vec!["--device".to_owned(), targets::resolve_nickname(&name)?]
+        }
+    };
+    let candidates = detect::candidates(path);
+    let chosen = match detect::choose(&candidates, app.as_deref()) {
+        Ok(app) => app.to_owned(),
+        Err(error) if error.starts_with("several companions") => {
+            if !std::io::stdin().is_terminal() {
+                return Err(console::usage(format!(
+                    "{error} - name one with --app ({})",
+                    candidates.join("|")
+                )));
+            }
+            let names: Vec<String> = candidates.iter().map(|name| (*name).to_owned()).collect();
+            let stdin = std::io::stdin();
+            let mut input = stdin.lock();
+            let mut output = std::io::stdout();
+            let Some(index) = console::choose_numbered(
+                &mut input,
+                &mut output,
+                &names,
+                "Send it to which companion (blank cancels): ",
+            )?
+            else {
+                return Ok(());
+            };
+            names[index].clone()
+        }
+        Err(error) => return Err(error),
+    };
+    let mut forwarded = vec!["push".to_owned(), file.clone()];
+    forwarded.extend(target_flags);
+    match chosen.as_str() {
+        "frame" => frame::command(&forwarded),
+        "feeds" => feeds::command(&forwarded),
+        "panels" => panels::command(&forwarded),
+        "parser" => parser_command(&forwarded),
+        "flashcards" => {
+            // Decks are a two-step import, not a push: the helper merges into
+            // a collection, and staging needs a mounted reader. Say so with
+            // the real commands rather than pretending a push happened.
+            println!(
+                "{file} is a study deck. Decks import into a collection first, then stage:\n  kobo flashcards import {file} --merge COLLECTION.cobfc\n  kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
+            );
+            Ok(())
+        }
+        _ => unreachable!("choose returns only detected companions"),
+    }
+}
+
 fn run(arguments: &[String]) -> Result<(), String> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return run_owner_menu();
@@ -535,6 +630,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
         "feeds" => feeds::command(&arguments[1..]),
+        "send" => send_file(&arguments[1..]),
         "fieldbook" => fieldbook::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
@@ -7086,6 +7182,7 @@ fn print_help() {
            sidekick test                        Ask the reader a harmless question, print the answer\n\
            feeds check FILE                     Read an OPML subscription list here\n\
            feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
+           send FILE [--app APP]   Route a file to its companion (--sim | --device IP | --reader NAME)\n\
            fieldbook --help                       Send field packs and receive eBird CSV files
 \
            panels --help                          Inspect, preview and send CBZ comics

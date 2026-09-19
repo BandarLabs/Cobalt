@@ -23,7 +23,7 @@ pub fn choose(
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<Option<Vec<String>>, String> {
-    writeln!(output, "Cobalt\n\n1. Set up a reader over USB\n2. Preview photos for Frame\n3. Check a feed subscription file\n4. Check a Paperterm connection\n5. Developer and release commands\n6. App setup guides\n0. Exit").map_err(|e| e.to_string())?;
+    writeln!(output, "Cobalt\n\n1. Set up a reader over USB\n2. Preview photos for Frame\n3. Check a feed subscription file\n4. Check a Paperterm connection\n5. Developer and release commands\n6. App setup guides\n7. Send a file\n0. Exit").map_err(|e| e.to_string())?;
     // Where the owner is, from what this computer has actually completed -
     // asked of the steps file, never of the owner.
     if let Ok(done) = crate::steps::Steps::load(&crate::steps::steps_path()) {
@@ -94,13 +94,63 @@ pub fn choose(
                 };
                 vec!["apps".into(), "setup".into(), apps[index].id.clone()]
             }
+            "7" => match send_choice(input, output)? {
+                Some(command) => command,
+                None => return Ok(None),
+            },
             _ => {
-                writeln!(output, "Enter a number from 0 to 6.").map_err(|e| e.to_string())?;
+                writeln!(output, "Enter a number from 0 to 7.").map_err(|e| e.to_string())?;
                 continue;
             }
         };
         return Ok(Some(command));
     }
+}
+
+/// The "send a file" choice: an explicitly typed path (the plain-terminal
+/// picker - the file is named, not browsed), then a numbered pick of where
+/// it goes. Blank answers cancel, as everywhere in this menu.
+fn send_choice(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(file) = answer(
+        input,
+        output,
+        "File to send - photo, subscriptions, comic or story (blank cancels): ",
+    )?
+    else {
+        return Ok(None);
+    };
+    let destinations = [
+        "the simulator on this computer".to_owned(),
+        "a reader at an address".to_owned(),
+        "a saved reader by name".to_owned(),
+    ];
+    let Some(index) =
+        crate::console::choose_numbered(input, output, &destinations, "Send to (blank cancels): ")?
+    else {
+        return Ok(None);
+    };
+    let mut command = vec!["send".into(), file];
+    match index {
+        0 => command.push("--sim".into()),
+        1 => {
+            let Some(host) = answer(input, output, "Reader address (blank cancels): ")? else {
+                return Ok(None);
+            };
+            command.push("--device".into());
+            command.push(host);
+        }
+        _ => {
+            let Some(name) = answer(input, output, "Reader name (blank cancels): ")? else {
+                return Ok(None);
+            };
+            command.push("--reader".into());
+            command.push(name);
+        }
+    }
+    Ok(Some(command))
 }
 
 fn answer(
@@ -134,7 +184,9 @@ mod tests {
         // each choice produces argv whose head is a command the binary
         // actually has, so the menu can never offer a path that does not
         // exist outside it.
-        let known = ["setup", "frame", "feeds", "stream", "--help", "apps"];
+        let known = [
+            "setup", "frame", "feeds", "stream", "--help", "apps", "send",
+        ];
         for answers in ["1\n", "2\n/x\n/y\n", "3\n/x.opml\n", "4\n", "5\n", "6\n1\n"] {
             let mut input = std::io::BufReader::new(answers.as_bytes());
             let mut output = Vec::new();
