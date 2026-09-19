@@ -50,7 +50,7 @@ def main():
           "vault":"wait 500\nexpect Vault\nexpect notes\ntap Browse\nexpect Field notes\nshot real-note-list\ntap Field notes\nexpect Moon study\nshot real-note\n",
           "nonograms":"wait 500\nexpect Nonograms\ntap Photos\nwait 500\ntap Open\nwait 1500\nexpect Imported photo\nshot real-puzzle-play\n",
           "parser":"wait 500\nexpect Interactive fiction\nexpect zork1\nshot real-story-library\n",
-          "panels":"wait 500\nexpect Untitled comic\nshot real-comic-library\n",
+          "panels":"wait 500\ntap Add comic\nwait 2500\nexpect Added comic\nshot real-comic-import\ntap Add to library\nwait 2000\nexpect Available on this reader\nshot real-comic-added\ntap Open\nwait 2500\ndump\nshot real-comic-reading\n",
           "rss":"wait 500\nshot real-feeds\n",
         }
         for flow in flows:
