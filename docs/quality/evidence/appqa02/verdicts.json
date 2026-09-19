@@ -40,6 +40,26 @@
   "fanshelf": {
    "status": "pass",
    "notes": "Rate-limit distinct (SLOW_DOWN 'The archive asked us to slow down - try in a minute'), malformed download distinct ('The downloaded EPUB could not be opened'), shelf-full distinct, six empty splashes per collection, skeleton loading. Unauthorized/credential signals handled via account setup. Evidence: states.json + main.rs:33,915."
+  },
+  "fieldbook": {
+   "status": "pass",
+   "notes": "Local app, packs pushed via CLI. Pack-shelf failure distinct ('could not be opened'), empty-pack splash distinct with the push remedy named, search-no-match distinct, outing/empty-log states separate. Evidence: states.json + main.rs:218-720."
+  },
+  "flashcards": {
+   "status": "pass",
+   "notes": "Import error taxonomy: incompatible package vs damaged deck vs no reviewable cards, each with distinct remedy; collection open vs read failures distinct; damaged-image and missing-font states named. Empty state + skeleton loading. Evidence: states.json + import.rs:22-27 + main.rs:220-873."
+  },
+  "frame": {
+   "status": "pass",
+   "notes": "Failure classes distinct: single photo unreadable vs no photo on shelf readable ('Re-push the album') vs transfer-record mismatch ('Re-push it from your computer') vs picture budget. Empty frame splash. Activity surfaces for loads. Evidence: states.json + main.rs:150-454."
+  },
+  "gallery": {
+   "status": "pass",
+   "notes": "Component catalog: state specimens are the content itself, reviewed under APPQA-05 (captions fix + 27/27 matrix). Counted for census completeness."
+  },
+  "grimoire": {
+   "status": "pass",
+   "notes": "Local reference app, bundled document. Empty states distinct per collection (no match / no reference selected / no combatants / no party); malformed covered by 'This reference has no text in the bundled document'. No network states by design. Evidence: states.json + main.rs:494-808."
   }
  },
  "findings": []
