@@ -1,0 +1,124 @@
+{
+ "method": "scripts/quality/audit-action-handlers.py static pass, then per-candidate source reading. Rules applied: action_id() outside tests = handler; TextEntry.opened_by = handled by the SDK entry field; page_turns ids dispatch to fn on_page_turn; is(\"x\") closures and action_id(variable)/format! loops are dynamic dispatch; ScreenBuilder::new ids are screen ids, not actions; storage keys, task kinds and status strings are not actions.",
+ "verdicts": {
+  "birds": {
+   "birds-home": "screen id"
+  },
+  "calibre-web": {
+   "calibre-account-choice": "screen id",
+   "calibre-book": "screen id",
+   "calibre-failure": "screen id",
+   "calibre-url": "screen id"
+  },
+  "crossword": {
+   "clear": "handled via is() closure (line 473)",
+   "undo": "handled via is() closure (line 468)"
+  },
+  "deck": {
+   "deck-code": "screen id",
+   "local": "address value, not an action",
+   "ok": "task-outcome string, not an action",
+   "running": "task-outcome string, not an action"
+  },
+  "fanshelf": {
+   "fs-adult": "screen id"
+  },
+  "flashcards": {
+   "next": "page_turns id dispatched to fn on_page_turn (line 1112)",
+   "previous": "page_turns id dispatched to fn on_page_turn (line 1112)"
+  },
+  "grimoire": {
+   "grimoire-state-v2": "storage key",
+   "items": "tab id, handled via kind.action() dispatch loop (line 1171)",
+   "monsters": "tab id, same loop",
+   "rules": "tab id, same loop",
+   "spells": "tab id, same loop"
+  },
+  "habits": {
+   "local": "settings row id, handled via schedules.find(action_id(action)) loop (line 457)"
+  },
+  "homepanel": {
+   "entities": "task kind string",
+   "service": "task kind string",
+   "tiles": "storage key",
+   "homepanel-add": "screen id",
+   "homepanel-climate": "screen id",
+   "homepanel-edit": "screen id",
+   "homepanel-grid": "screen id",
+   "homepanel-tile": "screen id"
+  },
+  "kitchencard": {
+   "kitchencard": "screen id"
+  },
+  "lichess": {
+   "lichess-pairing": "screen id",
+   "lichess-puzzle-result": "screen id"
+  },
+  "musicstand": {
+   "music-about": "screen id",
+   "music-stand": "screen id",
+   "score-a": "dynamic score-{n} family"
+  },
+  "nonograms": {
+   "nonograms-reveal": "screen id"
+  },
+  "parser": {
+   "slots-page-back": "page_turns id dispatched to fn on_page_turn (line 759)",
+   "slots-page-next": "page_turns id dispatched to fn on_page_turn (line 759)"
+  },
+  "post": {
+   "gateway-url": "text field id, not an action",
+   "post-inbox": "screen id"
+  },
+  "readlater": {
+   "readlater": "screen id",
+   "test": "screen id"
+  },
+  "sidekick": {
+   "allow": "handled via action_id(choice) loop over [ALLOW, DENY, IGNORE] (line 821)",
+   "deny": "same loop",
+   "pass": "same loop"
+  },
+  "sudoku": {
+   "how-to-play": "handled via is() closure",
+   "more": "handled via is() closure",
+   "new-easy": "handled via is(&format!(\"new-{}\", l.key())) loop",
+   "new-hard": "same loop",
+   "new-medium": "same loop",
+   "pencil": "handled via is() closure",
+   "play": "handled via is() closure",
+   "retry-save": "handled via is() closure",
+   "rotate": "handled via is() closure",
+   "undo": "handled via is() closure"
+  },
+  "syncthing": {
+   "running": "status string",
+   "syncthing": "screen id"
+  },
+  "vault": {
+   "vault-about": "screen id"
+  },
+  "verses": {
+   "verses-results": "screen id"
+  },
+  "audiobook": {
+   "audiobook-player-missing": "screen id"
+  },
+  "gutenbird": {
+   "gutenbird-lookup": "screen id"
+  },
+  "launcher": {
+   "launcher-leaving": "screen id"
+  },
+  "gallery": {
+   "tab-input": "handled via Tab::ALL loop",
+   "tab-lists": "handled via Tab::ALL loop",
+   "tab-text": "handled via Tab::ALL loop",
+   "flow-ask": "handled in next_step (line 1640)",
+   "flow-finish": "handled in next_step (line 1643)",
+   "flow-open": "handled in next_step (line 1644)",
+   "UNRESOLVED": "button-one, button-two, button-primary, button-second, button-off, button-primary-off, ctx-one, ctx-one-menu, ctx-two, ctx-two-menu, grp-save, hold-here, menu-one, picture-one, picture-two, reading-controls, state-browse, state-report, state-retry are specimen controls on component demo pages with exactly one source reference (registration only). button-off/button-primary-off/button-second-off demonstrate disabled states, where inert is correct. The rest may be intentional specimens (a style showcase need not navigate) or dead demo controls; this is a design judgment for the owner, not a mechanical call."
+  }
+ },
+ "summary": "50 app sources audited (44 catalog apps minus zotero-reader, plus shared examples). After per-candidate verification, no dead control was found in any shipped app: every candidate is handled through a dispatch idiom the static pass cannot see (is() closures, action_id loops, on_page_turn, opened_by) or is not an action at all (screen ids, storage keys, task kinds, status strings, field ids). Only gallery's specimen controls remain, pending an owner design judgment."
+}
