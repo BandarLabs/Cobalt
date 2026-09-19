@@ -1,0 +1,26 @@
+{
+  "server": "stub syncthing + stub ssh",
+  "checks": [
+    {
+      "name": "setup writes an isolated 0700 home, 0600 secrets, loopback API and a send-only vault mapping"
+    },
+    {
+      "name": "a relative KOBO_SYNC_HOME is rejected"
+    },
+    {
+      "name": "plan --json states direction, ingest contract and loopback API"
+    },
+    {
+      "name": "run names computer network and reader sleep effects; structured status, pause, resume and stop controls act on the paired reader"
+    },
+    {
+      "name": "publish packs raw notes into the exact synced.v1 package the reader ingests, idempotently"
+    },
+    {
+      "name": "stop leaves the dedicated peer stopped"
+    },
+    {
+      "name": "frame publish packs a manifest.v1 album, idempotently"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "base": "origin/beta",
+  "head_audited": "874ba0ee",
+  "changed_source_files": 35,
+  "third_party_packages_without_declared_license": [],
+  "required_notice_files_missing": [],
+  "local_reference_markers": [],
+  "note": "file:// test-release URLs are intentionally allowed; they are generated test inputs, not developer-local source references"
+}
