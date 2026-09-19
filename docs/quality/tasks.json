@@ -3657,8 +3657,12 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Differentiate loading, empty, offline, expired credentials and malformed content",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Static surface census + 44/44 verdicts: scripts/quality/audit-state-surfaces.py, docs/quality/evidence/appqa02/{states.json,verdicts.json} - 43 pass, 1 finding",
+   "Finding fixed at e1574037: 'Audio playback is unavailable' banner was clipped by the bottom bar at extra-large on the 4 smallest panels; banner now leads content and inert transport/volume controls drop when audio is unavailable; audiobook v1.0.14; gates 55/55; sdk 165 + app 31 tests green",
+   "Matrix proof 27/27 (9 profiles x 3 text scales): docs/quality/evidence/appqa02/audiobook-clipfix/<profile>-<scale>/results.json (f3e99709) - clip verified fixed, no regressions"
+  ]
  },
  {
   "id": "APPQA-03",

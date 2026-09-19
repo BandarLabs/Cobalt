@@ -524,7 +524,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 - [x] **SHOTS-01** Ship each app's best screenshots in its README and in the generated apps web pages.
 - [x] **APPQA-01** Use one dominant task action with stable secondary controls.
-- [ ] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
+- [x] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
 - [x] **APPQA-03** Keep cached content usable with honest freshness.
 - [ ] **APPQA-04** Show unsaved state before success.
 - [x] **APPQA-05** Audit every visible action for a handler.
