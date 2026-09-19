@@ -1,0 +1,13 @@
+{
+  "source_sha": "bab195fed64af2425a64072efeb3f13a622e8cdd",
+  "dirty": true,
+  "results": [
+    {
+      "app": "habits",
+      "launched": true,
+      "status": "pass",
+      "route": "/tmp/appqa08-habits-1.kobo",
+      "exit_code": 0
+    }
+  ]
+}
