@@ -448,6 +448,11 @@ impl Morse {
         screen
             .typed(&self.keyboard, "A message to send in light")
             .secondary(format!("{} to send.", spoken(beats(&signals).len())))
+            // The speed is the same for every message, so it is said once, in
+            // the units the light actually keeps. A reader who knows a dash is
+            // three seconds can follow the beacon letter by letter; one who
+            // does not learns it here, before anything has flashed.
+            .secondary("A dot is one second of light, a dash three.")
             .keyboard(&self.keyboard, "Send")
             .build()
     }
@@ -498,7 +503,10 @@ impl Morse {
         if self.running {
             screen.action_bar([(STOP, "Stop"), (TOGGLE_LIGHT, light)])
         } else {
-            screen.action_bar([(AGAIN, "Send"), (EDIT, "Edit"), (TOGGLE_LIGHT, light)])
+            // The message is already composed, so this key repeats it rather
+            // than sending something new; the label says so, or a repeat looks
+            // like a fresh send that happens to say the same thing.
+            screen.action_bar([(AGAIN, "Send again"), (EDIT, "Edit"), (TOGGLE_LIGHT, light)])
         }
         .build()
     }
@@ -1086,6 +1094,52 @@ mod tests {
         assert!(
             !issues.has_errors(),
             "the writing screen does not fit: {issues:?}"
+        );
+    }
+
+    /// The speed is a fact about the beacon rather than about the message, so
+    /// it is stated where the message is weighed: beside the estimate, on the
+    /// screen the Send key is on.
+    #[test]
+    fn the_speed_is_on_the_screen_the_send_key_is_on() {
+        let mut runner = AppRunner::new(Morse::default());
+        let commands = runner.start();
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a writing screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("one second of light"),
+            "the speed is not on the writing screen: {drawn}"
+        );
+    }
+
+    /// The resting key sends the same message out again, so it says that is
+    /// what it does. Labeled as a fresh send, a repeat would read as a
+    /// mistake: the same letters going out twice with nothing to say why.
+    #[test]
+    fn the_resting_key_says_it_repeats_the_message() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(AGAIN));
+        let commands = runner.action(action_id(STOP));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a resting screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("Send again"),
+            "the resting key does not say it repeats: {drawn}"
         );
     }
 
