@@ -116,6 +116,26 @@
   "paperterm": {
    "status": "finding",
    "notes": "Preview screen passes (single 'Connect a computer' CTA + Close preview chrome). FINDING: paperterm-welcome pairs 'Connect a computer' (task) with 'Try a preview' (demo) at equal weight - same shape as the audiobook empty-state finding. Setup/trust sheets use a clean single-Next + Back pattern otherwise. Evidence: screens.json + apps/paperterm/screenshots/preview.png."
+  },
+  "parlor": {
+   "status": "pass",
+   "notes": "Menu: single primary 'Resume saved game'; setup: primary 'Start game' + plain 'How to play'; board/record screens are board+chrome idioms (Board back button only). Evidence: screens.json + apps/parlor/screenshots/table.png."
+  },
+  "parser": {
+   "status": "pass",
+   "notes": "Reading/chapter idiom: page_turns navigation + banner chrome; slots browser uses paged page_turns; no competing actions on any screen. Evidence: screens.json + apps/parser/screenshots/parser-game.png."
+  },
+  "post": {
+   "status": "pass",
+   "notes": "Inbox: letter rows dominant + single 'Check for letters' button + Newer/Older action_bar; letter screen Previous/Inbox/Next action_bar + plain '?' help; opening uses transient activity spinner. Evidence: screens.json + apps/post/screenshots/inbox.png."
+  },
+  "pubquiz": {
+   "status": "pass",
+   "notes": "Every flow screen has exactly one primary (Continue / Start round / Show result / See podium / Finish round / Start pass-around); secondaries plain (Solo round, How to play) or action_bar Previous/Next/Answer. Verified players.png + question.png. Evidence: screens.json + apps/pubquiz/screenshots/."
+  },
+  "readlater": {
+   "status": "pass",
+   "notes": "Main list: tabs (Unread/Starred/Archive) + row tap dominant, splashes for empty states, plain 'Sync'/'Add address' on setup/connect states, Archive/Back action_bar in reading view. The unauthenticated state pairs connect splash with primary 'Add address' - single CTA. Evidence: screens.json + apps/readlater/screenshots/readlater-setup.png."
   }
  },
  "findings": [
