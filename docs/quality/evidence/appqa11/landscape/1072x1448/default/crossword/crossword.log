@@ -1,3 +1,0 @@
-Kobo app simulator: http://127.0.0.1:44419
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/crossword/crossword-shots/crossword-play.png
-kobo: line 10: tap-id clues: the renderer refused this screen: node 8: interactive control is outside the visible panel; node 10: interactive control is outside the visible panel; node 9: 2 node(s) are below the content area (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/crossword/crossword-shots/failed-line-10.png)

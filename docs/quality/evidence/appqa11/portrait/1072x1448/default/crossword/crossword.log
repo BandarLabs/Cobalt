@@ -1,5 +1,0 @@
-Kobo app simulator: http://127.0.0.1:41399
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/default/crossword/crossword-shots/crossword-play.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/default/crossword/crossword-shots/crossword-clues.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/default/crossword/crossword-shots/crossword-entry.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/default/crossword/crossword-shots

@@ -1,9 +1,0 @@
-Kobo app simulator: http://127.0.0.1:38429
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots/conversation.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots/conversation-earlier.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots/menu.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots/export-ready.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots/service.png
-task 1 failed: NoCredential
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots/no-key.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/large/chat/chat-shots

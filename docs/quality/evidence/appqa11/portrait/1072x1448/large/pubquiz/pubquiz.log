@@ -1,6 +1,0 @@
-Kobo app simulator: http://127.0.0.1:35513
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/large/pubquiz/pubquiz-shots/pubquiz-help.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/large/pubquiz/pubquiz-shots/setup.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/large/pubquiz/pubquiz-shots/players.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/large/pubquiz/pubquiz-shots/question.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1072x1448/large/pubquiz/pubquiz-shots

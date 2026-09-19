@@ -1,8 +1,0 @@
-Kobo app simulator: http://127.0.0.1:35245
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots/home.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots/packs.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots/search.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots/detail.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots/tally.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots/sightings.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/fieldbook/fieldbook-shots

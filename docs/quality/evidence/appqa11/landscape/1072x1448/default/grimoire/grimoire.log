@@ -1,3 +1,0 @@
-Kobo app simulator: http://127.0.0.1:36645
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/grimoire/grimoire-shots/home.png
-kobo: line 6: tap Spells: the renderer refused this screen: node 4: content is clipped by a panel edge; node 4: interactive control is outside the visible panel (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/grimoire/grimoire-shots/failed-line-6.png)

@@ -1,3 +1,0 @@
-Kobo app simulator: http://127.0.0.1:41019
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa01/audiobook/clara-colour-393-extra-large/audiobook-shots/audiobook-empty.png
-kobo: line 8: tap-id sample: the renderer refused this screen: node 13: content is clipped by a panel edge (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa01/audiobook/clara-colour-393-extra-large/audiobook-shots/failed-line-8.png)

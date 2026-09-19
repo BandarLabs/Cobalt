@@ -1,5 +1,0 @@
-Kobo app simulator: http://127.0.0.1:37473
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/magnet/journey/magnet-shots/magnet-sweeping-top.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/magnet/journey/magnet-shots/magnet-found.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/magnet/journey/magnet-shots/magnet-swept-right.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/magnet/journey/magnet-shots

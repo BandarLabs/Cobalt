@@ -1,7 +1,0 @@
-Kobo app simulator: http://127.0.0.1:37947
-
-thread 'main' panicked at crates/kobo-sdk/src/lib.rs:1298:21:
-this screen carries 'こ', which the installed face cannot draw: "これは長い本文です。日本語の文章が読書面で正しく表示されるかを確かめるためのものです。これは長い本文"
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-kobo: application exited with exit status: 101
-kobo: line 5: tap Japanese: the app disconnected while handling the tap

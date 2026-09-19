@@ -1,4 +1,0 @@
-Kobo app simulator: http://127.0.0.1:42285
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/homepanel/homepanel-shots/homepanel-setup.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/homepanel/homepanel-shots/homepanel-typed.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/homepanel/homepanel-shots

@@ -1,5 +1,0 @@
-Kobo app simulator: http://127.0.0.1:34235
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/rss/rss-shots/rss-empty.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/rss/rss-shots/rss-add.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/rss/rss-shots/rss-browse.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/rss/rss-shots

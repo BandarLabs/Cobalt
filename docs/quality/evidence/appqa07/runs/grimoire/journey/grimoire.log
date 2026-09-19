@@ -1,5 +1,0 @@
-Kobo app simulator: http://127.0.0.1:37599
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/grimoire/journey/grimoire-shots/home.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/grimoire/journey/grimoire-shots/spell-filters.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/grimoire/journey/grimoire-shots/spell-results.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/grimoire/journey/grimoire-shots

@@ -1,6 +1,0 @@
-Vault simulator store ready: /tmp/cb-00do68yw/cobalt-sim-state/vault
-Pushed 2 note(s) to the simulator store (vault-index-v1, 172 bytes).
-Kobo app simulator: http://127.0.0.1:44863
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/vault/vault-shots/browse.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/vault/vault-shots/note.png
-drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa11/portrait/1404x1872/default/vault/vault-shots

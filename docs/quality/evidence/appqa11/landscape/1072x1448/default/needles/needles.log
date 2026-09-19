@@ -1,5 +1,0 @@
-Kobo app simulator: http://127.0.0.1:44123
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/needles/needles-shots/project.png
-shot /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/needles/needles-shots/projects.png
-layout warning: node 4: picture 1000 is not in the runtime cache
-kobo: line 26: tap Read synced pattern: the renderer refused this screen: node 13: content is clipped by a panel edge; node 14: 1 node(s) are below the content area (screen at /home/sandbox/cobalt/docs/quality/evidence/appqa11/landscape/1072x1448/default/needles/needles-shots/failed-line-26.png)
