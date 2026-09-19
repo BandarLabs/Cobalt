@@ -1,6 +1,6 @@
 {
   "app": "needles",
-  "head": "85a41d1e",
+  "head": "83c3a524",
   "profiles": 9,
   "scales": [
     "default",
@@ -36,6 +36,5 @@
     "libra-h2o-384-extra-large",
     "libra-h2o-384-large"
   ],
-  "route": "apps/needles/drive.kobo",
-  "notes": "Route counts two rows, undoes one, expects the heading Row 1 with repeat row 1 of 12 drawn as a bar, then switches section and expects the fresh Sleeve counter. Rerun after the counter screen copy cleanup."
+  "route": "apps/needles/drive.kobo"
 }

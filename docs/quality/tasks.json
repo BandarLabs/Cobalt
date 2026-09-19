@@ -2471,8 +2471,10 @@
   "pr": 3,
   "group": "Needles",
   "task": "Provide projects and named sections",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Counters now live on named projects, each with its own section counters; a Projects screen lists everything being counted with where it stands, and save format v2 round-trips all projects while migrating v1 saves (83c3a524); tests state_round_trips_projects_and_all_sections, the_first_version_of_the_state_becomes_one_project, following_a_pattern_twice_keeps_one_project_and_its_count. Sim evidence docs/quality/evidence/needles-sim/matrix.json (27/27 cells)."
+  ]
  },
  {
   "id": "NEEDLES-02",
