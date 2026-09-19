@@ -729,12 +729,9 @@ fn send_preview(
         "frame" | "panels" => {
             let out = out
                 .ok_or_else(|| console::usage(format!("a {app} preview needs --out DIRECTORY")))?;
-            let mut forwarded = vec![
-                "preview".to_owned(),
-                file.to_owned(),
-                "--out".to_owned(),
-                out.to_owned(),
-            ];
+            // frame_preview owns its verb already (frame strips it); panels
+            // dispatches its own, so each gets the argv shape it expects.
+            let mut forwarded = vec![file.to_owned(), "--out".to_owned(), out.to_owned()];
             if let Some(profile) = profile {
                 forwarded.push("--profile".to_owned());
                 forwarded.push(profile.to_owned());
@@ -742,6 +739,7 @@ fn send_preview(
             if app == "frame" {
                 frame_preview::command(&forwarded)
             } else {
+                forwarded.insert(0, "preview".to_owned());
                 panels::command(&forwarded)
             }
         }
