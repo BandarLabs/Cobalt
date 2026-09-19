@@ -7,6 +7,8 @@ shot pubquiz-help
 tap Play
 tap Start pass-around
 expect setup
+clean
+shot setup
 tap Continue
 expect Pass-around players
 clean

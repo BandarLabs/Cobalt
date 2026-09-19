@@ -7,6 +7,7 @@ use kobo_sdk::{
     ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, Task,
     TaskId, TaskOutcome,
 };
+use kobo_ui::TextScale;
 use std::fmt::Write;
 use std::process::ExitCode;
 
@@ -237,7 +238,7 @@ impl Quiz {
             .into_bytes(),
         );
     }
-    fn setup_action(&mut self, action: ActionId) -> bool {
+    fn setup_action(&mut self, action: ActionId, context: &Context) -> bool {
         if action == action_id("diff-cycle") {
             self.setup_difficulty = match self.setup_difficulty {
                 None => Some(Difficulty::Easy),
@@ -248,7 +249,8 @@ impl Quiz {
         } else if action == action_id("cat-any") {
             self.setup_category = None;
         } else if action == action_id("next-page") {
-            let pages = setup_categories(self).len().max(1).div_ceil(SETUP_ROWS);
+            let rows_per_page = setup_rows_per_page(context);
+            let pages = setup_categories(self).len().max(1).div_ceil(rows_per_page);
             self.setup_page = (self.setup_page + 1).min(pages - 1);
         } else if action == action_id("previous-page") {
             self.setup_page = self.setup_page.saturating_sub(1);
@@ -260,10 +262,11 @@ impl Quiz {
             }
         } else if action != ActionId::BACK && action != action_id("home") {
             let categories = setup_categories(self);
-            let pages = categories.len().max(1).div_ceil(SETUP_ROWS);
+            let rows_per_page = setup_rows_per_page(context);
+            let pages = categories.len().max(1).div_ceil(rows_per_page);
             let page = self.setup_page.min(pages - 1);
             let offset = usize::from(page == 0);
-            let Some(index) = (0..SETUP_ROWS.saturating_sub(offset))
+            let Some(index) = (0..rows_per_page.saturating_sub(offset))
                 .find(|i| action == action_id(&format!("cat-{i}")))
             else {
                 return false;
@@ -587,11 +590,11 @@ fn setup_categories(quiz: &Quiz) -> Vec<String> {
     categories
 }
 
-fn setup_screen(quiz: &Quiz) -> Screen {
-    let categories = setup_categories(quiz);
-    let pages = categories.len().max(1).div_ceil(SETUP_ROWS);
+fn setup_screen_with(quiz: &Quiz, categories: &[String], rows_per_page: usize) -> Screen {
+    let pages = categories.len().max(1).div_ceil(rows_per_page);
     let page = quiz.setup_page.min(pages - 1);
-    let window = &categories[page * SETUP_ROWS..categories.len().min((page + 1) * SETUP_ROWS)];
+    let window =
+        &categories[page * rows_per_page..categories.len().min((page + 1) * rows_per_page)];
     let difficulty = quiz.setup_difficulty.map_or("Any", Difficulty::label);
     let mut rows: Vec<(String, String, String, Glyph)> = vec![(
         "diff-cycle".to_owned(),
@@ -613,7 +616,7 @@ fn setup_screen(quiz: &Quiz) -> Screen {
     }
     for (index, name) in window.iter().enumerate() {
         let title = if name.chars().count() > 18 {
-            format!("{}…", name.chars().take(17).collect::<String>())
+            format!("{}\u{2026}", name.chars().take(17).collect::<String>())
         } else {
             name.clone()
         };
@@ -639,6 +642,20 @@ fn setup_screen(quiz: &Quiz) -> Screen {
         .action_bar([("previous-page", "Previous"), ("next-page", "Next")])
         .primary_button("continue-setup", "Continue")
         .build()
+}
+
+/// Bigger text leaves less vertical room: extra-large fits one category a
+/// page beside the difficulty row, large fits two, anything smaller three.
+fn setup_rows_per_page(context: &Context) -> usize {
+    match context.metrics().text_scale {
+        TextScale::Larger | TextScale::ExtraLarge => 1,
+        TextScale::Large | TextScale::Medium => 2,
+        _ => SETUP_ROWS,
+    }
+}
+
+fn setup_screen(quiz: &Quiz, context: &Context) -> Screen {
+    setup_screen_with(quiz, &setup_categories(quiz), setup_rows_per_page(context))
 }
 
 fn players_screen(quiz: &Quiz) -> Screen {
@@ -711,7 +728,7 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
     }
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     match quiz.view {
-        View::Setup => setup_screen(quiz),
+        View::Setup => setup_screen(quiz, context),
         View::Players => players_screen(quiz),
         View::Home => {
             let mut b = ScreenBuilder::new("pubquiz-home")
@@ -898,7 +915,7 @@ impl KoboApp for Quiz {
             self.setup_party = true;
             self.setup_page = 0;
             self.view = View::Setup;
-        } else if self.view == View::Setup && self.setup_action(action) {
+        } else if self.view == View::Setup && self.setup_action(action, context) {
         } else if self.view == View::Players && action == action_id("start") {
             self.begin(true);
         } else if self.view == View::Players && action == action_id("count-2") {
