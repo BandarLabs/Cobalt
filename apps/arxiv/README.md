@@ -3,7 +3,7 @@
 Browse a subject's newest preprints or search the archive, and read what comes
 back on the panel rather than downloading it.
 
-<img width="300" src="screenshots/listing.png" alt="The newest machine learning preprints, newest first"> <img width="300" src="screenshots/abstract.png" alt="A paper's abstract, set for reading">
+<img width="300" src="screenshots/listing.png" alt="The Artificial Intelligence subject listing, three preprints with authors and dates, newest first"> <img width="300" src="screenshots/abstract.png" alt="A paper's abstract, set for reading">
 
 ## The abstract is the document
 
