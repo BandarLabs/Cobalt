@@ -57,6 +57,7 @@ rather than a claim of full Standards conformance.
 | Work | Bundled | License |
 | --- | --- | --- |
 | Generated interpreter fixtures | Tests only | AGPL-3.0-only |
+| First Light tutorial story | Yes, seeds onto an empty shelf | AGPL-3.0-only (original) |
 | Advent 350 | No | Not audited for this distribution |
 | Modern v8 story | No | Not selected or audited |
 | Infocom commercial stories (including Zork) | **Never** | Proprietary; readers must sideload copies they are entitled to use |

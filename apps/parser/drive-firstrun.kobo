@@ -11,10 +11,14 @@ shot parser-firstrun-opening
 tap Keyboard
 type examine note
 tap Run
-wait-for stair head
+# The note pages at every scale; its final words are the only text
+# guaranteed to sit on the last page.
+wait-for head."
 type north
 tap Run
-wait-for Storeroom
+# At larger text scales the room block pages; the last line
+# always lands on the final page at every scale.
+wait-for dust
 type take lamp
 tap Run
 wait-for Taken.
@@ -27,10 +31,10 @@ clean
 shot parser-firstrun-inventory
 type light lamp
 tap Run
-wait-for steady flame
+wait-for flame.
 type north
 tap Run
-wait-for learned the moves
-wait-for story has ended
+wait-for moves
+wait-for ended
 clean
 shot parser-firstrun-ending

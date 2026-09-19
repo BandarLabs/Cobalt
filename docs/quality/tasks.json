@@ -2822,8 +2822,13 @@
   "pr": 3,
   "group": "Parser",
   "task": "Include an original tutorial story",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "64da718d: First Light, an original three-room tutorial story hand-assembled as a v3 Z-machine blob (apps/parser/src/story.rs), seeds onto an empty shelf and teaches verbs through an in-fiction note; design doc docs/quality/parser-tutorial-story.md",
+   "ba66b5d0: first-run seeding fixed (lowercase shelf key), typed-command endings mark the transcript ended and stop autosaving, tiles and the reading bar title-case story names; drive-firstrun.kobo walks a bare shelf from seeding through the ending",
+   "docs/quality/evidence/parser-sim/matrix.json: 27/27 standard-route cells (9 profiles x 3 text scales) green at ba66b5d0 plus the bare first-run route green at default, large and extra-large; library, opening, inventory and ending shots inspected",
+   "32/32 parser tests incl. the_tutorial_teaches_and_ends, wrong_turns_are_kind, a_save_round_trips_mid_story and tutorial_blob_is_a_valid_shelf_key; README game and license ledger lists First Light (bundled, AGPL-3.0-only)"
+  ]
  },
  {
   "id": "PARSER-02",
