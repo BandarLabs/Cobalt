@@ -1,0 +1,6 @@
+Kobo app simulator: http://127.0.0.1:42195
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/backgammon/libra-2-388-large/backgammon-shots/backgammon-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/backgammon/libra-2-388-large/backgammon-shots/backgammon-opening.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/backgammon/libra-2-388-large/backgammon-shots/backgammon-save-refused.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/backgammon/libra-2-388-large/backgammon-shots/backgammon-save-kept.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa04/backgammon/libra-2-388-large/backgammon-shots

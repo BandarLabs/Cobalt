@@ -1,0 +1,6 @@
+Kobo app simulator: http://127.0.0.1:44177
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/parlor/clara-bw-391-extra-large/parlor-shots/parlor-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/parlor/clara-bw-391-extra-large/parlor-shots/reversi.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/parlor/clara-bw-391-extra-large/parlor-shots/parlor-save-refused.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa04/parlor/clara-bw-391-extra-large/parlor-shots/parlor-save-kept.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa04/parlor/clara-bw-391-extra-large/parlor-shots
