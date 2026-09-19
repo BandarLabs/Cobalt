@@ -80,6 +80,26 @@
   "inkling": {
    "status": "pass",
    "notes": "Deterministic offline daily puzzle, no network by design. Save integrity: full validation before replace ('a bad save cannot replace anything'), LoadState Pending/Ready gates first paint; archive-play honesty ('do not change statistics and are not saved'). Evidence: states.json + main.rs:1-8,478,605,876-932."
+  },
+  "kitchencard": {
+   "status": "pass",
+   "notes": "Offline distinct with kept-state honesty ('Off the air. Saved recipes still cook.'), missing credential with exact remedy, offline-storage-limit distinct, empty/no-steps states separate. Evidence: states.json + main.rs:112-492."
+  },
+  "lichess": {
+   "status": "pass",
+   "notes": "Offline training mode distinct from online play; 'Token rejected' banner (expired credentials) distinct from network failure; solution-unreadable vs challenge-expired vs opponent-disconnected states all separate. Evidence: states.json + main.rs:531-914."
+  },
+  "logicpack": {
+   "status": "pass",
+   "notes": "Local app. Save corruption distinct and non-destructive ('This saved record could not be read.' + 'Your saved puzzles have been kept.'); restart consequences honest and undoable. Evidence: states.json + main.rs:410-887."
+  },
+  "magnet": {
+   "status": "pass",
+   "notes": "Hardware-state taxonomy instead of network states: no hall sensor vs build-cannot-read vs permission-not-asked vs sensor-read failure, each with distinct honest copy. Evidence: states.json + main.rs:379-573."
+  },
+  "morse": {
+   "status": "pass",
+   "notes": "Local app, bundled code table. Failure modes covered: empty-send ('There is nothing here to send') and timing failure ('The beacon could not keep time, so it stopped'). No network/credential states by design. Evidence: states.json + main.rs:578-668."
   }
  },
  "findings": []
