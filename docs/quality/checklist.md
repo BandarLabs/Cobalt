@@ -565,10 +565,10 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-23** Notify only useful completion or required action.
 - [x] **CLI-24** Explain wake/network effects of continuous sync.
 - [x] **CLI-25** Use consistent verbs and reader/simulator/output target resolution.
-- [ ] **CLI-26** Create required storage within validated import.
-- [ ] **CLI-27** Support offline preparation and bundled local help.
-- [ ] **CLI-28** Keep prepared, sent and available-offline states distinct.
-- [ ] **CLI-29** Provide keyboard and screen-reader-friendly forms.
+- [x] **CLI-26** Create required storage within validated import.
+- [x] **CLI-27** Support offline preparation and bundled local help.
+- [x] **CLI-28** Keep prepared, sent and available-offline states distinct.
+- [x] **CLI-29** Provide keyboard and screen-reader-friendly forms.
 - [x] **CLI-30** Provide numbered plain terminal alternative.
 - [x] **CLI-31** Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion.
 - [x] **CLI-32** Keep progress on stderr with versioned JSON on stdout.
