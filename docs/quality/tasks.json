@@ -3635,8 +3635,12 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Ship each app's best screenshots in its README and in the generated apps web pages",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/shots-census.json: all 49 generated-page web images md5-hashed against every PNG in the repo. 14 pre-proof-standard images re-sourced from real runs (38e80301, 5958a3d0): arxiv/deck/flashcards/grimoire/kitchencard/lichess/musicstand/syncthing/vault from their committed screenshots dirs, backgammon/fanshelf/magnet/tictactoe from fresh clara-bw-391 default captures (docs/quality/evidence/shots01/, driven by each app's committed route, all pass), brief from its shoot-apps.sh real-reader run. Every replacement eyeballed before copying; all 1072x1448 to match the site grid.",
+   "Alt texts updated where the screen changed (backgammon, deck, fanshelf, flashcards, lichess, musicstand, vault) and the pages regenerated; version gate 55/55. README galleries added for needles and parser, the only two catalog apps without one (the first census pass missed HTML <img> embeds; arxiv, birds, morse, vault already had galleries).",
+   "Verification re-run: 49/49 web images now hash-match a real-run copy in the repo, zero untraced. Caveats carried to APPQA-06: brief has no committed simulator route (its shots come from the device pipeline), and birds, homepanel, musicstand, post, verses and flashcards have launch-only routes."
+  ]
  },
  {
   "id": "APPQA-01",
