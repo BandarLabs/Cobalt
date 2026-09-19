@@ -711,4 +711,4 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
 - [x] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
 - [x] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
-- [ ] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.
+- [x] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.
