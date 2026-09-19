@@ -1,19 +1,19 @@
 expect Crossword
 tap-id puzzle-3
-tap-id cell-0
-type cat
+tap-id cell-1
+type put
 tap Enter
 tap-id cell-5
-type ore
+type minor
 tap Enter
 tap-id cell-10
-type wedge
+type alike
 tap Enter
-tap-id cell-17
-type dom
+tap-id cell-15
+type noted
 tap Enter
-tap-id cell-22
-type you
+tap-id cell-21
+type ten
 tap Enter
 expect Puzzle complete
 clean

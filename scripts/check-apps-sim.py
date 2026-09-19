@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import contextlib
 import shutil
 import subprocess
 import tempfile
@@ -41,30 +42,58 @@ def seed(app, state, kobo, env, log):
     elif app == 'frame':
         run('frame', 'init', '--sim')
         run('frame', 'push', str(ROOT / 'apps/frame/screenshots/frame.png'), '--sim', '--fit', 'pad')
+    elif app == 'needles':
+        shelf = Path(state) / 'cobalt-sim-data' / 'needles'
+        shelf.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'apps/needles/fixtures/pattern.md', shelf / 'pattern.md')
+        shutil.copyfile(ROOT / 'apps/needles/fixtures/chart-main.png', shelf / 'chart-main.png')
     elif app == 'birds':
         shelf = Path(state) / 'cobalt-sim-data' / 'birds'
         shelf.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'scripts/fixtures/birds/current.json', shelf / 'current.json')
         shutil.copyfile(ROOT / 'scripts/fixtures/birds/current.png', shelf / 'current.png')
+    elif app == 'fieldbook':
+        shelf = Path(state) / 'cobalt-sim-data' / 'fieldbook'
+        shelf.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'scripts/fixtures/fieldbook/packs.v1', shelf / 'packs.v1')
     elif app == 'vault':
         run('vault', 'init', '--sim')
         run('vault', 'push', str(ROOT / 'scripts/fixtures/vault'), '--sim')
+    elif app == 'chat':
+        store = Path(state) / 'cobalt-sim-state' / 'chat'
+        store.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'scripts/fixtures/chat/conversation', store / 'conversation')
+    elif app == 'parser':
+        shelf = Path(state) / 'cobalt-sim-data' / 'parser'
+        shelf.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'apps/parser/fixtures/lamplight.z3', shelf / 'story-lamplight.z3')
 
 
-def run_app(app, kobo, out, environment, timeout):
+def run_app(app, kobo, out, environment, timeout, bare=False, route_override=None,
+            seed_root=None, state_dir=None):
     directory = next((ROOT / group / app for group in ('apps', 'examples')
                       if (ROOT / group / app).is_dir()), None)
     result = dict(app=app, launched=False, status='fail')
     if directory is None:
         return dict(result, error='catalog app has no source directory')
-    route = next((directory / name for name in ('drive.kobo', 'drive.txt')
-                  if (directory / name).is_file()), None)
-    result['route'] = str(route.relative_to(ROOT)) if route else None
+    route = route_override or next((directory / name for name in ('drive.kobo', 'drive.txt')
+                                    if (directory / name).is_file()), None)
+    result['route'] = (str(route.relative_to(ROOT)) if route and route.is_relative_to(ROOT)
+                       else str(route) if route else None)
     process = None
     log_path = out / (app + '.log')
     # Short paths are required by Unix sockets, independently of --out length.
-    with tempfile.TemporaryDirectory(prefix='cb-', dir='/tmp') as state, log_path.open('w') as log:
+    if state_dir is not None:
+        kept = Path(state_dir)
+        kept.mkdir(parents=True, exist_ok=True)
+        context = contextlib.nullcontext(str(kept))
+    else:
+        context = tempfile.TemporaryDirectory(prefix='cb-', dir='/tmp')
+    with context as state, log_path.open('w') as log:
         env = dict(environment, TMPDIR=state, KOBO_INKLING_DAY='2026-09-01')
+        if seed_root is not None and Path(seed_root).is_dir():
+            shutil.copytree(seed_root, state, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns('*.sock'))
         if app == 'fanshelf':
             env['FANSHELF_DEMO'] = '1'
         if app == 'backgammon':
@@ -72,7 +101,8 @@ def run_app(app, kobo, out, environment, timeout):
             # what was rolled needs the fixture source rather than chance.
             env['KOBO_BACKGAMMON_SEED'] = '7'
         try:
-            seed(app, state, kobo, env, log)
+            if not bare:
+                seed(app, state, kobo, env, log)
             process = subprocess.Popen([str(kobo), 'dev', '127.0.0.1:0'], cwd=directory,
                                        env=env, stdout=log, stderr=log, start_new_session=True)
             deadline = time.monotonic() + timeout
@@ -108,7 +138,17 @@ def main():
     parser.add_argument('apps', nargs='*', help='catalog IDs; default: all apps')
     parser.add_argument('--out', type=Path, default=ROOT / 'target/sim-check')
     parser.add_argument('--timeout', type=int, default=300)
+    parser.add_argument('--bare', action='store_true',
+                        help='skip seeding, for first-run scenarios')
+    parser.add_argument('--seed-root', type=Path,
+                        help='copy this prepared simulator state into the fresh simulator')
+    parser.add_argument('--state-dir', type=Path,
+                        help='keep simulator state here instead of deleting it after the run')
+    parser.add_argument('--route', type=Path,
+                        help='drive script to run instead of the app default')
     args = parser.parse_args()
+    if args.route is not None:
+        args.route = args.route.resolve()
     if args.timeout < 1:
         parser.error('--timeout must be positive')
     registry = json.loads(subprocess.check_output([
@@ -137,7 +177,9 @@ def main():
         'results': [],
     }
     for app in apps:
-        result = run_app(app, kobo, out, env, args.timeout)
+        result = run_app(app, kobo, out, env, args.timeout,
+                                   bare=args.bare, route_override=args.route,
+                                   seed_root=args.seed_root, state_dir=args.state_dir)
         report['results'].append(result)
         (out / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(result), flush=True)

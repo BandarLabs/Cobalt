@@ -6,14 +6,17 @@ clean
 shot about
 tap Back to packs
 tap Start pass-around
+expect setup
+tap Continue
+tap Start round
 expect Ada answers
 clean
 shot question
-tap A · Mercury
-expect Answer locked
+tap Mercury
+expect Hand to
 clean
 shot pass
 tap Show result
-expect Round result
+expect Question result
 clean
 shot reveal

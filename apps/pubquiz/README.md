@@ -1,6 +1,12 @@
 # Pub Quiz
 
-![A pass-around question on a clean Kobo Clara BW panel](screenshots/question.png)
+![The pass-around players screen with four renamable players](screenshots/players.png)
+
+![Renaming a player on the on-screen keyboard](screenshots/keyboard.png)
+
+![The player list after renaming the first player](screenshots/renamed.png)
+
+![A pass-around question naming whose turn it is](screenshots/question.png)
 
 Pub Quiz syncs Open Trivia DB packs while online and plays them offline. Solo
 rounds are ten questions. Pass-around mode rotates named players and puts an

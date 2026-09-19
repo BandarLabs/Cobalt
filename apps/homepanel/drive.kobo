@@ -1,3 +1,10 @@
+# The setup screen explains the connection and the address field takes
+# typed input on the on-screen keyboard.
+wait-for Home Panel
 expect Connect Home Assistant
 clean
-shot setup
+shot homepanel-setup
+type homeassistant
+expect https://homeassistant
+clean
+shot homepanel-typed

@@ -58,6 +58,15 @@ resource limits, remaining release checks and the dependency assessment.
 | `pubquiz` | Starter questions sourced from Open Trivia DB | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` |
 | `verses` | Short poems by Emily Dickinson, William Blake and Percy Bysshe Shelley | Public domain; source and publication year are retained with each poem |
 
+## Test fixtures
+
+These files are copied for tests only; they are not bundled into an
+application or distributed to readers.
+
+| Application | Fixture | Terms | Notice |
+| --- | --- | --- | --- |
+| `parser` | Compiled Lamplight story (`apps/parser/fixtures/lamplight.z3`), Z-machine version 3 release 1 serial 260919, from the original source in `apps/parser/fixtures/lamplight.inf` built with Inform 6 and the PunyInform library | MIT | `licenses/LICENSE-PunyInform.txt`; provenance in `licenses/SOURCE-Parser-Lamplight.md` |
+
 ## Icons
 
 The icon geometry every application draws comes from a published set rather

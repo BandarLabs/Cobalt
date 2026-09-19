@@ -30,14 +30,26 @@ use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, QuoteRole, RowLead, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId,
+    TaskOutcome,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
 /// The export API, which is the interface arXiv asks robots to use.
-const QUERY: &str = "https://export.arxiv.org/api/query";
+/// Where the Atom API lives, overridable so the simulator harness can point
+/// the app at a local fixture.
+fn api_base() -> String {
+    std::env::var("ARXIV_API_BASE")
+        .unwrap_or_else(|_| "https://export.arxiv.org/api/query".to_owned())
+}
+
+/// Where HTML renderings live, overridable for the same reason. A paper's
+/// figures resolve against this origin, so the override carries them too.
+fn html_base() -> String {
+    std::env::var("ARXIV_HTML_BASE").unwrap_or_else(|_| "https://arxiv.org/html".to_owned())
+}
 
 /// How many papers one listing fetch asks for.
 const PAGE: usize = 25;
@@ -287,6 +299,9 @@ enum View {
     FullText,
     /// The papers kept for reading without a network.
     Library,
+    /// The searches saved and the subjects followed, so either can be run
+    /// again without being typed or found a second time.
+    Saved,
 }
 
 /// One paper the reader kept, as the library lists it.
@@ -302,8 +317,13 @@ struct Kept {
     authors: String,
     /// How big the stored rendering is, so the library can say what it costs.
     bytes: u32,
+    /// How far through anybody has read, as a percentage of the paper's
+    /// blocks, written down each time the reader saves a place. `None` means
+    /// kept but never opened.
+    progress: Option<u8>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 struct Arxiv {
     view: View,
@@ -351,6 +371,15 @@ struct Arxiv {
     /// listing, which is what Back has to know.
     from_library: bool,
     library_page: usize,
+    /// Word searches the reader saved to run again, newest first.
+    saved: Vec<String>,
+    /// Subject codes the reader follows, pinned to the top of the subject
+    /// list in the order they were followed.
+    followed: Vec<String>,
+    saved_page: usize,
+    /// Whether the saved list is removing rather than running: Manage turns
+    /// every row into the removal of itself, and Done turns them back.
+    managing: bool,
     /// The rendering of the open paper, held while it is on the panel so that
     /// keeping it does not mean fetching it a second time.
     ///
@@ -382,13 +411,58 @@ fn blob_key(id: &str) -> String {
 /// The store key the library's catalogue is written under.
 const LIBRARY_KEY: &str = "library";
 
+/// The store keys the saved searches and the followed subjects are written
+/// under.
+const SEARCHES_KEY: &str = "searches";
+const FOLLOWED_KEY: &str = "followed";
+
+/// How many saved searches and followed subjects each list holds. A saved
+/// list is a shortcut, not an archive: past a screenful or two of rows the
+/// answer to "which one was it" is the search box, not more scrolling.
+const MAX_SAVED: usize = 24;
+
+/// Writes a list of short strings out, one to a line.
+///
+/// The same shape as the library catalogue, for the same reasons: readable
+/// over the shell when somebody reports a lost entry, and a line that cannot
+/// be understood costs one entry rather than the whole list. Tabs are
+/// scrubbed on the way in, so nothing can forge a second field or a second
+/// line.
+fn encode_list(list: &[String]) -> Vec<u8> {
+    let mut text = String::new();
+    for entry in list.iter().take(MAX_SAVED) {
+        let _ = writeln!(text, "{}", untabbed(entry));
+    }
+    text.into_bytes()
+}
+
+fn decode_list(bytes: &[u8]) -> Vec<String> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    text.lines()
+        .take(MAX_SAVED)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// What a kept paper's row says under its title.
 fn kept_summary(kept: &Kept) -> String {
     let size = kept.bytes / 1024;
-    if kept.authors.is_empty() {
-        return format!("{} \u{b7} {size} KB", kept.id);
+    let facts = if kept.authors.is_empty() {
+        format!("{} \u{b7} {size} KB", kept.id)
+    } else {
+        format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
+    };
+    // Progress leads, for the same reason the offline badge does: the
+    // row clamps to one line, and the tail is what the clamp eats.
+    // "How far through am I" is the fact a library row exists to show.
+    if let Some(progress) = kept.progress.filter(|progress| *progress > 0) {
+        format!("{progress}% \u{b7} {facts}")
+    } else {
+        facts
     }
-    format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
 }
 
 /// Writes the library catalogue out.
@@ -407,11 +481,14 @@ fn encode_library(library: &[Kept]) -> Vec<u8> {
     for kept in library.iter().take(MAX_KEPT) {
         let _ = writeln!(
             text,
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}",
             untabbed(&kept.id),
             kept.bytes,
             untabbed(&kept.title),
-            untabbed(&kept.authors)
+            untabbed(&kept.authors),
+            kept.progress
+                .map(|progress| progress.to_string())
+                .unwrap_or_default()
         );
     }
     text.into_bytes()
@@ -431,11 +508,17 @@ fn decode_library(bytes: &[u8]) -> Vec<Kept> {
         if id.is_empty() {
             continue;
         }
+        let authors = fields.next().unwrap_or_default();
+        let progress = fields
+            .next()
+            .filter(|field| !field.is_empty())
+            .and_then(|field| field.parse().ok());
         library.push(Kept {
             id: id.to_owned(),
             title: title.to_owned(),
-            authors: fields.next().unwrap_or_default().to_owned(),
+            authors: authors.to_owned(),
             bytes: bytes.parse().unwrap_or(0),
+            progress,
         });
     }
     library
@@ -485,6 +568,16 @@ const KEEP: &str = "keep";
 const DISCARD: &str = "discard";
 const KEPT: &str = "kept-";
 const WINDOW: &str = "window";
+const SAVED: &str = "saved";
+const MANAGE: &str = "manage";
+const DONE: &str = "done";
+const SAVE_SEARCH: &str = "save-search";
+const FOLLOW: &str = "follow";
+const UNFOLLOW: &str = "unfollow";
+const SSEARCH: &str = "ssearch-";
+const FROW: &str = "frow-";
+const SAVED_BACK: &str = "saved-back";
+const SAVED_NEXT: &str = "saved-next";
 
 impl Arxiv {
     fn paper(&self) -> Option<&Paper> {
@@ -498,8 +591,9 @@ impl Arxiv {
     /// subject means.
     fn ask_listing(&mut self, context: &mut Context, query: Query, offset: usize) {
         let url = format!(
-            "{QUERY}?search_query={}&start={offset}&max_results={PAGE}\
+            "{}?search_query={}&start={offset}&max_results={PAGE}\
              &sortBy=submittedDate&sortOrder=descending",
+            api_base(),
             query.expression(self.window, today())
         );
         self.trouble = None;
@@ -524,7 +618,7 @@ impl Arxiv {
         let Some(paper) = self.paper() else {
             return;
         };
-        let url = format!("https://arxiv.org/html/{}", escape_path(&paper.id));
+        let url = format!("{}/{}", html_base(), escape_path(&paper.id));
         // Asked for now rather than when the rendering lands, so that the
         // place is already in hand by the time there is a document to put
         // it into. The store is on the same machine and the paper is at the
@@ -545,12 +639,30 @@ impl Arxiv {
         }
     }
 
-    /// Lays the open paper's abstract out as pages.
+    /// Lays the open paper's abstract out as pages, with the paper's title
+    /// and facts measured off the top of the first page and the prose given
+    /// the whole of every page after.
     fn open_abstract(&mut self, context: &Context) {
         let Some(paper) = self.paper() else {
             return;
         };
-        self.pages = context.paginate_reading(&abstract_text(paper), false);
+        let header = paper_header(paper);
+        let paragraphs: Vec<(u32, u8, QuoteRole, &str)> = paper
+            .summary
+            .split("\n\n")
+            .map(|paragraph| (0, 0, QuoteRole::Body, paragraph))
+            .collect();
+        // `true` because the paper screen's bottom band is a bottom action
+        // (Full text): the layout engine bounds content by it exactly as it
+        // does a navigation bar, so the pages are measured against that
+        // shorter area. Measured without it, a full first page overflows
+        // into the band and the renderer refuses the screen -- which only a
+        // real abstract, long enough to fill the page, ever showed.
+        self.pages = context
+            .paginate_tagged_under(&paragraphs, true, &header)
+            .into_iter()
+            .map(|page| page.into_iter().map(|(_, _, _, text)| text).collect())
+            .collect();
         self.page = 0;
         self.truncated = false;
     }
@@ -560,22 +672,52 @@ impl Arxiv {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
-        let rows: Vec<(&str, &str)> = SUBJECTS.iter().map(|(code, name)| (*name, *code)).collect();
+        // Followed subjects lead, in the order they were followed, and carry
+        // the follow mark; the rest keep the catalogue's own order behind
+        // them. The row ids still name the catalogue index, so the action
+        // that opens a subject does not care where the row stood.
+        let order: Vec<usize> = self
+            .followed
+            .iter()
+            .filter_map(|code| SUBJECTS.iter().position(|(known, _)| known == code))
+            .chain(
+                SUBJECTS
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, (code, _))| {
+                        (!self.followed.iter().any(|followed| followed == code)).then_some(index)
+                    }),
+            )
+            .collect();
+        let rows: Vec<(&str, &str)> = order
+            .iter()
+            .map(|index| {
+                let (code, name) = SUBJECTS[*index];
+                (name, code)
+            })
+            .collect();
         let pages = context.paginate_rows(&rows, true);
         let page = self.subject_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen
-            .rows(shown.iter().filter_map(|index| {
-                SUBJECTS.get(*index).map(|(code, name)| {
+            .rows(shown.iter().filter_map(|position| {
+                let index = *order.get(*position)?;
+                SUBJECTS.get(index).map(|(code, name)| {
+                    let lead = if self.followed.iter().any(|followed| followed == code) {
+                        Glyph::Heart
+                    } else {
+                        Glyph::Note
+                    };
                     (
                         format!("{SUBJECT}{index}"),
                         (*name).to_owned(),
                         (*code).to_owned(),
-                        RowLead::Icon(Glyph::Note),
+                        RowLead::Icon(lead),
                     )
                 })
             }))
             .top_bar_glyph(LIBRARY, "Library", Glyph::Bookmark)
+            .top_bar_glyph(SAVED, "Saved", Glyph::Heart)
             .page_turns(SUBJECTS_BACK, SUBJECTS_NEXT)
             .page_position(page_number(page), page_total(pages.len()))
             .bottom_action_marked(SEARCH, "Search arXiv", Glyph::Search)
@@ -612,10 +754,19 @@ impl Arxiv {
                 )
                 .build();
         }
+        // Clamped here rather than left to the renderer: a real title runs
+        // to two dozen words, and a row's text that does not fit is a screen
+        // the renderer refuses outright. Two lines for the title, one for
+        // the facts, measured against the same width the layout uses.
         let rows: Vec<(String, String)> = self
             .library
             .iter()
-            .map(|kept| (kept.title.clone(), kept_summary(kept)))
+            .map(|kept| {
+                (
+                    context.clamped_row(&kept.title, 2, false),
+                    context.one_line_row(&kept_summary(kept), false),
+                )
+            })
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
@@ -625,18 +776,92 @@ impl Arxiv {
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|index| {
-            self.library.get(*index).map(|kept| {
-                (
-                    format!("{KEPT}{index}"),
-                    kept.title.clone(),
-                    kept_summary(kept),
-                    RowLead::Icon(Glyph::Bookmark),
-                )
-            })
+            self.library
+                .get(*index)
+                .zip(rows.get(*index))
+                .map(|(_kept, (title, summary))| {
+                    (
+                        format!("{KEPT}{index}"),
+                        title.clone(),
+                        summary.clone(),
+                        RowLead::Icon(Glyph::Bookmark),
+                    )
+                })
         }));
         screen
             .page_turns(LIB_BACK, LIB_NEXT)
             .page_position(page_number(page), page_total(pages.len()))
+            .build()
+    }
+
+    /// The searches saved and the subjects followed, in one list.
+    ///
+    /// Reachable from the subject list beside the library, because both
+    /// answer "where are the things I set aside" before any listing exists
+    /// to ask it from.
+    fn saved(&self, context: &Context) -> Screen {
+        let mut screen = ScreenBuilder::new("arxiv-saved").top_bar("Saved");
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        if self.saved.is_empty() && self.followed.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::Heart),
+                    "Nothing saved",
+                    "Save a search or follow a subject to see it here.",
+                )
+                .build();
+        }
+        // Searches first: they are the more specific shortcut. A search
+        // phrase is free text, so the rows are clamped here for the usual
+        // reason - a row that does not fit is a refused screen.
+        let rows: Vec<(String, String)> = self
+            .saved
+            .iter()
+            .map(|words| {
+                (
+                    context.clamped_row(&format!("\u{201c}{words}\u{201d}"), 2, false),
+                    "Saved search".to_owned(),
+                )
+            })
+            .chain(self.followed.iter().filter_map(|code| {
+                SUBJECTS
+                    .iter()
+                    .find(|(known, _)| known == code)
+                    .map(|(code, name)| (context.one_line_row(name, false), (*code).to_owned()))
+            }))
+            .collect();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, summary)| (title.as_str(), summary.as_str()))
+            .collect();
+        let pages = context.paginate_rows(&borrowed, true);
+        let page = self.saved_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let searches = self.saved.len();
+        screen = screen.rows(shown.iter().filter_map(|position| {
+            let (title, summary) = rows.get(*position)?;
+            let (id, lead) = if *position < searches {
+                (format!("{SSEARCH}{position}"), Glyph::Search)
+            } else {
+                (format!("{FROW}{}", position - searches), Glyph::Heart)
+            };
+            let lead = if self.managing { Glyph::Trash } else { lead };
+            Some((id, title.clone(), summary.clone(), RowLead::Icon(lead)))
+        }));
+        // Manage turns every row into the removal of itself. There is no
+        // confirm: a removal costs one tap to undo, because saving and
+        // following are one tap each to redo.
+        let managing = if self.managing {
+            (DONE, "Done", Glyph::Check)
+        } else {
+            (MANAGE, "Manage", Glyph::Settings)
+        };
+        screen
+            .page_turns(SAVED_BACK, SAVED_NEXT)
+            .page_position(page_number(page), page_total(pages.len()))
+            .bottom_action_marked(managing.0, managing.1, managing.2)
             .build()
     }
 
@@ -666,10 +891,18 @@ impl Arxiv {
                 .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
                 .build();
         }
+        // Clamped for the same reason the library's rows are: live titles
+        // and bylines are far longer than anything a fixture needs, and an
+        // overflowing row is a refused screen.
         let rows: Vec<(String, String)> = self
             .papers
             .iter()
-            .map(|paper| (paper.title.clone(), row_summary(paper)))
+            .map(|paper| {
+                (
+                    context.clamped_row(&paper.title, 2, false),
+                    context.one_line_row(&self.listing_summary(paper), false),
+                )
+            })
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
@@ -679,21 +912,44 @@ impl Arxiv {
         let page = self.listing_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|index| {
-            self.papers.get(*index).map(|paper| {
-                (
-                    format!("{PAPER}{index}"),
-                    paper.title.clone(),
-                    row_summary(paper),
-                    RowLead::Number(u16::try_from(self.offset + index + 1).unwrap_or(u16::MAX)),
-                )
-            })
+            self.papers
+                .get(*index)
+                .zip(rows.get(*index))
+                .map(|(_paper, (title, summary))| {
+                    (
+                        format!("{PAPER}{index}"),
+                        title.clone(),
+                        summary.clone(),
+                        RowLead::Number(u16::try_from(self.offset + index + 1).unwrap_or(u16::MAX)),
+                    )
+                })
         }));
         // Offered only on the last page, and only when there is more behind
         // it. Anywhere else it is a control that fetches something the reader
-        // has not finished looking at.
+        // has not finished looking at. It goes in the top bar: the bottom
+        // band holds one control, and that one is the window the listing is
+        // narrowed to.
         let more_behind = self.offset + self.papers.len() < self.total as usize;
         if page + 1 == pages.len() && more_behind {
-            screen = screen.bottom_action_marked(MORE, "Older papers", Glyph::Download);
+            screen = screen.top_bar_action(MORE, "Older papers");
+        }
+        // Saving and following are offered where the thing they keep is on
+        // screen: "run this again" is a fact about the listing behind the
+        // rows, and the listing is the only place that says what it is. The
+        // bar holds two actions and "Older papers" can be one, so this is
+        // the other.
+        match &self.query {
+            Some(Query::Words(words)) if !self.saved.contains(words) => {
+                screen = screen.top_bar_glyph(SAVE_SEARCH, "Save this search", Glyph::Bookmark);
+            }
+            Some(Query::Subject { code, .. }) => {
+                screen = if self.followed.contains(code) {
+                    screen.top_bar_glyph(UNFOLLOW, "Stop following", Glyph::Check)
+                } else {
+                    screen.top_bar_glyph(FOLLOW, "Follow this subject", Glyph::Heart)
+                };
+            }
+            _ => {}
         }
         screen
             .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
@@ -723,19 +979,24 @@ impl Arxiv {
             );
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));
+        if page == 0 {
+            screen = with_paper_header(screen, paper);
+        }
         for line in self.pages.get(page).map(Vec::as_slice).unwrap_or_default() {
             screen = screen.text(line.clone());
         }
         // Keeping is offered from the paper rather than from the reader,
         // because the reader's bar belongs to reading and every application
         // sharing it has the same one. Whether this paper is kept is a fact
-        // about this application's library, not about the page.
+        // about this application's library, not about the page. It sits in
+        // the top bar: the bottom band holds one control, and that one is
+        // the way into the full text.
         let kept = self.paper().is_some_and(|paper| self.is_kept(&paper.id));
         screen = screen.fill();
         screen = if kept {
-            screen.bottom_action_marked(DISCARD, "Remove from library", Glyph::Trash)
+            screen.top_bar_glyph(DISCARD, "Remove from library", Glyph::Trash)
         } else {
-            screen.bottom_action_marked(KEEP, "Keep for offline", Glyph::Download)
+            screen.top_bar_glyph(KEEP, "Keep for offline", Glyph::Download)
         };
         screen
             .bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book)
@@ -769,6 +1030,7 @@ impl Arxiv {
             View::Paper => self.reading(),
             View::FullText => self.full_text(),
             View::Library => self.library(context),
+            View::Saved => self.saved(context),
         };
         // Every view but the subject list was reached from another one, so
         // Back has somewhere to go from all of them and nowhere to go from it.
@@ -782,6 +1044,7 @@ impl Arxiv {
             View::Subjects => &mut self.subject_page,
             View::Listing => &mut self.listing_page,
             View::Library => &mut self.library_page,
+            View::Saved => &mut self.saved_page,
             View::Paper => &mut self.page,
             // The reader turns its own pages, and the taps that ask it to are
             // its own actions rather than this application's.
@@ -834,7 +1097,7 @@ impl Arxiv {
         // carrying the id. The paper's name appeared twice and every figure
         // came back 404, which is why a paper used to read with nothing but
         // "Refer to caption" where its plots belong.
-        let origin = format!("https://arxiv.org/html/{}", escape_path(&paper.id));
+        let origin = format!("{}/{}", html_base(), escape_path(&paper.id));
         // Whatever this paper was left at, if it has been read before. The
         // load was asked for when the paper was opened, so by the time the
         // rendering is in hand the answer is usually already here; a paper
@@ -881,6 +1144,20 @@ impl Arxiv {
         self.library.iter().any(|kept| kept.id == id)
     }
 
+    /// A listing row's second line: the facts that place the paper, and
+    /// whether it is already on the shelf for reading without a network.
+    fn listing_summary(&self, paper: &Paper) -> String {
+        // The badge leads so that clamping a live-length byline to
+        // one line can never eat it: an "offline" the row no longer
+        // shows is a kept paper the reader cannot find again without
+        // a network.
+        if self.is_kept(&paper.id) {
+            format!("offline \u{b7} {}", row_summary(paper))
+        } else {
+            row_summary(paper)
+        }
+    }
+
     /// Writes the reading position of the open paper.
     ///
     /// Called on every save the reader asks for and again when the paper
@@ -895,6 +1172,23 @@ impl Arxiv {
             return;
         };
         context.store().save(place_key(&id), memory.encode());
+        // The library row says how far through the paper anybody has read.
+        // Blocks, not pages: a block is content and stays put when the type
+        // size changes, which a page number does not.
+        let progress = self.book.reader_mut().and_then(|reader| {
+            let total = reader.document().blocks.len();
+            let at = reader.memory().at as usize;
+            let percent = u8::try_from((((at * 100) + (total / 2)) / total).min(100)).ok();
+            (total > 0).then_some(percent)?
+        });
+        if let Some(progress) = progress {
+            if let Some(kept) = self.library.iter_mut().find(|kept| kept.id == id) {
+                if kept.progress != Some(progress) {
+                    kept.progress = Some(progress);
+                    self.save_library(context);
+                }
+            }
+        }
     }
 
     /// Asks for the reading position of a paper about to be opened.
@@ -942,6 +1236,7 @@ impl Arxiv {
                 title: paper.title.clone(),
                 authors: paper.byline(),
                 bytes: size,
+                progress: None,
             },
         );
         self.save_library(context);
@@ -958,6 +1253,54 @@ impl Arxiv {
         context
             .store()
             .save(LIBRARY_KEY, encode_library(&self.library));
+    }
+
+    /// Saves the listing's word search so Saved can run it again.
+    fn save_search(&mut self, context: &mut Context) {
+        let Some(Query::Words(words)) = &self.query else {
+            return;
+        };
+        if self.saved.contains(words) {
+            return;
+        }
+        if self.saved.len() >= MAX_SAVED {
+            self.trouble = Some(format!(
+                "Saved searches hold {MAX_SAVED}. Remove one in Saved."
+            ));
+            return;
+        }
+        self.saved.insert(0, words.clone());
+        context.store().save(SEARCHES_KEY, encode_list(&self.saved));
+    }
+
+    /// Follows the listing's subject, pinning it to the top of the list.
+    fn follow_subject(&mut self, context: &mut Context) {
+        let Some(Query::Subject { code, .. }) = &self.query else {
+            return;
+        };
+        if self.followed.contains(code) {
+            return;
+        }
+        if self.followed.len() >= MAX_SAVED {
+            self.trouble = Some(format!(
+                "Followed subjects hold {MAX_SAVED}. Remove one in Saved."
+            ));
+            return;
+        }
+        self.followed.push(code.clone());
+        context
+            .store()
+            .save(FOLLOWED_KEY, encode_list(&self.followed));
+    }
+
+    fn unfollow_subject(&mut self, context: &mut Context) {
+        let Some(Query::Subject { code, .. }) = &self.query else {
+            return;
+        };
+        self.followed.retain(|followed| followed != code);
+        context
+            .store()
+            .save(FOLLOWED_KEY, encode_list(&self.followed));
     }
 
     /// Opens a kept paper from the shelf instead of the network.
@@ -1036,22 +1379,23 @@ fn row_summary(paper: &Paper) -> String {
     parts.join(" \u{00b7} ")
 }
 
-/// The abstract, with the facts that only matter once you are considering
-/// reading the thing set above it.
-fn abstract_text(paper: &Paper) -> String {
-    let mut facts = Vec::new();
+/// The facts that decide whether a paper is worth reading, one per line, in
+/// the order a reader asks for them: who wrote it, where it sits, when it
+/// came, and anything the authors thought to add.
+fn fact_lines(paper: &Paper) -> Vec<String> {
+    let mut lines = Vec::new();
     let byline = paper.byline();
     if !byline.is_empty() {
-        facts.push(byline);
+        lines.push(byline);
     }
     if !paper.categories.is_empty() {
-        facts.push(paper.categories.join(", "));
+        lines.push(paper.categories.join(", "));
     }
     if !paper.published.is_empty() {
         // Both dates, but only when they differ: a paper revised twice is a
         // different thing from the one first posted, and saying so costs a
         // line only for the papers where it is true.
-        facts.push(
+        lines.push(
             if paper.updated.is_empty() || paper.updated == paper.published {
                 format!("Submitted {}", paper.published)
             } else {
@@ -1060,22 +1404,28 @@ fn abstract_text(paper: &Paper) -> String {
         );
     }
     if !paper.journal.is_empty() {
-        facts.push(format!("Published in {}", paper.journal));
+        lines.push(format!("Published in {}", paper.journal));
     }
     if !paper.comment.is_empty() {
-        facts.push(paper.comment.clone());
+        lines.push(paper.comment.clone());
     }
-    // Joined with a separator rather than newlines. The paginator treats a
-    // single newline as a soft wrap, so a fact per line came out as one
-    // run-on sentence -- "Lecheng Kong and 3 others cs.CL, cs.LG Submitted
-    // 2026-08-10" -- where the reader could not tell where the authors ended
-    // and the subjects began.
-    format!(
-        "{}\n\n{}\n\n{}",
-        paper.title,
-        facts.join(" \u{00b7} "),
-        paper.summary
-    )
+    lines
+}
+
+/// The head of a paper's first page: its title set as a heading and each fact
+/// about it on a muted line of its own, apart from the abstract that follows.
+fn with_paper_header(screen: ScreenBuilder, paper: &Paper) -> ScreenBuilder {
+    let mut screen = screen.heading(paper.title.clone());
+    for line in fact_lines(paper) {
+        screen = screen.secondary(line);
+    }
+    screen
+}
+
+/// The header on its own, so the abstract can be paginated in the space it
+/// leaves on the first page.
+fn paper_header(paper: &Paper) -> Screen {
+    with_paper_header(ScreenBuilder::new("arxiv-paper-head"), paper).build()
 }
 
 /// The identifier as it goes in a path.
@@ -1099,6 +1449,8 @@ fn page_total(pages: usize) -> u16 {
 impl KoboApp for Arxiv {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(LIBRARY_KEY);
+        context.store().load(SEARCHES_KEY);
+        context.store().load(FOLLOWED_KEY);
         self.show(context);
     }
 
@@ -1132,7 +1484,7 @@ impl KoboApp for Arxiv {
             self.trouble = None;
             match self.view {
                 View::Subjects => return,
-                View::Search | View::Listing | View::Library => {
+                View::Search | View::Listing | View::Library | View::Saved => {
                     self.view = View::Subjects;
                     self.listing_page = 0;
                 }
@@ -1240,11 +1592,55 @@ impl KoboApp for Arxiv {
             return;
         }
 
-        if action == action_id(SUBJECTS_BACK) || action == action_id(LIST_BACK) {
+        if action == action_id(SAVED) {
+            self.saved_page = 0;
+            self.managing = false;
+            self.view = View::Saved;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(MANAGE) {
+            self.managing = true;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(DONE) {
+            self.managing = false;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(SAVE_SEARCH) {
+            self.save_search(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(FOLLOW) {
+            self.follow_subject(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(UNFOLLOW) {
+            self.unfollow_subject(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(SUBJECTS_BACK)
+            || action == action_id(LIST_BACK)
+            || action == action_id(SAVED_BACK)
+        {
             self.turn(context, false);
             return;
         }
-        if action == action_id(SUBJECTS_NEXT) || action == action_id(LIST_NEXT) {
+        if action == action_id(SUBJECTS_NEXT)
+            || action == action_id(LIST_NEXT)
+            || action == action_id(SAVED_NEXT)
+        {
             self.turn(context, true);
             return;
         }
@@ -1305,6 +1701,53 @@ impl KoboApp for Arxiv {
                     },
                     0,
                 );
+                self.show(context);
+                return;
+            }
+        }
+
+        for index in 0..self.saved.len() {
+            if action == action_id(&format!("{SSEARCH}{index}")) {
+                if self.managing {
+                    self.saved.remove(index);
+                    context.store().save(SEARCHES_KEY, encode_list(&self.saved));
+                    self.show(context);
+                    return;
+                }
+                let words = self.saved[index].clone();
+                self.papers.clear();
+                self.listing_page = 0;
+                self.managing = false;
+                self.view = View::Listing;
+                self.ask_listing(context, Query::Words(words), 0);
+                self.show(context);
+                return;
+            }
+        }
+
+        for index in 0..self.followed.len() {
+            if action == action_id(&format!("{FROW}{index}")) {
+                if self.managing {
+                    self.followed.remove(index);
+                    context
+                        .store()
+                        .save(FOLLOWED_KEY, encode_list(&self.followed));
+                    self.show(context);
+                    return;
+                }
+                let code = self.followed[index].clone();
+                let Some((code, name)) = SUBJECTS
+                    .iter()
+                    .find(|(known, _)| *known == code)
+                    .map(|(code, name)| ((*code).to_owned(), (*name).to_owned()))
+                else {
+                    return;
+                };
+                self.papers.clear();
+                self.listing_page = 0;
+                self.managing = false;
+                self.view = View::Listing;
+                self.ask_listing(context, Query::Subject { code, name }, 0);
                 self.show(context);
                 return;
             }
@@ -1437,6 +1880,12 @@ impl KoboApp for Arxiv {
             if key == LIBRARY_KEY {
                 self.library = value.as_deref().map(decode_library).unwrap_or_default();
                 self.show(context);
+            } else if key == SEARCHES_KEY {
+                self.saved = value.as_deref().map(decode_list).unwrap_or_default();
+                self.show(context);
+            } else if key == FOLLOWED_KEY {
+                self.followed = value.as_deref().map(decode_list).unwrap_or_default();
+                self.show(context);
             } else if self
                 .paper()
                 .is_some_and(|paper| place_key(&paper.id) == key)
@@ -1492,14 +1941,18 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        abstract_text, blob_key, decode_library, encode_library, escape, escape_path, paper_body,
-        place_key, row_summary, stamp, Arxiv, Kept, Query, View, Window, ABSTRACT, DISCARD,
-        FULL_TEXT, KEEP, LIBRARY_KEY, SUBJECTS, WINDOW,
+        blob_key, decode_library, decode_list, encode_library, encode_list, escape, escape_path,
+        fact_lines, kept_summary, paper_body, place_key, row_summary, stamp, Arxiv, Kept, Query,
+        View, Window, ABSTRACT, DISCARD, DONE, FOLLOW, FOLLOWED_KEY, FULL_TEXT, KEEP, LIBRARY_KEY,
+        MANAGE, MAX_SAVED, SAVED, SAVE_SEARCH, SEARCHES_KEY, SSEARCH, SUBJECTS, UNFOLLOW, WINDOW,
     };
     use crate::atom::Paper;
     use kobo_read::Memory;
     use kobo_sdk::StoreResult;
-    use kobo_sdk::{action_id, is_valid_key, ActionId, AppRunner, Command, Task, TaskOutcome};
+    use kobo_sdk::{
+        action_id, is_valid_key, ActionId, AppRunner, Command, StoreRequest, Task, TaskError,
+        TaskId, TaskOutcome,
+    };
 
     fn paper() -> Paper {
         Paper {
@@ -1587,24 +2040,96 @@ mod tests {
         }
     }
 
+    /// While the full text is in the air, the paper screen says so.
+    #[test]
+    fn fetching_the_full_text_shows_a_fetching_state() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        runner.action(action_id(FULL_TEXT));
+        let rendered = format!("{:?}", runner.app().reading());
+        assert!(rendered.contains("Fetching the full text"), "{rendered}");
+    }
+
+    /// Both ways off the abstract stay reachable: the bottom band is a
+    /// single slot, so Keep lives in the top bar and Full text in the band -
+    /// a second bottom control would silently replace the first.
+    #[test]
+    fn the_paper_screen_keeps_keep_and_full_text_reachable() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        let rendered = format!("{:?}", runner.app().reading());
+        assert!(rendered.contains("Keep for offline"), "{rendered}");
+        assert!(rendered.contains("Full text"), "{rendered}");
+
+        runner.app_mut().library.push(Kept {
+            id: paper().id.clone(),
+            title: paper().title.clone(),
+            authors: String::new(),
+            bytes: 1,
+            progress: None,
+        });
+        let rendered = format!("{:?}", runner.app().reading());
+        assert!(rendered.contains("Remove from library"), "{rendered}");
+        assert!(!rendered.contains("Keep for offline"), "{rendered}");
+    }
+
+    /// Older papers stay reachable from the listing's last page, from the
+    /// top bar, without costing the window control its band.
+    #[test]
+    fn the_listing_keeps_older_papers_and_the_window_reachable() {
+        let app = Arxiv {
+            papers: vec![paper()],
+            total: 50,
+            ..Arxiv::default()
+        };
+        let rendered = format!("{:?}", app.listing(&kobo_sdk::Context::default()));
+        assert!(rendered.contains("Older papers"), "{rendered}");
+        assert!(rendered.contains("Any time"), "{rendered}");
+    }
+
     /// The facts above an abstract are the ones that decide whether to read
     /// it, so they have to be there and be right.
     #[test]
     fn an_abstract_is_set_under_the_facts_that_decide_whether_to_read_it() {
-        let text = abstract_text(&paper());
-        assert!(
-            text.starts_with("Attention Is All You Need Again"),
-            "{text}"
+        let lines = fact_lines(&paper());
+        assert_eq!(
+            lines,
+            [
+                "Ada Lovelace, Alan Turing",
+                "cs.LG, cs.CL",
+                "Submitted 2024-01-01, revised 2024-01-09",
+                "12 pages",
+            ]
         );
-        assert!(text.contains("Ada Lovelace, Alan Turing"), "{text}");
-        assert!(text.contains("cs.LG, cs.CL"), "{text}");
-        assert!(text.contains("Submitted 2024-01-01, revised 2024-01-09"));
-        // The facts have to read as separate facts, not as one sentence.
-        assert!(
-            text.contains("Ada Lovelace, Alan Turing \u{00b7} cs.LG, cs.CL \u{00b7} Submitted"),
-            "{text}"
-        );
-        assert!(text.ends_with("We revisit the transformer."), "{text}");
+    }
+
+    /// Title, facts and abstract are three kinds of text and are set as
+    /// three: the title a heading, each fact a muted line of its own, and the
+    /// abstract prose paginated beneath them - never one run-on paragraph.
+    #[test]
+    fn the_first_page_separates_title_facts_and_prose_visually() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        let app = runner.app();
+        // The paginated prose carries the abstract and nothing else: the
+        // title and every fact live in the header above it.
+        let body = app.pages.concat().join("\n");
+        assert!(body.contains("We revisit the transformer."), "{body}");
+        assert!(!body.contains("Attention Is All You Need Again"), "{body}");
+        assert!(!body.contains("Submitted 2024-01-01"), "{body}");
+        // And the first page - heading, fact lines and prose together - fits
+        // the smallest panel the application ships to.
+        let issues = app
+            .reading()
+            .diagnostics(&kobo_sdk::CLARA_BW_METRICS, &kobo_sdk::Chrome::default())
+            .issues;
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     /// A revision date equal to the submission date is not news, and a line
@@ -1615,9 +2140,9 @@ mod tests {
             updated: "2024-01-01".into(),
             ..paper()
         };
-        let text = abstract_text(&never);
-        assert!(text.contains("Submitted 2024-01-01"), "{text}");
-        assert!(!text.contains("revised"), "{text}");
+        let lines = fact_lines(&never);
+        assert!(lines.iter().any(|line| line == "Submitted 2024-01-01"));
+        assert!(!lines.iter().any(|line| line.contains("revised")));
     }
 
     /// Taken from the real shape of an arXiv rendering: banner and issue form
@@ -1765,6 +2290,228 @@ mod tests {
         );
     }
 
+    /// A long paper keeps its structure the whole way through: tables stay
+    /// tables, a displayed formula is typeset and handed to the panel as a
+    /// picture of itself, and a figure is fetched rather than dropped.
+    ///
+    /// The parser hands a formula over as its LaTeX source and the book view
+    /// typesets it a pass at a time after the first page is already showing,
+    /// so the test answers the runtime's wake tasks the way the runtime would
+    /// until the pipeline runs dry.
+    #[test]
+    fn a_long_paper_keeps_its_formulas_tables_and_figures() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let mut commands = opened_on(
+            &mut runner,
+            "<article><h2>1 Introduction</h2><p>The union over every set.</p>             <math display=\"block\" alttext=\"\\bigcup_{i=1}^{n} A_i\"><mo>\u{22c3}</mo></math>             <table><tr><th>Model</th><th>Accuracy</th></tr>             <tr><td>Fixture A</td><td>91.2</td></tr></table>             <figure><img src=\"2609.00077v1/x1.png\" alt=\"A fixture plot\">             <figcaption>Figure 1.</figcaption></figure></article>",
+        );
+        let fetched: Vec<String> = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut pictures_put = 0;
+        for _ in 0..16 {
+            let wakes: Vec<TaskId> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    Command::Spawn {
+                        task,
+                        work: Task::Sleep { .. },
+                    } => Some(*task),
+                    _ => None,
+                })
+                .collect();
+            if wakes.is_empty() {
+                break;
+            }
+            commands = wakes
+                .into_iter()
+                .flat_map(|wake| runner.task_outcome(wake, TaskOutcome::Completed(Vec::new())))
+                .collect();
+            pictures_put += commands
+                .iter()
+                .filter(|command| matches!(command, Command::PutPicture { .. }))
+                .count();
+        }
+        let reader = runner.app().book.reader().expect("the paper is not open");
+        let blocks = &reader.document().blocks;
+
+        assert!(
+            blocks
+                .iter()
+                .any(|block| matches!(block, kobo_doc::Block::Row { header: true, .. })),
+            "the table's heading row was flattened into prose"
+        );
+        assert!(
+            blocks.iter().any(|block| matches!(
+                block,
+                kobo_doc::Block::Row { cells, .. } if cells.iter().any(|cell| cell == "Fixture A")
+            )),
+            "the table's body was flattened into prose"
+        );
+        assert!(
+            blocks.iter().any(|block| matches!(
+                block,
+                kobo_doc::Block::Picture { name, .. } if name == "formula:0"
+            )),
+            "the displayed formula lost its place in the text"
+        );
+        assert!(
+            pictures_put > 0,
+            "the displayed formula was never typeset and handed to the panel"
+        );
+        assert!(
+            fetched
+                .iter()
+                .any(|url| url == "https://arxiv.org/html/2609.00077v1/x1.png"),
+            "the figure was not fetched from beside its paper: {fetched:?}"
+        );
+    }
+
+    /// A figure that will not fetch costs the paper nothing: the page reads
+    /// on past it, no error is raised, and the reader's place still saves on
+    /// the way out.
+    ///
+    /// The reader draws what the caption said the figure shows, which is what
+    /// a document with a missing plate should look like; the failure belongs
+    /// to the figure, not to the paper around it.
+    #[test]
+    fn a_failed_figure_fetch_leaves_the_paper_readable_and_its_place_saved() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let commands = opened_on(
+            &mut runner,
+            "<article><p>Before the figure.</p>             <figure><img src=\"2609.00077v1/x2.png\" alt=\"A missing plot\">             <figcaption>Figure 2.</figcaption></figure>             <p>After the figure.</p></article>",
+        );
+        let fetch = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Fetch { url, .. },
+                } if url.ends_with("x2.png") => Some(*task),
+                _ => None,
+            })
+            .expect("the figure was never asked for");
+        let _ = runner.task_outcome(fetch, TaskOutcome::Failed(TaskError::NotFound));
+
+        assert!(
+            runner.app().trouble.is_none(),
+            "a missing figure was raised as an error"
+        );
+        let reader = runner.app().book.reader().expect("the paper is not open");
+        assert!(
+            reader.document().blocks.iter().any(|block| matches!(
+                block,
+                kobo_doc::Block::Paragraph(text) if text == "After the figure."
+            )),
+            "the paper stopped reading at the missing figure"
+        );
+
+        let commands = runner.action(ActionId::BACK);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, .. }) if key.starts_with("place.")
+            )),
+            "leaving the paper saved no place"
+        );
+    }
+
+    /// Reproduces the first live run's refused screen: a real title wraps
+    /// the heading to several lines and a real abstract fills every page,
+    /// and the first page still has to fit exactly.
+    #[test]
+    fn a_long_live_title_paginates_the_abstract_without_overflow() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let mut live = paper();
+        live.title = "Objective vs. Search: Decomposing What Makes a Good Tokeniser".into();
+        live.authors = vec![
+            "Ahmetcan Yavuz".into(),
+            "Clara Meister".into(),
+            "Tiago Pimentel".into(),
+        ];
+        live.categories = vec!["cs.CL".into(), "cs.AI".into()];
+        live.published = "2026-09-16".into();
+        live.comment = "Accepted at EMNLP 2026. 20 pages, 4 figures, 10 tables. Code: https://github.com/Ahmetcanyvz/comp-vs-like".into();
+        live.summary =
+            "Two dominant tokenisation algorithms are used by modern language models: byte-pair encoding (BPE) and UnigramLM. These differ along two orthogonal axes: their optimisation objective (compression vs. log-likelihood) and their search procedure (bottom-up merging vs. top-down pruning). Existing comparisons confound these axes, making it unclear whether their observed differences stem from what is being optimised vs. how it is being optimised. We disentangle the two by introducing two new tokenisation algorithms that complete this 2x2 design space: BottomUpLL, a bottom-up likelihood-based tokeniser, and TopDownComp, a top-down compression-based tokeniser. The remainder of the abstract carries the evaluation and the conclusions at the same length as the real paper's. ".into();
+        runner.app_mut().papers = vec![live];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Paper;
+        let context = runner.context();
+        runner.app_mut().open_abstract(&context);
+        let screen = runner.app().reading();
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "the abstract page overflowed under a live-length title: {issues:?}"
+        );
+    }
+
+    /// Live titles and bylines run far longer than anything a fixture needs,
+    /// and a row whose text does not fit is a screen the renderer refuses
+    /// outright -- which is what the first run against the real arXiv feed
+    /// did. Rows clamp to the width the layout engine measures, two lines
+    /// for a title and one for the facts beneath it.
+    #[test]
+    fn rows_clamp_live_length_titles_and_bylines() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let long_title = "Transformers Are Secretly ".repeat(12);
+        let long_authors = vec![
+            "Bartholomew Featherstonehaugh".to_owned(),
+            "Alexandrina Konstantinopoulos".to_owned(),
+            "Wolfgang Amadeus".to_owned(),
+        ];
+        let mut live = paper();
+        live.title = long_title.clone();
+        live.authors = long_authors.clone();
+        runner.app_mut().papers = vec![live];
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().library = vec![Kept {
+            id: "2609.00099v1".into(),
+            title: long_title.clone(),
+            authors: long_authors.join(", "),
+            bytes: 4096,
+            progress: None,
+        }];
+        let context = runner.context();
+        let screen = runner.app().listing(&context);
+        // The badge surviving the clamp is guaranteed by construction:
+        // listing_summary leads with it and one_line_row ellipsizes the
+        // tail. That ordering is pinned by the listing_summary tests.
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "a live-length listing row still overflowed: {issues:?}"
+        );
+
+        runner.app_mut().library = vec![Kept {
+            id: "2609.00099v1".into(),
+            title: long_title,
+            authors: long_authors.join(", "),
+            bytes: 4096,
+            progress: Some(74),
+        }];
+        let screen = runner.app().library(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "a live-length library row still overflowed: {issues:?}"
+        );
+    }
+
     /// And its figures, which live at addresses rather than in the file, are
     /// fetched against the address the paper itself was fetched from.
     #[test]
@@ -1859,12 +2606,14 @@ mod tests {
                 title: "On the Convergence of Things".into(),
                 authors: "A. Author and 3 others".into(),
                 bytes: 91_234,
+                progress: Some(42),
             },
             Kept {
                 id: "math.CO/0601001".into(),
                 title: "An Older Numbering Scheme".into(),
                 authors: "B. Bourbaki".into(),
                 bytes: 12,
+                progress: None,
             },
         ];
         let read_back = decode_library(&encode_library(&library));
@@ -1880,6 +2629,7 @@ mod tests {
             title: "Before\tAfter".into(),
             authors: "C. Cantor".into(),
             bytes: 7,
+            progress: None,
         }];
         let read_back = decode_library(&encode_library(&library));
         assert_eq!(read_back.len(), 1, "the entry should still be one entry");
@@ -1887,6 +2637,84 @@ mod tests {
         assert!(
             !read_back[0].title.contains('\t'),
             "the tab should not have survived into the stored title"
+        );
+    }
+
+    /// A catalogue written before progress was kept still reads, with every
+    /// paper simply never-opened.
+    #[test]
+    fn a_library_from_before_progress_was_kept_still_reads() {
+        let legacy = "2401.00001v2\t91234\tOn the Convergence of Things\tA. Author\n";
+        let read_back = decode_library(legacy.as_bytes());
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].progress, None);
+        assert_eq!(read_back[0].title, "On the Convergence of Things");
+    }
+
+    /// The library row says what is on the shelf and how far it was read.
+    #[test]
+    fn a_kept_row_shows_size_and_reading_progress() {
+        let kept = Kept {
+            id: "2401.00001v2".into(),
+            title: "On the Convergence of Things".into(),
+            authors: "A. Author".into(),
+            bytes: 91_234,
+            progress: Some(42),
+        };
+        let summary = kept_summary(&kept);
+        assert!(summary.contains("2401.00001v2"), "{summary}");
+        assert!(summary.contains("89 KB"), "{summary}");
+        assert!(summary.starts_with("42% \u{b7} "), "{summary}");
+        // Never opened says nothing, rather than claiming nought percent.
+        let unread = Kept {
+            progress: None,
+            ..kept
+        };
+        assert!(!kept_summary(&unread).contains('%'));
+    }
+
+    /// A listing row says when the paper is already on the shelf.
+    #[test]
+    fn a_listing_row_says_when_the_paper_is_kept() {
+        let mut app = Arxiv::default();
+        assert!(!app.listing_summary(&paper()).contains("offline"));
+        app.library.push(Kept {
+            id: paper().id.clone(),
+            title: paper().title.clone(),
+            authors: String::new(),
+            bytes: 1,
+            progress: None,
+        });
+        let summary = app.listing_summary(&paper());
+        assert!(summary.starts_with("offline \u{b7} "), "{summary}");
+        // And the facts that place the paper are still there ahead of it.
+        assert!(summary.contains("Ada Lovelace, Alan Turing"), "{summary}");
+    }
+
+    /// Reading a kept paper moves its library row along.
+    #[test]
+    fn reading_a_kept_paper_records_progress_in_the_library() {
+        let long = format!(
+            "<article>{}</article>",
+            "<p>A paragraph of text.</p>".repeat(400)
+        );
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, &long);
+        runner.action(action_id(KEEP));
+        for _ in 0..4 {
+            runner.action(action_id(kobo_read::action::FORWARD));
+        }
+        runner.action(kobo_sdk::ActionId::BACK);
+        let kept = runner
+            .app()
+            .library
+            .iter()
+            .find(|kept| kept.id == paper().id)
+            .expect("the paper is not in the library");
+        let progress = kept.progress.expect("no progress was recorded");
+        assert!(
+            progress > 0 && progress < 100,
+            "four pages into a long paper read {progress}%"
         );
     }
 
@@ -1970,6 +2798,7 @@ mod tests {
             title: "A Paper".into(),
             authors: "D. Dedekind".into(),
             bytes: 5,
+            progress: None,
         });
         assert!(app.is_kept("2401.00003"));
         assert!(!app.is_kept("2401.00004"));
@@ -2232,6 +3061,224 @@ mod tests {
         assert!(
             url.contains("start=0"),
             "the window kept an old offset: {url}"
+        );
+    }
+    /// The titles of a screen's rows, top to bottom.
+    fn row_titles(screen: &kobo_sdk::Screen) -> Vec<String> {
+        let mut titles = Vec::new();
+        for node in &screen.nodes {
+            if let kobo_sdk::Node::Rows { rows, .. } = node {
+                titles.extend(rows.iter().map(|row| row.title.clone()));
+            }
+        }
+        titles
+    }
+
+    /// Saved searches and followed subjects ride the store the way the
+    /// library does: a line each, tabs scrubbed, the cap honest.
+    #[test]
+    fn saved_lists_survive_the_round_trip_through_the_store() {
+        let saved = vec!["deep learning".to_owned(), "attention".to_owned()];
+        assert_eq!(decode_list(&encode_list(&saved)), saved);
+
+        let over: Vec<String> = (0..MAX_SAVED + 4).map(|n| format!("search {n}")).collect();
+        assert_eq!(decode_list(&encode_list(&over)).len(), MAX_SAVED);
+
+        // A tab in a phrase would forge a second line on the way back, so it
+        // is a space before it ever reaches the store.
+        let tabbed = vec!["a\tphrase\twith\ttabs".to_owned()];
+        assert_eq!(
+            decode_list(&encode_list(&tabbed)),
+            vec!["a phrase with tabs".to_owned()]
+        );
+    }
+
+    /// Both lists come back when the store answers, which is the whole point
+    /// of writing them down.
+    #[test]
+    fn saved_lists_come_back_when_the_store_answers() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SEARCHES_KEY.to_owned(),
+            value: Some(encode_list(&["deep learning".to_owned()])),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: FOLLOWED_KEY.to_owned(),
+            value: Some(encode_list(&["cs.LG".to_owned()])),
+        });
+        assert_eq!(runner.app().saved, vec!["deep learning".to_owned()]);
+        assert_eq!(runner.app().followed, vec!["cs.LG".to_owned()]);
+    }
+
+    /// Saving the listing's search writes it to the store once, and Saved
+    /// runs it again without the keyboard.
+    #[test]
+    fn a_saved_search_is_stored_once_and_runs_again_from_saved() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().query = Some(Query::Words("deep learning".into()));
+
+        let commands = runner.action(action_id(SAVE_SEARCH));
+        assert_eq!(runner.app().saved, vec!["deep learning".to_owned()]);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, value })
+                    if key == SEARCHES_KEY && value == &encode_list(&["deep learning".to_owned()])
+            )),
+            "the saved list was not written out"
+        );
+
+        // Saving what is already saved keeps one of it.
+        let _ = runner.action(action_id(SAVE_SEARCH));
+        assert_eq!(runner.app().saved.len(), 1);
+
+        let _ = runner.action(action_id(SAVED));
+        assert_eq!(runner.app().view, View::Saved);
+        let commands = runner.action(action_id(&format!("{SSEARCH}0")));
+        assert_eq!(runner.app().view, View::Listing);
+        assert!(
+            matches!(&runner.app().query, Some(Query::Words(words)) if words == "deep learning"),
+            "the saved search did not come back as the query"
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } if url.contains("deep%20learning")
+            )),
+            "the saved search asked arXiv for nothing"
+        );
+    }
+
+    /// Following pins the subject to the top of the list with its mark, and
+    /// unfollowing puts the catalogue's order back.
+    #[test]
+    fn a_followed_subject_leads_the_subject_list() {
+        let last = SUBJECTS.len() - 1;
+        let (code, name) = SUBJECTS[last];
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().query = Some(Query::Subject {
+            code: code.into(),
+            name: name.into(),
+        });
+
+        let commands = runner.action(action_id(FOLLOW));
+        assert_eq!(runner.app().followed, vec![code.to_owned()]);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, .. }) if key == FOLLOWED_KEY
+            )),
+            "the followed list was not written out"
+        );
+
+        let _ = runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Subjects);
+        let context = runner.context();
+        let screen = runner.app().subjects(&context);
+        assert_eq!(
+            row_titles(&screen).first().map(String::as_str),
+            Some(name),
+            "the followed subject was not pinned to the top"
+        );
+
+        let _ = runner.action(action_id(UNFOLLOW));
+        assert!(runner.app().followed.is_empty());
+        let context = runner.context();
+        let screen = runner.app().subjects(&context);
+        assert_eq!(
+            row_titles(&screen).first().map(String::as_str),
+            Some(SUBJECTS[0].1),
+            "the catalogue's order did not come back"
+        );
+    }
+
+    /// A full list says so rather than dropping the oldest or growing past
+    /// what the rows can hold.
+    #[test]
+    fn a_full_saved_list_says_so_instead_of_growing_quietly() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().saved = (0..MAX_SAVED).map(|n| format!("search {n}")).collect();
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().query = Some(Query::Words("one more".into()));
+
+        let _ = runner.action(action_id(SAVE_SEARCH));
+        assert_eq!(runner.app().saved.len(), MAX_SAVED);
+        assert!(
+            runner
+                .app()
+                .trouble
+                .as_deref()
+                .is_some_and(|trouble| trouble.contains("hold")),
+            "the cap was hit without a word"
+        );
+    }
+
+    /// Manage turns a row into the removal of itself, and Done turns the
+    /// rows back into shortcuts.
+    #[test]
+    fn manage_removes_and_done_restores() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().saved = vec!["alpha".to_owned(), "beta".to_owned()];
+
+        let _ = runner.action(action_id(SAVED));
+        let _ = runner.action(action_id(MANAGE));
+        assert!(runner.app().managing);
+        let commands = runner.action(action_id(&format!("{SSEARCH}0")));
+        assert_eq!(runner.app().saved, vec!["beta".to_owned()]);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, value })
+                    if key == SEARCHES_KEY && value == &encode_list(&["beta".to_owned()])
+            )),
+            "the removal was not written out"
+        );
+        let _ = runner.action(action_id(DONE));
+        assert!(!runner.app().managing);
+    }
+
+    /// Live search phrases run long, and a row whose text does not fit is a
+    /// screen the renderer refuses outright -- so the saved list is checked
+    /// at live length, not fixture length.
+    #[test]
+    fn a_live_length_saved_search_does_not_overflow_its_row() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().saved = vec![
+            "Comparative Analysis of Transformer-Based Language Models and Bayesian Deep Learning at Scale"
+                .to_owned(),
+        ];
+        runner.app_mut().followed = vec![SUBJECTS[0].0.to_owned()];
+        let context = runner.context();
+        let screen = runner.app().saved(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "the saved rows overflowed under a live-length phrase: {issues:?}"
+        );
+
+        let context = runner.context();
+        let screen = runner.app().subjects(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "the subject list overflowed with a followed subject pinned: {issues:?}"
         );
     }
 }

@@ -1,5 +1,29 @@
-# Empty private shelf: first-run transfer instructions, not a toy story.
-expect Interactive fiction
-expect parser push
+# Seeded with the Lamplight fixture: library, opening, and the story's own
+# save/restore round trip through the slot picker.
+wait-for Interactive fiction
+wait-for Lamplight
 clean
-shot parser-library-empty
+shot parser-library
+tap Lamplight
+# At larger text scales the opening spans the page turn; the crate line
+# is what lands on the final page at every scale.
+wait-for pool of light.
+clean
+shot parser-opening
+tap Keyboard
+type save
+tap Run
+wait-for Ok.
+clean
+shot parser-story-save
+type restore
+tap Run
+wait-for Story checkpoint
+clean
+shot parser-restore-picker
+tap Story checkpoint
+# At large text scales the room description spans the page turn; the last
+# line is what lands on the final page at every scale.
+wait-for pool of light.
+clean
+shot parser-restored

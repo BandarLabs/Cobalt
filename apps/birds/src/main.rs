@@ -105,6 +105,8 @@ impl Birds {
         if self.menu_open {
             let freshness = if age >= 24 * 60 * 60 {
                 format!("Stale - last update was {} ago", age_label(age))
+            } else if age < 60 {
+                "Updated just now".into()
             } else {
                 format!("Updated {} ago", age_label(age))
             };

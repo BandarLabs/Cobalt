@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+blake3 = "1.8.2"
 kobo-image = { path = "../../crates/kobo-image" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 

@@ -149,6 +149,13 @@ pub const MAX_TURNS: usize = 20;
 /// latency, not the one that would otherwise show up as a refused task.
 pub const MAX_HISTORY_BYTES: usize = 16 * 1024;
 
+/// The store key the transcript is kept under between sessions.
+pub const STATE: &str = "conversation";
+
+/// The save format. Version one is the first that survives a restart; a
+/// saved value naming any other version is left alone rather than guessed at.
+const SAVE_VERSION: &str = "1";
+
 /// How much of any single turn is kept.
 ///
 /// A reply arrives from a server that is under no obligation to honour
@@ -264,6 +271,79 @@ impl Conversation {
 
     fn bytes(&self) -> usize {
         self.turns.iter().map(|turn| turn.text.len()).sum()
+    }
+
+    /// The transcript as one JSON value, so a restart reads back exactly what
+    /// was said. Built from values, like the request body, for the same
+    /// reason: a message carrying a quote is ordinary reader input.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let turns = self
+            .turns
+            .iter()
+            .map(|turn| {
+                ObjectBuilder::new()
+                    .set("role", turn.role.wire())
+                    .set("text", turn.text.as_str())
+                    .build()
+            })
+            .collect::<Vec<_>>();
+        ObjectBuilder::new()
+            .set("v", SAVE_VERSION)
+            .set("turns", turns)
+            .build()
+            .to_json()
+            .into_bytes()
+    }
+
+    /// Reads a saved transcript back. Anything unreadable, newer or
+    /// incomplete is no transcript at all rather than an error: the reader
+    /// would rather start a fresh conversation than be told a saved
+    /// preference is damaged.
+    #[must_use]
+    pub fn restore(bytes: &[u8]) -> Option<Self> {
+        let value = parse(std::str::from_utf8(bytes).ok()?).ok()?;
+        if value.get("v").and_then(Value::as_str) != Some(SAVE_VERSION) {
+            return None;
+        }
+        let turns = value.get("turns").and_then(Value::as_array)?;
+        let mut conversation = Self::default();
+        for turn in turns {
+            let role = match turn.get("role").and_then(Value::as_str) {
+                Some("user") => Role::You,
+                Some("assistant") => Role::Assistant,
+                _ => return None,
+            };
+            let text = turn.get("text").and_then(Value::as_str)?;
+            conversation.push(role, text);
+        }
+        Some(conversation)
+    }
+
+    /// The transcript as plain text, for a copy on the paired computer.
+    ///
+    /// By-lined the way the panel by-lines it, and with the model's trailing
+    /// options line left out, because the panel never shows it either.
+    #[must_use]
+    pub fn transcript_text(&self, assistant: &str) -> String {
+        let mut out = String::new();
+        for turn in &self.turns {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            match turn.role {
+                Role::You => out.push_str("You"),
+                Role::Assistant => out.push_str(assistant),
+            }
+            out.push('\n');
+            let body = match turn.role {
+                Role::You => turn.text.trim().to_owned(),
+                Role::Assistant => Reply::read(&turn.text).paragraphs.join("\n\n"),
+            };
+            out.push_str(body.trim());
+        }
+        out.push('\n');
+        out
     }
 
     /// The request body for one provider, built as a value and serialised once.
@@ -937,6 +1017,78 @@ mod tests {
         ] {
             assert!(read_completion(body, Provider::OpenAi).is_err(), "{body:?}");
         }
+    }
+
+    #[test]
+    fn a_saved_conversation_reads_back_exactly() {
+        let mut conversation = Conversation::default();
+        conversation.push(Role::You, "who wrote Bleak House");
+        conversation.push(
+            Role::Assistant,
+            "Charles Dickens.\n{\"options\":[\"When\",\"Where\"]}",
+        );
+        let bytes = conversation.encode();
+        let restored = Conversation::restore(&bytes).expect("a saved conversation restores");
+        assert_eq!(restored.turns(), conversation.turns());
+    }
+
+    #[test]
+    fn a_saved_conversation_from_another_time_is_left_alone() {
+        for bytes in [
+            &b"not json"[..],
+            &b"{}"[..],
+            &br#"{\"v\":\"2\",\"turns\":[]}"#[..],
+            &br#"{\"v\":\"1\",\"turns\":[{\"role\":\"nobody\",\"text\":\"hi\"}]}"#[..],
+            &br#"{\"v\":\"1\",\"turns\":[{\"role\":\"user\"}]}"#[..],
+        ] {
+            assert!(Conversation::restore(bytes).is_none(), "{bytes:?}");
+        }
+        // An empty transcript from this version is a real, if short, save.
+        let empty = Conversation::default().encode();
+        assert_eq!(
+            Conversation::restore(&empty).map(|c| c.turns().len()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_copy_for_the_computer_reads_like_the_panel() {
+        let mut conversation = Conversation::default();
+        conversation.push(Role::You, "what next");
+        conversation.push(
+            Role::Assistant,
+            "Where shall we start?\n{\"options\":[\"The beginning\",\"The end\"]}",
+        );
+        let text = conversation.transcript_text(Provider::OpenAi.label());
+        assert_eq!(
+            text, "You\nwhat next\n\nOpenAI\nWhere shall we start?\n",
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn each_service_s_own_failure_envelope_is_read_as_the_failure_it_is() {
+        // The documented error shape of each provider, as a fixture: a proxy
+        // or a refactor that stops reading one of them must fail loudly here
+        // rather than tell the reader "no message in it" on a spent key.
+        let openai = br#"{"error":{"message":"Incorrect API key provided. You can find your API key at https://platform.example.com.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}"#;
+        assert_eq!(
+            read_completion(openai, Provider::OpenAi),
+            Err(
+                "Incorrect API key provided. You can find your API key at https://platform.example.com."
+                    .to_owned()
+            )
+        );
+        let anthropic = br#"{"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your rate limit."}}"#;
+        assert_eq!(
+            read_completion(anthropic, Provider::Anthropic),
+            Err("Number of request tokens has exceeded your rate limit.".to_owned())
+        );
+        let gemini = br#"{"error":{"code":429,"message":"Quota exceeded for metric: generate_requests.","status":"RESOURCE_EXHAUSTED"}}"#;
+        assert_eq!(
+            read_completion(gemini, Provider::Gemini),
+            Err("Quota exceeded for metric: generate_requests.".to_owned())
+        );
     }
 
     #[test]

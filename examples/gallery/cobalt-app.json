@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.12",
+  "version": "1.0.14",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Adds a page for a picture measured against the panel, which reaches both bezels instead of sitting inside the text margins."
+  "release_notes": "Every enabled specimen control now answers its tap with a caption, so no control in the gallery feels dead."
 }

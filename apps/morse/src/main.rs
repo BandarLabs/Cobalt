@@ -40,7 +40,7 @@
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, DeviceRequest, DeviceResult, KoboApp, PictureHandle,
-    Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
+    Position, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
 };
 use kobo_ui::tone;
 use std::process::ExitCode;
@@ -356,8 +356,14 @@ enum View {
     Writing,
     /// Sending it.
     Beacon,
+    /// Every character the beacon can send, with the code that carries it.
+    Reference,
 }
 
+// The four flags are independent facts -- the beacon running, the light
+// carrying the message, learning mode, an open menu -- rather than states of
+// one thing, so a state machine would say less than they do.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 struct Morse {
     view: View,
@@ -381,6 +387,17 @@ struct Morse {
     /// Which signal the panel is currently showing, so the picture is rebuilt
     /// on a change of letter rather than on every beat.
     showing: Option<usize>,
+    /// Whether the beacon names each letter's code in the top bar as it sends.
+    ///
+    /// Off by default: somebody who reads Morse is watching the light, and the
+    /// code of a letter they already know is clutter on every panel. On, the
+    /// bar carries the letter and its code alongside the count, so a learner
+    /// can hear the light say what the screen spells.
+    learn: bool,
+    /// Whether the writing screen's overflow menu is open.
+    menu_open: bool,
+    /// The page of the letter reference the reader is on.
+    reference_page: usize,
     tick: Option<TaskId>,
     trouble: Option<String>,
 }
@@ -399,6 +416,9 @@ impl Default for Morse {
             light: true,
             found_light: None,
             showing: None,
+            learn: false,
+            menu_open: false,
+            reference_page: 0,
             tick: None,
             trouble: None,
         }
@@ -410,6 +430,11 @@ const STOP: &str = "stop";
 const AGAIN: &str = "again";
 const EDIT: &str = "edit";
 const TOGGLE_LIGHT: &str = "light";
+const LEARN: &str = "learn";
+const MORE: &str = "more";
+const REFERENCE: &str = "reference";
+const PREVIOUS_PAGE: &str = "previous-page";
+const NEXT_PAGE: &str = "next-page";
 
 impl Morse {
     /// The letters of the message, spelled out with their codes underneath.
@@ -433,7 +458,9 @@ impl Morse {
     }
 
     fn writing(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("morse-writing").top_bar("Morse");
+        let mut screen = ScreenBuilder::new("morse-writing")
+            .top_bar("Morse")
+            .top_bar_overflow(MORE, self.menu_open, [(REFERENCE, "Letter reference")]);
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -448,6 +475,14 @@ impl Morse {
         screen
             .typed(&self.keyboard, "A message to send in light")
             .secondary(format!("{} to send.", spoken(beats(&signals).len())))
+            // The speed is the same for every message, so it is said once, in
+            // the units the light actually keeps. A reader who knows a dash is
+            // three seconds can follow the beacon letter by letter; one who
+            // does not learns it here, before anything has flashed.
+            .secondary("A dot is one second of light, a dash three.")
+            // The learning switch lives beside the message it changes: chosen
+            // here, it is the send that follows which narrates its letters.
+            .chips([(LEARN, "Learning", self.learn)])
             .keyboard(&self.keyboard, "Send")
             .build()
     }
@@ -458,11 +493,24 @@ impl Morse {
         // already exists costs the letter nothing, where a line of text under
         // it costs the letter that line on every panel.
         let title = if self.running {
-            format!(
+            let progress = format!(
                 "{} of {}",
                 self.sent().min(self.signals.len().max(1)),
                 self.signals.len()
-            )
+            );
+            if self.learn {
+                // The letter on the panel, spelled in the code the light is
+                // flashing. A word gap has no code of its own, so while one is
+                // going out the bar keeps the plain count.
+                match self.showing.and_then(|index| self.signals.get(index)) {
+                    Some(signal) if !signal.code.is_empty() => {
+                        format!("{} {} ({})", signal.character, signal.code, progress)
+                    }
+                    _ => progress,
+                }
+            } else {
+                progress
+            }
         } else {
             "Morse".to_owned()
         };
@@ -498,9 +546,51 @@ impl Morse {
         if self.running {
             screen.action_bar([(STOP, "Stop"), (TOGGLE_LIGHT, light)])
         } else {
-            screen.action_bar([(AGAIN, "Send"), (EDIT, "Edit"), (TOGGLE_LIGHT, light)])
+            // The message is already composed, so this key repeats it rather
+            // than sending something new; the label says so, or a repeat looks
+            // like a fresh send that happens to say the same thing.
+            screen.action_bar([(AGAIN, "Send again"), (EDIT, "Edit"), (TOGGLE_LIGHT, light)])
         }
         .build()
+    }
+
+    /// Every character the beacon can send, with the code that carries it.
+    ///
+    /// The chart is a paged list rather than one long screen, because a panel
+    /// that ran out of room would drop the tail of the alphabet with nothing
+    /// to say so. Paging is measured against this panel at this text size, so
+    /// the largest setting simply turns more pages.
+    fn reference(&self, context: &Context) -> Screen {
+        let entries: Vec<(String, String)> = CODE
+            .iter()
+            .map(|(letter, code)| (letter.to_string(), (*code).to_owned()))
+            .collect();
+        let measuring: Vec<(&str, &str, &str)> = entries
+            .iter()
+            .map(|(letter, code)| (letter.as_str(), code.as_str(), ""))
+            .collect();
+        let pages =
+            context.paginate_rows_below_section(&measuring, true, Position::AtTheFoot, None);
+        let page = self.reference_page.min(pages.len().saturating_sub(1));
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        ScreenBuilder::new("morse-reference")
+            .top_bar("Letter reference")
+            .section_with_value("The letters Morse can send", format!("{}", CODE.len()))
+            .rows(visible.iter().map(|&index| {
+                let (letter, code) = &entries[index];
+                (
+                    format!("letter-{letter}"),
+                    letter.clone(),
+                    code.clone(),
+                    RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
+                )
+            }))
+            .page_turns(PREVIOUS_PAGE, NEXT_PAGE)
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
+            )
+            .build()
     }
 
     /// How many letters have gone out, counting the one in flight.
@@ -514,6 +604,7 @@ impl Morse {
         let screen = match self.view {
             View::Writing => self.writing(),
             View::Beacon => self.beacon(context),
+            View::Reference => self.reference(context),
         };
         context.set_screen(screen);
     }
@@ -613,6 +704,7 @@ impl KoboApp for Morse {
         if self.view == View::Writing {
             match self.keyboard.press(action) {
                 Some(Pressed::Submitted) => {
+                    self.menu_open = false;
                     let typed = self.keyboard.text().trim().to_owned();
                     self.compose(&typed);
                     self.view = View::Beacon;
@@ -620,6 +712,7 @@ impl KoboApp for Morse {
                     return;
                 }
                 Some(Pressed::Edited | Pressed::Shifted) => {
+                    self.menu_open = false;
                     self.show(context);
                     return;
                 }
@@ -627,7 +720,19 @@ impl KoboApp for Morse {
             }
         }
 
+        if action == action_id(MORE) {
+            self.menu_open = true;
+            self.show(context);
+            return;
+        }
+
         if action == ActionId::BACK {
+            // An open menu takes the first Back, the way a scrim tap reads.
+            if self.menu_open {
+                self.menu_open = false;
+                self.show(context);
+                return;
+            }
             match self.view {
                 View::Writing => return,
                 View::Beacon => {
@@ -636,8 +741,40 @@ impl KoboApp for Morse {
                     }
                     self.view = View::Writing;
                 }
+                View::Reference => self.view = View::Writing,
             }
             self.show(context);
+            return;
+        }
+
+        // Any tap past this point lands on the screen itself, so a menu left
+        // open is closed by it rather than held over whatever happens next.
+        self.menu_open = false;
+
+        if action == action_id(REFERENCE) {
+            self.reference_page = 0;
+            self.view = View::Reference;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(LEARN) {
+            self.learn = !self.learn;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(PREVIOUS_PAGE) || action == action_id(NEXT_PAGE) {
+            if self.view == View::Reference {
+                if action == action_id(NEXT_PAGE) {
+                    // Clamped against the real page count when the screen is
+                    // drawn, so a tap at the end stays on the last page.
+                    self.reference_page += 1;
+                } else {
+                    self.reference_page = self.reference_page.saturating_sub(1);
+                }
+                self.show(context);
+            }
             return;
         }
 
@@ -736,10 +873,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        beats, encode, glyph, letter_at, paint, Beat, Morse, AGAIN, CODE, MAX_MESSAGE, STOP,
-        TOGGLE_LIGHT,
+        beats, encode, glyph, letter_at, paint, Beat, Morse, AGAIN, CODE, LEARN, MAX_MESSAGE, MORE,
+        NEXT_PAGE, REFERENCE, STOP, TOGGLE_LIGHT,
     };
-    use kobo_sdk::{action_id, AppRunner, Command, DeviceRequest, TaskOutcome};
+    use kobo_sdk::{action_id, ActionId, AppRunner, Command, DeviceRequest, TaskOutcome};
     use kobo_ui::{tone, Chrome, CLARA_BW_METRICS};
 
     /// Renders a run of beats as the light would show it, so a test can state
@@ -1086,6 +1223,158 @@ mod tests {
         assert!(
             !issues.has_errors(),
             "the writing screen does not fit: {issues:?}"
+        );
+    }
+
+    /// The speed is a fact about the beacon rather than about the message, so
+    /// it is stated where the message is weighed: beside the estimate, on the
+    /// screen the Send key is on.
+    #[test]
+    fn the_speed_is_on_the_screen_the_send_key_is_on() {
+        let mut runner = AppRunner::new(Morse::default());
+        let commands = runner.start();
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a writing screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("one second of light"),
+            "the speed is not on the writing screen: {drawn}"
+        );
+    }
+
+    /// The resting key sends the same message out again, so it says that is
+    /// what it does. Labeled as a fresh send, a repeat would read as a
+    /// mistake: the same letters going out twice with nothing to say why.
+    #[test]
+    fn the_resting_key_says_it_repeats_the_message() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(AGAIN));
+        let commands = runner.action(action_id(STOP));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a resting screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("Send again"),
+            "the resting key does not say it repeats: {drawn}"
+        );
+    }
+
+    /// The chart is the whole alphabet the beacon can send, paged so a panel
+    /// never drops the tail of it. Walked to the end, every code is there and
+    /// every page fits.
+    #[test]
+    fn the_reference_lists_every_letter_the_beacon_can_send() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(MORE));
+        let mut drawn = String::new();
+        let mut commands = runner.action(action_id(REFERENCE));
+        // Paged to the end: a page turn past the last page redraws it
+        // unchanged, the runner elides a screen it is already showing, and
+        // the empty answer says the walk is done. The cap only guards the
+        // loop against a chart that never ends.
+        for _ in 0..40 {
+            let Some(screen) = commands.iter().rev().find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            }) else {
+                break;
+            };
+            let issues = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true));
+            assert!(
+                !issues.has_errors(),
+                "a page of the reference does not fit: {issues:?}"
+            );
+            drawn.push_str(&format!("{screen:?}"));
+            commands = runner.action(action_id(NEXT_PAGE));
+        }
+        for code in [".-", "-.--", "-----", ".-.-.-", "-..-."] {
+            assert!(drawn.contains(code), "the code {code} is missing");
+        }
+    }
+
+    /// Back from the chart returns to the message, with the typing untouched.
+    #[test]
+    fn the_reference_leads_back_to_the_message() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(MORE));
+        runner.action(action_id(REFERENCE));
+        let commands = runner.action(ActionId::BACK);
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a writing screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("one second of light"),
+            "back from the chart did not return to the message: {drawn}"
+        );
+    }
+
+    /// Learning mode names the letter the light is flashing, in the code it is
+    /// being flashed in, on the bar that already counts the letters off.
+    #[test]
+    fn learning_mode_names_the_letter_the_light_is_flashing() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(LEARN));
+        let commands = runner.action(action_id(AGAIN));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a beacon screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("S ... (1 of 3)"),
+            "the bar does not name the letter and its code: {drawn}"
+        );
+    }
+
+    /// Without learning mode the bar counts letters off and says nothing
+    /// more: somebody reading the light fluently has no use for the code.
+    #[test]
+    fn the_bar_stays_a_plain_count_until_asked() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        let commands = runner.action(action_id(AGAIN));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a beacon screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            !drawn.contains("S ..."),
+            "the bar names codes nobody asked for: {drawn}"
+        );
+        assert!(
+            drawn.contains("1 of 3"),
+            "the count is missing from the bar: {drawn}"
         );
     }
 

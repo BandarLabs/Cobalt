@@ -148,3 +148,24 @@ fn clara_bw_today_controls_fit() {
         .issues
         .is_empty());
 }
+#[test]
+fn a_week_sums_only_due_days() {
+    let mut habit = Habit::new("Read".into());
+    habit.schedule = Schedule::Weekdays;
+    // 20004 is a Tuesday by the model's Monday-zero shift, so the seven days
+    // ending there hold five weekdays.
+    let today = 20_004;
+    habit.done = vec![today];
+    habit.skipped = vec![today - 1];
+    let (due, done, skipped) = week_summary(&[habit], today);
+    assert_eq!((due, done, skipped), (5, 1, 1));
+}
+#[test]
+fn an_undone_skip_leaves_the_day_plainly_not_done() {
+    let mut habit = Habit::new("Read".into());
+    habit.skipped = vec![4];
+    assert!(habit.unskip(4));
+    assert!(habit.skipped.is_empty());
+    assert!(habit.done.is_empty());
+    assert!(!habit.unskip(4));
+}

@@ -28,8 +28,16 @@ pub(super) fn push(
             PencilMarkKind::Block => [3, 0, 0],
             PencilMarkKind::Sum { across, down } => [4, across, down],
             PencilMarkKind::Digit { value, given } => [5, value, u8::from(given)],
+            #[allow(clippy::cast_possible_truncation)]
+            PencilMarkKind::Candidates(m) => [6, m as u8, (m >> 8) as u8],
         });
-        out.push(u8::from(mark.selected));
+        out.push(if mark.selected {
+            1
+        } else if mark.peer {
+            2
+        } else {
+            0
+        });
         push_u32(out, mark.action.map_or(0, |a| a.0));
     }
     out.push(u8::try_from(board.edges.len()).map_err(|_| ProtocolError::TooManyNodes)?);
@@ -67,11 +75,19 @@ pub(super) fn read(reader: &mut Reader<'_>, id: NodeId) -> Result<Node, Protocol
                 value,
                 given: given == 1,
             },
+            (6, lo, hi) => {
+                let mask = u16::from(lo) | (u16::from(hi) << 8);
+                if mask == 0 || mask > 0x1FF {
+                    return Err(ProtocolError::InvalidValue("pencil candidates"));
+                }
+                PencilMarkKind::Candidates(mask)
+            }
             _ => return Err(ProtocolError::InvalidValue("pencil mark")),
         };
-        let selected = match reader.u8()? {
-            0 => false,
-            1 => true,
+        let (selected, peer) = match reader.u8()? {
+            0 => (false, false),
+            1 => (true, false),
+            2 => (false, true),
             _ => return Err(ProtocolError::InvalidValue("pencil selection")),
         };
         marks.push(PencilMark {
@@ -80,6 +96,7 @@ pub(super) fn read(reader: &mut Reader<'_>, id: NodeId) -> Result<Node, Protocol
             kind,
             action: action(reader)?,
             selected,
+            peer,
         });
     }
     let count = usize::from(reader.u8()?);
@@ -124,6 +141,7 @@ mod tests {
                     kind: PencilMarkKind::Island(2),
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 PencilMark {
                     column: 2,
@@ -131,6 +149,7 @@ mod tests {
                     kind: PencilMarkKind::Island(2),
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 PencilMark {
                     column: 0,
@@ -141,6 +160,7 @@ mod tests {
                     },
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 PencilMark {
                     column: 1,
@@ -151,6 +171,7 @@ mod tests {
                     },
                     action: Some(ActionId(9)),
                     selected: true,
+                    peer: false,
                 },
             ],
             edges: vec![PencilEdge {
@@ -186,6 +207,39 @@ mod tests {
         };
         assert_eq!(decode(&encode(&frame).unwrap()).unwrap(), frame);
     }
+    #[test]
+    fn candidates_and_peer_marks_round_trip_and_validate() {
+        let mut board = sample();
+        board.marks.push(PencilMark {
+            column: 2,
+            row: 2,
+            kind: PencilMarkKind::Candidates(0b1_1000_0110),
+            action: Some(ActionId(30)),
+            selected: false,
+            peer: false,
+        });
+        board.marks[3].selected = false;
+        board.marks[3].peer = true;
+        let id = NodeId(7);
+        let mut bytes = Vec::new();
+        push(&mut bytes, id, &board, VERSION).unwrap();
+        assert_eq!(
+            read(&mut Reader::new(&bytes[5..]), id).unwrap(),
+            Node::PencilBoard {
+                id,
+                board: board.clone()
+            }
+        );
+        for (offset, value) in [(54, 2), (55, 3)] {
+            let mut bad = bytes.clone();
+            bad[offset] = value;
+            assert!(
+                read(&mut Reader::new(&bad[5..]), NodeId(1)).is_err(),
+                "offset {offset}"
+            );
+        }
+    }
+
     #[test]
     fn malformed_pencil_marks_counts_and_edges_are_refused() {
         let mut bytes = Vec::new();

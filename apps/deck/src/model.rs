@@ -29,9 +29,11 @@ pub struct RunResult {
 
 pub const PAD_COUNT: usize = 15;
 
-pub fn pad_cells(page: &Page) -> Vec<(String, String, Option<kobo_sdk::Glyph>)> {
-    let mut cells = page
-        .keys
+/// Five across: the fifteen-pad reader grid.
+pub const PAD_COLUMNS: u8 = 5;
+
+pub fn pad_cells(page: &Page) -> Vec<(String, String, Option<kobo_sdk::Glyph>, bool)> {
+    page.keys
         .iter()
         .take(PAD_COUNT)
         .map(|key| {
@@ -39,26 +41,28 @@ pub fn pad_cells(page: &Page) -> Vec<(String, String, Option<kobo_sdk::Glyph>)> 
                 format!("press-{}", key.id),
                 pad_label(key),
                 Some(pad_glyph(key)),
+                false,
             )
         })
-        .collect::<Vec<_>>();
-    while cells.len() < PAD_COUNT {
-        cells.push((format!("empty-{}", cells.len()), String::new(), None));
-    }
-    cells
+        .collect()
 }
 
 /// What is written on a key.
 ///
-/// The word and nothing else. What the key is doing is said by the picture
-/// above it, which is the one part of a pad that is large enough to read at
-/// arm's length; a status character was appended here as well, and since a pad
-/// carries a single line the newline in front of it was drawn as a box with a
-/// cross in it on every key that had ever been pressed.
+/// The whole word, wrapped by the pad rather than cut by us: a label sawn off
+/// at eight characters read as "Rust-lan" and "Calculat", which is the panel
+/// mumbling. Sixteen characters is what the computer allows a key to be
+/// named, so nothing a computer sent is ever cut.
 fn pad_label(key: &Key) -> String {
-    key.label.chars().take(8).collect()
+    key.label.chars().take(16).collect()
 }
 
+/// The picture above the word.
+///
+/// A key that is doing something says so (running, done, failed); an idle key
+/// says what pressing it reaches. Most deck keys run a command, and a prompt
+/// with a line waiting to be typed is how a command is drawn everywhere else
+/// on the panel, so that is the default rather than a bare grid of dots.
 fn pad_glyph(key: &Key) -> kobo_sdk::Glyph {
     match key.state.as_str() {
         "running" => kobo_sdk::Glyph::Refresh,
@@ -66,7 +70,7 @@ fn pad_glyph(key: &Key) -> kobo_sdk::Glyph {
         "failed" => kobo_sdk::Glyph::Close,
         _ if key.detail.starts_with("launch ") => kobo_sdk::Glyph::App,
         _ if key.detail.contains('.') => kobo_sdk::Glyph::Globe,
-        _ => kobo_sdk::Glyph::Grid,
+        _ => kobo_sdk::Glyph::Terminal,
     }
 }
 

@@ -15,16 +15,21 @@ Provider keys remain runtime secrets named `exa`, `openai` and `elevenlabs`.
 They are attached only to the exact provider endpoints allowed by `kobod` and
 are never sent to, stored by, or logged from the application process.
 
-| The shelf | Choosing a topic |
+| The shelf, before anything exists | What a missing account costs |
 | --- | --- |
-| ![One saved audiobook listed by title with its size on disk](screenshots/shelf.png) | ![An on-screen keyboard with the topic typed above it](screenshots/topic.png) |
+| ![An empty shelf offering the free sample and the first creation](screenshots/shelf.png) | ![The three providers named as missing before anything is spent](screenshots/preflight.png) |
 
-| Making it | Listening |
+| Making it | Picking up where it stopped |
 | --- | --- |
-| ![The title and summary above two progress bars and how long it has taken](screenshots/making.png) | ![The player, with generated cover art, position and transport controls](screenshots/player.png) |
+| ![Narrating part 1 of 3, with a progress bar and the elapsed time](screenshots/narrating.png) | ![The composer offering to resume an interrupted book](screenshots/resume.png) |
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`, on a run
-that took four minutes end to end against the real providers.*
+| Listening |
+| --- |
+| ![The player, with generated cover art, position and transport controls](screenshots/player.png) |
+
+*Captured by `scripts/quality/check-audiobook-sim.py` on the simulator's Clara
+BW profile, end to end against local fixtures that record every provider
+request.*
 
 ## The shelf
 
@@ -68,8 +73,10 @@ kobo secret set openai     --from PATH --device IP
 kobo secret set elevenlabs --from PATH --device IP
 ```
 
-All three are needed. Without one the run stops at the stage that wanted it and
-says which, instead of failing at the end with everything already spent.
+All three are needed, and the application checks them before the first paid
+request and names any that are missing, instead of failing at the end with
+everything already spent. Without any of them the free sample still plays, so
+the player can be tried before an account exists.
 
 ---
 

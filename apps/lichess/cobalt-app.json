@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.12",
-  "release_notes": "Clarifies saved-game, challenge and pairing recovery messages. A delayed match check now says it is waiting to check again and keeps cancellation available.",
+  "version": "1.0.13",
+  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [
@@ -32,5 +32,6 @@
         "text": "Official Lichess Board API. Rapid and Classical seeks."
       }
     ]
-  }
+  },
+  "page_description": "An unofficial touch-first Lichess client for Kobo. Play live games with responsive time-control presets, accept or send challenges, solve puzzles, or play offline against the computer."
 }
