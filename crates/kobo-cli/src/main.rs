@@ -37,6 +37,7 @@ mod owner_start;
 mod package;
 mod panels;
 mod post;
+mod publish;
 mod readers;
 mod readlater;
 mod receipts;
