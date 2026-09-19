@@ -36,6 +36,26 @@
   "deck": {
    "status": "pass",
    "notes": "Setup sheets use primary buttons (Enter the address / Enter the code). Main screen is a tool-tile launcher grid (equal tiles = pick-a-tool idiom) with refresh in top-right chrome. Evidence: apps/deck/screenshots/deck.png + screens.json."
+  },
+  "fanshelf": {
+   "status": "pass",
+   "notes": "Shelf: rows dominant (tap work to open/download); Filter/Add in stable top-right chrome; Followed tags / Updates / Manage are equal-weight section shortcuts above the list (navigation, not competing task actions); empty states single-purpose splashes; manage confirm is a dialog pair. Evidence: apps/fanshelf/screenshots/shelf.png, manage-confirm.png + screens.json."
+  },
+  "fieldbook": {
+   "status": "pass",
+   "notes": "Home: one dominant 'Start an outing' button centered on the Today tab; stable bottom tab bar (Today/Packs/Search/Life list/Export). Evidence: apps/fieldbook/screenshots/home.png."
+  },
+  "flashcards": {
+   "status": "pass",
+   "notes": "Decks: empty-state splash with transfer entry in top-right chrome; first-use single 'Start with the sample'; review screen primary 'Reveal answer' with card paging in stable chrome; done state is a plain splash. Evidence: apps/flashcards/screenshots/decks.png, first-use.png + screens.json."
+  },
+  "frame": {
+   "status": "pass",
+   "notes": "Photo-viewing idiom like birds: the photo is the screen; navigation via SDK page_turns/reading_menu; state screens use single 'Next photo' buttons; settings in modal. Evidence: screens.json (frame-home/frame-show)."
+  },
+  "grimoire": {
+   "status": "pass",
+   "notes": "Home is a tile launcher (Spells etc.); reference screens use SDK reading chrome (Aa/light/page turns); filters screen action_bar pair Clear filters / View results (action-bar idiom). Evidence: apps/grimoire/screenshots/rule.png, spell-filters.png + screens.json."
   }
  },
  "findings": [
