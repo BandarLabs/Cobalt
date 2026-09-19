@@ -3,17 +3,18 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The welcome screen now makes connecting a computer the clear next step, with the preview kept as a quieter option.",
+  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
   "setup": {
     "steps": [
       {
         "text": "Run kobo stream init on the computer, install its stream trust root on the Kobo, then start kobo stream."
       }
     ]
-  }
+  },
+  "page_description": "Mirror a terminal session from your computer onto e-ink. The shell, credentials, and scrollback stay on the computer; the Kobo renders the session over a paired connection."
 }

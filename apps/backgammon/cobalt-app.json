@@ -3,8 +3,9 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.7",
-  "release_notes": "Say so when progress could not be saved, and keep trying on the next move.",
+  "version": "0.1.8",
+  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
   "glyph": "circle",
-  "capabilities": []
+  "capabilities": [],
+  "page_description": "Play complete backgammon on one Kobo, solo against a modest computer player or pass-and-play with the board reversed between turns. Full legal-move rules, the doubling cube with the Crawford rule, match play to 7 points, undo, and autosave."
 }
