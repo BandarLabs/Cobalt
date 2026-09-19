@@ -20,6 +20,22 @@
   "brief": {
    "status": "pass",
    "notes": "Story list: row tap opens the story; single Refresh control in bottom bar; Source switcher in stable top-right chrome; sources screen has single Brief return control. Evidence: examples/brief/screenshots/brief.png, sources.png."
+  },
+  "calibre-web": {
+   "status": "pass",
+   "notes": "Libraries screen: primary 'Add library' + plain 'Downloaded books'; account choice: primary 'Sign in' + plain 'Use public library'; book screen: primary 'Download'. Catalog: rows dominant, list-continuation paging, single 'Libraries' bottom control. Failure/offline dialogs use Try again / Cancel pairs (SDK dialog idiom). Evidence: apps/calibre-web/screenshots/catalog.png + screens.json."
+  },
+  "chat": {
+   "status": "pass",
+   "notes": "Tab idiom (Conversation/Type/Service) in stable bottom tab bar; empty state directs to the Type tab; compose is the SDK text-entry sheet; errors get a single Try again. Evidence: examples/chat/screenshots/start.png, answer.png + screens.json."
+  },
+  "crossword": {
+   "status": "pass",
+   "notes": "Grid is the interaction surface (tap cell, type); clue caption above; stable bottom bar (Clues/More); list paging via action_bar Previous/Next. Evidence: apps/crossword/screenshots/crossword-play.png."
+  },
+  "deck": {
+   "status": "pass",
+   "notes": "Setup sheets use primary buttons (Enter the address / Enter the code). Main screen is a tool-tile launcher grid (equal tiles = pick-a-tool idiom) with refresh in top-right chrome. Evidence: apps/deck/screenshots/deck.png + screens.json."
   }
  },
  "findings": [
