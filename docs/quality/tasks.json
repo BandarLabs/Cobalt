@@ -3760,8 +3760,8 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Regenerate screenshots only from the shipped build",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "All 42 README galleries + site tiles present and regenerated from shipped-build harness routes; every screenshot visually verified against its README alt 2026-09-19 with zero overselling alts. Fresh-gallery refreshes this pass: frame (40c06a74) plus SEO page-description batch (3a697537). Skips: birds (live BirdNET e2e chain), zotero-reader (APPQA-13)."
  },
  {
   "id": "APPQA-13",
