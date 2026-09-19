@@ -3,8 +3,8 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.6",
-  "release_notes": "Dice come from the operating system rather than from a counter, the board says whose move it is and marks where a checker may go, and every roll is written down.",
+  "version": "0.1.7",
+  "release_notes": "Say so when progress could not be saved, and keep trying on the next move.",
   "glyph": "circle",
   "capabilities": []
 }

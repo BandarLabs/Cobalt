@@ -5,8 +5,8 @@
   "summary": "Play touch-first Reversi together on one Kobo.",
   "page_description": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.4",
-  "release_notes": "A README gallery and a current web page image; no changes to play.",
+  "version": "0.1.5",
+  "release_notes": "Say so when progress could not be saved, and keep trying on the next move.",
   "glyph": "circle",
   "capabilities": []
 }
