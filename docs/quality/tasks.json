@@ -2986,8 +2986,10 @@
   "pr": 3,
   "group": "Pub Quiz",
   "task": "Clarify pass-device and answer-reveal screens",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pubquiz-sim/ (matrix.json: 27/27 profile-scale cells plus 3/3 seeded-state cells green at cca07460; pass-default.png and reveal-extra-large.png inspected on clara-bw-391): the pass screen heads with the next player, the result screen is titled Question result, names the right answer on a miss and who said it on a hit, and offers the podium on the last question. Filtered packs shorter than ten questions deal a shorter round without repeats (the tenth-question cycle bug is gone). Twenty-four app tests cover short-round dealing, result copy and the podium label; strict Clippy passes."
+  ]
  },
  {
   "id": "QUIZ-05",
