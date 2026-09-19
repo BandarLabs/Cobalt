@@ -1,0 +1,13 @@
+{
+  "source_sha": "6bf7c1d8e96a452a426b0dece893e4f010b3242f",
+  "dirty": true,
+  "results": [
+    {
+      "app": "todo",
+      "launched": true,
+      "status": "pass",
+      "route": "/tmp/appqa11-todo-landscape.kobo",
+      "exit_code": 0
+    }
+  ]
+}
