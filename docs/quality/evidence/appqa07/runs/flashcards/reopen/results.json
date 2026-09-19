@@ -1,0 +1,13 @@
+{
+  "source_sha": "ccc557bdd426663a73524f2dd604cc57ff4a403f",
+  "dirty": true,
+  "results": [
+    {
+      "app": "flashcards",
+      "launched": true,
+      "status": "pass",
+      "route": "/tmp/appqa07-routes/flashcards-reopen.kobo",
+      "exit_code": 0
+    }
+  ]
+}

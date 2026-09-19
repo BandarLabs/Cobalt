@@ -1,0 +1,12 @@
+Kobo app simulator: http://127.0.0.1:35317
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/shelf.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/work.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/work-unchecked.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/updates.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/fandoms.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/fandom-filter.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/manage.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/manage-confirm.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/followed-tags.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots/tag-feed.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/fanshelf/journey/fanshelf-shots

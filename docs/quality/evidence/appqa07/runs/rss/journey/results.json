@@ -1,0 +1,13 @@
+{
+  "source_sha": "ccc557bdd426663a73524f2dd604cc57ff4a403f",
+  "dirty": true,
+  "results": [
+    {
+      "app": "rss",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/rss/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

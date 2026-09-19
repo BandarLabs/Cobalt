@@ -1,0 +1,1543 @@
+{
+ "backgammon": {
+  "marker": "Backgammon",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "scenario",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "backgammon",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/backgammon/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/backgammon/backgammon-autosave-v4"
+  ],
+  "reopen": {
+   "app": "backgammon",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/backgammon-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "backgammon",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/backgammon-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "vault": {
+  "marker": "Vault",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/vault/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/vault/vault-index-v1"
+  ],
+  "reopen": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/vault-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "vault",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/vault-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "arxiv": {
+  "marker": "arXiv",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "arxiv",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/arxiv/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "arxiv",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/arxiv-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "arxiv",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/arxiv-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "audiobook": {
+  "marker": "Audiobooks",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "audiobook",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/audiobook/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/audiobook/the-quiet-shelf.mp3z",
+   "cobalt-sim-state/audiobook/library"
+  ],
+  "reopen": {
+   "app": "audiobook",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/audiobook-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "audiobook",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/audiobook-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "birds": {
+  "marker": "Birds",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap-at",
+   "wait-for",
+   "wait-idle"
+  ],
+  "journey": {
+   "app": "birds",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/birds/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/birds/current.json",
+   "cobalt-sim-data/birds/current.png"
+  ],
+  "reopen": {
+   "app": "birds",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/birds-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "birds",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/birds-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "brief": {
+  "marker": "Daily brief",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "brief",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/brief/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/brief/brief-v2"
+  ],
+  "reopen": {
+   "app": "brief",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/brief-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "brief",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/brief-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "calibre-web": {
+  "marker": "Libraries",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "calibre-web",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/calibre-web/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "calibre-web",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/calibre-web-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "calibre-web",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/calibre-web-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "chat": {
+  "marker": "AI Command Center",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "type",
+   "wait",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "chat",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/chat/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/chat/eb20a0c6bf18c342cd435d9bf01ab73c3a5d3c8acc9dee20fc177041519b4c6e",
+   "cobalt-sim-state/chat/cobalt-export",
+   "cobalt-sim-state/chat/conversation",
+   "cobalt-sim-state/chat/eb20a0c6bf18c342cd435d9bf01ab73c3a5d3c8acc9dee20fc177041519b4c6e"
+  ],
+  "reopen": {
+   "app": "chat",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/chat-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "chat",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/chat-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "crossword": {
+  "marker": "Crossword",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "type"
+  ],
+  "journey": {
+   "app": "crossword",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/crossword/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/crossword/crossword-state-v1"
+  ],
+  "reopen": {
+   "app": "crossword",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/crossword-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "crossword",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/crossword-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "deck": {
+  "marker": "Todo",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "shot",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "deck",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/deck/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/deck/cache.deck-cache",
+   "cobalt-sim-state/deck/paired",
+   "deck-config/deck.toml"
+  ],
+  "reopen": {
+   "app": "deck",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/deck-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "deck",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/deck-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "fanshelf": {
+  "marker": "Fanshelf",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "fanshelf",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/fanshelf/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "fanshelf",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/fanshelf-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "fanshelf",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/fanshelf-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "fieldbook": {
+  "marker": "2 packs, 10 species.",
+  "route_verbs": [
+   "clean",
+   "shot",
+   "tap",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "fieldbook",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/fieldbook/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/fieldbook/packs.v1",
+   "cobalt-sim-state/fieldbook/outings.v1",
+   "cobalt-sim-state/fieldbook/sightings.v1"
+  ],
+  "reopen": {
+   "app": "fieldbook",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/fieldbook-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "fieldbook",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/fieldbook-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "flashcards": {
+  "marker": "No collection yet",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "flashcards",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/flashcards/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/flashcards/collection.cobfc"
+  ],
+  "reopen": {
+   "app": "flashcards",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/flashcards-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "flashcards",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/flashcards-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "frame": {
+  "marker": "Frame",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "shot",
+   "tap",
+   "wait",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "frame",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/frame/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/frame/manifest.v1",
+   "cobalt-sim-data/frame/photo-a2b4fcd174e3a15b.png"
+  ],
+  "reopen": {
+   "app": "frame",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/frame-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "frame",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/frame-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "gallery": {
+  "marker": "Type and tone",
+  "route_verbs": [
+   "expect",
+   "maybe-tap-id",
+   "tap",
+   "tap-paged",
+   "wait",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "gallery",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gallery/drive.txt",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "gallery",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/gallery-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "gallery",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/gallery-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "grimoire": {
+  "marker": "Grimoire",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait"
+  ],
+  "journey": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/grimoire/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/grimoire-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "grimoire",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/grimoire-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "gutenbird": {
+  "marker": "Project Gutenberg",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/gutenbird/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/gutenbird/catalog-153d7dad",
+   "cobalt-sim-state/gutenbird/catalog-3ed05bdd",
+   "cobalt-sim-state/gutenbird/catalog-9a3a743a",
+   "cobalt-sim-state/gutenbird/catalog-open"
+  ],
+  "reopen": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/gutenbird-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "gutenbird",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/gutenbird-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "habits": {
+  "marker": "Habits",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "type"
+  ],
+  "journey": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/habits/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/habits/habits-v1"
+  ],
+  "reopen": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/habits-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "habits",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/habits-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "hn": {
+  "marker": "1 of",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/hn/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/hn-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "hn",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/hn-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "homepanel": {
+  "marker": "Home Panel",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/homepanel/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/homepanel-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "homepanel",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/homepanel-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "inkling": {
+  "marker": "Inkling",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "type",
+   "wait"
+  ],
+  "journey": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/inkling/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/inkling/inkling-state-v1"
+  ],
+  "reopen": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/inkling-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "inkling",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/inkling-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "kitchencard": {
+  "marker": "Connect Mealie",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/kitchencard/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/kitchencard/config",
+   "cobalt-sim-state/kitchencard/tonight"
+  ],
+  "reopen": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/kitchencard-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "kitchencard",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/kitchencard-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "lichess": {
+  "marker": "Lichess",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/lichess/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/lichess-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "lichess",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/lichess-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "logicpack": {
+  "marker": "Logic Pack",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait-for-id"
+  ],
+  "journey": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/logicpack/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/logicpack/logicpack-state-v1"
+  ],
+  "reopen": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/logicpack-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "logicpack",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/logicpack-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "magnet": {
+  "marker": "No magnet",
+  "route_verbs": [
+   "clean",
+   "device",
+   "expect",
+   "shot",
+   "tap",
+   "wait",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/magnet/drive.txt",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/magnet/magnet-sweep-v1"
+  ],
+  "reopen": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/magnet-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "magnet",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/magnet-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "morse": {
+  "marker": "Morse",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "type",
+   "wait",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/morse/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/morse-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "morse",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/morse-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "musicstand": {
+  "marker": "Music Stand",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/musicstand/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/musicstand-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "musicstand",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/musicstand-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "needles": {
+  "marker": "Needles",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait"
+  ],
+  "journey": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/needles/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/needles/chart-main.png",
+   "cobalt-sim-data/needles/pattern.md",
+   "cobalt-sim-state/needles/counter-state-v1"
+  ],
+  "reopen": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/needles-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "needles",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/needles-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "nonograms": {
+  "marker": "Nonograms",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait",
+   "wait-for-id",
+   "wait-idle"
+  ],
+  "journey": {
+   "app": "nonograms",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/nonograms/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/nonograms/progress-picture-house-v1"
+  ],
+  "reopen": {
+   "app": "nonograms",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/nonograms-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "nonograms",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/nonograms-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "panels": {
+  "marker": "Your shelf is empty",
+  "route_verbs": [
+   "expect",
+   "shot",
+   "tap",
+   "wait",
+   "wait-for-id"
+  ],
+  "journey": {
+   "app": "panels",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/panels/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "panels",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/panels-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "panels",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/panels-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "paperterm": {
+  "marker": "Terminal sessions",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-state",
+   "scenario",
+   "shot",
+   "tap-id",
+   "type"
+  ],
+  "journey": {
+   "app": "paperterm",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/paperterm/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "paperterm",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/paperterm-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "paperterm",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/paperterm-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "parlor": {
+  "marker": "Pass-and-play classics",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "scenario",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait"
+  ],
+  "journey": {
+   "app": "parlor",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/parlor/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/parlor/parlor-autosave-v1"
+  ],
+  "reopen": {
+   "app": "parlor",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/parlor-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "parlor",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/parlor-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "parser": {
+  "marker": "Interactive fiction",
+  "route_verbs": [
+   "clean",
+   "shot",
+   "tap",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "parser",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/parser/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/parser/save-119-880429-bf44-auto",
+   "cobalt-sim-data/parser/save-119-880429-bf44-game",
+   "cobalt-sim-data/parser/story-zork1.z3"
+  ],
+  "reopen": {
+   "app": "parser",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/parser-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "parser",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/parser-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "post": {
+  "marker": "Post",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "post",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/post/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "post",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/post-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "post",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/post-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "pubquiz": {
+  "marker": "Pub Quiz",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait"
+  ],
+  "journey": {
+   "app": "pubquiz",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/pubquiz/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/pubquiz/pubquiz-content-license"
+  ],
+  "reopen": {
+   "app": "pubquiz",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/pubquiz-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "pubquiz",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/pubquiz-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "readlater": {
+  "marker": "Connect Wallabag",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "readlater",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/readlater/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/readlater/config"
+  ],
+  "reopen": {
+   "app": "readlater",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/readlater-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "readlater",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/readlater-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "rss": {
+  "marker": "Feeds",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "rss",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/rss/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "rss",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/rss-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "rss",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/rss-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "rss-miniflux": {
+  "marker": "Connect Miniflux",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap"
+  ],
+  "journey": {
+   "app": "rss-miniflux",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/rss-miniflux/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "rss-miniflux",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/rss-miniflux-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "rss-miniflux",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/rss-miniflux-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "sidekick": {
+  "marker": "Sidekick",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "sidekick",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/sidekick/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "app": "sidekick",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/sidekick-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "sidekick",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/sidekick-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "sudoku": {
+  "marker": "Notes",
+  "route_verbs": [
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait-for-id",
+   "wait-idle"
+  ],
+  "journey": {
+   "app": "sudoku",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/sudoku/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/sudoku/game"
+  ],
+  "reopen": {
+   "app": "sudoku",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/sudoku-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "sudoku",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/sudoku-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "syncthing": {
+  "marker": "Sync",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "shot",
+   "tap"
+  ],
+  "journey": {
+   "app": "syncthing",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/syncthing/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/syncthing/sync-config",
+   "cobalt-sim-state/syncthing/sync-meta"
+  ],
+  "reopen": {
+   "app": "syncthing",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/syncthing-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "syncthing",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/syncthing-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "tictactoe": {
+  "marker": "O to play",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "tap-id",
+   "wait",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "tictactoe",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/tictactoe/drive.txt",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/tictactoe/tictactoe-v1"
+  ],
+  "reopen": {
+   "app": "tictactoe",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/tictactoe-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "tictactoe",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/tictactoe-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "todo": {
+  "marker": "Nothing to do",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "expect-missing",
+   "shot",
+   "tap",
+   "type",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "todo",
+   "launched": true,
+   "status": "pass",
+   "route": "examples/todo/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-state/todo/items"
+  ],
+  "reopen": {
+   "app": "todo",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/todo-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "todo",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/todo-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "verses": {
+  "marker": "Quote card",
+  "route_verbs": [
+   "clean",
+   "expect",
+   "shot",
+   "tap",
+   "wait-for"
+  ],
+  "journey": {
+   "app": "verses",
+   "launched": true,
+   "status": "pass",
+   "route": "apps/verses/drive.kobo",
+   "exit_code": 0
+  },
+  "state_files": [
+   "cobalt-sim-data/verses/78f133c9e319b70fd1f0b29c7566eda163065e7e87be8679f1206520a19aae68",
+   "cobalt-sim-state/verses/78f133c9e319b70fd1f0b29c7566eda163065e7e87be8679f1206520a19aae68",
+   "cobalt-sim-state/verses/cobalt-export"
+  ],
+  "reopen": {
+   "app": "verses",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/verses-reopen.kobo",
+   "exit_code": 0
+  },
+  "offline": {
+   "app": "verses",
+   "launched": true,
+   "status": "pass",
+   "route": "/tmp/appqa07-routes/verses-offline.kobo",
+   "exit_code": 0
+  }
+ },
+ "zotero-reader": {
+  "marker": null,
+  "route_verbs": [],
+  "journey": {
+   "app": "zotero-reader",
+   "launched": true,
+   "status": "pass",
+   "route": null,
+   "exit_code": 0
+  },
+  "state_files": [],
+  "reopen": {
+   "status": "skip",
+   "reason": "committed route has no steps"
+  },
+  "offline": {
+   "status": "skip",
+   "reason": "committed route has no steps"
+  }
+ }
+}

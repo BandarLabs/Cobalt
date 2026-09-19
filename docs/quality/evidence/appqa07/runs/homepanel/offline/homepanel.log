@@ -1,0 +1,3 @@
+Kobo app simulator: http://127.0.0.1:36361
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/homepanel/offline/homepanel-shots/homepanel-offline.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/homepanel/offline/homepanel-shots

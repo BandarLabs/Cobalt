@@ -1,0 +1,6 @@
+Kobo app simulator: http://127.0.0.1:36395
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/needles/journey/needles-shots/project.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/needles/journey/needles-shots/projects.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/needles/journey/needles-shots/reading-chart.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/needles/journey/needles-shots/project-imported.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/needles/journey/needles-shots

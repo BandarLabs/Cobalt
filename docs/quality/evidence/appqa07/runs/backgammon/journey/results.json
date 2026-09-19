@@ -1,0 +1,13 @@
+{
+  "source_sha": "8417b884d48e7acc983f73a5868a57ce2d758c7c",
+  "dirty": true,
+  "results": [
+    {
+      "app": "backgammon",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/backgammon/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

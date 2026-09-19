@@ -1,0 +1,6 @@
+Kobo app simulator: http://127.0.0.1:34711
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/parlor/journey/parlor-shots/parlor-help.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/parlor/journey/parlor-shots/reversi.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/parlor/journey/parlor-shots/parlor-save-refused.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/parlor/journey/parlor-shots/parlor-save-kept.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/parlor/journey/parlor-shots

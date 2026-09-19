@@ -1,0 +1,5 @@
+Kobo app simulator: http://127.0.0.1:46833
+layout warning: screen: more than one control on this screen means going back
+layout warning: screen: more than one control on this screen means going back
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/rss-miniflux/journey/rss-miniflux-shots/rss-miniflux-directory.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/rss-miniflux/journey/rss-miniflux-shots

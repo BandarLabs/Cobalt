@@ -1,0 +1,6 @@
+Kobo app simulator: http://127.0.0.1:44441
+task 6 failed: Offline
+task 9 failed: Offline
+task 8 failed: Offline
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/hn/offline/hn-shots/hn-offline.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/hn/offline/hn-shots

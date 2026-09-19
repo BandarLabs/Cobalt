@@ -1,0 +1,4 @@
+Kobo app simulator: http://127.0.0.1:37419
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/sidekick/journey/sidekick-shots/sidekick-address.png
+shot /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/sidekick/journey/sidekick-shots/sidekick-code.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/appqa07/runs/sidekick/journey/sidekick-shots

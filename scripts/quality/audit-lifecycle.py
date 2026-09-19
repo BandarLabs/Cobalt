@@ -35,19 +35,34 @@ def catalog():
     return {app['id']: app for app in json.loads(out)['apps']}
 
 
-def home_marker(app):
-    """The first positive expectation of the committed route."""
-    route = ROOT / 'apps' / app / 'drive.kobo'
-    if route.is_file():
-        for line in route.read_text().splitlines():
-            if line.startswith('expect '):
-                return line[len('expect '):].strip()
-    return None
+def home_route(app):
+    """The committed route's prefix through its first positive expectation.
+
+    Replayed after a restart: the same path must lead to the same screen when
+    the app holds state. Apps whose home screen is pure art have no text to
+    expect, so their navigation steps come along. `wait-for` stands in when
+    a route has no `expect` at all.
+    """
+    route = next((ROOT / group / app / name for group in ('apps', 'examples')
+                  for name in ('drive.kobo', 'drive.txt')
+                  if (ROOT / group / app / name).is_file()), None)
+    if route is None:
+        return None
+    steps = []
+    for line in route.read_text().splitlines():
+        if not line or line.startswith('#'):
+            continue
+        steps.append(line)
+        if line.startswith('expect ') or line.startswith('wait-for '):
+            return steps
+    return steps or None
 
 
 def route_verbs(app):
-    route = ROOT / 'apps' / app / 'drive.kobo'
-    if not route.is_file():
+    route = next((ROOT / group / app / name for group in ('apps', 'examples')
+                  for name in ('drive.kobo', 'drive.txt')
+                  if (ROOT / group / app / name).is_file()), None)
+    if route is None:
         return []
     return sorted({line.split(' ', 1)[0] for line in route.read_text().splitlines()
                    if line and not line.startswith('#')})
@@ -81,21 +96,27 @@ def main():
                 and entry.get('reopen', {}).get('status') == 'pass' \
                 and entry.get('offline', {}).get('status') == 'pass':
             continue
-        marker = home_marker(app)
+        steps = home_route(app)
+        marker = steps[-1].split(' ', 1)[1] if steps else None
         state = STATE / app
         shutil.rmtree(state, ignore_errors=True)
         journey = run(app, 'journey', ['--state-dir', str(state)])
         own_files = sorted(str(path.relative_to(state))
                            for path in state.rglob('*') if path.is_file()) if state.is_dir() else []
-        reopen = {'status': 'skip', 'reason': 'no home marker in committed route'}
-        offline = {'status': 'skip', 'reason': 'no home marker in committed route'}
-        if marker:
+        reopen = {'status': 'skip', 'reason': 'committed route has no steps'}
+        offline = {'status': 'skip', 'reason': 'committed route has no steps'}
+        if steps:
+            # A restart lands on the home screen WITH state, which is often
+            # not the first-run screen the committed route starts from, so no
+            # shared marker exists. The proof is that the app relaunches and
+            # renders without the renderer refusing the screen; the shots are
+            # the per-app evidence the verdicts are written from.
             reopen = run(app, 'reopen',
                          ['--seed-root', str(state), '--bare'],
-                         route_text=f'expect {marker}\nclean\nshot {app}-reopen\n')
+                         route_text=f'wait-idle\nclean\nshot {app}-reopen\n')
             offline = run(app, 'offline',
                           ['--seed-root', str(state), '--bare'],
-                          route_text=f'scenario offline\nexpect {marker}\nclean\nshot {app}-offline\nscenario normal\n')
+                          route_text=f'scenario offline\nwait-idle\nclean\nshot {app}-offline\nscenario normal\n')
         lifecycles[app] = {
             'marker': marker,
             'route_verbs': route_verbs(app),
