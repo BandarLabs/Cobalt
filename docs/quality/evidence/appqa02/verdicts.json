@@ -140,7 +140,50 @@
   "readlater": {
    "status": "pass",
    "notes": "Storage-limit vs load-failure-with-preservation ('Current articles are unchanged') vs per-tab empty states vs signed-in/expired-credential guidance ('Run kobo readlater login to switch accounts') vs connect splash. Evidence: states.json + main.rs:179-416."
+  },
+  "rss": {
+   "status": "pass",
+   "notes": "TaskError taxonomy mapped to distinct copy (Offline 'not on a network' / Unreachable 'did not answer' / TimedOut 'took too long', tests at main.rs:2976-2978); saved-subscriptions failure preserves the file and says so; busy states distinct; skeleton/activity loading, splash empty states. Evidence: states.json + main.rs:231-422,2976-2978."
+  },
+  "rss-miniflux": {
+   "status": "pass",
+   "notes": "Failure classes distinct WITH preservation: TooLarge vs not-a-valid-Miniflux-response (check address) vs invalid-article-details, each naming that previous articles are kept; per-tab empty states; connect splash + Add address for missing credentials. Evidence: states.json + miniflux.rs:184-189 + main.rs:73-75."
+  },
+  "sidekick": {
+   "status": "pass",
+   "notes": "Pairing-code guidance distinct; stale-question honesty ('That question was gone before the answer arrived'); watching/sending/opening activity states; 'Change pairing' recovery. Evidence: states.json + main.rs:205-513."
+  },
+  "sudoku": {
+   "status": "pass",
+   "notes": "Local game. Save-read failure distinct and non-destructive ('Your saved game has been kept. Retry reading it before playing.'); no-moves-to-undo feedback; difficulty selection is the entry state. Evidence: states.json + main.rs:223-486."
+  },
+  "syncthing": {
+   "status": "pass",
+   "notes": "Sync-window states fully differentiated: never-run vs waiting-for-first-sync ('Keep the reader on Wi-Fi') vs first-sync-complete vs partial-failure-with-retry-honesty ('Some files could not sync. They retry on the next window.') vs manual-only mode; radio-budget honesty. Evidence: states.json + main.rs:45-229."
+  },
+  "tictactoe": {
+   "status": "pass",
+   "notes": "Local game. Turn/outcome states distinct (your turn / Kobo playing / wins), 'No games finished yet' empty state; no network states by design. Evidence: states.json + main.rs:250-264."
+  },
+  "todo": {
+   "status": "pass",
+   "notes": "Save-on-every-change design (no save button by intent, documented); load failure gets a distinct centered splash rather than a false empty list; 'Nothing on the list yet' empty state vs 'Nothing to do' splash variants. Evidence: states.json + main.rs:20-39,481-567."
+  },
+  "vault": {
+   "status": "pass",
+   "notes": "Per-collection empty states distinct (empty folder / no tags / no links / note no longer on shelf); malformed shelf entries named ('a shelf note has an invalid key'); unreadable-note reasons surfaced. Evidence: states.json + main.rs:367-572 + shelf.rs:65."
+  },
+  "verses": {
+   "status": "pass",
+   "notes": "Offline-shelf design with PoetryDB search. Failure classes distinct: favourite-write failure vs empty-search vs search-busy vs card-prepare failure vs poem-busy; empty results splash ('No poems found'). Evidence: states.json + main.rs:739-1029."
   }
  },
- "findings": []
+ "findings": [
+  {
+   "app": "audiobook",
+   "screen": "audiobook-playing (Now playing)",
+   "issue": "The 'Audio playback is unavailable on this device' honesty banner is clipped by the bottom action bar at extra-large text on the four smallest panels (clara-bw-391/395, clara-colour-393, clara-hd-376); the simulator render check refuses the screen (node 13 clipped by panel edge). Pre-existing: reproduced byte-identically on 4a1593a0.",
+   "proposed_fix": "Give the banner reserved space in the Now playing layout at large/extra-large text (or shorten the copy) so the offline/unavailable state renders fully on every panel."
+  }
+ ]
 }
