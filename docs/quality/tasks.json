@@ -3618,6 +3618,14 @@
   ]
  },
  {
+  "id": "SHOTS-01",
+  "pr": 3,
+  "group": "Catalog-wide release gates",
+  "task": "Ship each app's best screenshots in its README and in the generated apps web pages",
+  "status": "todo",
+  "evidence": []
+ },
+ {
   "id": "APPQA-01",
   "pr": 3,
   "group": "Catalog-wide release gates",
