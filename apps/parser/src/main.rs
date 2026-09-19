@@ -12,7 +12,10 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 use zvm::{Machine, RunState, StoryInfo};
 
-const SLOT_PAGE_ROWS: usize = 4;
+// Three rows to a page rather than four: with the story's own checkpoint
+// listed and a message on the panel, four rows crowded the guidance line off
+// the largest text scale, and the renderer refused the screen.
+const SLOT_PAGE_ROWS: usize = 3;
 
 const STORY_PREFIX: &str = "story-";
 const SAVE_PREFIX: &str = "save-";
@@ -1130,17 +1133,21 @@ mod tests {
             slot_subtitle(SlotAction::Restore, false),
             "Empty: nothing to restore"
         );
+        let machine = Machine::new(zork1_fixture(), "zork1.z3").expect("fixture opens");
         let mut parser = Parser {
-            saves: vec!["save-zork1-3".to_owned()],
+            saves: vec!["save-zork1-3".to_owned(), save_name(machine.info(), "game")],
+            machine: Some(machine),
             ..Parser::default()
         };
-        parser.message = Some("Slot 4 is empty.".to_owned());
+        parser.slot_action = SlotAction::Restore;
+        parser.message = Some("The story asked to restore a game - pick a slot.".to_owned());
+        let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
         for scale in TextScale::STEPS {
             let scaled = DisplayMetrics {
                 text_scale: scale,
                 ..CLARA_BW_METRICS
             };
-            for page in 0..3 {
+            for page in 0..page_count {
                 parser.slots_page = page;
                 let diagnostics = parser
                     .slots_screen()
