@@ -1,0 +1,55 @@
+{
+  "source_sha": "386a5ffe701df0ec7217367daf1e7f167065c6e3",
+  "dirty": false,
+  "results": [
+    {
+      "app": "kitchencard",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/kitchencard/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "lichess",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/lichess/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "magnet",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/magnet/drive.txt",
+      "exit_code": 0
+    },
+    {
+      "app": "musicstand",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/musicstand/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "syncthing",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/syncthing/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "tictactoe",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/tictactoe/drive.txt",
+      "exit_code": 0
+    },
+    {
+      "app": "vault",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/vault/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

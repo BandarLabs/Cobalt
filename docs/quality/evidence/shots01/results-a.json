@@ -1,0 +1,55 @@
+{
+  "source_sha": "386a5ffe701df0ec7217367daf1e7f167065c6e3",
+  "dirty": false,
+  "results": [
+    {
+      "app": "arxiv",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/arxiv/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "backgammon",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/backgammon/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "brief",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "deck",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/deck/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "fanshelf",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/fanshelf/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "flashcards",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/flashcards/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "grimoire",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/grimoire/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}
