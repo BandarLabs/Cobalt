@@ -3679,8 +3679,12 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Audit every visible action for a handler",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Audit tooling + full triage: scripts/quality/audit-action-handlers.py, docs/quality/evidence/appqa05/action-handlers.json + triage.json (39d4cc0b) - 70 candidates triaged, zero dead controls in shipped apps outside gallery specimens",
+   "Gallery fix: every enabled specimen control answers its tap with a person-written caption; disabled (*-off) specimens stay inert by design; v1.0.14 (d62b4f40)",
+   "Matrix proof 27/27 (9 profiles x 3 text scales): docs/quality/evidence/gallery-caption/"
+  ]
  },
  {
   "id": "APPQA-06",
