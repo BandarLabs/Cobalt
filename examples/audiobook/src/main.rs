@@ -300,7 +300,8 @@ impl Audiobook {
                 )
             };
             return screen
-                .buttons([(NEW, "Create an audiobook"), (SAMPLE, "Play the sample")])
+                .primary_button(NEW, "Create an audiobook")
+                .button(SAMPLE, "Play the sample")
                 .build();
         }
         // The bottom of the panel is spent on page turns, so the way to the

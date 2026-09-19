@@ -7,7 +7,7 @@ pub(super) fn welcome(error: Option<&str>) -> Screen {
         .top_bar("Paperterm")
         .heading("Terminal sessions")
         .text("Read a terminal session on your Kobo. Type from either device when keyboard access is enabled.")
-        .button("setup", "Connect a computer")
+        .primary_button("setup", "Connect a computer")
         .button("preview", "Try a preview")
         .secondary(error.unwrap_or("The computer runs the session. Keep it awake and on the same network."))
         .build()
