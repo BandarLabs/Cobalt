@@ -407,7 +407,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 ## PR 3 · Parser
 
 - [x] **PARSER-01** Include an original tutorial story.
-- [ ] **PARSER-02** Offer useful command suggestions.
+- [x] **PARSER-02** Offer useful command suggestions.
 - [x] **PARSER-03** Clarify import and save slots.
 - [ ] **PARSER-04** Complete interpreter conformance fixtures.
 - [ ] **PARSER-05** Run representative story fixtures.

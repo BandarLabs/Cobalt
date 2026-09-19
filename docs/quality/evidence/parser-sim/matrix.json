@@ -1,6 +1,6 @@
 {
  "app": "parser",
- "head": "ba66b5d0",
+ "head": "1f9d4217",
  "profiles": 9,
  "scales": [
   "default",
@@ -46,5 +46,5 @@
   ],
   "note": "Bare shelf: the bundled First Light seeds itself, then the walkthrough plays it to the ending marker."
  },
- "notes": "Standard route: Zork I fixture library, opening, story save/restore round trip through the slot picker. First-run route covers PARSER-01 on clara-bw-391 at all three scales."
+ "notes": "Standard route: Zork I fixture library, opening, story save/restore round trip through the slot picker, on the dictionary-filtered command palette. First-run route covers PARSER-01 on clara-bw-391 at all three scales."
 }

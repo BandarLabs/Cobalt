@@ -5,7 +5,9 @@ wait-for Zork1
 clean
 shot parser-library
 tap Zork1
-wait-for West of House
+# At larger text scales the opening spans the page turn; the mailbox line
+# is what lands on the final page at every scale.
+wait-for small mailbox
 clean
 shot parser-opening
 tap Keyboard

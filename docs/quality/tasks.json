@@ -2835,8 +2835,13 @@
   "pr": 3,
   "group": "Parser",
   "task": "Offer useful command suggestions",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "1f9d4217: the play-screen palette is filtered through the story dictionary (Machine::knows_word) - verbs, directions and meta commands the story knows in a stable order, plus the app-owned save/restore screens; Zork I offers UP/DOWN/DROP/OPEN/READ/LIGHT/AGAIN and no UNDO, First Light offers eleven chips and no east or west",
+   "1f9d4217: flaky pagination test pinned down - measurements mixed the fallback face and the installed real face depending on which test thread first ran install_real_face; every measuring test now installs the face itself (4/4 parallel runs stable)",
+   "docs/quality/evidence/parser-sim/matrix.json: 27/27 standard-route cells (9 profiles x 3 text scales) green at 1f9d4217 plus the bare first-run route green at default, large and extra-large; opening shots inspected at default and large on both routes",
+   "34/34 parser tests incl. palette_only_offers_words_the_story_knows and palette_follows_the_zork_dictionary; opening-drive route waits are wrap-proof single tokens at every scale"
+  ]
  },
  {
   "id": "PARSER-03",
