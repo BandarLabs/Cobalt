@@ -77,12 +77,20 @@ pub fn build(include_paths: bool) -> String {
     }
     match crate::receipts::Pending::load(&config.join("pending-send")) {
         Ok(Some(pending)) => {
-            let _ = writeln!(
-                out,
-                "a send is waiting to be retried: to {} ({})",
-                pending.target,
-                pending.app.as_deref().unwrap_or("undecided companion")
-            );
+            if include_paths {
+                let _ = writeln!(
+                    out,
+                    "a send is waiting to be retried: to {} ({})",
+                    pending.target,
+                    pending.app.as_deref().unwrap_or("undecided companion")
+                );
+            } else {
+                let _ = writeln!(
+                    out,
+                    "a send is waiting to be retried ({})",
+                    pending.app.as_deref().unwrap_or("undecided companion")
+                );
+            }
         }
         Ok(None) => {
             let _ = writeln!(out, "no send is waiting to be retried");
