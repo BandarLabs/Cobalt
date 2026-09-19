@@ -231,15 +231,23 @@ pub fn resolve_saved(
             return Ok(address);
         }
     }
-    for (address, found) in sweep() {
-        if found == serial {
-            store.remember(&serial, &address, None);
-            return Ok(address);
+    let found = sweep();
+    for (address, serial_found) in &found {
+        if *serial_found == serial {
+            store.remember(&serial, address, None);
+            return Ok(address.clone());
         }
     }
-    Err(crate::console::target(format!(
-        "\"{nickname}\" (serial {}…) is not answering at its saved address or anywhere on this network",
-        serial.get(..4).unwrap_or(&serial)
+    Err(crate::console::target(crate::console::Console::with_details(
+        format!(
+            "\"{nickname}\" (serial {}…) is not answering at its saved address or anywhere on this network",
+            serial.get(..4).unwrap_or(&serial)
+        ),
+        &format!(
+            "tried saved addresses [{}]; the sweep saw {} Kobo(s)",
+            store.find(nickname).map(|r| r.addresses.join(", ")).unwrap_or_default(),
+            found.len()
+        ),
     )))
 }
 

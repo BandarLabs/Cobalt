@@ -535,11 +535,13 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
                          \x20      photos to Frame, OPML lists to Feeds, CBZ comics to Panels,\n\
                          \x20      story files to Parser, APKG/COLPKG decks to Flashcards.\n\
                          \x20      --app settles a container more than one companion reads.\n\
-                         \x20      --preview renders or checks the content locally; nothing is sent.";
+                         \x20      --preview renders or checks the content locally; nothing is sent.\n\
+                         \x20      --retry repeats the kept selection after a failed send.";
     if wants_help(arguments) {
         return print_command_help(USAGE);
     }
-    let (target, rest) = targets::TargetArgs::parse(arguments)?;
+    let (arguments, target_words) = send_arguments(arguments)?;
+    let (target, rest) = targets::TargetArgs::parse(&arguments)?;
     let options = SendOptions::parse(&rest, USAGE)?;
     let file = options.file.ok_or_else(|| console::usage(USAGE))?;
     let path = Path::new(&file);
@@ -608,13 +610,50 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         }
     }
 
-    let mut forwarded = vec!["push".to_owned(), file.clone()];
-    forwarded.extend(device_flags);
-    match chosen.as_str() {
-        "frame" => frame::command(&forwarded)?,
-        "feeds" => feeds::command(&forwarded)?,
-        "panels" => panels::command(&forwarded)?,
-        "parser" => parser_command(&forwarded)?,
+    send_dispatch(
+        &chosen,
+        &file,
+        &device_flags,
+        &target_label,
+        &target_words,
+        &mut ledger,
+        &receipts_path,
+        sha,
+    )
+}
+
+/// The transfer itself: keep the selection, dispatch to the companion, and
+/// only past its acknowledgement clear the pending send and write the
+/// receipt - an interrupted transfer keeps the one and never gains the
+/// other, which is what makes the next send a resume rather than a
+/// duplicate.
+#[allow(clippy::too_many_arguments)]
+fn send_dispatch(
+    chosen: &str,
+    file: &str,
+    device_flags: &[String],
+    target_label: &str,
+    target_words: &str,
+    ledger: &mut receipts::Receipts,
+    receipts_path: &std::path::Path,
+    sha: String,
+) -> Result<(), String> {
+    let pending_path = receipts::pending_path();
+    let pending = receipts::Pending {
+        file: file.to_owned(),
+        app: Some(chosen.to_owned()),
+        target: target_words.to_owned(),
+    };
+    if let Err(error) = pending.save(&pending_path) {
+        println!("note: this send could not be kept for --retry ({error}); the send itself is unaffected");
+    }
+    let mut forwarded = vec!["push".to_owned(), file.to_owned()];
+    forwarded.extend(device_flags.iter().cloned());
+    let sent = match chosen {
+        "frame" => frame::command(&forwarded),
+        "feeds" => feeds::command(&forwarded),
+        "panels" => panels::command(&forwarded),
+        "parser" => parser_command(&forwarded),
         "flashcards" => {
             // Decks are a two-step import, not a push: the helper merges into
             // a collection, and staging needs a mounted reader. Say so with
@@ -622,28 +661,74 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
             println!(
                 "{file} is a study deck. Decks import into a collection first, then stage:\n  kobo flashcards import {file} --merge COLLECTION.cobfc\n  kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
             );
+            receipts::Pending::clear(&pending_path);
             return Ok(());
         }
         _ => unreachable!("choose returns only detected companions"),
+    };
+    if let Err(error) = sent {
+        return Err(console::Console::with_details(
+            format!("{error}\nThe selection is kept; retry with: kobo send --retry"),
+            &format!("forwarded: kobo {} {}", chosen, forwarded.join(" ")),
+        ));
     }
-
-    // The receipt lands only past the companion's own acknowledgement - an
-    // interrupted transfer leaves none, which is what lets the next send of
-    // the same file resume instead of duplicate.
+    receipts::Pending::clear(&pending_path);
     ledger.record(receipts::Receipt {
-        file: file.clone(),
-        app: chosen.clone(),
-        target: target_label.clone(),
+        file: file.to_owned(),
+        app: chosen.to_owned(),
+        target: target_label.to_owned(),
         sha256: sha,
         at: steps::now(),
     });
-    if let Err(error) = ledger.save(&receipts_path) {
+    if let Err(error) = ledger.save(receipts_path) {
         println!(
             "note: the send's receipt could not be written ({error}); the send itself finished"
         );
     }
     console::Console::progress(&format!("sent to {target_label}"));
     Ok(())
+}
+
+/// The arguments a send runs with, and its target flags as words.
+///
+/// Ordinarily the arguments as given. With `--retry` they are rebuilt from
+/// the kept pending send: same file, same companion, same target, none of
+/// it retyped.
+fn send_arguments(arguments: &[String]) -> Result<(Vec<String>, String), String> {
+    if !arguments.iter().any(|argument| argument == "--retry") {
+        return Ok((arguments.to_vec(), target_words(arguments)));
+    }
+    let pending_path = receipts::pending_path();
+    let pending = receipts::Pending::load(&pending_path)?
+        .ok_or_else(|| console::target("nothing is waiting to be retried"))?;
+    let mut rebuilt = vec![pending.file.clone()];
+    if let Some(app) = pending.app.clone() {
+        rebuilt.push("--app".to_owned());
+        rebuilt.push(app);
+    }
+    rebuilt.extend(pending.target.split(' ').map(str::to_owned));
+    console::Console::progress(&format!("retrying the kept send of {}", pending.file));
+    let words = pending.target.clone();
+    Ok((rebuilt, words))
+}
+
+/// The target flags exactly as given, so a kept send retries the same way.
+fn target_words(arguments: &[String]) -> String {
+    let mut words = Vec::new();
+    let mut arguments = arguments.iter().peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--sim" => words.push("--sim".to_owned()),
+            "--device" | "-s" | "--reader" => {
+                words.push(argument.clone());
+                if let Some(value) = arguments.next() {
+                    words.push(value.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    words.join(" ")
 }
 
 /// What a send run was asked for, beyond the shared target flags.

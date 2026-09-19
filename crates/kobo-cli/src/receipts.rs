@@ -207,3 +207,119 @@ mod tests {
         assert!(receipts.find("frame", "sim", "abc").is_none());
     }
 }
+
+/// A send that did not finish: the selection and the prepared routing, kept
+/// so a retry is one word rather than the whole command again.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pending {
+    /// The file as named on the command line.
+    pub file: String,
+    /// The companion chosen for it, when the choice was settled.
+    pub app: Option<String>,
+    /// The target flags exactly as given, e.g. `--sim` or `--reader clara`.
+    pub target: String,
+}
+
+impl Pending {
+    /// Reads a pending-send file; unknown lines are ignored.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut pending = Pending {
+            file: String::new(),
+            app: None,
+            target: String::new(),
+        };
+        for line in text.lines() {
+            let Some((key, value)) = line.trim().split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "send" => value.clone_into(&mut pending.file),
+                "app" => pending.app = (!value.is_empty()).then(|| value.to_owned()),
+                "target" => value.clone_into(&mut pending.target),
+                _ => {}
+            }
+        }
+        (!pending.file.is_empty() && !pending.target.is_empty()).then_some(pending)
+    }
+
+    /// Writes the pending send back out.
+    #[must_use]
+    pub fn render(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let _ = writeln!(out, "send = {}", self.file);
+        let _ = writeln!(out, "app = {}", self.app.as_deref().unwrap_or_default());
+        let _ = writeln!(out, "target = {}", self.target);
+        out
+    }
+
+    /// Loads the pending send at `path`; a missing file is nothing pending.
+    pub fn load(path: &Path) -> Result<Option<Self>, String> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => Ok(Self::parse(&text)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("{} cannot be read: {error}", path.display())),
+        }
+    }
+
+    /// Saves the pending send at `path`, making its folder when needed.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{} cannot be made: {error}", parent.display()))?;
+        }
+        std::fs::write(path, self.render())
+            .map_err(|error| format!("{} cannot be written: {error}", path.display()))
+    }
+
+    /// Clears a pending send; clearing nothing is fine.
+    pub fn clear(path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Where a pending send lives: beside the receipts it never became.
+#[must_use]
+pub fn pending_path() -> PathBuf {
+    if let Some(value) = std::env::var_os("KOBO_CONFIG_DIR") {
+        return PathBuf::from(value).join("pending-send");
+    }
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    PathBuf::from(home)
+        .join(".config")
+        .join("kobo")
+        .join("pending-send")
+}
+
+#[cfg(test)]
+mod pending_tests {
+    use super::*;
+
+    #[test]
+    fn a_pending_send_round_trips_and_clears() {
+        let pending = Pending {
+            file: "a.png".to_owned(),
+            app: Some("frame".to_owned()),
+            target: "--reader clara".to_owned(),
+        };
+        let parsed = Pending::parse(&pending.render()).expect("parses");
+        assert_eq!(parsed, pending);
+        let path = std::env::temp_dir().join(format!("kobo-pending-{}", std::process::id()));
+        assert!(Pending::load(&path).expect("loads").is_none());
+        pending.save(&path).expect("saves");
+        assert!(Pending::load(&path).expect("loads").is_some());
+        Pending::clear(&path);
+        assert!(Pending::load(&path).expect("loads").is_none());
+    }
+
+    #[test]
+    fn an_empty_or_half_written_pending_file_is_nothing_pending() {
+        assert!(Pending::parse("").is_none());
+        assert!(
+            Pending::parse("send = a.png\n").is_none(),
+            "no target, nothing to retry"
+        );
+    }
+}

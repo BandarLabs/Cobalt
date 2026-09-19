@@ -188,6 +188,26 @@ impl Console {
         eprintln!("{message}");
     }
 
+    /// True when the owner asked for the technical half of an error:
+    /// `KOBO_DEBUG=1` (or `KOBO_DETAILS=1`). Off by default, so an error
+    /// says what to do, not how the plumbing failed.
+    #[must_use]
+    pub fn details_wanted() -> bool {
+        ["KOBO_DEBUG", "KOBO_DETAILS"]
+            .iter()
+            .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty() && value != "0"))
+    }
+
+    /// An owner-facing message plus its technical detail, when wanted.
+    #[must_use]
+    pub fn with_details(message: String, details: &str) -> String {
+        if Self::details_wanted() {
+            format!("{message}\ndetails: {details}")
+        } else {
+            message
+        }
+    }
+
     /// The one machine-readable object a `--json` run prints: the envelope
     /// version, the command answering, and that command's data.
     #[must_use]
