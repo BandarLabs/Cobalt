@@ -50,6 +50,7 @@ mod panel;
 mod setup;
 mod sha256;
 mod sidekick;
+mod steps;
 mod sync;
 mod targets;
 
@@ -4691,6 +4692,16 @@ fn setup_device_with_confirmation(
         }
         .describe_for(&reader)
     );
+    // The step is recorded only here, past the eject: a dry run, a decline
+    // or a failed verify completes nothing.
+    if let Err(error) = (|| {
+        let path = steps::steps_path();
+        let mut done = steps::Steps::load(&path)?;
+        done.complete(steps::SETUP, &reader.serial, steps::now());
+        done.save(&path)
+    })() {
+        println!("note: the completed setup could not be remembered ({error}); the install itself is fine");
+    }
     match &sample {
         Some(Ok(path)) => println!(
             "sample: {} is in the library; open it on the reader after the restart, and delete it whenever you like",

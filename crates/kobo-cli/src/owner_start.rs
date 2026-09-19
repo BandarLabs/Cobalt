@@ -24,6 +24,25 @@ pub fn choose(
     output: &mut impl Write,
 ) -> Result<Option<Vec<String>>, String> {
     writeln!(output, "Cobalt\n\n1. Set up a reader over USB\n2. Preview photos for Frame\n3. Check a feed subscription file\n4. Check a Paperterm connection\n5. Developer and release commands\n6. App setup guides\n0. Exit").map_err(|e| e.to_string())?;
+    // Where the owner is, from what this computer has actually completed -
+    // asked of the steps file, never of the owner.
+    if let Ok(done) = crate::steps::Steps::load(&crate::steps::steps_path()) {
+        if done.completed(crate::steps::SETUP, None) {
+            if let Some(setup) = done
+                .steps
+                .iter()
+                .rev()
+                .find(|step| step.name == crate::steps::SETUP)
+            {
+                writeln!(
+                    output,
+                    "Done on this computer: reader setup (serial {}\u{2026}).",
+                    setup.serial.get(..4).unwrap_or(&setup.serial)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
     loop {
         let Some(choice) = answer(input, output, "Choose a number: ")? else {
             return Ok(None);
