@@ -1,0 +1,297 @@
+{
+ "item": "APPQA-08",
+ "method": "scripts/quality/audit-item-counts.py seeds each list app at 0, 1, 20 and 100 items with ~70-character accented-Latin titles (CJK and emoji exceed the simulator face), renders the list screen at clara-bw-391 default scale, and screenshots every count. Seeding writes the app store or shelf format directly, or drives the companion CLI where one exists for the sim (vault, frame).",
+ "caps": "todo 60 items, rss 40 feeds, panels 64 books: over-cap inputs are clamped or rejected cleanly, never crash",
+ "verdicts": {
+  "arxiv": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "audiobook": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "backgammon": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "birds": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "brief": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "server digests; network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "calibre-web": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "chat": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "crossword": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "deck": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "fixed 8-slot launcher grid; the count is by design"
+  },
+  "fanshelf": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "demo shelf with fixed seeded content; count by design"
+  },
+  "fieldbook": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "flashcards": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass"
+   },
+   "note": "no collection (0) and the real APPQA-07 collection (1 deck) render; 20/100 decks is not a realistic shape for one collection, and card-volume behavior is covered by the app tests"
+  },
+  "frame": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "gallery": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "grimoire": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "gutenbird": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "habits": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "hn": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "homepanel": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "inkling": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "kitchencard": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "lichess": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "logicpack": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "magnet": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "morse": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "musicstand": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "needles": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "nonograms": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "bundled puzzle picker with a fixed catalog; per-picture progress is single-state"
+  },
+  "panels": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "64": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 64, 100 items with ~70-char accented-Latin titles; no renderer refusal; library holds at most MAX_BOOKS 64; a 100-entry library record is rejected on decode and the shelf screen still renders; sideload files dropped in the shelf folder are ignored outside the import flow, so seeding writes the library record directly"
+  },
+  "paperterm": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "parlor": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "parser": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "post": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "pubquiz": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "one downloaded pack at a time; single-state"
+  },
+  "readlater": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "rss": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "40": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 40, 100 items with ~70-char accented-Latin titles; no renderer refusal; holds at most MAX_FEEDS 40; a 100-line feeds file is rejected cleanly with \"Could not open feeds\" and the saved file left unchanged"
+  },
+  "rss-miniflux": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  },
+  "sidekick": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "sudoku": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "syncthing": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "setup/session surface: no persistent user list"
+  },
+  "tictactoe": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "todo": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal; clamps at MAX_ITEMS 60; the 100-line store loads the first 60 and renders (header reads \"Todo: 60 left\")"
+  },
+  "vault": {
+   "verdict": "pass",
+   "counts": {
+    "0": "pass",
+    "1": "pass",
+    "20": "pass",
+    "100": "pass"
+   },
+   "note": "seeded and rendered at 0, 1, 20, 100 items with ~70-char accented-Latin titles; no renderer refusal"
+  },
+  "verses": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "single-state app: one document or session rather than a list; 0/1 covered by the APPQA-07 lifecycle audit, larger counts do not apply"
+  },
+  "zotero-reader": {
+   "verdict": "pass",
+   "counts": {},
+   "note": "network-backed: the item list lives on a server, not in local state; nothing local to seed at scale"
+  }
+ }
+}

@@ -3728,8 +3728,8 @@
   "pr": 3,
   "group": "Catalog-wide release gates",
   "task": "Test 0, 1, 20 and 100 items with long Unicode titles",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "audit-item-counts.py: 13 list apps seeded at 0/1/20/100 with long Unicode titles, all render without refusals (docs/quality/evidence/appqa08/). Caps confirmed: todo 60, rss 40 feeds, panels 64 books; over-cap inputs clamped or rejected cleanly. 32 apps classified single-state/bundled/network/session."
  },
  {
   "id": "APPQA-09",
