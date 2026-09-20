@@ -1014,9 +1014,7 @@ pub fn write_sample(volume: &Path) -> Result<PathBuf, String> {
     let path = volume.join(SAMPLE_NAME);
     fs::write(&path, sample_text())
         .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
-    let file = fs::File::open(&path)
-        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
-    file.sync_all()
+    kobo_protocol::durability::sync_file(&path)
         .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
     Ok(path)
 }

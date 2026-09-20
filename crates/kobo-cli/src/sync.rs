@@ -1677,11 +1677,9 @@ mod tests {
     #[test]
     fn explicit_sync_home_root_wins_and_must_be_absolute() {
         // No other test in this binary reads KOBO_SYNC_HOME.
-        env::set_var("KOBO_SYNC_HOME", "/tmp/cobalt-sync-home-test");
-        assert_eq!(
-            host_home().expect("absolute root"),
-            PathBuf::from("/tmp/cobalt-sync-home-test")
-        );
+        let absolute = std::env::temp_dir().join("cobalt-sync-home-test");
+        env::set_var("KOBO_SYNC_HOME", &absolute);
+        assert_eq!(host_home().expect("absolute root"), absolute);
         env::set_var("KOBO_SYNC_HOME", "relative");
         assert!(host_home().is_err());
         env::remove_var("KOBO_SYNC_HOME");
