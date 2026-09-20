@@ -956,11 +956,14 @@ fn read_octal(field: &[u8]) -> Result<u64, DeviceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_launch_bootstrap, install, recover_interrupted_update, swap_with_fault,
-        TransactionFailure, TransactionStep, JOURNAL, OWNER_FOLDERS, PREFIX,
+        ensure_launch_bootstrap, install, recover_interrupted_update, JOURNAL, OWNER_FOLDERS,
+        PREFIX,
     };
+    #[cfg(unix)]
+    use super::{swap_with_fault, TransactionFailure, TransactionStep};
     use kobo_protocol::DeviceError;
     use std::fs;
+    #[cfg(unix)]
     use std::process::Command;
 
     /// A tar member for the archives these tests publish.

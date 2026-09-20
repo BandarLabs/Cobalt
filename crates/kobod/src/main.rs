@@ -68,16 +68,23 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
 
 use std::process::ExitCode;
 
+// The daemon's subsystems serve the device-write entry points, which a
+// Windows host build does not compile. Keep the dead-code lint live on unix
+// and silence the noise in the Windows CI job's build.
+#[cfg_attr(not(unix), allow(dead_code))]
 mod app_link;
 mod app_store;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
 mod frame;
 mod syncthing;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod update;
 
 fn main() -> ExitCode {

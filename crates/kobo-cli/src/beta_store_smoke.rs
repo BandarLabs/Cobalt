@@ -2483,6 +2483,7 @@ mod tests {
         path
     }
 
+    #[cfg(unix)] // Only the unix acceptance test drives the fixture.
     fn fixture(path: &Path) {
         fs::create_dir_all(path).expect("fixture directory");
         fs::write(path.join(FIXTURE_SEED), format!("{}\n", "2a".repeat(32))).expect("fixture seed");

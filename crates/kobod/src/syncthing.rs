@@ -963,17 +963,23 @@ fn record_ingest(
     atomic_write(&path, &lines.join("\n"), 0o600)
 }
 
-fn atomic_bytes(path: &Path, value: &[u8], mode: u32) -> Result<(), String> {
+fn atomic_bytes(
+    path: &Path,
+    value: &[u8],
+    #[cfg_attr(not(unix), allow(unused))] mode: u32,
+) -> Result<(), String> {
     let temporary = path.with_extension("new");
     match fs::remove_file(&temporary) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value)

@@ -8689,12 +8689,12 @@ mod tests {
         }
         assert_eq!(
             super::parse_wait(&arguments(&["--device", "192.0.2.10", "--timeout", "5"])).unwrap(),
-            ("192.0.2.10".to_owned(), Duration::from_secs(5))
+            ("192.0.2.10".to_owned(), std::time::Duration::from_secs(5))
         );
         // The adb spelling still works, wherever it appears.
         assert_eq!(
             super::parse_wait(&arguments(&["--timeout", "5", "-s", "192.0.2.11"])).unwrap(),
-            ("192.0.2.11".to_owned(), Duration::from_secs(5))
+            ("192.0.2.11".to_owned(), std::time::Duration::from_secs(5))
         );
         let error = super::parse_wait(&arguments(&["--device", "192.0.2.10", "--sim"]))
             .expect_err("two targets");
