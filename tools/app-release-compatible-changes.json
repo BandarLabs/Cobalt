@@ -491,6 +491,82 @@
      "compatible_blob": "4b90af686dd47ac5d249ae882146cb48e361c9d6"
     }
    ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "The beta app catalog moved its published base to the companion-merge revision: re-anchor the standing protocol-15 blessing there. The Windows host support, the merged companion wiring, and the re-resolved lock carry no reader-visible wire or rendering change; existing Store apps keep working against the runtime they already have.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607",
+     "compatible_blob": "b264c8e2a7ac600cf3f19a1a7372d61b62f38bc6"
+    },
+    {
+     "path": "crates/kobo-abi/src/entropy.rs",
+     "base_blob": null,
+     "compatible_blob": "830985f15812fc529fd475f0bbdd890d894d6b48"
+    },
+    {
+     "path": "crates/kobo-abi/src/lib.rs",
+     "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
+     "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
+    },
+    {
+     "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+     "base_blob": "d3a38bababc85d720ac33d9208db7037ed6c1120",
+     "compatible_blob": "ea9d096f89417240268e2bc509b211bd68ed8f55"
+    },
+    {
+     "path": "crates/kobo-policy/src/credential_servers.rs",
+     "base_blob": "045d25b5b0c7b8fe42bdb8b99f1fb47d27ee6fe4",
+     "compatible_blob": "f40dccb057537225c5d085a478a5103884077592"
+    },
+    {
+     "path": "crates/kobo-policy/src/credentials.rs",
+     "base_blob": "53acec36c3d33f6c62af75530f23da7a643f8737",
+     "compatible_blob": "f00c86f6fefdd1d6ffcfb847eeaf8039c117c0fb"
+    },
+    {
+     "path": "crates/kobo-policy/src/persistence.rs",
+     "base_blob": "9b93e0d803738261d02e79282d230960d38cb105",
+     "compatible_blob": "7d3038e3f2210f42f36116bd4bc59913d1e145b2"
+    },
+    {
+     "path": "crates/kobo-policy/src/tasks.rs",
+     "base_blob": "011425614aeb9f85ac435db1bce8da6aa37f369b",
+     "compatible_blob": "fea7ca16fe3a0016735b1dfca80d8b62e82c2a54"
+    },
+    {
+     "path": "crates/kobo-protocol/src/channel.rs",
+     "base_blob": null,
+     "compatible_blob": "d5d1af6f86c3ab9225e4add3de827d4c1a2c6779"
+    },
+    {
+     "path": "crates/kobo-protocol/src/durability.rs",
+     "base_blob": null,
+     "compatible_blob": "c8e8fd49487587d0e2b605b7facd0088bf820d2d"
+    },
+    {
+     "path": "crates/kobo-protocol/src/lib.rs",
+     "base_blob": "c8859f6095d663df333519070e81e45f72a26cb7",
+     "compatible_blob": "7742f00724710705431d064bf7b558fd785e4bca"
+    },
+    {
+     "path": "crates/kobo-sdk/Cargo.toml",
+     "base_blob": "a8bd10dbafc3ba8e4ded6a2b8e812f532f03f1e3",
+     "compatible_blob": "cfe6a5571dd1ed76958cd45891b07de4c6fba890"
+    },
+    {
+     "path": "crates/kobo-sdk/src/entropy.rs",
+     "base_blob": "a200e99d7cf78cde2d73cc14ea22b2e83c42c129",
+     "compatible_blob": "eafecffa4dbb5f3fe724cd8a0b54fda538966780"
+    },
+    {
+     "path": "crates/kobo-sdk/src/lib.rs",
+     "base_blob": "4b0a0f32dbb9ca3b5fc421d6973ff40ab07c3e76",
+     "compatible_blob": "4b90af686dd47ac5d249ae882146cb48e361c9d6"
+    }
+   ]
   }
  ]
 }
