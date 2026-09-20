@@ -358,12 +358,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Re-pinned over the Windows host support: the lock also gains the kobo-abi edges for the CLI, SDK, sidekickd, and wifi-trace, all workspace-internal, and none of which resolves differently for a Unix build.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "452c14ab3110b0b7ac41b3caa8b0edfa5d969f60"
+     "compatible_blob": "b264c8e2a7ac600cf3f19a1a7372d61b62f38bc6"
     }
    ]
   },
@@ -418,6 +418,77 @@
      "path": "Cargo.lock",
      "base_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696",
      "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Windows host support for the CLI and simulator. The SDK host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The lock gains only the kobo-abi edges for the CLI, SDK, sidekickd, and wifi-trace, none of which resolves differently for a Unix build. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected.",
+   "files": [
+    {
+     "path": "crates/kobo-abi/src/entropy.rs",
+     "base_blob": null,
+     "compatible_blob": "830985f15812fc529fd475f0bbdd890d894d6b48"
+    },
+    {
+     "path": "crates/kobo-abi/src/lib.rs",
+     "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
+     "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
+    },
+    {
+     "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+     "base_blob": "d3a38bababc85d720ac33d9208db7037ed6c1120",
+     "compatible_blob": "ea9d096f89417240268e2bc509b211bd68ed8f55"
+    },
+    {
+     "path": "crates/kobo-policy/src/credential_servers.rs",
+     "base_blob": "ad519237796a31a2b587487b8a8f77e311c030f6",
+     "compatible_blob": "f40dccb057537225c5d085a478a5103884077592"
+    },
+    {
+     "path": "crates/kobo-policy/src/credentials.rs",
+     "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
+     "compatible_blob": "f00c86f6fefdd1d6ffcfb847eeaf8039c117c0fb"
+    },
+    {
+     "path": "crates/kobo-policy/src/persistence.rs",
+     "base_blob": "9b93e0d803738261d02e79282d230960d38cb105",
+     "compatible_blob": "7d3038e3f2210f42f36116bd4bc59913d1e145b2"
+    },
+    {
+     "path": "crates/kobo-policy/src/tasks.rs",
+     "base_blob": "011425614aeb9f85ac435db1bce8da6aa37f369b",
+     "compatible_blob": "fea7ca16fe3a0016735b1dfca80d8b62e82c2a54"
+    },
+    {
+     "path": "crates/kobo-protocol/src/channel.rs",
+     "base_blob": null,
+     "compatible_blob": "d5d1af6f86c3ab9225e4add3de827d4c1a2c6779"
+    },
+    {
+     "path": "crates/kobo-protocol/src/durability.rs",
+     "base_blob": null,
+     "compatible_blob": "c8e8fd49487587d0e2b605b7facd0088bf820d2d"
+    },
+    {
+     "path": "crates/kobo-protocol/src/lib.rs",
+     "base_blob": "e68b7d0c48c34c62784efcc725272f55ec1ed693",
+     "compatible_blob": "7742f00724710705431d064bf7b558fd785e4bca"
+    },
+    {
+     "path": "crates/kobo-sdk/Cargo.toml",
+     "base_blob": "a8bd10dbafc3ba8e4ded6a2b8e812f532f03f1e3",
+     "compatible_blob": "cfe6a5571dd1ed76958cd45891b07de4c6fba890"
+    },
+    {
+     "path": "crates/kobo-sdk/src/entropy.rs",
+     "base_blob": "a200e99d7cf78cde2d73cc14ea22b2e83c42c129",
+     "compatible_blob": "eafecffa4dbb5f3fe724cd8a0b54fda538966780"
+    },
+    {
+     "path": "crates/kobo-sdk/src/lib.rs",
+     "base_blob": "ff20655ce9538a06735590dc31513f555218e7a3",
+     "compatible_blob": "4b90af686dd47ac5d249ae882146cb48e361c9d6"
     }
    ]
   }
