@@ -1,6 +1,34 @@
-tap Log a sighting
-expect TALLY
-tap TALLY
-expect Lifer!
+wait-for 2 packs, 10 species.
 clean
-shot log
+shot home
+tap Packs
+wait-for San Francisco Bay
+wait-for legacy-pack.csv
+clean
+shot packs
+tap San Francisco Bay
+wait-for Search packs
+type flicker
+tap Find
+wait-for Northern Flicker
+clean
+shot search
+tap Northern Flicker
+wait-for Colaptes auratus
+clean
+shot detail
+tap Back
+wait-for Fieldbook
+tap Start an outing
+wait-for Name this place
+type lake merced
+tap Save
+wait-for lake merced
+tap American Robin
+wait-for 1 logged
+clean
+shot tally
+tap Review sightings
+wait-for American Robin ×1
+clean
+shot sightings

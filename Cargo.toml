@@ -37,6 +37,7 @@ members = [
     "crates/kobo-handoff",
     "crates/kobo-wifi-trace",
     "crates/kobo-xml",
+    "crates/kobo-zstory",
     "crates/kobod",
     "examples/brief",
     "examples/audiobook",

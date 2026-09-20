@@ -15,6 +15,8 @@ use kobo_sdk::{
     RichTextSpan, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, SlotWidth,
     Space, StoreError, StoreResult, TextPresentation, TilePicture,
 };
+mod sample;
+
 use std::collections::BTreeSet;
 use std::process::ExitCode;
 
@@ -42,6 +44,7 @@ const DECK_PRESENTATION: ParagraphPresentation = ParagraphPresentation {
 enum View {
     #[default]
     Loading,
+    FirstUse,
     Decks,
     Review,
     Settings,
@@ -52,7 +55,6 @@ enum View {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProblemKind {
-    Missing,
     Corrupt,
     UnsafeMedia,
 }
@@ -127,7 +129,10 @@ struct Flashcards {
     problem: Option<(ProblemKind, String)>,
     menu_open: bool,
     library_download: Option<ShelfDownload>,
+    sample_upload: Option<ShelfUpload>,
+    sample_saving: bool,
     review_download: Option<ShelfDownload>,
+    resume_download: Option<ShelfDownload>,
     review_upload: Option<ShelfUpload>,
     bundle: Option<ParsedBundle>,
     bundle_digest: String,
@@ -158,11 +163,14 @@ impl Default for Flashcards {
     fn default() -> Self {
         Self {
             view: View::Loading,
+            sample_upload: None,
+            sample_saving: false,
             return_view: View::Decks,
             problem: None,
             menu_open: false,
             library_download: None,
             review_download: None,
+            resume_download: None,
             review_upload: None,
             bundle: None,
             bundle_digest: String::new(),
@@ -194,7 +202,12 @@ impl Default for Flashcards {
 impl Flashcards {
     fn screen(&self) -> Screen {
         match self.view {
-            View::Loading => loading_screen(self.loading_received, self.loading_total),
+            View::Loading => loading_screen(
+                self.loading_received,
+                self.loading_total,
+                self.sample_saving,
+            ),
+            View::FirstUse => first_use_screen(self.menu_open),
             View::Decks => self.deck_picker(),
             View::Review => self.review(),
             View::Settings => settings_screen(self.show_details),
@@ -213,28 +226,45 @@ impl Flashcards {
         }
     }
 
-    fn active_card_ids(&self) -> &[i64] {
+    /// One row per deck, even when a merged collection keeps one queue per
+    /// source package. Cards stay in imported due order.
+    fn deck_groups(&self) -> Vec<(i64, Vec<i64>)> {
         let Some(bundle) = &self.bundle else {
-            return &[];
+            return Vec::new();
+        };
+        let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
+        for queue in &bundle.manifest().review_queue.decks {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group.0 == queue.root_deck_id)
+            {
+                group.1.extend_from_slice(&queue.card_ids);
+            } else {
+                groups.push((queue.root_deck_id, queue.card_ids.clone()));
+            }
+        }
+        groups
+    }
+
+    fn active_card_ids(&self) -> Vec<i64> {
+        let Some(bundle) = &self.bundle else {
+            return Vec::new();
         };
         self.selected_deck
-            .and_then(|index| bundle.manifest().review_queue.decks.get(index))
-            .map_or(
-                bundle.manifest().review_queue.card_ids.as_slice(),
-                |queue| queue.card_ids.as_slice(),
-            )
+            .and_then(|index| self.deck_groups().get(index).map(|group| group.1.clone()))
+            .unwrap_or_else(|| bundle.manifest().review_queue.card_ids.clone())
     }
 
     fn current_card(&self) -> Option<&Card> {
         let bundle = self.bundle.as_ref()?;
-        let card_id = self
-            .active_card_ids()
+        let active = self.active_card_ids();
+        let card_id = *active
             .iter()
             .find(|card_id| !self.reviewed_cards.contains(card_id))?;
         let index = bundle
             .manifest()
             .cards
-            .binary_search_by_key(card_id, |card| card.id)
+            .binary_search_by_key(&card_id, |card| card.id)
             .ok()?;
         bundle.manifest().cards.get(index)
     }
@@ -251,13 +281,13 @@ impl Flashcards {
             return "Flashcards".to_owned();
         };
         self.selected_deck
-            .and_then(|index| bundle.manifest().review_queue.decks.get(index))
-            .and_then(|queue| {
+            .and_then(|index| self.deck_groups().get(index).map(|group| group.0))
+            .and_then(|root_deck_id| {
                 bundle
                     .manifest()
                     .decks
                     .iter()
-                    .find(|deck| deck.id == queue.root_deck_id)
+                    .find(|deck| deck.id == root_deck_id)
             })
             .map_or_else(
                 || "All due cards".to_owned(),
@@ -344,8 +374,9 @@ impl Flashcards {
             return Vec::new();
         };
         let queue = &bundle.manifest().review_queue;
+        let groups = self.deck_groups();
         let mut choices = Vec::new();
-        if queue.decks.len() > 1 {
+        if groups.len() > 1 {
             let remaining = queue
                 .card_ids
                 .iter()
@@ -354,19 +385,18 @@ impl Flashcards {
             choices.push(DeckChoice {
                 action: "deck-all".to_owned(),
                 title: "All due cards".to_owned(),
-                summary: format!("Across {} decks · imported due order", queue.decks.len()),
+                summary: format!("Across {} decks · imported due order", groups.len()),
                 trailing: due_label(remaining),
             });
         }
-        for (index, deck_queue) in queue.decks.iter().enumerate() {
+        for (index, (root_deck_id, card_ids)) in groups.iter().enumerate() {
             let name = bundle
                 .manifest()
                 .decks
                 .iter()
-                .find(|deck| deck.id == deck_queue.root_deck_id)
+                .find(|deck| deck.id == *root_deck_id)
                 .map_or_else(|| "Imported deck".to_owned(), |deck| deck.name.clone());
-            let remaining = deck_queue
-                .card_ids
+            let remaining = card_ids
                 .iter()
                 .filter(|card_id| !self.reviewed_cards.contains(card_id))
                 .count();
@@ -519,6 +549,7 @@ impl Flashcards {
             .at_most(usize::try_from(MAX_BUNDLE_BYTES).expect("bundle bound fits device usize"));
         download.start(context);
         self.library_download = Some(download);
+        self.sample_saving = false;
         self.view = View::Loading;
         self.problem = None;
         self.loading_received = 0;
@@ -596,8 +627,13 @@ impl Flashcards {
                 self.pending_review = None;
                 self.picture = None;
                 self.media_message = None;
-                self.view = View::Decks;
-                self.prepare_deck_pages(context);
+                let mut resume = ShelfDownload::new(REVIEW_LOG_NAME).at_most(MAX_REVIEW_LOG_BYTES);
+                resume.start(context);
+                self.resume_download = Some(resume);
+                self.loading_received = 0;
+                self.loading_total = None;
+                self.loading_bucket = None;
+                self.view = View::Loading;
                 context.set_screen(self.screen());
             }
             Err(error) => {
@@ -774,6 +810,100 @@ impl Flashcards {
         context.set_screen(self.screen());
     }
 
+    /// Cards already recorded against this collection's digest do not come
+    /// up again after a restart; their grades wait in the log for the paired
+    /// computer.
+    fn seed_reviewed_cards(&mut self, log: &[u8]) {
+        if validate_review_log(log).is_err() {
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(log) else {
+            return;
+        };
+        for line in text.lines() {
+            if let Some(card_id) = review_card_id(line, &self.bundle_digest) {
+                self.reviewed_cards.insert(card_id);
+            }
+        }
+    }
+
+    fn finish_resume(&mut self, context: &mut Context, log: Option<Vec<u8>>) {
+        self.resume_download = None;
+        if let Some(log) = log {
+            self.seed_reviewed_cards(&log);
+        }
+        self.view = View::Decks;
+        self.prepare_deck_pages(context);
+        context.set_screen(self.screen());
+    }
+
+    /// Advances the collection download; true when it owned the store result.
+    fn advance_library_download(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(download) = &mut self.library_download else {
+            return false;
+        };
+        match download.advance(context, result) {
+            ShelfProgress::Done => {
+                self.finish_download(context);
+            }
+            ShelfProgress::Moving { done, total } => {
+                let percent = (total > 0).then(|| {
+                    u8::try_from(done.saturating_mul(100) / total)
+                        .unwrap_or(100)
+                        .min(100)
+                });
+                let bucket = percent.map(|percent| percent / 10 * 10);
+                self.loading_received = u64::from(done);
+                self.loading_total = (total > 0).then_some(u64::from(total));
+                if bucket != self.loading_bucket {
+                    self.loading_bucket = bucket;
+                    context.set_screen(self.screen());
+                }
+            }
+            ShelfProgress::Failed(StoreError::Missing) => {
+                self.library_download = None;
+                self.view = View::FirstUse;
+                context.set_screen(self.screen());
+            }
+            ShelfProgress::Failed(_) => {
+                self.library_download = None;
+                self.set_problem(
+                    context,
+                    ProblemKind::Corrupt,
+                    "The collection could not be read. Check the staged bundle and try again.",
+                );
+            }
+            ShelfProgress::Elsewhere => return false,
+        }
+        true
+    }
+
+    /// Advances the one sample upload; true when it owned the store result.
+    fn advance_sample_upload(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(upload) = &mut self.sample_upload else {
+            return false;
+        };
+        match upload.advance(context, result) {
+            ShelfProgress::Done => {
+                self.sample_upload = None;
+                self.start_download(context);
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+            ShelfProgress::Failed(_) => {
+                self.sample_upload = None;
+                self.sample_saving = false;
+                self.set_problem(
+                    context,
+                    ProblemKind::Corrupt,
+                    "The sample deck could not be saved on this Kobo. Try again.",
+                );
+                true
+            }
+        }
+    }
+
     fn upload_review_log(&mut self, context: &mut Context, mut log: Vec<u8>) {
         let Some(record) = self.pending_review.as_ref() else {
             return;
@@ -922,6 +1052,16 @@ impl KoboApp for Flashcards {
             self.close_supporting_screen(context);
         } else if action == action_id("retry") {
             self.start_download(context);
+        } else if action == action_id("sample") {
+            let mut upload = ShelfUpload::new(BUNDLE_NAME, sample::collection());
+            upload.start(context);
+            self.sample_upload = Some(upload);
+            self.sample_saving = true;
+            self.loading_received = 0;
+            self.loading_total = None;
+            self.loading_bucket = None;
+            self.view = View::Loading;
+            context.set_screen(self.screen());
         } else if action == action_id("choose-deck") || action == action_id("back-decks") {
             self.view = View::Decks;
             self.answer = false;
@@ -974,43 +1114,28 @@ impl KoboApp for Flashcards {
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if let Some(download) = &mut self.library_download {
+        if self.advance_library_download(context, &result) {
+            return;
+        }
+        if self.advance_sample_upload(context, &result) {
+            return;
+        }
+        if let Some(download) = &mut self.resume_download {
             match download.advance(context, &result) {
                 ShelfProgress::Done => {
-                    self.finish_download(context);
+                    let log = self
+                        .resume_download
+                        .take()
+                        .expect("active resume download")
+                        .take();
+                    self.finish_resume(context, Some(log));
                     return;
                 }
-                ShelfProgress::Moving { done, total } => {
-                    let percent = (total > 0).then(|| {
-                        u8::try_from(done.saturating_mul(100) / total)
-                            .unwrap_or(100)
-                            .min(100)
-                    });
-                    let bucket = percent.map(|percent| percent / 10 * 10);
-                    self.loading_received = u64::from(done);
-                    self.loading_total = (total > 0).then_some(u64::from(total));
-                    if bucket != self.loading_bucket {
-                        self.loading_bucket = bucket;
-                        context.set_screen(self.screen());
-                    }
-                    return;
-                }
-                ShelfProgress::Failed(StoreError::Missing) => {
-                    self.library_download = None;
-                    self.set_problem(
-                        context,
-                        ProblemKind::Missing,
-                        "No prepared collection is on this Kobo. Stage one with flashcards-import.",
-                    );
-                    return;
-                }
+                ShelfProgress::Moving { .. } => return,
+                // A first run has no log; an unreadable one must not lock the
+                // collection out. Offer the imported queue in both cases.
                 ShelfProgress::Failed(_) => {
-                    self.library_download = None;
-                    self.set_problem(
-                        context,
-                        ProblemKind::Corrupt,
-                        "The collection could not be read. Check the staged bundle and try again.",
-                    );
+                    self.finish_resume(context, None);
                     return;
                 }
                 ShelfProgress::Elsewhere => {}
@@ -1071,7 +1196,7 @@ struct DeckChoice {
     trailing: String,
 }
 
-fn loading_screen(received: u64, total: Option<u64>) -> Screen {
+fn loading_screen(received: u64, total: Option<u64>, sample_saving: bool) -> Screen {
     let screen = ScreenBuilder::new("flashcards-loading").top_bar("Flashcards");
     if received == 0 && total.is_none() {
         screen
@@ -1085,14 +1210,35 @@ fn loading_screen(received: u64, total: Option<u64>) -> Screen {
         screen
             .section("Opening collection")
             .skeleton(5)
-            .transfer("Reading verified bundle", received, total)
+            .transfer(
+                if sample_saving {
+                    "Saving the sample deck"
+                } else {
+                    "Reading verified bundle"
+                },
+                received,
+                total,
+            )
             .build()
     }
 }
 
+fn first_use_screen(menu_open: bool) -> Screen {
+    ScreenBuilder::new("flashcards-first-use")
+        .top_bar("Flashcards")
+        .top_bar_overflow("more", menu_open, [("notices", "Licences & about")])
+        .heading("No collection yet")
+        .text("Start with the sample deck, or stage your own collection from your computer.")
+        .text(
+            "With Cobalt on your computer: kobo flashcards import deck.apkg --merge              collection.cobfc, then kobo flashcards stage collection.cobfc.",
+        )
+        .buttons([("sample", "Start with the sample")])
+        .bottom_action("retry", "Read collection again")
+        .build()
+}
+
 fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
     let title = match kind {
-        ProblemKind::Missing => "Collection not found",
         ProblemKind::Corrupt => "Collection rejected",
         ProblemKind::UnsafeMedia => "Media rejected",
     };
@@ -1102,6 +1248,19 @@ fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
         .error_state(format!("{title}\n\n{message}"))
         .bottom_action("retry", "Read collection again")
         .build()
+}
+
+fn review_card_id(record: &str, digest: &str) -> Option<i64> {
+    if !record.contains(&format!("\"bundle_sha256\":\"{digest}\"")) {
+        return None;
+    }
+    let key = "\"card_id\":";
+    let start = record.find(key)? + key.len();
+    let digits: String = record[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
 }
 
 fn settings_screen(detailed: bool) -> Screen {
@@ -1124,6 +1283,12 @@ fn settings_screen(detailed: bool) -> Screen {
             ("Intervals", "Not recalculated on Kobo"),
             ("Media", "Fit without stretching"),
         ])
+        .section("Grading")
+        .text(
+            "Grades append to a local review log kept beside this collection, and recorded \
+             cards stay done when you come back. Staging the collection again keeps the log; \
+             your desktop scheduler is never written back.",
+        )
         .bottom_action("screen-back", "Done")
         .build()
 }
@@ -1815,21 +1980,208 @@ mod tests {
         clippy::too_many_lines,
         reason = "one explicit inventory keeps every required golden state auditable"
     )]
-    fn capture_cases() -> Vec<(&'static str, Screen, Option<ActionId>, bool)> {
-        install_fonts();
+    fn screen_text(screen: &Screen, needle: &str) -> bool {
+        screen.nodes.iter().any(|node| match node {
+            kobo_sdk::Node::Heading { text, .. }
+            | kobo_sdk::Node::Text { text, .. }
+            | kobo_sdk::Node::Secondary { text, .. }
+            | kobo_sdk::Node::RichText { text, .. } => text.contains(needle),
+            kobo_sdk::Node::Rows { rows, .. } => rows
+                .iter()
+                .any(|row| row.title.contains(needle) || row.summary.contains(needle)),
+            kobo_sdk::Node::Button { label, .. } => label.contains(needle),
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn a_missing_collection_offers_first_use_setup() {
+        use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+        let mut app = Flashcards::default();
+        let mut context = Context::default();
+        app.start_download(&mut context);
+        app.on_store(&mut context, StoreResult::Denied(StoreError::Missing));
+        assert_eq!(app.view, View::FirstUse);
+        let screen = app.screen();
+        assert!(screen_text(&screen, "No collection yet"));
+        assert!(screen_text(
+            &screen,
+            "kobo flashcards stage collection.cobfc"
+        ));
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+    }
+
+    fn answer_store(
+        values: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        blobs: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        writes: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        request: kobo_sdk::StoreRequest,
+    ) -> kobo_sdk::StoreResult {
+        use kobo_sdk::{StoreError, StoreRequest, StoreResult};
+        match request {
+            StoreRequest::Save { key, value } => {
+                values.insert(key.clone(), value);
+                StoreResult::Saved { key }
+            }
+            StoreRequest::Load { key } => StoreResult::Loaded {
+                value: values.get(&key).cloned(),
+                key,
+            },
+            StoreRequest::Forget { key } => {
+                values.remove(&key);
+                StoreResult::Forgotten { key }
+            }
+            StoreRequest::List => StoreResult::Keys(values.keys().cloned().collect()),
+            StoreRequest::ShelfWrite {
+                name,
+                offset,
+                bytes,
+                last,
+            } => {
+                let offset = offset as usize;
+                let pending = writes.entry(name.clone()).or_default();
+                if pending.len() < offset + bytes.len() {
+                    pending.resize(offset + bytes.len(), 0);
+                }
+                pending[offset..offset + bytes.len()].copy_from_slice(&bytes);
+                let size = u32::try_from(pending.len()).expect("test blob fits in u32");
+                if last {
+                    let finished = writes.remove(&name).unwrap_or_default();
+                    blobs.insert(name.clone(), finished);
+                }
+                StoreResult::ShelfWritten { name, size }
+            }
+            StoreRequest::ShelfRead {
+                name,
+                offset,
+                length,
+            } => {
+                let Some(blob) = blobs.get(&name) else {
+                    return StoreResult::Denied(StoreError::Missing);
+                };
+                let offset = offset as usize;
+                let end = (offset + length as usize).min(blob.len());
+                StoreResult::ShelfRead {
+                    name,
+                    offset: u32::try_from(offset).expect("test offset fits in u32"),
+                    bytes: blob.get(offset..end).unwrap_or(&[]).to_vec(),
+                    size: u32::try_from(blob.len()).expect("test blob fits in u32"),
+                }
+            }
+            StoreRequest::ShelfRemove { name } => {
+                blobs.remove(&name);
+                writes.remove(&name);
+                StoreResult::ShelfRemoved { name }
+            }
+            StoreRequest::ShelfList => StoreResult::Shelf(
+                blobs
+                    .iter()
+                    .map(|(name, bytes)| {
+                        (
+                            name.clone(),
+                            u32::try_from(bytes.len()).expect("test blob fits in u32"),
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
+    type TestMaps = std::collections::BTreeMap<String, Vec<u8>>;
+
+    fn pump_transfers(
+        runner: &mut kobo_sdk::AppRunner<Flashcards>,
+        mut commands: Vec<kobo_sdk::Command>,
+        values: &mut TestMaps,
+        blobs: &mut TestMaps,
+        writes: &mut TestMaps,
+    ) {
+        for _ in 0..40 {
+            let mut next = Vec::new();
+            for command in commands {
+                let kobo_sdk::Command::Store(request) = command else {
+                    continue;
+                };
+                let result = answer_store(values, blobs, writes, request);
+                next.extend(runner.store_result(result));
+            }
+            if next.is_empty() {
+                return;
+            }
+            commands = next;
+        }
+        panic!("the transfers did not settle");
+    }
+
+    #[test]
+    fn the_sample_deck_loads_after_writing() {
+        use kobo_sdk::{AppRunner, StoreRequest, StoreResult};
+
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
+        let mut runner = AppRunner::new(Flashcards::default());
+        let commands = runner.start();
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        assert_eq!(runner.app().view, View::FirstUse);
+        let commands = runner.action(action_id("sample"));
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        assert_eq!(runner.app().view, View::Decks);
+        assert!(screen_text(&runner.app().screen(), "Getting started"));
+        assert_eq!(
+            answer_store(
+                &mut values,
+                &mut blobs,
+                &mut writes,
+                StoreRequest::ShelfList
+            ),
+            StoreResult::Shelf(vec![(
+                BUNDLE_NAME.to_owned(),
+                u32::try_from(sample::collection().len()).expect("sample fits in u32")
+            )])
+        );
+    }
+
+    #[test]
+    fn a_restart_keeps_recorded_reviews() {
+        use kobo_sdk::AppRunner;
+
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
+        let mut runner = AppRunner::new(Flashcards::default());
+        let commands = runner.start();
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        let commands = runner.action(action_id("sample"));
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        for action in ["deck-0", "answer", "good"] {
+            let commands = runner.action(action_id(action));
+            pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        }
+        assert!(blobs.contains_key(REVIEW_LOG_NAME));
+
+        let mut restarted = AppRunner::new(Flashcards::default());
+        let commands = restarted.start();
+        pump_transfers(
+            &mut restarted,
+            commands,
+            &mut values,
+            &mut blobs,
+            &mut writes,
+        );
+        assert_eq!(restarted.app().view, View::Decks);
+        assert_eq!(restarted.app().reviewed_cards.len(), 1);
+        assert!(restarted
+            .app()
+            .deck_choices()
+            .iter()
+            .any(|choice| choice.trailing == "5 due"));
+    }
+
+    fn japanese_review_screens() -> (Screen, Screen) {
         let (_, question_tile, answer_tile) = japanese_pictures();
-        let mut deck_app = Flashcards {
-            bundle: Some(fixture_bundle(true)),
-            deck_pages: vec![vec![0, 1, 2]],
-            japanese_font: Some(JAPANESE_FONT_HANDLE),
-            view: View::Decks,
-            ..Flashcards::default()
-        };
-        let empty_app = Flashcards {
-            bundle: Some(fixture_bundle(false)),
-            view: View::Decks,
-            ..Flashcards::default()
-        };
         let mut question = review_model(false);
         question.deck = "日本語".to_owned();
         question.picture = Some(question_tile);
@@ -1853,6 +2205,10 @@ mod tests {
                 },
             }],
         );
+        (question_screen, answer_screen)
+    }
+
+    fn long_text_screen() -> Screen {
         let long_text =
             "これは長いカードの文章です。安全にページを分け、操作を画面の下に残します。".repeat(90);
         let mut long_model = review_model(true);
@@ -1860,11 +2216,29 @@ mod tests {
         let long_pages = paginate_review_text(&long_model, &long_text, &[], CLARA_BW_METRICS);
         long_model.page = 1.min(long_pages.len().saturating_sub(1));
         long_model.pages = long_pages.len();
-        let long_screen = review_screen(
+        review_screen(
             &long_model,
             &long_pages[long_model.page].text,
             &long_pages[long_model.page].spans,
-        );
+        )
+    }
+
+    fn capture_cases() -> Vec<(&'static str, Screen, Option<ActionId>, bool)> {
+        install_fonts();
+        let (question_screen, answer_screen) = japanese_review_screens();
+        let long_screen = long_text_screen();
+        let mut deck_app = Flashcards {
+            bundle: Some(fixture_bundle(true)),
+            deck_pages: vec![vec![0, 1, 2]],
+            japanese_font: Some(JAPANESE_FONT_HANDLE),
+            view: View::Decks,
+            ..Flashcards::default()
+        };
+        let empty_app = Flashcards {
+            bundle: Some(fixture_bundle(false)),
+            view: View::Decks,
+            ..Flashcards::default()
+        };
         let context = Context::default();
         deck_app.notice_documents = build_notice_documents(&context);
         let notice_index = {
@@ -1877,11 +2251,11 @@ mod tests {
             deck_app.notice_page = 0;
             deck_app.notice()
         };
-        vec![
-            ("loading", loading_screen(0, None), None, false),
+        let mut cases = vec![
+            ("loading", loading_screen(0, None, false), None, false),
             (
                 "loading-progress",
-                loading_screen(384 * 1024, Some(1024 * 1024)),
+                loading_screen(384 * 1024, Some(1024 * 1024), false),
                 None,
                 false,
             ),
@@ -1936,7 +2310,20 @@ mod tests {
                 None,
                 false,
             ),
+            ("settings", settings_screen(false), None, false),
+            ("licenses", notice_index, None, false),
+            ("license-document", notice_screen, None, false),
+        ];
+        cases.extend(setup_and_problem_cases(&empty_app));
+        cases
+    }
+
+    fn setup_and_problem_cases(
+        empty_app: &Flashcards,
+    ) -> Vec<(&'static str, Screen, Option<ActionId>, bool)> {
+        vec![
             ("empty", empty_app.deck_picker(), None, false),
+            ("first-use", first_use_screen(false), None, false),
             (
                 "done",
                 done_screen("日本語", 18, 18, false, Some(JAPANESE_FONT_HANDLE)),
@@ -1953,9 +2340,6 @@ mod tests {
                 None,
                 false,
             ),
-            ("settings", settings_screen(false), None, false),
-            ("licenses", notice_index, None, false),
-            ("license-document", notice_screen, None, false),
         ]
     }
 
@@ -2178,8 +2562,8 @@ mod tests {
             assert!(rect.height >= CLARA_BW_METRICS.touch_target_minimum());
         }
         let screens = [
-            loading_screen(0, None),
-            loading_screen(100, Some(200)),
+            loading_screen(0, None, false),
+            loading_screen(100, Some(200), false),
             settings_screen(false),
             problem_screen(
                 ProblemKind::Corrupt,

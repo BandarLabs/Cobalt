@@ -1,0 +1,46 @@
+wait 800
+expect AI Command Center
+expect question 7
+clean
+shot conversation
+tap-id earlier
+expect question 5
+tap-id earlier
+expect question 3
+tap-id earlier
+expect question 0
+clean
+shot conversation-earlier
+tap-id later
+expect question 3
+tap more
+expect New conversation
+expect Save a copy
+clean
+shot menu
+tap New conversation
+expect Start over
+tap Keep talking
+expect question 3
+tap more
+tap Save a copy
+wait-for Ready for your computer
+clean
+shot export-ready
+tap Back
+expect question 3
+tap Service
+expect OpenAI (gpt-4o-mini)
+expect Anthropic (claude-3-5-haiku-latest)
+expect Google Gemini (gemini-3.6-flash)
+clean
+shot service
+tap Conversation
+expect question 3
+tap Type
+type hello there
+tap Send
+wait 1500
+wait-for Try again
+clean
+shot no-key

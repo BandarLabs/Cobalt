@@ -1007,8 +1007,10 @@ dependencies = [
 
 [[package]]
 name = "kobo-fieldbook"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
+ "kobo-image",
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -1045,6 +1047,7 @@ dependencies = [
 name = "kobo-frame"
 version = "1.0.1"
 dependencies = [
+ "blake3",
  "kobo-image",
  "kobo-sdk",
  "kobo-ui",
@@ -1150,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-homepanel"
-version = "0.1.0"
+version = "0.2.2"
 dependencies = [
  "kobo-json",
  "kobo-sdk",
@@ -1176,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-inkling"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -1190,6 +1193,7 @@ version = "0.3.19"
 name = "kobo-kitchencard"
 version = "0.1.0"
 dependencies = [
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -1244,6 +1248,8 @@ dependencies = [
 name = "kobo-musicstand"
 version = "0.1.0"
 dependencies = [
+ "kobo-image",
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -1253,6 +1259,7 @@ name = "kobo-needles"
 version = "0.1.0"
 dependencies = [
  "kobo-bookview",
+ "kobo-doc",
  "kobo-json",
  "kobo-read",
  "kobo-sdk",
@@ -1340,7 +1347,9 @@ name = "kobo-parser"
 version = "0.1.0"
 dependencies = [
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
+ "kobo-zstory",
 ]
 
 [[package]]
@@ -1360,6 +1369,7 @@ name = "kobo-post"
 version = "0.1.0"
 dependencies = [
  "kobo-json",
+ "kobo-net",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -1640,6 +1650,7 @@ version = "0.1.0"
 dependencies = [
  "kobo-html",
  "kobo-image",
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
  "pulldown-cmark",
@@ -1678,6 +1689,10 @@ dependencies = [
  "kobo-read",
  "kobo-sdk",
 ]
+
+[[package]]
+name = "kobo-zstory"
+version = "0.3.19"
 
 [[package]]
 name = "kobod"

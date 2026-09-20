@@ -41,6 +41,8 @@ pub struct Work {
     pub epub: String,
     pub download: DownloadState,
     pub adult: bool,
+    /// Epoch seconds of the last completed update check; 0 = never checked.
+    pub last_checked: u64,
 }
 
 impl Work {
@@ -93,13 +95,17 @@ pub fn place_key(id: &str) -> String {
     format!("place.{id}")
 }
 
+pub fn ao3_base() -> String {
+    std::env::var("FANSHELF_AO3_BASE").unwrap_or_else(|_| "https://archiveofourown.org".to_owned())
+}
+
 pub fn work_url(id: &str, adult: bool) -> String {
     let suffix = if adult { "?view_adult=true" } else { "" };
-    format!("https://archiveofourown.org/works/{id}{suffix}")
+    format!("{}/works/{id}{suffix}", ao3_base())
 }
 
 pub fn feed_url(tag: &FollowedTag) -> String {
-    format!("https://archiveofourown.org/tags/{}/feeds.atom", tag.slug)
+    format!("{}/tags/{}/feeds.atom", ao3_base(), tag.slug)
 }
 
 pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
@@ -126,16 +132,16 @@ pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
     let author = attribute_text(body, "rel", "author", AUTHOR_MAX)
         .or_else(|| class_text(body, "byline heading", AUTHOR_MAX))
         .unwrap_or_else(|| "Anonymous".to_owned());
-    let fandom =
-        class_text(body, "fandom tags", FANDOM_MAX).unwrap_or_else(|| "Unspecified".into());
-    let rating = class_text(body, "rating tags", RATING_MAX).unwrap_or_else(|| "Not Rated".into());
-    let warnings = class_text(body, "warning tags", WARNINGS_MAX)
+    let fandom = dd_list(body, "fandom tags", FANDOM_MAX).unwrap_or_else(|| "Unspecified".into());
+    let rating =
+        dd_class_text(body, "rating tags", RATING_MAX).unwrap_or_else(|| "Not Rated".into());
+    let warnings = dd_list(body, "warning tags", WARNINGS_MAX)
         .unwrap_or_else(|| "Creator Chose Not To Use Archive Warnings".into());
     let summary = class_text(body, "summary module", SUMMARY_MAX).unwrap_or_default();
-    let updated = class_text(body, "updated", DATE_MAX)
-        .or_else(|| class_text(body, "published", DATE_MAX))
+    let updated = dd_class_text(body, "updated", DATE_MAX)
+        .or_else(|| dd_class_text(body, "published", DATE_MAX))
         .unwrap_or_default();
-    let chapter_text = class_text(body, "chapters", 32).unwrap_or_else(|| "1/1".into());
+    let chapter_text = dd_class_text(body, "chapters", 32).unwrap_or_else(|| "1/1".into());
     let (chapters, total_chapters) = parse_chapters(&chapter_text);
     let complete = total_chapters.is_some_and(|total| chapters >= total);
     let epub = epub_url(body).unwrap_or_default();
@@ -158,6 +164,7 @@ pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
         epub,
         download: DownloadState::NotDownloaded,
         adult: false,
+        last_checked: 0,
     }))
 }
 
@@ -192,10 +199,10 @@ fn epub_url(body: &str) -> Option<String> {
         if !href.contains("/downloads/") || !href.contains(".epub") {
             continue;
         }
-        let absolute = if href.starts_with("https://archiveofourown.org/") {
+        let absolute = if href.starts_with("https://") || href.starts_with("http://") {
             href
         } else if href.starts_with('/') {
-            format!("https://archiveofourown.org{href}")
+            format!("{}{href}", ao3_base())
         } else {
             continue;
         };
@@ -206,6 +213,96 @@ fn epub_url(body: &str) -> Option<String> {
 
 fn class_text(body: &str, class: &str, limit: usize) -> Option<String> {
     attribute_text(body, "class", class, limit)
+}
+
+/// The text of the `<dd>` carrying a class, never the `<dt>` label that
+/// shares it.
+///
+/// A real work page marks up its facts as label and value cells with the
+/// same class - `<dt class="rating tags">Rating:</dt>` then `<dd
+/// class="rating tags">General Audiences</dd>` - and a first-match search
+/// harvests the label. The fixture page carried only the value cells, which
+/// is why this only showed against the live archive.
+fn dd_class_text(body: &str, class: &str, limit: usize) -> Option<String> {
+    tagged_class_text(body, "dd", class, limit)
+}
+
+/// The raw markup of the `<dd>` carrying a class.
+///
+/// Fandoms and warnings arrive as one `<li>` per entry, and a plain text
+/// scrape would join them with nothing but a space: "Jane Austen Pride and
+/// Prejudice" reads as one long name when it is two. `dd_list` lifts the
+/// items out and comma-joins them, the way the archive presents them.
+fn dd_cell(body: &str, class: &str) -> Option<String> {
+    let mut rest = body;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let end = rest.find('>')?;
+        let head = &rest[..=end];
+        let name = head[1..]
+            .trim_start_matches('/')
+            .split(|character: char| character.is_whitespace() || character == '>')
+            .next()?;
+        if name == "dd" {
+            if let Some(value) = attribute_value(head, "class") {
+                if class
+                    .split_whitespace()
+                    .all(|wanted| value.split_whitespace().any(|part| part == wanted))
+                {
+                    let tail = &rest[end + 1..];
+                    let close_at = tail.find("</dd>")?;
+                    return Some(tail[..close_at].to_owned());
+                }
+            }
+        }
+        rest = &rest[end + 1..];
+    }
+    None
+}
+
+fn dd_list(body: &str, class: &str, limit: usize) -> Option<String> {
+    let cell = dd_cell(body, class)?;
+    if !cell.contains("<li") {
+        return Some(plain(&cell, limit));
+    }
+    let items: Vec<String> = cell
+        .split("<li")
+        .skip(1)
+        .map(|item| plain(item, limit))
+        .filter(|item| !item.is_empty())
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    Some(bounded(&items.join(", "), limit))
+}
+
+fn tagged_class_text(body: &str, tag: &str, class: &str, limit: usize) -> Option<String> {
+    let mut rest = body;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let end = rest.find('>')?;
+        let head = &rest[..=end];
+        let name = head[1..]
+            .trim_start_matches('/')
+            .split(|character: char| character.is_whitespace() || character == '>')
+            .next()?;
+        if name == tag {
+            if let Some(value) = attribute_value(head, "class") {
+                if class
+                    .split_whitespace()
+                    .all(|wanted| value.split_whitespace().any(|part| part == wanted))
+                {
+                    let close = format!("</{name}>");
+                    let tail = &rest[end + 1..];
+                    let close_at = tail.find(&close)?;
+                    return Some(plain(&tail[..close_at], limit));
+                }
+            }
+        }
+        rest = &rest[end + 1..];
+    }
+    None
 }
 
 fn attribute_text(body: &str, attribute: &str, wanted: &str, limit: usize) -> Option<String> {
@@ -466,7 +563,7 @@ pub fn work_id(text: &str) -> Option<String> {
 }
 
 pub fn encode_works(works: &[Work]) -> Vec<u8> {
-    let mut lines = vec!["v2".to_owned()];
+    let mut lines = vec!["v3".to_owned()];
     lines.extend(works.iter().take(MAX_WORKS).map(|work| {
         [
             work.id.clone(),
@@ -490,10 +587,32 @@ pub fn encode_works(works: &[Work]) -> Vec<u8> {
             }
             .to_owned(),
             u8::from(work.adult).to_string(),
+            work.last_checked.to_string(),
         ]
         .join("\t")
     }));
     lines.join("\n").into_bytes()
+}
+
+/// The shelf's started books, one work id per line. Ids are digits, so no
+/// escaping is needed.
+#[must_use]
+pub fn encode_reading(ids: &std::collections::BTreeSet<String>) -> Vec<u8> {
+    ids.iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
+#[must_use]
+pub fn decode_reading(bytes: &[u8]) -> std::collections::BTreeSet<String> {
+    std::str::from_utf8(bytes)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| work_id(line).as_deref() == Some(*line))
+        .map(str::to_owned)
+        .collect()
 }
 
 pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
@@ -501,15 +620,23 @@ pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
         return Vec::new();
     };
     let mut lines = text.lines();
-    if lines.next() != Some("v2") {
+    let version = lines.next();
+    if version != Some("v3") && version != Some("v2") {
         return decode_legacy(text);
     }
     lines
         .filter_map(|line| {
             // A fixed-size array rather than a length check and indexing, so a
             // short line is rejected by the conversion instead of by a rule a
-            // later reader has to notice before adding a field.
-            let fields: [&str; 14] = line.split('\t').collect::<Vec<_>>().try_into().ok()?;
+            // later reader has to notice before adding a field. v2 lines predate
+            // last_checked and decode as never-checked.
+            let width = if version == Some("v3") { 15 } else { 14 };
+            let mut fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != width {
+                return None;
+            }
+            fields.resize(15, "0");
+            let fields: [&str; 15] = fields.try_into().ok()?;
             let id = fields[0];
             if work_id(id).as_deref() != Some(id) {
                 return None;
@@ -534,6 +661,7 @@ pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
                     _ => DownloadState::NotDownloaded,
                 },
                 adult: fields[13] == "1",
+                last_checked: fields[14].parse().ok()?,
             })
         })
         .take(MAX_WORKS)
@@ -614,11 +742,17 @@ mod tests {
       <html><head><title>Fallback | Archive of Our Own</title></head><body>
       <h2 class="title heading">The Lantern Library</h2>
       <h3 class="byline heading"><a rel="author">River Quill</a></h3>
+      <dt class="rating tags">Rating:</dt>
       <dd class="rating tags"><ul><li><a>Teen And Up Audiences</a></li></ul></dd>
+      <dt class="warning tags">Archive Warning:</dt>
       <dd class="warning tags"><ul><li><a>No Archive Warnings Apply</a></li></ul></dd>
-      <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li></ul></dd>
+      <dt class="fandom tags">Fandoms:</dt>
+      <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li><li><a>Whispered Cartographies</a></li></ul></dd>
       <blockquote class="userstuff summary module"><p>A synthetic fixture.</p></blockquote>
-      <dd class="updated">2026-09-01</dd><dd class="chapters">12/?</dd>
+      <dt class="updated">Updated:</dt>
+      <dd class="updated">2026-09-01</dd>
+      <dt class="chapters">Chapters:</dt>
+      <dd class="chapters">12/?</dd>
       <a href="/downloads/4242/The_Lantern_Library.epub?updated_at=1">EPUB</a>
       </body></html>
     "#;
@@ -630,11 +764,30 @@ mod tests {
         };
         assert_eq!(work.title, "The Lantern Library");
         assert_eq!(work.author, "River Quill");
-        assert_eq!(work.fandom, "Public Domain Fairy Tales");
+        assert_eq!(
+            work.fandom,
+            "Public Domain Fairy Tales, Whispered Cartographies"
+        );
         assert_eq!(work.rating, "Teen And Up Audiences");
         assert_eq!(work.warnings, "No Archive Warnings Apply");
         assert_eq!(work.chapters_label(), "12/? WIP");
         assert!(work.epub.ends_with(".epub?updated_at=1"));
+    }
+
+    #[test]
+    fn label_cells_are_never_harvested_as_values() {
+        // The fixture above carries the real archive's shape: every fact is
+        // a <dt> label and a <dd> value sharing one class. A first-match
+        // search reads the label - the live work page rendered
+        // "Rating: Rating:" until the parser learned to read value cells.
+        let ParsedWork::Work(work) = parse_work_page("4242", WORK) else {
+            panic!("work was not parsed");
+        };
+        for field in [&work.rating, &work.warnings, &work.fandom, &work.updated] {
+            assert!(!field.ends_with(':'), "a label leaked into {field}");
+        }
+        assert_eq!(work.updated, "2026-09-01");
+        assert_eq!(work.chapters_label(), "12/? WIP");
     }
 
     #[test]
@@ -678,6 +831,36 @@ mod tests {
         assert_eq!(decode_works(&encode_works(&[work.clone()])), [work]);
         let tag = parse_tag("Public Domain Fairy Tales").unwrap();
         assert_eq!(decode_tags(&encode_tags(std::slice::from_ref(&tag))), [tag]);
+    }
+
+    #[test]
+    fn v2_shelves_decode_as_never_checked() {
+        let ParsedWork::Work(work) = parse_work_page("4242", WORK) else {
+            panic!("work was not parsed");
+        };
+        let v3 = String::from_utf8(encode_works(std::slice::from_ref(&work))).unwrap();
+        let line = v3.lines().nth(1).unwrap().to_owned();
+        assert_eq!(line.split('\t').count(), 15);
+        // A v2 line is the same record without the trailing last_checked field.
+        let v2_line = line.rsplit_once('\t').unwrap().0;
+        let v2 = format!("v2\n{v2_line}\n");
+        let decoded = decode_works(v2.as_bytes());
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].id, work.id);
+        assert_eq!(decoded[0].title, work.title);
+        assert_eq!(decoded[0].last_checked, 0);
+        // v3 round-trips the stamp.
+        let stamped = decode_works(v3.as_bytes());
+        assert_eq!(stamped[0].last_checked, work.last_checked);
+    }
+
+    #[test]
+    fn reading_set_round_trips_and_drops_non_ids() {
+        let ids: std::collections::BTreeSet<String> =
+            ["9001".to_owned(), "9002".to_owned()].into_iter().collect();
+        assert_eq!(decode_reading(&encode_reading(&ids)), ids);
+        assert!(decode_reading(b"9001\nnot-a-work\n9002\n").contains("9002"));
+        assert_eq!(decode_reading(b"9001\nnot-a-work\n9002\n").len(), 2);
     }
 
     #[test]

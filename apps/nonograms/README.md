@@ -10,7 +10,7 @@ Tap a square to cycle **blank → filled → crossed out**. A cross records a sq
 
 The selected square has an ink outline. Its row and column clues also have a shaded field and outline. Tap a clue to read its complete sequence; **…** means more numbers than the gutter can show. Back returns to the same board window. A zero clue means the line is empty.
 
-**Left, Up, Right and Down** move the window with an overlap. **−** and **+** change square size. Disabled controls keep their positions. Panning keeps absolute cell identities; an edit to row 25, column 25 never becomes an edit to the first visible square. The header identifies the selected square or the panned range when that square is offscreen. Wide displays use two rows of controls; portrait uses three.
+**Left, Up, Right and Down** move the window with an overlap. **−** and **+** change square size. Disabled controls keep their positions. Panning keeps absolute cell identities; an edit to row 25, column 25 never becomes an edit to the first visible square. The header identifies the selected square (or the panned range when that square is offscreen) and counts the marks made so far; the selected square’s row and column clues carry a compact chip. Wide displays use two rows of controls; portrait uses three.
 
 ## Help, undo and checking
 
@@ -33,13 +33,18 @@ Corrupt, oversized or future records stay untouched. Retry reads them again; Puz
 
 ## Photo puzzles
 
-The current computer companion sends 5×5, 7×7 or 9×9 photo puzzles:
+The computer companion sends photo puzzles:
 
 ```sh
 kobo nonograms push IMAGE --size N --device READER
 ```
 
-Choose the same size in **Photos**, then **Open**. The app’s Help screen explains the placeholders. Companion preview, simulator targeting and broader import support are tracked separately in PR 3.
+Choose the same size in **Photos**, then **Import**. Grid sizes from 5×5 to 25×25 are accepted. To send several at once, the push writes an `imported.txt` list beside the photos, one line per puzzle with the file name, puzzle name and grid size. Each listed photo arrives as a named puzzle. Reimporting an unchanged photo keeps its saved progress, and photos a push no longer names leave the shelf.
+
+![Marking a run on the board](screenshots/play.png)
+![A 25 by 25 board, zoomed](screenshots/large-board.png)
+![A finished picture puzzle](screenshots/picture-completed.png)
+![Imported photo puzzles listed by name](screenshots/imported-puzzles.png)
 
 The app accepts an image-derived puzzle only when repeated row/column deductions determine its entire answer. Ambiguous or unsupported inputs are refused. The displayed solver rating is **Easy** for one productive pass, **Medium** for two or three and **Hard** for more. This repeatable guide describes solver work, not measured human difficulty. The earlier study pack remains available for existing games. The new collection uses 18 distinct original drawings; every answer is determined by the line solver.
 

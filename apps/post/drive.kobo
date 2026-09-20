@@ -1,4 +1,10 @@
-# Honest first-run without a named Hermes secret.
+# The gateway setup names the companion login command and the address
+# field takes typed input on the on-screen keyboard.
+wait-for Post
 expect Connect a Hermes gateway
 clean
-shot setup
+shot post-setup
+type hermes
+expect https://hermes
+clean
+shot post-typed

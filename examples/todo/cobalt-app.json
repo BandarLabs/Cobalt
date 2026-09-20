@@ -3,8 +3,8 @@
   "display_name": "Todo",
   "short_label": "Todo",
   "summary": "Keep a simple to-do list that stays on your Kobo.",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "glyph": "check",
   "capabilities": [],
-  "release_notes": "Edit a list and date it, and take a copy off the reader onto a paired computer without emptying the list in the process."
+  "release_notes": "Say so when the list cannot be saved, instead of letting it look kept."
 }

@@ -7,9 +7,26 @@ send-only `out`.
 
 ![Sync folders on the Clara BW simulator](screenshots/syncthing-folders.png)
 
+The status screen shows the whole picture at a glance: transfer state, bytes
+remaining, peers online, the last successful window, the next scheduled
+window, and - when the engine gives up on a file for now - a distinct
+conflict state that retries on the next window. Completed windows import
+staged packages onto the application shelves (`sync/vault` becomes Vault's
+synced shelf, `sync/frame` becomes the Frame album; deletions never
+propagate) and the screen lists what each import brought in. The first
+completed sync is called out once.
+
 `kobod --syncthing window 300` starts a bounded owner-attended window;
 `tail` limits opportunistic windows to 90 seconds, `scheduled` honours the
-stored cadence, and `status` reports the latest runtime status. The supervisor
+stored cadence, and `status` reports the latest runtime status.
+
+![First sync complete, with last success, next window and the Vault import](../../docs/quality/evidence/syncthing/sync-first-complete.png)
+
+![A running window with bytes remaining and peers online](../../docs/quality/evidence/syncthing/sync-running.png)
+
+![Conflicts are distinct and name the retry path](../../docs/quality/evidence/syncthing/sync-conflict.png)
+
+The supervisor
 generates configuration in `/var/lib/cobalt/syncthing`, makes a daemon-only
 API key from `/dev/urandom`, and only permits its REST listener on loopback.
 It accepts neither arbitrary folder paths nor a key supplied by an app. A

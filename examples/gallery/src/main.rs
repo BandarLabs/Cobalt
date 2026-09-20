@@ -212,6 +212,32 @@ enum Floating {
     RowMenu(usize),
 }
 
+/// What an enabled specimen says when it is pressed. Disabled specimens
+/// stay silent: saying no by being drawn unavailable is their whole point.
+const SPECIMENS: &[(&str, &str)] = &[
+    ("button-primary", "You pressed Download."),
+    ("button-one", "You pressed Keep."),
+    ("button-two", "You pressed Discard."),
+    ("button-second", "You pressed Keep both."),
+    ("grp-save", "You pressed Save."),
+    ("grp-share", "You pressed Share."),
+    ("ctx-one", "You pressed Shelf."),
+    ("ctx-one-menu", "You opened the Shelf menu."),
+    ("ctx-two", "You pressed Feeds."),
+    ("ctx-two-menu", "You opened the Feeds menu."),
+    ("picture-one", "You pressed the tile with artwork."),
+    (
+        "picture-two",
+        "You pressed the tile that is still arriving.",
+    ),
+    ("menu-one", "You pressed Ars Technica."),
+    ("reading-controls", "You opened the reading menu."),
+    ("state-browse", "You pressed Browse the catalogue."),
+    ("state-retry", "You pressed Try again."),
+    ("state-report", "You pressed Report it."),
+    ("hold-here", "You held there."),
+];
+
 struct Gallery {
     tab: Tab,
     /// Which page of the current tab is showing.
@@ -230,6 +256,8 @@ struct Gallery {
     swatch: Option<TilePicture>,
     entry: TextEntry,
     answer: Option<String>,
+    /// What the last pressed specimen said, so no enabled control feels dead.
+    pressed: Option<&'static str>,
     /// Which page of the icon sheet is showing.
     icon_page: usize,
     /// Which panel of a page that takes more than one is showing.
@@ -273,6 +301,7 @@ impl Default for Gallery {
             // when it sees it.
             entry: TextEntry::new().opened_by("file-other"),
             answer: None,
+            pressed: None,
             icon_page: 0,
             shown: 0,
             ticked: [true, false],
@@ -435,6 +464,10 @@ impl Gallery {
             screen
         };
         let screen = parts.iter().fold(screen, |screen, part| part(self, screen));
+        let screen = match self.pressed {
+            Some(caption) => screen.text(caption),
+            None => screen,
+        };
         let screen = if total > 1 {
             screen.page_turns("panel-back", "panel-next").page_position(
                 u16::try_from(self.shown.min(total - 1) + 1).unwrap_or(1),
@@ -753,6 +786,7 @@ impl Gallery {
                     },
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 1,
@@ -766,6 +800,7 @@ impl Gallery {
                     // before it reaches the panel.
                     action: Some(action_id("pencil-four")),
                     selected: true,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 2,
@@ -773,6 +808,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Block,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 0,
@@ -780,6 +816,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Clue(3),
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 1,
@@ -787,6 +824,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Dot,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 2,
@@ -794,6 +832,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Island(2),
                     action: Some(action_id("pencil-island")),
                     selected: false,
+                    peer: false,
                 },
             ],
             edges: Vec::new(),
@@ -1731,6 +1770,7 @@ impl KoboApp for Gallery {
         for (tab, name, _) in Tab::ALL {
             if action == action_id(name) {
                 self.tab = tab;
+                self.pressed = None;
                 self.show(context);
                 return;
             }
@@ -1792,6 +1832,12 @@ impl KoboApp for Gallery {
                 self.show(context);
                 return;
             }
+        }
+
+        if let Some((_, caption)) = SPECIMENS.iter().find(|(id, _)| action == action_id(id)) {
+            self.pressed = Some(caption);
+            self.show(context);
+            return;
         }
 
         if self.overlays(context, action) || self.transfers(context, action) {

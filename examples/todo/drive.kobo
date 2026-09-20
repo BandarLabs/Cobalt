@@ -1,0 +1,15 @@
+# The empty list offers Add; a typed task lands on the list.
+wait-for Nothing to do
+clean
+shot todo-empty
+tap Add a task
+wait-for New item
+type water the fern
+expect water the fern
+clean
+shot todo-new
+tap Add
+wait-for water the fern
+expect-missing Nothing to do
+clean
+shot todo-list

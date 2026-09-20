@@ -224,6 +224,12 @@ struct Todo {
     /// "you have nothing to do" and "your list has not arrived yet" are
     /// different statements and only one of them is reassuring.
     loaded: bool,
+    /// Why this list should not be trusted to survive a restart.
+    ///
+    /// A refused save still leaves the words on screen, because throwing
+    /// them away would be worse; the banner says the list is memory only
+    /// until a save lands.
+    notice: Option<String>,
     page: usize,
     /// The tag the list is narrowed to, if any.
     ///
@@ -275,6 +281,7 @@ impl Default for Todo {
         Self {
             items: Vec::new(),
             loaded: false,
+            notice: None,
             page: 0,
             filter: None,
             entry: TextEntry::new().opened_by(ADD),
@@ -413,7 +420,7 @@ impl Todo {
             &borrowed,
             false,
             Position::AtTheFoot,
-            &Self::around_the_editing_list(),
+            &self.around_the_editing_list(),
         );
         if self.edit_pages.is_empty() {
             self.edit_pages.push(Vec::new());
@@ -422,9 +429,13 @@ impl Todo {
     }
 
     /// Everything the editing screen is drawn around.
-    fn around_the_editing_list() -> Screen {
-        ScreenBuilder::new("Todo")
-            .secondary("Tap an item to rename it, move it, give it a date or remove it.")
+    fn around_the_editing_list(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("Todo")
+            .secondary("Tap an item to rename it, move it, give it a date or remove it.");
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+        }
+        screen
             .spacer(Space::Medium)
             .buttons([(EXPORT, "Save a copy"), (ADD, "Add")])
             .build()
@@ -437,6 +448,9 @@ impl Todo {
     /// bar: that is chrome the paginator already knows about.
     fn around_the_list(&self) -> Screen {
         let mut screen = ScreenBuilder::new("Todo");
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+        }
         let tags = self.all_tags();
         if !tags.is_empty() {
             screen = screen.chips(tags.iter().map(|tag| {
@@ -466,6 +480,9 @@ impl Todo {
 
     fn list(&self) -> Screen {
         let mut screen = ScreenBuilder::new("Todo").top_bar(self.title());
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+        }
         if !self.items.is_empty() {
             // Only where there is something to change. An Edit control over
             // an empty list is a promise about a screen with nothing on it.
@@ -563,6 +580,9 @@ impl Todo {
             .top_bar("Edit list")
             .owns_back(true)
             .secondary("Tap an item to rename it, move it, give it a date or remove it.");
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+        }
         if self.items.is_empty() {
             screen = screen.empty_state("Nothing on the list yet.");
         } else {
@@ -787,8 +807,12 @@ impl KoboApp for Todo {
         if let Some(export) = self.export.as_mut() {
             if export.on_save(context, key, &result) {
                 self.show(context);
+                return;
             }
         }
+        // The runtime hands every save answer here, the list's included.
+        // Leaving them at the door is how a refused save once said nothing.
+        self.on_store(context, result);
     }
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
@@ -825,11 +849,15 @@ impl KoboApp for Todo {
             // means the reader believes a list that is not there.
             StoreResult::Denied(reason) => {
                 self.loaded = true;
+                self.notice = Some("The list could not be saved. Check free space.".to_owned());
                 context.log(
                     LogLevel::Warn,
                     format!("the list could not be saved: {reason}"),
                 );
                 self.show(context);
+            }
+            StoreResult::Saved { key } if key == ITEMS => {
+                self.notice = None;
             }
             // Listed rather than wildcarded, so adding a store answer to the
             // protocol makes every application decide what it means here.
@@ -1397,11 +1425,38 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_save_puts_a_banner_on_the_list_until_a_save_lands() {
+        let mut todo = started(&[("left", false)]);
+        let mut context = Context::default();
+        todo.on_save(
+            &mut context,
+            ITEMS,
+            StoreResult::Denied(kobo_sdk::StoreError::NoRoom),
+        );
+        assert_eq!(
+            todo.notice.as_deref(),
+            Some("The list could not be saved. Check free space."),
+            "a failed save left the list looking kept"
+        );
+        let mut context = Context::default();
+        todo.on_save(
+            &mut context,
+            ITEMS,
+            StoreResult::Saved {
+                key: ITEMS.to_owned(),
+            },
+        );
+        assert_eq!(todo.notice, None, "the banner outlived the save");
+        let _ = &mut context;
+    }
+
+    #[test]
     fn a_refused_save_is_reported_rather_than_swallowed() {
         let mut todo = started(&[]);
         let mut context = Context::default();
-        todo.on_store(
+        todo.on_save(
             &mut context,
+            ITEMS,
             StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
         );
         assert!(

@@ -179,11 +179,11 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · AI Command Center
 
-- [ ] **CHAT-01** Guide provider setup and explain provider/model choice.
-- [ ] **CHAT-02** Persist and manage conversations.
-- [ ] **CHAT-03** Export conversations.
-- [ ] **CHAT-04** Support explicit retry and cancel.
-- [ ] **CHAT-05** Paginate long replies and test provider-specific failures with fixtures.
+- [x] **CHAT-01** Guide provider setup and explain provider/model choice.
+- [x] **CHAT-02** Persist and manage conversations.
+- [x] **CHAT-03** Export conversations.
+- [x] **CHAT-04** Support explicit retry and cancel.
+- [x] **CHAT-05** Paginate long replies and test provider-specific failures with fixtures.
 
 ## PR 2 · Crossword
 
@@ -213,14 +213,15 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Fieldbook (APP-3)
 
-- [ ] **FIELD-01** Label starter data truthfully.
-- [ ] **FIELD-02** Import actual field/species packs and search them.
-- [ ] **FIELD-03** Record outing, location, date and time with sightings.
-- [ ] **FIELD-04** Edit, delete and undo sightings.
-- [ ] **FIELD-05** Show per-outing totals.
-- [ ] **FIELD-06** Produce a real downloadable checklist.
-- [ ] **FIELD-07** Report save/sync failure instead of fictitious success.
-- [ ] **FIELD-08** Keep local logging independent of service availability.
+- [x] **FIELD-01** Label starter data truthfully.
+- [x] **FIELD-02** Import actual field/species packs and search them.
+- [x] **FIELD-03** Record outing, location, date and time with sightings.
+- [x] **FIELD-04** Edit, delete and undo sightings.
+- [x] **FIELD-05** Show per-outing totals.
+- [x] **FIELD-06** Produce a real downloadable checklist.
+- [x] **FIELD-07** Report save/sync failure instead of fictitious success.
+- [x] **FIELD-08** Keep local logging independent of service availability.
+- [x] **FIELD-09** Show a licensed species photo on the species detail screen.
 
 ## PR 3 · Flashcards app
 
@@ -233,12 +234,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Frame app
 
-- [ ] **FRAME-01** Expose slideshow mode, interval and ordering controls.
+- [x] **FRAME-01** Expose slideshow mode, interval and ordering controls.
 - [ ] **FRAME-02** Show album, date and count clearly.
 - [ ] **FRAME-03** Provide an original multi-photo demo.
 - [ ] **FRAME-04** Show verified transfer status.
 - [ ] **FRAME-05** Integrate shared fit/crop behavior.
-- [ ] **FRAME-06** Prepare sleep ownership and energy validation.
+- [x] **FRAME-06** Prepare sleep ownership and energy validation.
 
 ## PR 2 · Components reference
 
@@ -286,34 +287,34 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Home Panel
 
-- [ ] **HOME-01** Guide server discovery and connection setup.
-- [ ] **HOME-02** Show online/stale/last-updated states.
-- [ ] **HOME-03** Acknowledge each tile action and failure.
-- [ ] **HOME-04** Provide compact tile editing.
-- [ ] **HOME-05** Add usable climate controls.
-- [ ] **HOME-06** Provide an optional wall-panel mode.
-- [ ] **HOME-07** Validate against local service fixtures.
+- [x] **HOME-01** Guide server discovery and connection setup.
+- [x] **HOME-02** Show online/stale/last-updated states.
+- [x] **HOME-03** Acknowledge each tile action and failure.
+- [x] **HOME-04** Provide compact tile editing.
+- [x] **HOME-05** Add usable climate controls.
+- [x] **HOME-06** Provide an optional wall-panel mode.
+- [x] **HOME-07** Validate against local service fixtures.
 
 ## PR 3 · Inkling
 
-- [ ] **INK-01** Expand audited answer and guess vocabulary.
-- [ ] **INK-02** Show uppercase letters with redundant state patterns.
-- [ ] **INK-03** Keep keyboard knowledge visible.
-- [ ] **INK-04** Use real date instead of technical identifiers.
-- [ ] **INK-05** Add result export and distribution statistics.
-- [ ] **INK-06** Provide archive play.
-- [ ] **INK-07** Verify daily persistence and deterministic fixtures.
+- [x] **INK-01** Expand audited answer and guess vocabulary.
+- [x] **INK-02** Show uppercase letters with redundant state patterns.
+- [x] **INK-03** Keep keyboard knowledge visible.
+- [x] **INK-04** Use real date instead of technical identifiers.
+- [x] **INK-05** Add result export and distribution statistics.
+- [x] **INK-06** Provide archive play.
+- [x] **INK-07** Verify daily persistence and deterministic fixtures.
 
 ## PR 3 · Kitchen Card (APP-2)
 
-- [ ] **KITCHEN-01** Configure Mealie endpoint and credentials.
-- [ ] **KITCHEN-02** Parse real recipe list and detail responses.
-- [ ] **KITCHEN-03** Preserve ingredient quantities and cooking steps.
-- [ ] **KITCHEN-04** Persist imported recipes through restart.
-- [ ] **KITCHEN-05** Handle save and connection failures honestly.
-- [ ] **KITCHEN-06** Add ingredient check-off.
-- [ ] **KITCHEN-07** Add recipe scaling with readable fractions.
-- [ ] **KITCHEN-08** Add cooking timers and Finished state.
+- [x] **KITCHEN-01** Configure Mealie endpoint and credentials.
+- [x] **KITCHEN-02** Parse real recipe list and detail responses.
+- [x] **KITCHEN-03** Preserve ingredient quantities and cooking steps.
+- [x] **KITCHEN-04** Persist imported recipes through restart.
+- [x] **KITCHEN-05** Handle save and connection failures honestly.
+- [x] **KITCHEN-06** Add ingredient check-off.
+- [x] **KITCHEN-07** Add recipe scaling with readable fractions.
+- [x] **KITCHEN-08** Add cooking timers and Finished state.
 
 ## PR 3 · Lichess
 
@@ -341,31 +342,31 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Morse
 
-- [ ] **MORSE-01** Expose speed, duration and repeat clearly.
-- [ ] **MORSE-02** Keep Stop reachable.
-- [ ] **MORSE-03** Explain unsupported characters.
-- [ ] **MORSE-04** Restore previous light setting.
-- [ ] **MORSE-05** Add visible learning mode and letter reference.
-- [ ] **MORSE-06** Prepare hardware timing checks.
+- [x] **MORSE-01** Expose speed, duration and repeat clearly.
+- [x] **MORSE-02** Keep Stop reachable.
+- [x] **MORSE-03** Explain unsupported characters.
+- [x] **MORSE-04** Restore previous light setting.
+- [x] **MORSE-05** Add visible learning mode and letter reference.
+- [x] **MORSE-06** Prepare hardware timing checks.
 
 ## PR 3 · Music Stand (APP-4)
 
-- [ ] **MUSIC-01** Replace text placeholders with actual score pages.
-- [ ] **MUSIC-02** Render overlapping half-page crops correctly.
-- [ ] **MUSIC-03** Create and edit setlists and rehearsal order.
-- [ ] **MUSIC-04** Persist per-score page, crop and marks.
-- [ ] **MUSIC-05** Provide usable zoom and full-screen controls.
-- [ ] **MUSIC-06** Support reachable physical/page-button turns.
-- [ ] **MUSIC-07** Read host-prepared scores and report import failures.
+- [x] **MUSIC-01** Replace text placeholders with actual score pages.
+- [x] **MUSIC-02** Render overlapping half-page crops correctly.
+- [x] **MUSIC-03** Create and edit setlists and rehearsal order.
+- [x] **MUSIC-04** Persist per-score page, crop and marks.
+- [x] **MUSIC-05** Provide usable zoom and full-screen controls.
+- [x] **MUSIC-06** Support reachable physical/page-button turns.
+- [x] **MUSIC-07** Read host-prepared scores and report import failures.
 
 ## PR 3 · Needles
 
-- [ ] **NEEDLES-01** Provide projects and named sections.
-- [ ] **NEEDLES-02** Emphasize current row count.
-- [ ] **NEEDLES-03** Keep Undo adjacent to increment.
-- [ ] **NEEDLES-04** Show pattern location and repeat progress.
-- [ ] **NEEDLES-05** Read actual imported pattern sections.
-- [ ] **NEEDLES-06** Support charts through shared image/document reading.
+- [x] **NEEDLES-01** Provide projects and named sections.
+- [x] **NEEDLES-02** Emphasize current row count.
+- [x] **NEEDLES-03** Keep Undo adjacent to increment.
+- [x] **NEEDLES-04** Show pattern location and repeat progress.
+- [x] **NEEDLES-05** Read actual imported pattern sections.
+- [x] **NEEDLES-06** Support charts through shared image/document reading.
 
 ## PR 2 · Nonograms
 
@@ -406,9 +407,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Parser
 
-- [ ] **PARSER-01** Include an original tutorial story.
-- [ ] **PARSER-02** Offer useful command suggestions.
-- [ ] **PARSER-03** Clarify import and save slots.
+- [x] **PARSER-01** Include an original tutorial story.
+- [x] **PARSER-02** Offer useful command suggestions.
+- [x] **PARSER-03** Clarify import and save slots.
 - [ ] **PARSER-04** Complete interpreter conformance fixtures.
 - [ ] **PARSER-05** Run representative story fixtures.
 - [ ] **PARSER-06** Paginate long transcript and restore saved play.
@@ -424,12 +425,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Pub Quiz
 
-- [ ] **QUIZ-01** Allow player names and count.
-- [ ] **QUIZ-02** Provide categories and difficulty.
-- [ ] **QUIZ-03** Show pack source and freshness.
-- [ ] **QUIZ-04** Clarify pass-device and answer-reveal screens.
-- [ ] **QUIZ-05** Export a scorecard.
-- [ ] **QUIZ-06** Test full rounds, repeats and offline refreshed packs.
+- [x] **QUIZ-01** Allow player names and count.
+- [x] **QUIZ-02** Provide categories and difficulty.
+- [x] **QUIZ-03** Show pack source and freshness.
+- [x] **QUIZ-04** Clarify pass-device and answer-reveal screens.
+- [x] **QUIZ-05** Export a scorecard.
+- [x] **QUIZ-06** Test full rounds, repeats and offline refreshed packs.
 
 ## PR 3 · Read Later (APP-5/6)
 
@@ -503,13 +504,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Vault (APP-6)
 
-- [ ] **VAULT-01** Page library rows without clipped actions.
-- [ ] **VAULT-02** Paginate long notes through final sentence.
-- [ ] **VAULT-03** Wire tag filtering and deduplicate tags.
-- [ ] **VAULT-04** Build navigable folder hierarchy.
-- [ ] **VAULT-05** Replace single packed-index bottleneck with scalable indexed shelf.
-- [ ] **VAULT-06** Integrate Sync ingestion.
-- [ ] **VAULT-07** Preserve Back, list and reading positions.
+- [x] **VAULT-01** Page library rows without clipped actions.
+- [x] **VAULT-02** Paginate long notes through final sentence.
+- [x] **VAULT-03** Wire tag filtering and deduplicate tags.
+- [x] **VAULT-04** Build navigable folder hierarchy.
+- [x] **VAULT-05** Replace single packed-index bottleneck with scalable indexed shelf.
+- [x] **VAULT-06** Integrate Sync ingestion.
+- [x] **VAULT-07** Preserve Back, list and reading positions.
 
 ## PR 3 · Verses (APP-8)
 
@@ -522,19 +523,20 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Catalog-wide release gates
 
-- [ ] **APPQA-01** Use one dominant task action with stable secondary controls.
-- [ ] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
-- [ ] **APPQA-03** Keep cached content usable with honest freshness.
-- [ ] **APPQA-04** Show unsaved state before success.
-- [ ] **APPQA-05** Audit every visible action for a handler.
-- [ ] **APPQA-06** Supply a committed meaningful route for each of the 43 apps.
-- [ ] **APPQA-07** Exercise install/sample/own-data/task/offline-reopen for each app.
-- [ ] **APPQA-08** Test 0, 1, 20 and 100 items with long Unicode titles.
-- [ ] **APPQA-09** Test long bodies, supported fonts and CJK where applicable.
-- [ ] **APPQA-10** Test delayed/failed downloads and storage interruption.
-- [ ] **APPQA-11** Check every intermediate state under supported profile/scale/orientation.
-- [ ] **APPQA-12** Regenerate screenshots only from the shipped build.
-- [ ] **APPQA-13** Keep Zotero Reader outside this catalog review.
+- [x] **SHOTS-01** Ship each app's best screenshots in its README and in the generated apps web pages.
+- [x] **APPQA-01** Use one dominant task action with stable secondary controls.
+- [x] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
+- [x] **APPQA-03** Keep cached content usable with honest freshness.
+- [x] **APPQA-04** Show unsaved state before success.
+- [x] **APPQA-05** Audit every visible action for a handler.
+- [x] **APPQA-06** Supply a committed meaningful route for each of the 43 apps.
+- [x] **APPQA-07** Exercise install/sample/own-data/task/offline-reopen for each app.
+- [x] **APPQA-08** Test 0, 1, 20 and 100 items with long Unicode titles.
+- [x] **APPQA-09** Test long bodies, supported fonts and CJK where applicable.
+- [x] **APPQA-10** Test delayed/failed downloads and storage interruption.
+- [x] **APPQA-11** Check every intermediate state under supported profile/scale/orientation.
+- [x] **APPQA-12** Regenerate screenshots only from the shipped build.
+- [x] **APPQA-13** Keep Zotero Reader outside this catalog review.
 
 ## PR 4 · Main CLI and companion operation engine
 
@@ -630,12 +632,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Needles companion
 
-- [ ] **NEEDLECLI-01** Manage required converter instead of demanding manual toolchain setup.
-- [ ] **NEEDLECLI-02** Preview extracted instructions against source.
-- [ ] **NEEDLECLI-03** Flag image-only pages and missing charts.
-- [ ] **NEEDLECLI-04** Choose title and preview section/row parsing.
-- [ ] **NEEDLECLI-05** Use the same prepare/preview/send flow for PDF, Markdown and text.
-- [ ] **NEEDLECLI-06** Support simulator and output-only targets.
+- [x] **NEEDLECLI-01** Manage required converter instead of demanding manual toolchain setup.
+- [x] **NEEDLECLI-02** Preview extracted instructions against source.
+- [x] **NEEDLECLI-03** Flag image-only pages and missing charts.
+- [x] **NEEDLECLI-04** Choose title and preview section/row parsing.
+- [x] **NEEDLECLI-05** Use the same prepare/preview/send flow for PDF, Markdown and text.
+- [x] **NEEDLECLI-06** Support simulator and output-only targets.
 
 ## PR 4 · Nonograms companion
 

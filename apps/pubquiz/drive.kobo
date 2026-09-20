@@ -1,11 +1,19 @@
 expect Pub Quiz
 tap How to play
-expect Ten questions, one Kobo
+expect player
 wait 800
 clean
 shot pubquiz-help
 tap Play
 tap Start pass-around
+expect setup
+clean
+shot setup
+tap Continue
+expect Pass-around players
+clean
+shot players
+tap Start round
 expect Ada answers
 clean
 shot question

@@ -1,0 +1,40 @@
+# First run on an empty shelf (run with --bare): the bundled tutorial seeds
+# itself, and the walkthrough plays it from the gatehouse to the ending.
+wait-for Interactive fiction
+wait-for First Light
+clean
+shot parser-firstrun-library
+tap First Light
+wait-for Gatehouse
+clean
+shot parser-firstrun-opening
+tap Keyboard
+type examine note
+tap Run
+# The note pages at every scale; its final words are the only text
+# guaranteed to sit on the last page.
+wait-for head."
+type north
+tap Run
+# At larger text scales the room block pages; the last line
+# always lands on the final page at every scale.
+wait-for dust
+type take lamp
+tap Run
+wait-for Taken.
+type take matchbox
+tap Run
+type inventory
+tap Run
+wait-for matchbox
+clean
+shot parser-firstrun-inventory
+type light lamp
+tap Run
+wait-for flame.
+type north
+tap Run
+wait-for moves
+wait-for ended
+clean
+shot parser-firstrun-ending

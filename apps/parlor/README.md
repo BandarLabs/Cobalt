@@ -8,6 +8,14 @@ Parlor is a four-game, offline board-game shelf for Kobo:
 - **Nine Men's Morris**
 - **Kalah 6,4**
 
+![The game table: Reversi, Draughts, Nine Men's Morris and Kalah 6,4](screenshots/table.png)
+
+![A draughts opening on the shaded board, captures forced](screenshots/draughts.png)
+
+![The Nine Men's Morris board with its twenty-four points](screenshots/morris.png)
+
+![A Reversi game after Black's move, board turned for White](screenshots/reversi-rotated.png)
+
 Pass-and-play is the primary mode. The board turns 180° for the active player,
 with an optional fixed orientation for side-by-side play. Solo games offer
 Casual, Club, and Strong deterministic alpha-beta opponents. Every move

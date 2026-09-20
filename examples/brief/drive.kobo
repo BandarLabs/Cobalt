@@ -1,0 +1,26 @@
+# A fresh brief says it has nothing, names its source choices, and a refresh
+# fills the page with the live list. Assertions stay on stable text: the
+# fetch stamp, the source name and the pager, never a story title.
+wait-for Daily brief
+expect Nothing yet
+expect not fetched yet
+clean
+shot brief-empty
+tap Source
+wait-for All four are public Hacker News lists
+expect Showing this now
+tap-id source-best
+wait-for Best
+tap Brief
+wait-for Daily brief
+expect Best
+tap Refresh
+wait-for as of
+expect Best of the week
+expect 1 of 2
+clean
+shot brief-stories
+tap-id next
+wait-for 2 of 2
+tap-id previous
+wait-for 1 of 2

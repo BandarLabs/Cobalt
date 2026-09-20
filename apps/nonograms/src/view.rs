@@ -40,10 +40,9 @@ impl Game {
     }
     fn play_header(&self, wide: bool) -> ScreenBuilder {
         let side = self.puzzle().map_or(1, |puzzle| puzzle.side);
-        let position = self.focus.map_or_else(
-            || "Choose a square".into(),
-            |cell| format!("Row {} · Column {}", cell / side + 1, cell % side + 1),
-        );
+        // The focused square is visible on the board; the header carries
+        // coordinates only when a zoomed window leaves the focus outside the
+        // view and the window's place is otherwise invisible.
         let position = if let Some(view) = self
             .viewport
             .as_ref()
@@ -58,18 +57,29 @@ impl Game {
                 columns.start + 1,
                 columns.end
             )
+        } else if self.focus.is_none() {
+            "Choose a square".to_owned()
         } else {
-            position
+            String::new()
         };
         let status = match self.draft.status() {
             Status::Failed(_) => "Not saved · More to retry".into(),
             Status::Saving | Status::Unsaved => "Saving…".into(),
             Status::Saved if self.run_start.is_some() => "Tap the other end of the run".into(),
             Status::Saved if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
-            Status::Saved => format!(
-                "{position} · {}",
-                if self.guided { "Guided" } else { "Free" }
-            ),
+            Status::Saved => {
+                let total = side * side;
+                let marked = self
+                    .marks
+                    .iter()
+                    .filter(|mark| !matches!(mark, Mark::Blank))
+                    .count();
+                if position.is_empty() {
+                    format!("{marked}/{total}")
+                } else {
+                    format!("{position} · {marked}/{total}")
+                }
+            }
         };
         let builder = ScreenBuilder::new("nonograms-play").top_bar("Nonograms");
         if wide {
@@ -114,14 +124,14 @@ impl Game {
         let mut builder = builder;
         for row in [
             [
-                ("board.left", "Left", view.can_pan(Direction::Left)),
+                ("board.smaller", "−", view.can_resize(false)),
                 ("board.up", "Up", view.can_pan(Direction::Up)),
-                ("board.right", "Right", view.can_pan(Direction::Right)),
+                ("board.larger", "+", view.can_resize(true)),
             ],
             [
-                ("board.smaller", "−", view.can_resize(false)),
+                ("board.left", "Left", view.can_pan(Direction::Left)),
                 ("board.down", "Down", view.can_pan(Direction::Down)),
-                ("board.larger", "+", view.can_resize(true)),
+                ("board.right", "Right", view.can_pan(Direction::Right)),
             ],
         ] {
             builder = builder.band(
@@ -263,13 +273,15 @@ impl Game {
     }
     pub(super) fn help_pages(&self, context: &Context) -> Vec<Vec<String>> {
         context.paginate(if self.route == Route::PhotoHelp {
-            "Send a photo
+            "Send photos
 
 On your computer, run:
 
 kobo nonograms push IMAGE --size N --device READER
 
-Replace IMAGE with your image file, N with 5, 7 or 9, and READER with your reader address. Choose the same size in Photo puzzle, then Open.
+Replace IMAGE with your image file, N with a grid size from 5 to 25, and READER with your reader address. Choose the same size in Photo puzzles, then Import.
+
+To send several at once, write imported.txt beside the photos, one line per puzzle: file name, puzzle name and grid size, separated by tabs. The list sets the sizes.
 
 Only puzzles solvable by row and column deductions are accepted. Try another photo or size if the clues need guessing.
 

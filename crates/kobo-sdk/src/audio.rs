@@ -286,7 +286,20 @@ impl AudioPlayer {
         };
         let mut screen = ScreenBuilder::new("audio-player")
             .top_bar("Now playing")
-            .owns_back(self.owns_back)
+            .owns_back(self.owns_back);
+        // The unavailable/trouble banner leads the content: appended last it
+        // lands under the volume controls, where the fixed bottom bar clips
+        // it on the smallest panels at extra-large text. Leading, it reads
+        // first and the hero absorbs the space pressure instead.
+        if self.audio_available == Availability::Unavailable {
+            screen = screen.banner(
+                BannerLevel::Attention,
+                "Audio playback is unavailable on this firmware.",
+            );
+        } else if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        screen = screen
             .hero(
                 self.cover,
                 26,
@@ -295,26 +308,34 @@ impl AudioPlayer {
                 facts,
             )
             .progress(progress)
-            .section_with_value("Position", position)
-            .controls(
-                3,
-                [
-                    (BACK_THIRTY, "Back 30 sec", Glyph::Rewind30),
-                    (PLAY, play_label, play_glyph),
-                    (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward30),
-                ],
-            )
-            // The volume is stated once, above the pair, rather than printed on
-            // both buttons. Two buttons carrying the same number is the same
-            // fault as a byline stated twice: it reads as two facts.
-            .section_with_value("Volume", format!("{}%", self.volume))
-            .controls(
-                2,
-                [
-                    (VOLUME_DOWN, "Quieter", Glyph::VolumeDown),
-                    (VOLUME_UP, "Louder", Glyph::VolumeUp),
-                ],
-            );
+            .section_with_value("Position", position);
+        // Where playback is unavailable (no audio hardware, as on the
+        // black-and-white panels), the transport and volume controls would be
+        // inert replicas of what the banner already says, and their two rows
+        // push the screen past the small panels at extra-large text. The
+        // position and progress stay: they are the saved state, not controls.
+        if self.audio_available != Availability::Unavailable {
+            screen = screen
+                .controls(
+                    3,
+                    [
+                        (BACK_THIRTY, "Back 30 sec", Glyph::Rewind30),
+                        (PLAY, play_label, play_glyph),
+                        (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward30),
+                    ],
+                )
+                // The volume is stated once, above the pair, rather than printed on
+                // both buttons. Two buttons carrying the same number is the same
+                // fault as a byline stated twice: it reads as two facts.
+                .section_with_value("Volume", format!("{}%", self.volume))
+                .controls(
+                    2,
+                    [
+                        (VOLUME_DOWN, "Quieter", Glyph::VolumeDown),
+                        (VOLUME_UP, "Louder", Glyph::VolumeUp),
+                    ],
+                );
+        }
         // Marked, because these are the two verbs a player screen offers and
         // both have a picture everyone already reads. The words stay: they are
         // what the control is called in a test, a log and a preview.
@@ -329,14 +350,6 @@ impl AudioPlayer {
             ]),
             None => screen.bottom_action_marked(OUTPUT, "Bluetooth audio output", Glyph::Bluetooth),
         };
-        if self.audio_available == Availability::Unavailable {
-            screen = screen.banner(
-                BannerLevel::Attention,
-                "Audio playback is unavailable on this firmware.",
-            );
-        } else if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble);
-        }
         screen.build()
     }
 
