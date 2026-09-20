@@ -8903,7 +8903,7 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ===============================================================================
 GNU Affero General Public License v3.0 [AGPL-3.0]
-Used by: anki 0.0.0, anki_i18n 0.0.0, anki_io 0.0.0, anki_proto 0.0.0, anki_proto_gen 0.0.0, kobo-doc 0.3.19, kobo-flashcards-format 0.3.19, kobo-flashcards-import 0.3.10, kobo-html 0.3.19, kobo-image 0.3.19, kobo-text 0.3.19, kobo-ui 0.3.19
+Used by: anki 0.0.0, anki_i18n 0.0.0, anki_io 0.0.0, anki_proto 0.0.0, anki_proto_gen 0.0.0, kobo-doc 0.3.20, kobo-flashcards-format 0.3.20, kobo-flashcards-import 0.3.10, kobo-html 0.3.20, kobo-image 0.3.20, kobo-text 0.3.20, kobo-ui 0.3.20
 -------------------------------------------------------------------------------
 GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007
