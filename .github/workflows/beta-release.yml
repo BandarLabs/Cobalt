@@ -325,21 +325,36 @@ jobs:
             target: x86_64-apple-darwin
             helper-target: x86_64-apple-darwin
             cc: ""
+            exe: ""
+            importer: "yes"
           - platform: macos-arm64
             runner: macos-14
             target: aarch64-apple-darwin
             helper-target: aarch64-apple-darwin
             cc: ""
+            exe: ""
+            importer: "yes"
           - platform: linux-x86_64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             helper-target: x86_64-unknown-linux-musl
             cc: musl-gcc
+            exe: ""
+            importer: "yes"
           - platform: linux-arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-musl
             helper-target: aarch64-unknown-linux-musl
             cc: musl-gcc
+            exe: ""
+            importer: "yes"
+          - platform: windows-x86_64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            helper-target: x86_64-pc-windows-msvc
+            cc: ""
+            exe: ".exe"
+            importer: "no"
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -358,6 +373,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install protobuf llvm
       - name: Build the host kobo command
+        shell: bash
         env:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
@@ -365,31 +381,42 @@ jobs:
           cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
           # The importer intentionally owns a separate Rust 1.88 workspace and
           # lockfile so Anki's host-only graph never enters the reader/CLI graph.
-          if [ "${{ runner.os }}" = macOS ]; then
-            export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+          # It is unix-only for now, so the Windows leg ships the CLI alone.
+          if [ "${{ matrix.importer }}" = "yes" ]; then
+            if [ "${{ runner.os }}" = macOS ]; then
+              export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+            fi
+            cargo +1.88.0 build --locked --release \
+              --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+              --target "${{ matrix.helper-target }}"
           fi
-          cargo +1.88.0 build --locked --release \
-            --manifest-path crates/kobo-flashcards-import/Cargo.toml \
-            --target "${{ matrix.helper-target }}"
       - name: Stage the host binary
+        shell: bash
         run: |
           mkdir -p host
-          cp "target/${{ matrix.target }}/release/kobo" host/kobo
-          cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
-            host/flashcards-import
+          cp "target/${{ matrix.target }}/release/kobo${{ matrix.exe }}" \
+            "host/kobo${{ matrix.exe }}"
+          if [ "${{ matrix.importer }}" = "yes" ]; then
+            cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
+              host/flashcards-import
+          fi
       - name: Smoke the staged binaries
         # A file that exists is not a binary that runs: link errors show up
         # here, on CI, instead of on an owner's machine.
+        shell: bash
         run: |
-          file host/kobo host/flashcards-import
-          host/kobo --version
-          host/flashcards-import --version
+          if [ "${{ runner.os }}" != Windows ]; then
+            file "host/kobo${{ matrix.exe }}"
+          fi
+          "host/kobo${{ matrix.exe }}" --version
+          if [ "${{ matrix.importer }}" = "yes" ]; then
+            file host/flashcards-import
+            host/flashcards-import --version
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: host-${{ matrix.platform }}
-          path: |
-            host/kobo
-            host/flashcards-import
+          path: host/
           if-no-files-found: error
 
   publish:
@@ -422,6 +449,10 @@ jobs:
             mv "dist/host-binaries/host-${platform}/flashcards-import" \
               "dist/host-binaries/${platform}/flashcards-import"
           done
+          test -f "dist/host-binaries/host-windows-x86_64/kobo.exe"
+          mkdir -p "dist/host-binaries/windows-x86_64"
+          mv "dist/host-binaries/host-windows-x86_64/kobo.exe" \
+            "dist/host-binaries/windows-x86_64/kobo.exe"
       - name: Build deterministic host release assets
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -469,7 +500,7 @@ jobs:
             --field "ref=refs/tags/${tag}" --field "sha=${GITHUB_SHA}" \
             --jq '.object.sha' | grep -Fx "$GITHUB_SHA"
           find dist -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 12
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 13
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION} beta" \
             --notes "Immutable prerelease built from the beta branch at ${GITHUB_SHA}." \

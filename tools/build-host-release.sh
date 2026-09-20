@@ -74,6 +74,32 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
         -cf - -C "$package" . | gzip -n -9 > "$asset"
 done
 
+# Windows ships the CLI alone: the flashcards importer is unix-only for now,
+# and the install.sh updater is a shell script that does not run on Windows.
+platform=windows-x86_64
+binary="$DIST/host-binaries/$platform/kobo.exe"
+[ -f "$binary" ] || {
+    echo "missing host binary $binary" >&2
+    exit 1
+}
+package="$build_root/$platform"
+mkdir -p "$package/licenses"
+cp "$binary" "$package/kobo.exe"
+cp LICENSE "$package/LICENSE"
+cp THIRD-PARTY.md "$package/THIRD-PARTY.md"
+cp licenses/LICENSE-Rust-dependencies.txt \
+    "$package/licenses/LICENSE-Rust-dependencies.txt"
+{
+    printf 'Cobalt %s\n' "$VERSION"
+    printf 'source https://github.com/BandarLabs/Cobalt/commit/%s\n' "$SOURCE_SHA"
+    printf 'release train immutable beta candidate, promotable unchanged to stable\n'
+    printf 'host platform %s\n' "$platform"
+    printf 'commands kobo\n'
+} > "$package/SOURCE.txt"
+asset="$DIST/kobo-$VERSION-$platform.tar.gz"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+    -cf - -C "$package" . | gzip -n -9 > "$asset"
+
 manifest="$DIST/cobalt-host-manifest.txt"
 {
     printf 'cobalt-host-release 1\n'
@@ -84,7 +110,7 @@ manifest="$DIST/cobalt-host-manifest.txt"
         "$device" "$(size_file "$DIST/$device")" "$(sha256_file "$DIST/$device")"
     printf 'bootstrap install.sh %s %s\n' \
         "$(size_file "$DIST/install.sh")" "$(sha256_file "$DIST/install.sh")"
-    for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
+    for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64 windows-x86_64; do
         asset="kobo-$VERSION-$platform.tar.gz"
         printf 'host %s %s %s %s\n' \
             "$platform" "$asset" "$(size_file "$DIST/$asset")" \
