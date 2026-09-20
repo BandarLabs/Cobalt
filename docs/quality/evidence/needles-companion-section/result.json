@@ -1,0 +1,14 @@
+{
+  "app_source": "pr5-apps-polish 96c3a7d (Needles app unchanged from 00a6f45)",
+  "cli_source": "pr6-companion-clis 1b35179 plus section/converter patch",
+  "source_url": "https://www.gutenberg.org/ebooks/62854",
+  "source_text_url": "https://www.gutenberg.org/cache/epub/62854/pg62854.txt",
+  "source_sha256": "a7116d2b9dbdfe38c39d13f19dbba7bfdd8968733a48c6100d51517ebf49e047",
+  "selected_section": "Style No. 3547",
+  "selected_rows": "Rows 1 through 12",
+  "assertions": [
+    "CLI wrote only requested section",
+    "running app opened CLI-selected section",
+    "unselected next section absent from shelf bytes"
+  ]
+}

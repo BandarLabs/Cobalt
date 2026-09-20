@@ -14,8 +14,16 @@ use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP\n\
                      \x20      kobo sync run [--foreground] [--seconds 1-86400]\n\
-                     \x20      kobo sync status\n\
-                     \x20      kobo sync stop";
+                     \x20      kobo sync plan [--json]\n\
+                     \x20      kobo sync status [--json]\n\
+                     \x20      kobo sync publish --folder vault|frame\n\
+                     \x20      kobo sync pause\n\
+                     \x20      kobo sync resume\n\
+                     \x20      kobo sync stop\n\
+                     \x20      \n\
+                     \x20      While the peer runs it uses this computer's network. A sleeping\n\
+                     \x20      reader is not kept awake; it syncs during the windows its owner\n\
+                     \x20      opens on the Kobo.";
 const GUI_ADDRESS: &str = "127.0.0.1:8385";
 const KOBO_KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -49,7 +57,11 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     match arguments.first().map(String::as_str) {
         Some("setup") => setup(&arguments[1..]),
         Some("run") => run(&arguments[1..]),
-        Some("status") if arguments.len() == 1 => status(),
+        Some("plan") => plan(&arguments[1..]),
+        Some("status") => status(&arguments[1..]),
+        Some("publish") => publish(&arguments[1..]),
+        Some("pause") if arguments.len() == 1 => set_paused(true),
+        Some("resume") if arguments.len() == 1 => set_paused(false),
         Some("stop") if arguments.len() == 1 => stop(),
         _ => Err(USAGE.to_owned()),
     }
@@ -135,7 +147,7 @@ fn setup(arguments: &[String]) -> Result<(), String> {
     }
     pair_kobo(device, &host_id, folder)?;
     println!(
-        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
+        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled and wakes only for the windows its owner\nopens; continuous sync does not keep a sleeping reader awake. While the peer runs it\nuses this computer's network. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
         local.display(),
         host_folder_type(folder),
         home.display(),
@@ -242,13 +254,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
     }
     if !foreground {
         println!(
-            "Sync peer started in the background (PID {}).\nRun 'kobo sync status' for folder state and 'kobo sync stop' to stop it.",
+            "Sync peer started in the background (PID {}).\nIt uses this computer's network until stopped; it does not keep a sleeping reader awake.\nRun 'kobo sync status' for folder state, 'kobo sync pause' to pause transfers, or 'kobo sync stop' to quit.",
             child.id()
         );
         return Ok(());
     }
     println!(
-        "Sync peer is running for at most {seconds} seconds; 'kobo sync stop' can end it sooner."
+        "Sync peer is running for at most {seconds} seconds; it uses this computer's network during that window and does not keep a sleeping reader awake. 'kobo sync stop' can end it sooner."
     );
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
@@ -300,14 +312,181 @@ fn parse_run(arguments: &[String]) -> Result<(bool, u64), String> {
     Ok((foreground, seconds))
 }
 
-fn status() -> Result<(), String> {
+/// One folder as the companion sees it: direction is fixed by the folder,
+/// state and diagnostics come from the daemon when it is running.
+#[derive(Clone, Debug)]
+struct FolderReport {
+    folder: String,
+    direction: &'static str,
+    path: PathBuf,
+    state: String,
+    last_change: Option<u64>,
+    errors: u64,
+}
+
+fn folder_report(state: &State, active: bool, folder: &str, mapping: &Mapping) -> FolderReport {
+    let mut report = FolderReport {
+        folder: (*folder).to_owned(),
+        direction: host_folder_type(folder),
+        path: mapping.path.clone(),
+        state: "not running".to_owned(),
+        last_change: None,
+        errors: 0,
+    };
+    if !active {
+        return report;
+    }
+    let Ok(value) = rest(
+        &state.api_key,
+        "GET",
+        &format!("/rest/db/status?folder=kobo-{folder}"),
+        None,
+    ) else {
+        "starting".clone_into(&mut report.state);
+        return report;
+    };
+    value
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("starting")
+        .clone_into(&mut report.state);
+    // stateChanged is when the folder last entered its current state; for an
+    // idle folder that is the last completed sync pass.
+    report.last_change = value
+        .get("stateChanged")
+        .and_then(Value::as_str)
+        .and_then(rfc3339_epoch);
+    report.errors = value.get("errors").and_then(Value::as_u64).unwrap_or(0)
+        + value.get("pullErrors").and_then(Value::as_u64).unwrap_or(0);
+    report
+}
+
+fn load_state() -> Result<(PathBuf, State), String> {
     let home = host_home()?;
     let state = optional_state(&home)?.ok_or_else(|| {
         "Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first"
             .to_owned()
     })?;
     verify_state(&state)?;
+    Ok((home, state))
+}
+
+fn parse_json_flag(arguments: &[String]) -> Result<bool, String> {
+    match arguments {
+        [] => Ok(false),
+        [flag] if flag == "--json" => Ok(true),
+        _ => Err(USAGE.to_owned()),
+    }
+}
+
+/// The fixed ingest contract, named here so plan and status can state which
+/// folders an application consumes after a window completes.
+fn ingest_note(folder: &str) -> &'static str {
+    match folder {
+        "vault" => "imports into Vault when a synced.v1 shelf package is present",
+        "frame" => "imports into Frame when a manifest.v1 album package is present",
+        "books" => "stays plain files for the reader library",
+        _ => "collects exports from the reader",
+    }
+}
+
+fn plan_json(home: &Path, state: &State, reports: &[FolderReport]) -> Value {
+    json!({
+        "format": "kobo-sync-plan",
+        "version": 1,
+        "home": home,
+        "host_id": state.host_id,
+        "kobo_id": state.kobo_id,
+        "syncthing": {
+            "binary": state.binary,
+            "sha256": state.binary_sha256,
+            "version": state.version,
+        },
+        "gui": GUI_ADDRESS,
+        "folders": reports.iter().map(|report| json!({
+            "id": format!("kobo-{}", report.folder),
+            "direction": report.direction,
+            "path": report.path,
+            "ingest": ingest_note(&report.folder),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn plan(arguments: &[String]) -> Result<(), String> {
+    let as_json = parse_json_flag(arguments)?;
+    let (home, state) = load_state()?;
+    let reports = state
+        .mappings
+        .iter()
+        .map(|(folder, mapping)| folder_report(&state, false, folder, mapping))
+        .collect::<Vec<_>>();
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&plan_json(&home, &state, &reports))
+                .map_err(|error| format!("render plan: {error}"))?
+        );
+        return Ok(());
+    }
+    println!(
+        "Sync plan\n  home         {}\n  host device  {}\n  Kobo device  {}\n  Syncthing    {} ({}, sha256 {})\n  API          http://{}",
+        home.display(),
+        state.host_id,
+        state.kobo_id,
+        state.version,
+        state.binary.display(),
+        &state.binary_sha256[..12],
+        GUI_ADDRESS
+    );
+    for report in &reports {
+        println!(
+            "  kobo-{:<6}  {:<12}  {} - {}",
+            report.folder,
+            report.direction,
+            report.path.display(),
+            ingest_note(&report.folder)
+        );
+    }
+    Ok(())
+}
+
+fn status_json(home: &Path, state: &State, active: bool, reports: &[FolderReport]) -> Value {
+    json!({
+        "format": "kobo-sync-status",
+        "version": 1,
+        "running": active,
+        "home": home,
+        "host_id": state.host_id,
+        "kobo_id": state.kobo_id,
+        "syncthing": state.version,
+        "folders": reports.iter().map(|report| json!({
+            "id": format!("kobo-{}", report.folder),
+            "direction": report.direction,
+            "path": report.path,
+            "state": report.state,
+            "last_change": report.last_change,
+            "errors": report.errors,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn status(arguments: &[String]) -> Result<(), String> {
+    let as_json = parse_json_flag(arguments)?;
+    let (home, state) = load_state()?;
     let active = running(&state, &home)?;
+    let reports = state
+        .mappings
+        .iter()
+        .map(|(folder, mapping)| folder_report(&state, active, folder, mapping))
+        .collect::<Vec<_>>();
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status_json(&home, &state, active, &reports))
+                .map_err(|error| format!("render status: {error}"))?
+        );
+        return Ok(());
+    }
     println!(
         "Dedicated Sync peer: {}\n  home         {}\n  host device  {}\n  Kobo device  {}\n  Syncthing    {}",
         if active { "running" } else { "stopped" },
@@ -316,32 +495,81 @@ fn status() -> Result<(), String> {
         state.kobo_id,
         state.version
     );
-    for (folder, mapping) in &state.mappings {
-        let direction = host_folder_type(folder);
-        let folder_state = if active {
-            rest(
-                &state.api_key,
-                "GET",
-                &format!("/rest/db/status?folder=kobo-{folder}"),
-                None,
-            )
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("state")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| "starting".to_owned())
-        } else {
-            "not running".to_owned()
-        };
+    for report in &reports {
+        let last = report
+            .last_change
+            .map_or_else(|| "-".to_owned(), |epoch| epoch.to_string());
         println!(
-            "  kobo-{folder:<6}  {direction:<11}  {folder_state:<12}  {}",
-            mapping.path.display()
+            "  kobo-{:<6}  {:<11}  {:<12}  last change {:<12}  errors {:<3}  {}",
+            report.folder,
+            report.direction,
+            report.state,
+            last,
+            report.errors,
+            report.path.display()
         );
     }
     Ok(())
+}
+
+/// Pausing suspends transfers with the paired Kobo without stopping the
+/// dedicated peer; the reader's own window keeps its independent cadence.
+fn set_paused(paused: bool) -> Result<(), String> {
+    let (home, state) = load_state()?;
+    if !running(&state, &home)? {
+        return Err("the dedicated Sync peer is not running".to_owned());
+    }
+    let action = if paused { "pause" } else { "resume" };
+    rest(
+        &state.api_key,
+        "POST",
+        &format!("/rest/system/{action}?device={}", state.kobo_id),
+        None,
+    )?;
+    println!(
+        "Sync with the Kobo {}. Resume with 'kobo sync {}'.",
+        if paused { "paused" } else { "resumed" },
+        if paused { "resume" } else { "pause" }
+    );
+    Ok(())
+}
+
+/// Parses the RFC 3339 timestamps Syncthing reports into epoch seconds.
+/// Only the calendar prefix is read; fractional seconds and the zone are
+/// accepted in the shapes Syncthing emits (Z or a numeric offset).
+fn rfc3339_epoch(value: &str) -> Option<u64> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' {
+        return None;
+    }
+    let number = |from: usize, to: usize| -> Option<i64> { value.get(from..to)?.parse().ok() };
+    let year = number(0, 4)?;
+    let month = number(5, 7)?;
+    let day = number(8, 10)?;
+    let hour = number(11, 13)?;
+    let minute = number(14, 16)?;
+    let second = number(17, 19)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
+        return None;
+    }
+    // Days-from-civil (Howard Hinnant's algorithm).
+    let shifted = if month <= 2 { year - 1 } else { year };
+    let era = shifted.div_euclid(400);
+    let year_of_era = shifted.rem_euclid(400);
+    let month_prime = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let mut epoch = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    match bytes.get(19) {
+        Some(b'Z' | b'.') => {}
+        Some(b'+' | b'-') if bytes.len() >= 25 => {
+            let offset = number(20, 22)? * 3_600 + number(23, 25)? * 60;
+            epoch -= if bytes[19] == b'+' { offset } else { -offset };
+        }
+        _ => return None,
+    }
+    u64::try_from(epoch).ok()
 }
 
 fn stop() -> Result<(), String> {
@@ -366,6 +594,16 @@ fn stop() -> Result<(), String> {
 }
 
 fn host_home() -> Result<PathBuf, String> {
+    // An explicit root keeps tests and parallel configurations away from the
+    // owner's real Sync home. It must be absolute so every later relative
+    // write stays inside it.
+    if let Some(root) = env::var_os("KOBO_SYNC_HOME") {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err("KOBO_SYNC_HOME must be an absolute path".to_owned());
+        }
+        return Ok(root);
+    }
     let home = env::var_os("HOME").ok_or("HOME is not set")?;
     Ok(PathBuf::from(home)
         .join(".config")
@@ -1164,9 +1402,319 @@ fn valid_hex(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// Packs the raw files in a mapped folder into the exact package the
+/// reader's ingest mirrors onto an application shelf: Vault takes a
+/// `synced.v1` manifest beside `synced-note-*.md` files, Frame a
+/// `manifest.v1` album. Publishing is the host half of the ingest contract;
+/// the daemon then carries the package like any other file.
+fn publish(arguments: &[String]) -> Result<(), String> {
+    let folder = match arguments {
+        [flag, folder] if flag == "--folder" => folder.as_str(),
+        _ => return Err(USAGE.to_owned()),
+    };
+    let (_home, state) = load_state()?;
+    let mapping = state.mappings.get(folder).ok_or_else(|| {
+        format!("folder {folder} is not mapped; run 'kobo sync setup LOCAL_DIR --folder {folder} --device IP' first")
+    })?;
+    match folder {
+        "vault" => publish_vault(&mapping.path),
+        "frame" => publish_frame(&mapping.path),
+        _ => Err(format!(
+            "folder {folder} syncs as plain files; no application package is needed"
+        )),
+    }
+}
+
+/// Repacking is idempotent: the previous package files are excluded from the
+/// walk, planned against, then rewritten only where content moved.
+fn publish_vault(folder: &Path) -> Result<(), String> {
+    use kobo_vault_host::{
+        plan_prefixed, Manifest, Push, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
+    };
+    let manifest_path = folder.join(SYNCED_MANIFEST);
+    let existing = match fs::read(&manifest_path) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("existing {SYNCED_MANIFEST} in the sync folder: {error}"))?,
+        Err(_) => Manifest {
+            notes: Vec::new(),
+            failures: Vec::new(),
+        },
+    };
+    let excludes = [SYNCED_MANIFEST.to_owned(), SYNCED_PREFIX.to_owned()];
+    let walk = super::vault::walk(folder, &excludes)?;
+    let offered = walk.offered.len();
+    let push = plan_prefixed(
+        &existing,
+        walk.offered.clone(),
+        walk.failures.clone(),
+        SYNCED_PREFIX,
+    )?;
+    super::vault::print_plan(&push, &walk);
+    if push.manifest.notes.len() > MAX_NOTES {
+        return Err(format!("Vault holds at most {MAX_NOTES} synced notes"));
+    }
+    for prepared in &push.notes {
+        let name = Push::note_name(&prepared.note_id);
+        atomic_write(
+            &folder.join(&name),
+            &String::from_utf8_lossy(&prepared.markdown),
+            0o600,
+        )?;
+    }
+    for removed in &push.removed {
+        let _ignored = fs::remove_file(folder.join(Push::note_name(&removed.id)));
+    }
+    let encoded = push.manifest.encode();
+    atomic_write(
+        &manifest_path,
+        std::str::from_utf8(&encoded).map_err(|_| "the packed shelf is not UTF-8")?,
+        0o600,
+    )?;
+    println!(
+        "Packed {offered} note(s) into {SYNCED_MANIFEST}; the next sync window carries the package and Vault imports it."
+    );
+    Ok(())
+}
+
+/// Packs the images in the mapped frame folder into a whole `manifest.v1`
+/// album, prepared for the reader's default panel. The shelf lives inside
+/// the source folder, so the walk skips its own output: the manifest, the
+/// sidecars and every photo the manifest already lists. Mirror semantics
+/// hold for the owner's sources - a removed photo leaves the album - and
+/// owner files are never modified.
+fn publish_frame(folder: &Path) -> Result<(), String> {
+    use kobo_frame_host::{
+        prepare_for_panel_excluding, Fit, Manifest, DEFAULT_PANEL, DIGEST_MANIFEST, FIT_MANIFEST,
+        MANIFEST, MAX_FRAME_CAPACITY,
+    };
+    let existing = match fs::read(folder.join(MANIFEST)) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("existing {MANIFEST} in the sync folder: {error}"))?,
+        Err(_) => Manifest { photos: Vec::new() },
+    };
+    let mut exclude = existing
+        .photos
+        .iter()
+        .map(kobo_frame_host::Photo::shelf_name)
+        .collect::<std::collections::BTreeSet<_>>();
+    for sidecar in [MANIFEST, DIGEST_MANIFEST, FIT_MANIFEST] {
+        exclude.insert(sidecar.to_owned());
+    }
+    let push =
+        prepare_for_panel_excluding(folder, Fit::Crop, &existing, true, DEFAULT_PANEL, &exclude)?;
+    let mut total = 0_usize;
+    for photo in &push.manifest.photos {
+        total = total.saturating_add(match fs::metadata(folder.join(photo.shelf_name())) {
+            Ok(metadata) => usize::try_from(metadata.len()).unwrap_or(usize::MAX),
+            Err(_) => push
+                .photos
+                .iter()
+                .find(|prepared| prepared.photo.id == photo.id)
+                .and_then(|prepared| prepared.png.as_ref())
+                .map_or(0, Vec::len),
+        });
+    }
+    if total > MAX_FRAME_CAPACITY {
+        return Err(format!(
+            "this would use {} MB for Frame photos; its capacity is {} MB",
+            total / (1024 * 1024),
+            MAX_FRAME_CAPACITY / (1024 * 1024)
+        ));
+    }
+    for prepared in push.photos.iter().filter(|prepared| prepared.png.is_some()) {
+        let name = prepared.photo.shelf_name();
+        let partial = folder.join(format!(".{name}.writing"));
+        fs::write(&partial, prepared.png.as_ref().expect("filtered"))
+            .map_err(|error| format!("write Frame photo {name}: {error}"))?;
+        fs::rename(&partial, folder.join(&name))
+            .map_err(|error| format!("publish Frame photo {name}: {error}"))?;
+    }
+    let partial = folder.join(format!(".{MANIFEST}.writing"));
+    fs::write(&partial, push.manifest.encode())
+        .map_err(|error| format!("write Frame manifest: {error}"))?;
+    fs::rename(&partial, folder.join(MANIFEST))
+        .map_err(|error| format!("publish Frame manifest: {error}"))?;
+    for photo in &push.removed {
+        let _ignored = fs::remove_file(folder.join(photo.shelf_name()));
+    }
+    println!(
+        "Packed {} photo(s) into {MANIFEST} for the {}x{} panel; the next sync window carries the album and Frame adopts it.",
+        push.manifest.photos.len(),
+        DEFAULT_PANEL.width,
+        DEFAULT_PANEL.height
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rfc3339_epoch_reads_syncthing_timestamps() {
+        assert_eq!(rfc3339_epoch("1970-01-01T00:00:00Z"), Some(0));
+        // Numeric zones shift the instant; a +05:30 stamp is 5.5 hours earlier.
+        assert_eq!(
+            rfc3339_epoch("2026-09-17T07:39:00+05:30"),
+            rfc3339_epoch("2026-09-17T02:09:00Z")
+        );
+        assert_eq!(
+            rfc3339_epoch("2026-09-17T02:09:00.123456789Z"),
+            rfc3339_epoch("2026-09-17T02:09:00Z")
+        );
+        assert_eq!(rfc3339_epoch("not a time"), None);
+        assert_eq!(rfc3339_epoch("2026-13-17T02:09:00Z"), None);
+    }
+
+    #[test]
+    fn plan_marks_the_ingest_contract_per_folder() {
+        assert!(ingest_note("vault").contains("synced.v1"));
+        assert!(ingest_note("frame").contains("manifest.v1"));
+        assert!(!ingest_note("books").contains("import"));
+    }
+
+    #[test]
+    fn folder_report_is_honest_when_the_daemon_is_down() {
+        let state = State {
+            binary: PathBuf::from("/bin/false"),
+            binary_sha256: "0".repeat(64),
+            version: "v2.0.9".to_owned(),
+            api_key: "key".to_owned(),
+            host_id: "HOST".to_owned(),
+            kobo_id: "KOBO".to_owned(),
+            mappings: BTreeMap::new(),
+        };
+        let mapping = Mapping {
+            path: PathBuf::from("/tmp/notes"),
+            device: 1,
+            inode: 1,
+        };
+        let report = folder_report(&state, false, "vault", &mapping);
+        assert_eq!(report.state, "not running");
+        assert_eq!(report.direction, "sendonly");
+        assert_eq!(report.last_change, None);
+        assert_eq!(report.errors, 0);
+    }
+
+    #[test]
+    fn explicit_sync_home_root_wins_and_must_be_absolute() {
+        // No other test in this binary reads KOBO_SYNC_HOME.
+        env::set_var("KOBO_SYNC_HOME", "/tmp/cobalt-sync-home-test");
+        assert_eq!(
+            host_home().expect("absolute root"),
+            PathBuf::from("/tmp/cobalt-sync-home-test")
+        );
+        env::set_var("KOBO_SYNC_HOME", "relative");
+        assert!(host_home().is_err());
+        env::remove_var("KOBO_SYNC_HOME");
+    }
+
+    #[test]
+    fn host_folder_directions_protect_owner_originals() {
+        assert_eq!(host_folder_type("vault"), "sendonly");
+        assert_eq!(host_folder_type("frame"), "sendonly");
+        assert_eq!(host_folder_type("books"), "sendonly");
+        assert_eq!(host_folder_type("out"), "receiveonly");
+    }
+
+    #[test]
+    fn publish_vault_packs_raw_notes_and_unpublishes_removed_ones() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-sync-publish-test-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("Alpha.md"), "# Alpha\nsee [[Beta]]").expect("note a");
+        fs::write(root.join("Beta.md"), "Beta body").expect("note b");
+        publish_vault(&root).expect("first publish");
+        let manifest =
+            kobo_vault_host::Manifest::decode(&fs::read(root.join("synced.v1")).expect("manifest"))
+                .expect("decode");
+        assert_eq!(manifest.notes.len(), 2);
+        assert!(manifest
+            .notes
+            .iter()
+            .all(|note| note.id.starts_with("synced-note-")));
+        assert_eq!(
+            manifest
+                .notes
+                .iter()
+                .find(|note| note.path == "Alpha.md")
+                .expect("alpha")
+                .links,
+            vec!["Beta"]
+        );
+        for note in &manifest.notes {
+            assert!(root.join(format!("{}.md", note.id)).is_file());
+        }
+        // A second publish with unchanged inputs changes nothing.
+        publish_vault(&root).expect("idempotent publish");
+        let again =
+            kobo_vault_host::Manifest::decode(&fs::read(root.join("synced.v1")).expect("manifest"))
+                .expect("decode");
+        assert_eq!(again.notes, manifest.notes);
+        // Removing a raw note drops its package file; every other raw note
+        // stays exactly where the owner put it.
+        let dropped = manifest
+            .notes
+            .iter()
+            .find(|note| note.path == "Alpha.md")
+            .expect("alpha")
+            .id
+            .clone();
+        fs::remove_file(root.join("Alpha.md")).expect("remove raw");
+        publish_vault(&root).expect("third publish");
+        let final_manifest =
+            kobo_vault_host::Manifest::decode(&fs::read(root.join("synced.v1")).expect("manifest"))
+                .expect("decode");
+        assert_eq!(final_manifest.notes.len(), 1);
+        assert!(!root.join(format!("{dropped}.md")).exists());
+        assert!(root.join("Beta.md").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    // A valid 1x1 PNG.
+    const TINY_PNG: [u8; 67] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    #[test]
+    fn publish_frame_packs_an_album_and_never_reingests_its_own_output() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-sync-frame-test-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("photo-one.png"), TINY_PNG).expect("photo");
+        publish_frame(&root).expect("first publish");
+        let manifest = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.photos.len(), 1);
+        assert!(root.join(manifest.photos[0].shelf_name()).is_file());
+        // A second publish walks the same folder, skips its own shelf and
+        // changes nothing.
+        publish_frame(&root).expect("idempotent publish");
+        let again = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(again.photos.len(), 1);
+        assert_eq!(again.photos[0].id, manifest.photos[0].id);
+        // Removing the source drops the photo and its shelf file; the raw
+        // file was never modified.
+        assert_eq!(fs::read(root.join("photo-one.png")).expect("raw"), TINY_PNG);
+        fs::remove_file(root.join("photo-one.png")).expect("remove source");
+        publish_frame(&root).expect("mirror publish");
+        let final_manifest = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert!(final_manifest.photos.is_empty());
+        assert!(!root.join(manifest.photos[0].shelf_name()).exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 
     fn test_root(name: &str) -> PathBuf {
         let base = env::var_os("CARGO_TARGET_DIR").map_or_else(

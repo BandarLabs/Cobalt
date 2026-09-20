@@ -1,0 +1,32 @@
+=== the guided menu's Send builds the same typed argv the CLI takes ===
+97:            "7" => match send_choice(input, output)? {
+137:        0 => command.push("--sim".into()),
+142:            command.push("--device".into());
+143:            command.push(host);
+149:            command.push("--reader".into());
+150:            command.push(name);
+512:            return run(&selected);
+
+=== a real menu-driven send: bare kobo in a terminal, choice 7, simulator (fresh photo, fresh config) ===
+3. a saved reader by name
+Send to (blank cancels): preparing /tmp/send-photo-34.png for frame
+1 new, 0 already present, 0 removed; 11521 image bytes to send
+  Add: send-photo-34.png / send-photo-34.png (photo-c6cf4d2229e25c41)
+Frame transfer verified: 8 photo(s), 1 new, 0 removed
+sent to sim
+
+=== the same file as a typed command: the shared receipt ledger already knows it ===
+preparing /tmp/send-photo-34.png for frame
+/tmp/send-photo-34.png is unchanged since it was sent to sim (receipt at 1789820422); nothing to do
+
+=== agent callers: machine output and stable exit categories (kobo help tail) ===
+Reading the output:
+Progress and explanations print on stderr; results print on stdout,
+so kobo devices > readers.txt holds only readers. --json prints one
+JSON object on stdout, with a version field, for programs to read.
+Exit status is a category, stable enough to test in a script:
+0 done   2 the command was misspelled   3 the reader or simulator
+could not be reached   4 this build or host cannot do it   1 anything else
+Verbs stay the same across commands: check reads, preview shows,
+prepare writes on this computer, push sends, status reports.
+

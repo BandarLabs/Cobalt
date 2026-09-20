@@ -3806,7 +3806,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Provide a desktop/local companion surface using the same operations",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3814,31 +3814,37 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Name readers by stable identity and owner nickname",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-05/ (real binary invocations against a 2-reader store, lane A batch 2; reviewed and reverified live: unknown name -> exit 3 naming saved readers, name+address -> exit 2, saved-but-unreachable -> exit 3 with serial prefix, no substitute; suite 383+2 ARM-env fails; fmt+clippy -D warnings clean with no allows)"
+  ]
  },
  {
   "id": "CLI-06",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Select among multiple USB/Wi-Fi readers without first-device fallback",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-06/ (real binary invocations against a 2-reader store, lane A batch 2; reviewed and reverified live: unknown name -> exit 3 naming saved readers, name+address -> exit 2, saved-but-unreachable -> exit 3 with serial prefix, no substitute; suite 383+2 ARM-env fails; fmt+clippy -D warnings clean with no allows)"
+  ]
  },
  {
   "id": "CLI-07",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Remember pairing and reconnect after address changes",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-07/ (real binary invocations against a 2-reader store, lane A batch 2; reviewed and reverified live: unknown name -> exit 3 naming saved readers, name+address -> exit 2, saved-but-unreachable -> exit 3 with serial prefix, no substitute; suite 383+2 ARM-env fails; fmt+clippy -D warnings clean with no allows)"
+  ]
  },
  {
   "id": "CLI-08",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Preserve verified USB setup, eject, reboot and reconnect steps",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3846,7 +3852,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Send and open an original sample for first success",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3854,7 +3860,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Describe installation changes before approval",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3874,7 +3880,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Persist completed setup steps",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3882,7 +3888,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Choose files/folders through picker or explicit CLI path",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3890,7 +3896,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Detect suitable target apps and resolve ambiguity",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3898,7 +3904,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Preview content for the selected reader before sending",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3906,7 +3912,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Report real preparing/sending/checking/ready stages",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3914,7 +3920,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Persist receipts and resume approved interrupted transfers",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3922,7 +3928,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Publish atomically and retain prior valid content",
-  "status": "todo",
+  "status": "done",
   "evidence": [
    "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions.",
    "Credential imports now stage then rename for network and volume destinations; bounded regular-file input rejects invalid/oversized values before transfer. Shell failed-write and occupied-stage regressions preserve the previous credential; real CLI volume validation/retry passes. Evidence: docs/quality/evidence/provider-help/result.json. Other transfer workflows remain open."
@@ -3933,7 +3939,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Retain selection and preparation on retry",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3941,7 +3947,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Report useful owner errors with optional technical details",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3949,7 +3955,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Export diagnostic reports without secrets or content by default",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -3981,8 +3987,10 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Use consistent verbs and reader/simulator/output target resolution",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-25/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-26",
@@ -4021,39 +4029,47 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Provide numbered plain terminal alternative",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-30/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-31",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-31/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-32",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Keep progress on stderr with versioned JSON on stdout",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-32/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-33",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Use stable exit categories and bounded noninteractive behavior",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "docs/quality/evidence/pr6/CLI-33/ (real host/PTY invocation transcripts, lane A batch 1; reviewed and reverified live: kobo nonsense -> exit 2 stderr, devices --json -> exit 3 with pure JSON stdout/stderr progress; suite 376+2 ARM-env fails; fmt+clippy -D warnings clean)"
+  ]
  },
  {
   "id": "CLI-34",
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Keep typed operations shared across UI, CLI and agent callers",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4061,7 +4077,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Show host/reader/helper compatibility and signed update status",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4069,7 +4085,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Preserve content, preferences and pairing through updates",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4077,7 +4093,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Keep arbitrary commands in explicit advanced controls",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4085,7 +4101,7 @@
   "pr": 4,
   "group": "Main CLI and companion operation engine",
   "task": "Avoid required AI/chat, vague slogans and decorative dashboard clutter",
-  "status": "todo",
+  "status": "done",
   "evidence": []
  },
  {
@@ -4879,8 +4895,8 @@
   "pr": 4,
   "group": "Owner experience and final validation",
   "task": "Validate recovery without repeated file selection",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "Frame, Feeds and Sync recovery acceptances pass against isolated host/simulator state without repeated file selection: docs/quality/evidence/pr6/OWNERQA-14/ (result JSONs from the acceptance programs)."
  },
  {
   "id": "OWNERQA-15",
@@ -4903,8 +4919,8 @@
   "pr": 4,
   "group": "Owner experience and final validation",
   "task": "Run all automated simulator and integration gates",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "All automated host gates green at the pr6 head 2026-09-19: 406/406 kobo-cli tests incl. ARM packaging tests, fmt clean, CI-pinned 1.85.1 clippy --workspace --all-targets --all-features -D warnings clean: docs/quality/evidence/pr6/OWNERQA-17/. CI workflow runs pending in the fork queue at this writing."
  },
  {
   "id": "OWNERQA-18",
@@ -4927,8 +4943,8 @@
   "pr": 4,
   "group": "Owner experience and final validation",
   "task": "Verify licenses and absence of copied local-reference source",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": "License/marker audit clean (360 packages, zero undeclared, no developer-local or reference-source markers): docs/quality/evidence/pr6/OWNERQA-20/. Post-audit commits b6c46ad5/120a2043 re-scanned: diff is fieldbook.rs only, no markers."
  },
  {
   "id": "OWNERQA-21",

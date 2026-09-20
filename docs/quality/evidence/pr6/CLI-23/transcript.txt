@@ -1,0 +1,20 @@
+=== a real send to the simulator: stage lines, then one completion ===
+preparing /tmp/send-photo.png for frame
+1 new, 0 already present, 0 removed; 11521 image bytes to send
+  Add: send-photo.png / send-photo.png (photo-6eeedc93f8468ea9)
+Frame transfer verified: 3 photo(s), 1 new, 0 removed
+sent to sim
+exit=0
+
+=== the same bytes again: one quiet no-op line, no re-send ===
+preparing /tmp/send-photo.png for frame
+/tmp/send-photo.png is unchanged since it was sent to sim (receipt at 1789819535); nothing to do
+exit=0
+
+=== a required-action refusal is one actionable line ===
+kobo: Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first
+exit=1
+
+=== a misuse names the fix, nothing else ===
+kobo: usage: --app nope does not fit this file; it looks like: frame
+exit=2

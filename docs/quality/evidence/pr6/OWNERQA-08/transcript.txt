@@ -1,0 +1,4 @@
+=== missing token ===
+kobo: read /tmp/does-not-exist: No such file or directory (os error 2)
+=== host/certificate/network ===
+kobo: Hermes at https://127.0.0.1:9 could not be connected: The server or its TLS certificate could not be verified. Check the HTTPS address; for a private CA, install its root with 'kobo trust set NAME --from ROOT.pem --device ADDRESS'.

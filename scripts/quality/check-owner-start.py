@@ -20,6 +20,14 @@ def main():
     plain = subprocess.run([cli], input='', capture_output=True, text=True, timeout=5)
     assert plain.returncode == 0 and 'Developer and release commands: kobo --help' in plain.stdout
     assert 'Choose a number:' not in plain.stdout
+    constrained = []
+    for columns in ('32', '48'):
+        env = dict(os.environ, COLUMNS=columns, NO_COLOR='1', TERM='dumb')
+        result = subprocess.run([cli], input='', capture_output=True, text=True, env=env, timeout=5)
+        assert result.returncode == 0 and result.stdout == plain.stdout
+        assert '\x1b' not in result.stdout and 'Choose a number:' not in result.stdout
+        assert max(map(len, result.stdout.splitlines())) <= 48
+        constrained.append({'columns': int(columns), 'output': result.stdout})
     with tempfile.TemporaryDirectory(prefix='cobalt-owner-menu-', dir='/tmp') as temp:
         source = Path(temp)/'Sample feeds.opml'
         source.write_text('<opml version="2.0"><head><title>Sample</title></head><body><outline text="Sample feed" type="rss" xmlUrl="https://example.org/feed.xml"/></body></opml>')
@@ -54,9 +62,11 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output/'terminal.txt').write_text(text)
     (args.output/'noninteractive.txt').write_text(plain.stdout)
+    (args.output/'constrained.json').write_text(json.dumps(constrained, indent=2)+'\n')
     (args.output/'result.json').write_text(json.dumps({'status':'passed','checks':[
         'noninteractive help exits without prompting', 'real PTY displays numbered owner choices',
-        'menu reads a path containing spaces', 'existing feed checker validates original OPML fixture']},indent=2)+'\n')
+        'menu reads a path containing spaces', 'existing feed checker validates original OPML fixture',
+        '32/48-column dumb terminals and NO_COLOR keep compact stable escape-free output']},indent=2)+'\n')
 
 
 if __name__ == '__main__':

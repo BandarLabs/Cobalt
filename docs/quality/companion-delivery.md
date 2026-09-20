@@ -263,3 +263,161 @@ oversized input without changing the valid shelf, preserves an occupied
 staging file, and publishes valid replacement bytes. Transcript/result:
 `evidence/feeds-companion`. This tests OPML staging, not device import or
 offline article downloads. CLI-18 remains open for the broader operation engine.
+
+### Nonograms real preview and pre-transfer fairness gate
+
+`kobo nonograms preview IMAGE --out DIRECTORY` now prepares and displays the
+5×5, 7×7 and 9×9 versions before transfer. Each board shows its real row and
+column clues plus the number of productive bounded line-solving passes. Push
+runs the same check and refuses a puzzle that requires guessing before writing
+the output or contacting a reader. Seven focused CLI tests and strict all-target
+CLI Clippy pass.
+
+The checked-in proof under `evidence/nonograms-companion-preview` uses NASA
+image PIA13227, "The Earth from the Moon", rather than a synthetic fixture. The
+full browser capture was pixel-inspected: all three boards and their clues are
+visible without overlap or clipping. This is host-side evidence only. The
+CLI-driven app journey and NONOCLI-01/02 remain open until the app accepts the
+same named, multi-puzzle transfer contract; no side-by-side completion is
+claimed here.
+
+The app transfer contract is now integrated. A real side-by-side journey built
+the app from PR-A `d0b2b7ce` and used the PR-B CLI to sync two real NASA images
+as named 5×5 and 9×9 puzzles into the running simulator. The app announced two
+imports and listed both names with their sizes and solver ratings. A second CLI
+sync named only one puzzle; the app announced one import, removed the omitted
+puzzle and retained the named one. All four screens were pixel-inspected at
+922×1246: text, controls, counts, names, sizes and ratings are readable with no
+clipping or overlap. Evidence is in `evidence/nonograms-companion-side-by-side`.
+
+The CLI accepts 1–12 named puzzles, names up to 48 characters, grid sizes 5–25,
+and simulator, output-directory or reader targets. It validates every puzzle
+before creating or contacting a destination. Photos publish before the manifest,
+so the app never sees a manifest that names incomplete files. Device publication
+also checks byte count and SHA-256 before the manifest boundary. Six focused
+tests and strict all-target CLI Clippy pass. NONOCLI-01/02/03/04 are complete.
+Physical-reader SSH remains unverified and is not claimed.
+
+### Needles public-PDF preview and app-driven transfer
+
+The CLI used the 1917 public-domain *Priscilla War Work Book* from the Internet
+Archive, SHA-256
+`f8cbe5401a7d4fa3a79a554f9ebf83a0cbd3719400deb62c1ff85f2143adcd27`.
+Its preview identifies the PDF and 36 pages, warns that images/charts exist,
+reports two row-like instructions and shows the exact text that will be sent.
+The preview was pixel-inspected; it is readable, and obvious OCR errors from the
+historic scan remain visible rather than being silently presented as clean.
+
+A side-by-side journey first showed the running Needles app had no pattern. The
+CLI then prepared this PDF and published it to the simulator target. Without an
+app restart, **Read synced pattern** opened the CLI output under the chosen
+"Priscilla War Work Book" title. Back returned to the row counter, and +1 row
+stored and displayed row 1. Both 922×1246 app frames were pixel-inspected: the
+reader and counter controls are clear, with no overlap or clipping. Evidence is
+under `evidence/needles-companion-public-pdf` and
+`evidence/needles-companion-side-by-side`.
+
+NEEDLECLI-02/03/05/06 are complete. NEEDLECLI-01 remains open because converter
+status and install guidance do not yet manage a verified Poppler installation.
+NEEDLECLI-04 remains open because whole-book row detection is too weak to claim
+section/row selection. Physical-reader transfer remains unverified.
+
+#### Needles section selection and converter setup
+
+`kobo needles converter install` now owns PDF setup on supported Homebrew, apt,
+dnf and pacman hosts and verifies `pdftotext` after the package command. If no
+supported package manager exists it says that Markdown and text still work.
+This host already had working Poppler, so the privileged install itself was not
+rerun merely to manufacture proof.
+
+For section proof, the CLI used the public-domain *Bernat Handicrafter Book
+161*, Project Gutenberg ebook 62854, and selected only `Style No. 3547` from a
+Markdown copy with explicit `##` section headings. It found Rows 1 through 12,
+wrote only that section to the simulator shelf, and the already-running app
+opened it as `Style No. 3547`; the following `Style No. 3595` section was
+asserted absent. The 1072×1448 browser-preview and app frames were
+pixel-inspected: heading, materials and row instructions are clear with no
+clipping or overlap. The selected pattern references a chart, which remains
+text-only and is not claimed as transferred. Evidence and source hashes are in
+`evidence/needles-companion-section`.
+
+This closes NEEDLECLI-01 and NEEDLECLI-04. Physical-reader transfer remains
+unverified.
+
+### Deck picker, presets and grid proof
+
+The actual CLI initialized its practical Build preset, replaced one pad with a
+harmless raw action, and added both a real Rust learning URL and a calculator
+app launch. `deck show` exposed all of those choices before `deck push --sim`
+changed the simulator store. The running app rendered the CLI-driven nine-pad
+layout in its real 3×5 grid at extra-large type.
+
+The 1072×1448 frame was pixel-inspected: the grid is balanced and has no
+overlap. The app's deliberately short pad label bound renders the generated
+`Rust-lang` and `Calculator` labels as `Rust-lan` and `Calculat`; they stay
+reachable but this is recorded rather than hidden. Evidence and the complete
+CLI transcript are in `evidence/deck-companion-picker`.
+
+This closes DECKCLI-04 and DECKCLI-05. DECKCLI-06 remains open: the first live
+helper run executed the CLI-configured harmless action and returned its exact
+output through the helper API, but the running app's long-poll state did not
+refresh to the finished acknowledgement during the attempted journey. No
+physical-reader behavior is claimed.
+
+### Panels CBZ preview and app-driven import
+
+`kobo panels inspect|preview|push` uses the same bounded `kobo-comic` archive
+inspection as Panels. It reports page count, cover and reading direction,
+renders a real cover preview, and atomically targets simulator, output file or
+reader. Genuine RAR/CBR bytes are refused with a direct instruction to make a
+CBZ copy without changing page images.
+
+The side-by-side run used *Pepper & Carrot*, Episode 1 by David Revoy (CC BY
+4.0), downloaded from the public Pepper & Carrot OPDS catalog. The third-party
+CBZ generator put all five JPEGs under a hidden `.workdir` path, which Panels
+correctly excludes, so the proof copy flattened the five unchanged JPEG bytes
+and re-zipped them. Both original and normalized hashes are recorded in
+`evidence/panels-companion-real-cbz/source.json`.
+
+The actual CLI changed the simulator shelf. The already-running app previewed
+the real cover, saved the import receipt, and opened page 1 of 5. The host
+preview plus app preview, receipt and reader frames were pixel-inspected: the
+cover and first comic page are sharp and readable with no clipping or overlap.
+MISSINGCLI-03 is complete. Physical-reader transfer remains unverified.
+
+#### Deck harmless-action acknowledgement
+
+With the app-side result watch from Deck 0.2.4, the companion journey now runs
+through the full primary outcome. The actual CLI created the Build preset,
+replaced pad 1 with a harmless `printf` check, added URL and app picks, and
+pushed it to the simulator. The running app used real `kobo-sidekickd`, showed
+the paired CLI-driven grid, ran Check on one tap, and automatically showed
+`Check finished.` when the helper's result arrived. The helper's exact output
+was `deck companion check passed`.
+
+Both 1072×1448 frames were pixel-inspected. The paired grid and completion line
+are clear with no clipping or overlap. Evidence is under
+`evidence/deck-companion-acknowledgement`. DECKCLI-06 is complete; physical
+reader execution remains unverified.
+
+### Parser shared validation and real Zork I journey
+
+The CLI and running Parser app now use the same `kobo-zstory` structural
+inspector. The real proof used the compiled Zork I story from
+`historicalsource/zork1` at commit `97b7b3d`, MIT licensed, SHA-256
+`37084966477dff679282de42974b2077156b1bd68fad92a65d4ea94d8eb64d79`.
+The CLI reported Z-machine v3, release 119, serial 880429, checksum `bf44`, and
+playable text-only compatibility before publishing the 86,838-byte story to a
+private simulator shelf.
+
+The running app listed that exact CLI output, opened the story, and executed
+LOOK. This side-by-side journey exposed two app regressions: fixed-byte
+pagination overflowed the measured layout, then measured pagination landed on
+a prompt-only final page that made commands appear to do nothing. PR-A fixed
+both before closeout. The retained 922x1246 library, opened-story and post-LOOK
+frames were pixel-inspected: story identity, game text, keyboard, suggestions,
+page turns and save controls are legible with no overlap or clipping. Evidence
+is under `evidence/parser-companion-real-story`.
+
+PARSERCLI-01/02/03/04 are complete. Physical-reader transfer and rendering
+remain unverified.

@@ -920,10 +920,13 @@ version = "0.3.19"
 dependencies = [
  "kobo-app-store",
  "kobo-catalog",
+ "kobo-comic",
  "kobo-doc",
  "kobo-frame-host",
+ "kobo-html",
  "kobo-image",
  "kobo-json",
+ "kobo-music-host",
  "kobo-net",
  "kobo-opml",
  "kobo-profile",
@@ -932,8 +935,11 @@ dependencies = [
  "kobo-sim",
  "kobo-stream",
  "kobo-ui",
+ "kobo-vault-host",
  "kobo-wifi-trace",
+ "kobo-zstory",
  "kobod",
+ "pulldown-cmark",
  "ring",
  "rusqlite",
  "serde_json",
@@ -1242,6 +1248,15 @@ version = "0.3.19"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
+]
+
+[[package]]
+name = "kobo-music-host"
+version = "0.3.19"
+dependencies = [
+ "blake3",
+ "kobo-image",
+ "kobo-json",
 ]
 
 [[package]]
@@ -1654,6 +1669,14 @@ dependencies = [
  "kobo-sdk",
  "kobo-ui",
  "pulldown-cmark",
+]
+
+[[package]]
+name = "kobo-vault-host"
+version = "0.3.19"
+dependencies = [
+ "blake3",
+ "kobo-json",
 ]
 
 [[package]]

@@ -11,6 +11,8 @@ members = [
     "crates/kobo-dict",
     "crates/kobo-flashcards-format",
     "crates/kobo-frame-host",
+    "crates/kobo-music-host",
+    "crates/kobo-vault-host",
     "crates/kobo-hal",
     "crates/kobo-html",
     "crates/kobo-image",

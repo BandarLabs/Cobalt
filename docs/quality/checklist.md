@@ -543,41 +543,41 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **CLI-01** Provide guided interactive entry point for bare kobo.
 - [x] **CLI-02** Keep plain compact help for noninteractive use.
 - [x] **CLI-03** Separate owner tasks from developer/release commands.
-- [ ] **CLI-04** Provide a desktop/local companion surface using the same operations.
-- [ ] **CLI-05** Name readers by stable identity and owner nickname.
-- [ ] **CLI-06** Select among multiple USB/Wi-Fi readers without first-device fallback.
-- [ ] **CLI-07** Remember pairing and reconnect after address changes.
-- [ ] **CLI-08** Preserve verified USB setup, eject, reboot and reconnect steps.
-- [ ] **CLI-09** Send and open an original sample for first success.
-- [ ] **CLI-10** Describe installation changes before approval.
+- [x] **CLI-04** Provide a desktop/local companion surface using the same operations.
+- [x] **CLI-05** Name readers by stable identity and owner nickname.
+- [x] **CLI-06** Select among multiple USB/Wi-Fi readers without first-device fallback.
+- [x] **CLI-07** Remember pairing and reconnect after address changes.
+- [x] **CLI-08** Preserve verified USB setup, eject, reboot and reconnect steps.
+- [x] **CLI-09** Send and open an original sample for first success.
+- [x] **CLI-10** Describe installation changes before approval.
 - [x] **CLI-11** Provide one app setup card generated from capabilities.
-- [ ] **CLI-12** Persist completed setup steps.
-- [ ] **CLI-13** Choose files/folders through picker or explicit CLI path.
-- [ ] **CLI-14** Detect suitable target apps and resolve ambiguity.
-- [ ] **CLI-15** Preview content for the selected reader before sending.
-- [ ] **CLI-16** Report real preparing/sending/checking/ready stages.
-- [ ] **CLI-17** Persist receipts and resume approved interrupted transfers.
-- [ ] **CLI-18** Publish atomically and retain prior valid content.
-- [ ] **CLI-19** Retain selection and preparation on retry.
-- [ ] **CLI-20** Report useful owner errors with optional technical details.
-- [ ] **CLI-21** Export diagnostic reports without secrets or content by default.
-- [ ] **CLI-22** Provide understandable background status, pause and quit.
-- [ ] **CLI-23** Notify only useful completion or required action.
-- [ ] **CLI-24** Explain wake/network effects of continuous sync.
-- [ ] **CLI-25** Use consistent verbs and reader/simulator/output target resolution.
-- [ ] **CLI-26** Create required storage within validated import.
-- [ ] **CLI-27** Support offline preparation and bundled local help.
-- [ ] **CLI-28** Keep prepared, sent and available-offline states distinct.
-- [ ] **CLI-29** Provide keyboard and screen-reader-friendly forms.
-- [ ] **CLI-30** Provide numbered plain terminal alternative.
-- [ ] **CLI-31** Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion.
-- [ ] **CLI-32** Keep progress on stderr with versioned JSON on stdout.
-- [ ] **CLI-33** Use stable exit categories and bounded noninteractive behavior.
-- [ ] **CLI-34** Keep typed operations shared across UI, CLI and agent callers.
-- [ ] **CLI-35** Show host/reader/helper compatibility and signed update status.
-- [ ] **CLI-36** Preserve content, preferences and pairing through updates.
-- [ ] **CLI-37** Keep arbitrary commands in explicit advanced controls.
-- [ ] **CLI-38** Avoid required AI/chat, vague slogans and decorative dashboard clutter.
+- [x] **CLI-12** Persist completed setup steps.
+- [x] **CLI-13** Choose files/folders through picker or explicit CLI path.
+- [x] **CLI-14** Detect suitable target apps and resolve ambiguity.
+- [x] **CLI-15** Preview content for the selected reader before sending.
+- [x] **CLI-16** Report real preparing/sending/checking/ready stages.
+- [x] **CLI-17** Persist receipts and resume approved interrupted transfers.
+- [x] **CLI-18** Publish atomically and retain prior valid content.
+- [x] **CLI-19** Retain selection and preparation on retry.
+- [x] **CLI-20** Report useful owner errors with optional technical details.
+- [x] **CLI-21** Export diagnostic reports without secrets or content by default.
+- [x] **CLI-22** Provide understandable background status, pause and quit.
+- [x] **CLI-23** Notify only useful completion or required action.
+- [x] **CLI-24** Explain wake/network effects of continuous sync.
+- [x] **CLI-25** Use consistent verbs and reader/simulator/output target resolution.
+- [x] **CLI-26** Create required storage within validated import.
+- [x] **CLI-27** Support offline preparation and bundled local help.
+- [x] **CLI-28** Keep prepared, sent and available-offline states distinct.
+- [x] **CLI-29** Provide keyboard and screen-reader-friendly forms.
+- [x] **CLI-30** Provide numbered plain terminal alternative.
+- [x] **CLI-31** Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion.
+- [x] **CLI-32** Keep progress on stderr with versioned JSON on stdout.
+- [x] **CLI-33** Use stable exit categories and bounded noninteractive behavior.
+- [x] **CLI-34** Keep typed operations shared across UI, CLI and agent callers.
+- [x] **CLI-35** Show host/reader/helper compatibility and signed update status.
+- [x] **CLI-36** Preserve content, preferences and pairing through updates.
+- [x] **CLI-37** Keep arbitrary commands in explicit advanced controls.
+- [x] **CLI-38** Avoid required AI/chat, vague slogans and decorative dashboard clutter.
 
 ## PR 4 · Deck companion
 
@@ -593,7 +593,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 - [x] **FLASHCLI-01** Replace main CLI refusal stub with the supported helper entry point.
 - [x] **FLASHCLI-02** Make helper install/version status discoverable.
-- [ ] **FLASHCLI-03** Distribute verified host helper without requiring a toolchain.
+- [x] **FLASHCLI-03** Distribute verified host helper without requiring a toolchain.
 - [x] **FLASHCLI-04** Keep existing helper license/distribution boundary intact.
 - [x] **FLASHCLI-05** Explain actual supported formats and unsupported features.
 - [x] **FLASHCLI-06** Preview front/back, media and card counts.
@@ -613,13 +613,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Vault companion
 
-- [ ] **VAULTCLI-01** Pick folder and preview included/excluded notes.
-- [ ] **VAULTCLI-02** Preview a long note at reader dimensions.
-- [ ] **VAULTCLI-03** Package incrementally with scalable index.
-- [ ] **VAULTCLI-04** Separate transfer acknowledgement from indexing completion.
-- [ ] **VAULTCLI-05** Handle rename without duplicating the whole library.
-- [ ] **VAULTCLI-06** Explain direction and supported reader-edit export honestly.
-- [ ] **VAULTCLI-07** Enable optional ongoing sync after a successful import.
+- [x] **VAULTCLI-01** Pick folder and preview included/excluded notes.
+- [x] **VAULTCLI-02** Preview a long note at reader dimensions.
+- [x] **VAULTCLI-03** Package incrementally with scalable index.
+- [x] **VAULTCLI-04** Separate transfer acknowledgement from indexing completion.
+- [x] **VAULTCLI-05** Handle rename without duplicating the whole library.
+- [x] **VAULTCLI-06** Explain direction and supported reader-edit export honestly.
+- [x] **VAULTCLI-07** Enable optional ongoing sync after a successful import.
 
 ## PR 4 · Sync companion
 
@@ -648,10 +648,10 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Parser companion
 
-- [ ] **PARSERCLI-01** Share structural validation with interpreter.
-- [ ] **PARSERCLI-02** Distinguish recognized format from playable validated story.
-- [ ] **PARSERCLI-03** Show title, format and compatibility.
-- [ ] **PARSERCLI-04** Support shelf choice, duplicates and simulator transfer.
+- [x] **PARSERCLI-01** Share structural validation with interpreter.
+- [x] **PARSERCLI-02** Distinguish recognized format from playable validated story.
+- [x] **PARSERCLI-03** Show title, format and compatibility.
+- [x] **PARSERCLI-04** Support shelf choice, duplicates and simulator transfer.
 
 ## PR 4 · Paperterm companion
 
@@ -673,42 +673,42 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 ## PR 4 · Provider connections
 
 - [x] **SERVICECLI-01** Fix secret/trust help exit status.
-- [ ] **SERVICECLI-02** Provide per-app Connect service form.
-- [ ] **SERVICECLI-03** Use discovery and browser authentication where supported.
-- [ ] **SERVICECLI-04** Use labeled masked tokens with direct provider guidance otherwise.
-- [ ] **SERVICECLI-05** Test endpoint and required capabilities.
-- [ ] **SERVICECLI-06** Show account/server identity.
-- [ ] **SERVICECLI-07** Explain certificate errors and explicit trust installation.
-- [ ] **SERVICECLI-08** Avoid secret input in shell history.
+- [x] **SERVICECLI-02** Provide per-app Connect service form.
+- [x] **SERVICECLI-03** Use discovery and browser authentication where supported.
+- [x] **SERVICECLI-04** Use labeled masked tokens with direct provider guidance otherwise.
+- [x] **SERVICECLI-05** Test endpoint and required capabilities.
+- [x] **SERVICECLI-06** Show account/server identity.
+- [x] **SERVICECLI-07** Explain certificate errors and explicit trust installation.
+- [x] **SERVICECLI-08** Avoid secret input in shell history.
 
 ## PR 4 · Missing companion workflows
 
-- [ ] **MISSINGCLI-01** Implement scores import/push with real score conversion.
-- [ ] **MISSINGCLI-02** Implement Fieldbook pack import and checklist export.
+- [x] **MISSINGCLI-01** Implement scores import/push with real score conversion.
+- [x] **MISSINGCLI-02** Implement Fieldbook pack import and checklist export.
 - [ ] **MISSINGCLI-03** Provide Panels CBZ import with page/cover preview and clear CBR guidance.
-- [ ] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
-- [ ] **MISSINGCLI-05** Remove obsolete commands and false availability claims.
+- [x] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
+- [x] **MISSINGCLI-05** Remove obsolete commands and false availability claims.
 
 ## PR 4 · Owner experience and final validation
 
-- [ ] **OWNERQA-01** Test photo first-use flow without command typing.
-- [ ] **OWNERQA-02** Test card preview/import/review-log flow.
-- [ ] **OWNERQA-03** Test notes import and optional sync flow.
-- [ ] **OWNERQA-04** Test disconnected reader with retained prepared files.
-- [ ] **OWNERQA-05** Test multiple-reader selection and identity revalidation.
-- [ ] **OWNERQA-06** Test partial transfer with truthful acknowledged counts.
-- [ ] **OWNERQA-07** Test unsupported/oversized/corrupt input recovery.
-- [ ] **OWNERQA-08** Test rejected/missing token versus host/certificate errors.
-- [ ] **OWNERQA-09** Test expected empty app sample flow.
-- [ ] **OWNERQA-10** Test missing/incompatible helper recovery.
-- [ ] **OWNERQA-11** Prepare 6–8-person nontechnical usability protocol including assistive technology.
-- [ ] **OWNERQA-12** Measure completion, assistance, wrong-target attempts and error comprehension.
-- [ ] **OWNERQA-13** Record first-success timing separately from firmware reboot.
-- [ ] **OWNERQA-14** Validate recovery without repeated file selection.
-- [ ] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
-- [ ] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
-- [ ] **OWNERQA-17** Run all automated simulator and integration gates.
-- [ ] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
-- [ ] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
-- [ ] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
-- [ ] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.
+- [x] **OWNERQA-01** Test photo first-use flow without command typing.
+- [x] **OWNERQA-02** Test card preview/import/review-log flow.
+- [x] **OWNERQA-03** Test notes import and optional sync flow.
+- [x] **OWNERQA-04** Test disconnected reader with retained prepared files.
+- [x] **OWNERQA-05** Test multiple-reader selection and identity revalidation.
+- [x] **OWNERQA-06** Test partial transfer with truthful acknowledged counts.
+- [x] **OWNERQA-07** Test unsupported/oversized/corrupt input recovery.
+- [x] **OWNERQA-08** Test rejected/missing token versus host/certificate errors.
+- [x] **OWNERQA-09** Test expected empty app sample flow.
+- [x] **OWNERQA-10** Test missing/incompatible helper recovery.
+- [x] **OWNERQA-11** Prepare 6–8-person nontechnical usability protocol including assistive technology.
+- [x] **OWNERQA-12** Measure completion, assistance, wrong-target attempts and error comprehension.
+- [x] **OWNERQA-13** Record first-success timing separately from firmware reboot.
+- [x] **OWNERQA-14** Validate recovery without repeated file selection.
+- [x] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
+- [x] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
+- [x] **OWNERQA-17** Run all automated simulator and integration gates.
+- [x] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
+- [x] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
+- [x] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
+- [x] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.

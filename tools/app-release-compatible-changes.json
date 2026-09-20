@@ -29,7 +29,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     },
     {
      "path": "crates/kobo-abi/src/lib.rs",
@@ -155,7 +155,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
     },
     {
      "path": "crates/kobo-abi/src/lib.rs",
@@ -292,12 +292,12 @@
   },
   {
    "protocol_version": 14,
-   "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately; a selected board square's row and column clues are now marked with a chip sized to their numbers instead of a key field spanning the whole gutter, with clue data, actions and full-strip tap targets unchanged. Applications whose own sources changed are versioned separately. Pencil boards learn a candidates mark and a peer shading state for sudoku: on the wire these are mark tag 6 and selection value 2, so readers before 0.3.18 refuse such boards and Sudoku declares that minimum; a 9x9 all-digit board rules its 3x3 boxes heavier, a selected square inverts, dense single-line labels may stand a little taller than their box, and pencil boards shrink to their allocation instead of clipping. Applications whose own sources changed are versioned separately. Re-pinned after merging the protocol-15 auto-hidden-top-bar work; the union remains additive for protocol-14 readers.",
+   "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately.",
    "files": [
     {
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "ee95176aef1432bdd0f9374f86eb313ae47a88aa",
-     "compatible_blob": "170b890d7284f74e549cb9dae9ed7c3044fb852e"
+     "compatible_blob": "d9bdea2f409157d3f5b3c598afeb8c47120fb94a"
     }
    ]
   },
@@ -308,7 +308,62 @@
     {
      "path": "Cargo.lock",
      "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
+    }
+   ]
+  },
+  {
+   "protocol_version": 14,
+   "reason": "The Music Stand companion adds the kobo-music-host crate and the kobo musicstand CLI. No app package changes; protocol bytes are untouched; the lockfile only resolves the new workspace member.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
+    }
+   ]
+  },
+  {
+   "protocol_version": 14,
+   "reason": "The Music Stand companion adds the kobo-music-host crate and the kobo musicstand CLI. No app package changes; protocol bytes are untouched; the lockfile only resolves the new workspace member. Same change, pinned against the published catalog's source base while a catalog republish is pending.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
+    }
+   ]
+  },
+  {
+   "protocol_version": 14,
+   "reason": "The Parser companion adds the pure kobo-zstory structural-inspection crate and points the host CLI at it. No Store app source or protocol bytes change on this branch; the lockfile only records the new workspace member. The Parser app adopts the same crate separately with its own versioned app change.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f929b097fe08ec583597e91c14c86ffff189b200",
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
+    }
+   ]
+  },
+  {
+   "protocol_version": 14,
+   "reason": "The Parser companion adds the pure kobo-zstory structural-inspection crate and points the host CLI at it. No Store app source or protocol bytes change on this branch; the lockfile only records the new workspace member. The Parser app adopts the same crate separately with its own versioned app change.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
+     "compatible_blob": "79877ee20509a2b9679f1e234e3172e76aa0893c"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
+     "compatible_blob": "452c14ab3110b0b7ac41b3caa8b0edfa5d969f60"
     }
    ]
   },
@@ -345,39 +400,6 @@
    ]
   },
   {
-   "protocol_version": 14,
-   "reason": "Music Stand reads the shelf its companion CLI publishes and renders fitted score pages, gaining kobo-image and kobo-json dependencies for page decoding and the shelf manifest. Protocol bytes are untouched; only the musicstand package is rebuilt.",
-   "files": [
-    {
-     "path": "Cargo.lock",
-     "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
-    }
-   ]
-  },
-  {
-   "protocol_version": 14,
-   "reason": "Music Stand reads the shelf its companion CLI publishes and renders fitted score pages, gaining kobo-image and kobo-json dependencies for page decoding and the shelf manifest. Protocol bytes are untouched; only the musicstand package is rebuilt. Same change, pinned against the published catalog's source base while a catalog republish is pending.",
-   "files": [
-    {
-     "path": "Cargo.lock",
-     "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
-    }
-   ]
-  },
-  {
-   "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member and wire it into kobo-image, kobo-net, and the new app pages for the app polish work. The lock gains only that member and its dependency edges; every package identity a published Store app resolves is unchanged.",
-   "files": [
-    {
-     "path": "Cargo.lock",
-     "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
-    }
-   ]
-  },
-  {
    "protocol_version": 15,
    "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes.",
    "files": [
@@ -385,17 +407,6 @@
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
      "compatible_blob": "58cffb6a0b820055751b15f9a6232252945906f8"
-    }
-   ]
-  },
-  {
-   "protocol_version": 15,
-   "reason": "Parser adopts the shared kobo-zstory structural inspector so the app and its companion CLI validate and name the same story file identically. The lock gains only that workspace member and the parser package's dependency edge to it; every published package identity is unchanged and protocol bytes are untouched. Only the parser package is rebuilt.",
-   "files": [
-    {
-     "path": "Cargo.lock",
-     "base_blob": "b0ca7c0e56e97119eb5c6f2be13b622de383946e",
-     "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
     }
    ]
   },

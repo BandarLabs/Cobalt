@@ -1,5 +1,5 @@
 //! Two bounded recovery slots; the pointer changes only after a complete copy.
-use kobo_frame_host::{Manifest, MANIFEST};
+use kobo_frame_host::{Manifest, DIGEST_MANIFEST, FIT_MANIFEST, MANIFEST};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -34,6 +34,13 @@ pub fn save(root: &Path, previous: &Manifest) -> Result<(), String> {
             fs::copy(root.join(photo.shelf_name()), dest.join(photo.shelf_name()))?;
         }
         fs::write(dest.join(MANIFEST), previous.encode())?;
+        for sidecar in [FIT_MANIFEST, DIGEST_MANIFEST] {
+            match fs::copy(root.join(sidecar), dest.join(sidecar)) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
         fs::write(root.join(".recovery-pointer.writing"), next)?;
         fs::rename(root.join(".recovery-pointer.writing"), root.join(POINTER))?;
         Ok(())
@@ -76,6 +83,20 @@ pub fn restore(root: &Path) -> Result<usize, String> {
     fs::write(&partial, manifest.encode()).map_err(|e| format!("Restore Frame manifest: {e}"))?;
     fs::rename(partial, root.join(MANIFEST))
         .map_err(|e| format!("Publish restored Frame manifest: {e}"))?;
+    for sidecar in [FIT_MANIFEST, DIGEST_MANIFEST] {
+        let saved = dir.join(sidecar);
+        let current = root.join(sidecar);
+        if saved.is_file() {
+            let partial = root.join(format!(".{sidecar}.restoring"));
+            fs::copy(&saved, &partial)
+                .map_err(|e| format!("Restore Frame sidecar {sidecar}: {e}"))?;
+            fs::rename(partial, current)
+                .map_err(|e| format!("Publish restored Frame sidecar {sidecar}: {e}"))?;
+        } else if current.exists() {
+            fs::remove_file(current)
+                .map_err(|e| format!("Remove new Frame sidecar {sidecar}: {e}"))?;
+        }
+    }
     for photo in current.photos {
         if !manifest.photos.iter().any(|p| p.id == photo.id) {
             fs::remove_file(root.join(photo.shelf_name()))
@@ -98,7 +119,7 @@ pub fn save_script(previous: &Manifest) -> String {
             photo.id, photo.id
         );
     }
-    let _ = write!(script, "cp \"$root/{MANIFEST}\" \"$backup/{MANIFEST}\"\nsync\nprintf '%s' \"$next\" > \"$root/.recovery-pointer.writing\"\nmv -f \"$root/.recovery-pointer.writing\" \"$root/{POINTER}\"\nsync\n");
+    let _ = write!(script, "cp \"$root/{MANIFEST}\" \"$backup/{MANIFEST}\"\nfor sidecar in {FIT_MANIFEST} {DIGEST_MANIFEST}; do if [ -f \"$root/$sidecar\" ]; then cp \"$root/$sidecar\" \"$backup/$sidecar\"; fi; done\nsync\nprintf '%s' \"$next\" > \"$root/.recovery-pointer.writing\"\nmv -f \"$root/.recovery-pointer.writing\" \"$root/{POINTER}\"\nsync\n");
     script
 }
 
@@ -121,8 +142,12 @@ pub fn restore_script(manifest: &Manifest) -> String {
     }
     let _ = writeln!(
         script,
-        "cp \"$backup/{MANIFEST}\" \"$root/.manifest.restoring\"\nmv -f \"$root/.manifest.restoring\" \"$root/{MANIFEST}\"\nsync"
+        "cp \"$backup/{MANIFEST}\" \"$root/.manifest.restoring\"\nmv -f \"$root/.manifest.restoring\" \"$root/{MANIFEST}\""
     );
+    for sidecar in [FIT_MANIFEST, DIGEST_MANIFEST] {
+        let _ = writeln!(script, "if [ -f \"$backup/{sidecar}\" ]; then cp \"$backup/{sidecar}\" \"$root/.{sidecar}.restoring\"; mv -f \"$root/.{sidecar}.restoring\" \"$root/{sidecar}\"; else rm -f \"$root/{sidecar}\"; fi");
+    }
+    script.push_str("sync\n");
     script
 }
 
@@ -151,6 +176,8 @@ mod tests {
             b"original image bytes",
         )
         .unwrap();
+        fs::write(root.join(FIT_MANIFEST), b"original fits").unwrap();
+        fs::write(root.join(DIGEST_MANIFEST), b"original digests").unwrap();
         let execute = |body: String| {
             let mut command = std::process::Command::new("sh");
             command
@@ -164,11 +191,18 @@ mod tests {
         assert!(execute(save_script(&manifest)).status.success());
         fs::write(root.join(MANIFEST), Manifest::default().encode()).unwrap();
         fs::remove_file(root.join(manifest.photos[0].shelf_name())).unwrap();
+        fs::write(root.join(FIT_MANIFEST), b"replacement fits").unwrap();
+        fs::write(root.join(DIGEST_MANIFEST), b"replacement digests").unwrap();
         assert!(execute(restore_script(&manifest)).status.success());
         assert_eq!(fs::read(root.join(MANIFEST)).unwrap(), manifest.encode());
         assert_eq!(
             fs::read(root.join(manifest.photos[0].shelf_name())).unwrap(),
             b"original image bytes"
+        );
+        assert_eq!(fs::read(root.join(FIT_MANIFEST)).unwrap(), b"original fits");
+        assert_eq!(
+            fs::read(root.join(DIGEST_MANIFEST)).unwrap(),
+            b"original digests"
         );
         // A failed new copy keeps the last complete recovery pointer.
         fs::remove_file(root.join(manifest.photos[0].shelf_name())).unwrap();

@@ -1,0 +1,30 @@
+=== stores survive a newer version's fields: an unknown key is ignored, not fatal ===
+address = 169.254.0.100
+paired = no
+future_field = added-by-a-newer-kobo
+report written to /tmp/report36.txt
+saved readers: 2
+  clara (serial N365…, paired: yes)
+  beckett (serial N418…, paired: no)
+
+=== the parser contract (source) ===
+    /// Reads a store file. Unknown lines are ignored, so the file can grow
+    /// fields without stranding older builds.
+    #[must_use]
+    /// Reads a receipts file; unknown lines are ignored.
+    #[must_use]
+    /// Reads a steps file. Unknown lines are ignored, so the file can grow
+    /// fields without stranding older builds.
+
+=== kobo update swaps only the managed binary; config and pairing live outside it ===
+fn update_host(arguments: &[String]) -> Result<(), String> {
+    let channel = parse_host_update(arguments)?;
+    let home = env::var_os("HOME").ok_or("HOME is not set")?;
+    let data = env::var_os("XDG_DATA_HOME")
+        .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
+    let root = data.join("kobo");
+    let state_path = root.join("install-state");
+1589:             source checkouts use git and cargo"
+
+=== receipts still read after the same surgery ===
+/tmp/send-photo-34.png is unchanged since it was sent to sim (receipt at 1789820422); nothing to do
