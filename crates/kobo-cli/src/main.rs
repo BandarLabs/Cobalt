@@ -1294,12 +1294,12 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
     }
     // A reader named on the command line is checked before anything is minted
     // or printed, so a typo does not leave a half-done pairing behind.
-    let reader = match device {
+    let search = match device {
         Some(host) => {
             if !valid_device_host(&host) {
                 return Err(format!("{host:?} is not an address this can reach"));
             }
-            Some(host)
+            ReaderSearch::Found(host)
         }
         None => choose_reader(),
     };
@@ -1320,17 +1320,10 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
     // Paperterm, typed a code that could not work, and was told the pairing
     // was refused. The certificate is still kept, because it is what the
     // instruction below needs, but nothing here claims to be ready.
-    let Some(reader) = reader else {
+    let ReaderSearch::Found(reader) = search else {
         return Err(format!(
-            "No reader was reached, so the trust root is not installed and Paperterm cannot pair yet.
-
-The computer's identity and pairing code are saved and stay valid:
-{}
-Put the reader on this Wi-Fi and run this again, or name it directly:
-  kobo stream init --device READER_IP
-
-The reader does not show its own address anywhere on the device yet, so
-take READER_IP from the list of clients on your router.",
+            "{}\n\nThe computer's identity and pairing code are saved and stay valid:\n{}",
+            search.explain(),
             kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
         ));
     };
@@ -1355,16 +1348,58 @@ take READER_IP from the list of clients on your router.",
     Ok(())
 }
 
+/// What a sweep for readers concluded.
+///
+/// Three different things used to arrive at the caller as one `None`, and a
+/// caller that cannot tell them apart can only guess which to advise about.
+/// It guessed "no reader answered", which is a falsehood when several did.
+enum ReaderSearch {
+    /// Exactly one answered, so there is nothing to choose.
+    Found(String),
+    /// No route to any network, so no sweep was run at all.
+    NoRoute,
+    /// The sweep ran and nothing answered.
+    NoneAnswered,
+    /// Several answered. Their addresses have already been listed.
+    Several(usize),
+}
+
+impl ReaderSearch {
+    /// Why no single reader came out of this, and what to do about it.
+    ///
+    /// Each case earns its own next step: a reader that is not on the network
+    /// has to be put there, and a reader that is one of several only has to be
+    /// named, which is a different sentence and a different fix.
+    fn explain(&self) -> String {
+        match self {
+            Self::Found(_) => String::new(),
+            Self::NoRoute => "This computer has no route to a network, so no reader can be \
+                 reached from here. Join the Wi-Fi the reader is on and run this again."
+                .to_owned(),
+            Self::NoneAnswered => "No reader was reached, so the trust root is not installed \
+                 and Paperterm cannot pair yet.\n\nPut the reader on this Wi-Fi and run this \
+                 again, or name it directly:\n  kobo stream init --device READER_IP\n\nThe \
+                 reader does not show its own address anywhere on the device yet, so take \
+                 READER_IP from the list of clients on your router."
+                .to_owned(),
+            Self::Several(count) => format!(
+                "{count} readers answered, so this will not guess which one to pair. Name the \
+                 one you want from the addresses listed above:\n  kobo stream init --device \
+                 READER_IP"
+            ),
+        }
+    }
+}
+
 /// The readers on this network, named, and the one to use.
 ///
 /// One reader is chosen without asking, because there is nothing to choose.
 /// Several are listed by what they are rather than by address alone, because
 /// "192.168.1.23" is not how anybody knows their own reader.
-fn choose_reader() -> Option<String> {
-    let subnet = connect::local_subnet().or_else(|| {
-        println!("This computer has no route to a network, so no reader can be found from here.");
-        None
-    })?;
+fn choose_reader() -> ReaderSearch {
+    let Some(subnet) = connect::local_subnet() else {
+        return ReaderSearch::NoRoute;
+    };
     println!("Looking for readers on {subnet}.1-254.");
     let mut readers = Vec::new();
     for address in connect::sweep(&subnet, connect::PROBE_TIMEOUT) {
@@ -1377,18 +1412,9 @@ fn choose_reader() -> Option<String> {
         }
     }
     match readers.as_slice() {
-        [] => {
-            println!("No reader answered. Put it on this Wi-Fi, or name it with --device IP.");
-            None
-        }
-        [only] => Some(only.clone()),
-        several => {
-            println!(
-                "{} readers answered. Name the one you want with --device IP.",
-                several.len()
-            );
-            None
-        }
+        [] => ReaderSearch::NoneAnswered,
+        [only] => ReaderSearch::Found(only.clone()),
+        several => ReaderSearch::Several(several.len()),
     }
 }
 
