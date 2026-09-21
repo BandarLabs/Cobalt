@@ -3,9 +3,9 @@
 use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceIdentity, DeviceRequest,
-    DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId,
-    TaskOutcome, UpdateChannel, WifiNetwork,
+    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DenyReason, DeviceIdentity,
+    DeviceRequest, DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task,
+    TaskId, TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -1018,6 +1018,29 @@ impl Settings {
         self.trouble = Some((topic, error.into()));
     }
 
+    /// Answers a radio row that this runtime can never read.
+    ///
+    /// Only the success arm ever moved a radio off `Unknown`, and `Unknown`
+    /// is drawn as "Checking…". A reader whose Bluetooth the runtime cannot
+    /// drive therefore sat on "Checking…" for the rest of the session while
+    /// the banner directly under it already said the reading would never
+    /// come: one row promising a result, one banner saying there would not be
+    /// one. `Unsupported` is a settled answer, so the row gives it.
+    ///
+    /// Only `Unsupported` settles anything. Every other failure is a reading
+    /// that may yet succeed, and claiming the radio is absent because one
+    /// read failed would be a worse lie than the one this fixes.
+    fn settle_unreadable_radio(&mut self, topic: Topic, reason: DenyReason) {
+        if reason != DenyReason::Unsupported {
+            return;
+        }
+        match topic {
+            Topic::Bluetooth => self.bluetooth_state = RadioState::Unavailable,
+            Topic::Wifi => self.wifi_state = RadioState::Unavailable,
+            Topic::Battery | Topic::About => {}
+        }
+    }
+
     /// Clears a failure once the same row answers successfully. A Wi-Fi
     /// success must not silence a Bluetooth failure.
     fn settled(&mut self, topic: Topic) {
@@ -1297,6 +1320,7 @@ impl KoboApp for Settings {
                 if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(reason.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
+                    self.settle_unreadable_radio(topic, reason);
                     self.fail(topic, reason.to_string());
                 }
             }
@@ -1611,13 +1635,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
+        RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
         CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel, WifiNetwork,
-        CLARA_BW_METRICS,
+        DenyReason, DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel,
+        WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1727,6 +1751,37 @@ mod tests {
         );
         assert_eq!(settings.update_channel, Some(UpdateChannel::Beta));
         assert_eq!(settings.update, super::UpdateFlow::Idle);
+    }
+
+    #[test]
+    fn a_radio_the_runtime_cannot_read_stops_saying_it_is_being_checked() {
+        // The bug this pins: only a successful reading moved a radio off
+        // Unknown, and Unknown draws as "Checking...". On hardware whose
+        // Bluetooth this runtime cannot drive, the home row promised a
+        // reading for the rest of the session while the banner under it
+        // already said the reading would never come.
+        let mut settings = Settings::default();
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        let before = format!("{:?}", settings.home());
+        assert!(before.contains("Checking"), "{before}");
+
+        settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Unsupported);
+
+        assert_eq!(settings.bluetooth_state, RadioState::Unavailable);
+        let after = format!("{:?}", settings.home());
+        assert!(after.contains("Not available on this device"), "{after}");
+    }
+
+    #[test]
+    fn a_radio_that_merely_failed_once_is_still_worth_reading_again() {
+        // The narrower half of the same fix: a refusal for any other reason
+        // may yet be followed by a reading that succeeds, so the row must not
+        // claim the hardware is absent on the strength of one refusal.
+        let mut settings = Settings::default();
+
+        settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Busy);
+
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
     }
 
     #[test]
