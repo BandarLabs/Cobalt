@@ -90,15 +90,25 @@ enum View {
 /// `Unavailable` is a confirmed hardware fact: it is only ever produced by
 /// `new`, from a successful device reply reporting `available: false`. It
 /// must never be assumed from the absence of an answer -- `Unknown`, the
-/// default, is what every radio starts as before its first read replies, and
-/// what a failed or denied read leaves it as, precisely so a pending or
-/// backend-failed read can never be mistaken for a device that has no radio
-/// at all.
+/// default, is what every radio starts as before its first read replies,
+/// precisely so a pending or backend-failed read can never be mistaken for a
+/// device that has no radio at all.
+///
+/// `Unsupported` is the second settled answer, and it is a fact about this
+/// runtime rather than about the hardware: the reading was refused with
+/// `DenyReason::Unsupported`, which the protocol defines as this runtime not
+/// being able to do it on this hardware *yet*. That is not the same claim as
+/// a missing radio, and the two must not be collapsed: a reader whose
+/// Bluetooth the runtime has not brought up has the hardware, and telling
+/// them it does not exist is a worse answer than the "Checking..." this
+/// replaced. Anything that is neither a reading nor a refusal still leaves
+/// the radio `Unknown`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum RadioState {
     #[default]
     Unknown,
     Unavailable,
+    Unsupported,
     Off,
     On,
 }
@@ -287,6 +297,7 @@ impl Settings {
         let bluetooth = match self.bluetooth_state {
             RadioState::Unknown => "Checking…".to_owned(),
             RadioState::Unavailable => "Not available on this device".to_owned(),
+            RadioState::Unsupported => "Not supported by this runtime".to_owned(),
             RadioState::Off => "Off".to_owned(),
             RadioState::On => {
                 let connected = self
@@ -300,6 +311,7 @@ impl Settings {
         let wifi = match (self.wifi_state, &self.connected_ssid) {
             (RadioState::Unknown, _) => "Checking…".to_owned(),
             (RadioState::Unavailable, _) => "Not available on this device".to_owned(),
+            (RadioState::Unsupported, _) => "Not supported by this runtime".to_owned(),
             (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
             (RadioState::On, None) => "On · Not connected".to_owned(),
             (RadioState::Off, _) => "Off".to_owned(),
@@ -522,11 +534,18 @@ impl Settings {
         // No radio was found on this hardware. A toggle that only fails once
         // tapped is worse than no toggle: it invites the exact action that
         // cannot succeed. Say so plainly instead and stop there.
-        if self.bluetooth_state == RadioState::Unavailable {
+        if matches!(
+            self.bluetooth_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
             return ScreenBuilder::new("settings-bluetooth")
                 .top_bar("Bluetooth")
                 .owns_back(true)
-                .text("This device has no Bluetooth hardware.")
+                .text(if self.bluetooth_state == RadioState::Unavailable {
+                    "This device has no Bluetooth hardware."
+                } else {
+                    "This runtime cannot use Bluetooth on this hardware."
+                })
                 .build();
         }
         let mut screen = ScreenBuilder::new("settings-bluetooth")
@@ -609,11 +628,18 @@ impl Settings {
     fn wifi(&self) -> Screen {
         // Same reasoning as the Bluetooth screen: a toggle that can only fail
         // is worse than no toggle.
-        if self.wifi_state == RadioState::Unavailable {
+        if matches!(
+            self.wifi_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
             return ScreenBuilder::new("settings-wifi")
                 .top_bar("Wi-Fi")
                 .owns_back(true)
-                .text("This device has no Wi-Fi hardware.")
+                .text(if self.wifi_state == RadioState::Unavailable {
+                    "This device has no Wi-Fi hardware."
+                } else {
+                    "This runtime cannot use Wi-Fi on this hardware."
+                })
                 .build();
         }
         let mut screen = ScreenBuilder::new("settings-wifi")
@@ -1035,8 +1061,8 @@ impl Settings {
             return;
         }
         match topic {
-            Topic::Bluetooth => self.bluetooth_state = RadioState::Unavailable,
-            Topic::Wifi => self.wifi_state = RadioState::Unavailable,
+            Topic::Bluetooth => self.bluetooth_state = RadioState::Unsupported,
+            Topic::Wifi => self.wifi_state = RadioState::Unsupported,
             Topic::Battery | Topic::About => {}
         }
     }
@@ -1640,8 +1666,8 @@ mod tests {
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DenyReason, DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel,
-        WifiNetwork, CLARA_BW_METRICS,
+        DenyReason, DeviceIdentity, DeviceRequest, DeviceResult, Emphasis, Glyph, Node,
+        UpdateChannel, WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1767,9 +1793,39 @@ mod tests {
 
         settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Unsupported);
 
-        assert_eq!(settings.bluetooth_state, RadioState::Unavailable);
+        assert_eq!(settings.bluetooth_state, RadioState::Unsupported);
         let after = format!("{:?}", settings.home());
-        assert!(after.contains("Not available on this device"), "{after}");
+        assert!(after.contains("Not supported by this runtime"), "{after}");
+    }
+
+    #[test]
+    fn a_refused_bluetooth_reading_settles_the_row_through_the_runtime() {
+        // Driven through on_device_result rather than the helper, because the
+        // helper passing proves only that the helper works: the defect was
+        // that the refusal never reached a state change at all, and a test
+        // that calls the transition directly would pass with the call site
+        // deleted.
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        assert_eq!(runner.app().bluetooth_state, RadioState::Unknown);
+
+        // read_bluetooth is the first reading refresh asks for, so the first
+        // answer delivered is the one it is matched to.
+        runner.device_result(DeviceResult::Denied(DenyReason::Unsupported));
+
+        assert_eq!(runner.app().bluetooth_state, RadioState::Unsupported);
+        let home = format!("{:?}", runner.app().home());
+        assert!(home.contains("Not supported by this runtime"), "{home}");
+        // The refusal is about the runtime, so the screen must not go on to
+        // claim the hardware is missing: this reader may well have a radio
+        // the runtime has simply not brought up.
+        let screen = text_of(&runner.app().bluetooth());
+        assert!(
+            screen.contains("This runtime cannot use Bluetooth on this hardware."),
+            "{screen}"
+        );
+        assert!(!screen.contains("no Bluetooth hardware"), "{screen}");
     }
 
     #[test]
