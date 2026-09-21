@@ -871,18 +871,35 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
         std::fs::write(directory.join("hosts"), requested_hosts.join("\n"))
             .map_err(|error| format!("save computer addresses: {error}"))?;
     }
-    // What remains after this is the caller's to say: the companion installs
-    // the trust root itself now, and printing an instruction it has already
-    // carried out said the same thing twice, one of them wrongly.
-    println!(
-        "Paperterm is ready to pair.\n{}",
-        pairing_instructions(DEFAULT_PORT)?
-    );
+    // Minting is not pairing. This used to announce "Paperterm is ready to
+    // pair" from here, which is a claim only the caller is in a position to
+    // make: it is the caller that knows whether a reader was found and the
+    // trust root installed. Announcing it here said pairing was ready in the
+    // one case where it was furthest from it -- no reader found at all.
     Ok(())
 }
 
 /// Shows saved connection details without replacing the identity or pairing code.
 pub fn pairing_instructions(port: u16) -> Result<String, String> {
+    Ok(format!("{}\n\n{FIRST_TIME_HELP}", pairing_details(port)?))
+}
+
+/// What to do with a freshly minted identity, for a caller that has not
+/// already done it. Named so a test can hold it to saying so without a
+/// filesystem identity to load.
+const FIRST_TIME_HELP: &str = "First time: run kobo trust set stream --device READER_IP.\nThen open Paperterm and enter the computer address and pairing code.\nKeep both devices on the same network and the computer awake.";
+
+/// The address and code alone, with no advice about what to do with them.
+///
+/// Separate from [`pairing_instructions`] because what to do next is not a
+/// property of the identity: after a successful pairing the trust root is
+/// already installed, and telling the owner to install it is one instruction
+/// too many, while after a failed one they need different advice entirely.
+/// Only the caller knows which happened.
+///
+/// # Errors
+/// Fails when the identity cannot be read.
+pub fn pairing_details(port: u16) -> Result<String, String> {
     let identity = Identity::load()?;
     let hosts = std::fs::read_to_string(identity_dir()?.join("hosts")).unwrap_or_default();
     Ok(format_pairing(&hosts, &identity.pairing, port))
@@ -905,7 +922,7 @@ fn format_pairing(hosts: &str, code: &str, port: u16) -> String {
     } else {
         format!("Computer address:\n{}", addresses.join("\n"))
     };
-    format!("{address_help}\nPairing code: {code}\n\nFirst time: run kobo trust set stream --device READER_IP.\nThen open Paperterm and enter the computer address and pairing code.\nKeep both devices on the same network and the computer awake.")
+    format!("{address_help}\nPairing code: {code}")
 }
 
 fn config_dir() -> Result<PathBuf, String> {
@@ -1269,7 +1286,11 @@ mod tests {
     fn missing_saved_address_explains_how_to_finish_setup() {
         let details = super::format_pairing("", "ABC123", 9123);
         assert!(details.contains("kobo stream init --host COMPUTER_IP"));
-        assert!(details.contains("kobo trust set stream --device READER_IP"));
+        // Installing the trust root moved out of the details and into the
+        // first-time advice, because a caller that has just installed it must
+        // not repeat the instruction back to the owner.
+        assert!(!details.contains("kobo trust set stream --device READER_IP"));
+        assert!(super::FIRST_TIME_HELP.contains("kobo trust set stream --device READER_IP"));
     }
     use super::*;
 

@@ -1313,13 +1313,26 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
         }
     }
     kobo_stream::init(&hosts)?;
+    // Minting is not pairing, and this used to read as though it were: the
+    // identity was minted, "Paperterm is ready to pair" was printed with a
+    // code, and only then did the last line admit the trust root was never
+    // installed. It then exited 0. An owner following it in order opened
+    // Paperterm, typed a code that could not work, and was told the pairing
+    // was refused. The certificate is still kept, because it is what the
+    // instruction below needs, but nothing here claims to be ready.
     let Some(reader) = reader else {
-        println!(
-            "No reader was named, so the trust root is not installed yet. Run
-  kobo trust set stream --device READER_IP
-or run this again with --device once the reader is on this network."
-        );
-        return Ok(());
+        return Err(format!(
+            "No reader was reached, so the trust root is not installed and Paperterm cannot pair yet.
+
+The computer's identity and pairing code are saved and stay valid:
+{}
+Put the reader on this Wi-Fi and run this again, or name it directly:
+  kobo stream init --device READER_IP
+
+The reader does not show its own address anywhere on the device yet, so
+take READER_IP from the list of clients on your router.",
+            kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
+        ));
     };
     let authority = stream_authority()?;
     println!("Installing the trust root on {reader}.");
@@ -1332,7 +1345,13 @@ or run this again with --device once the reader is on this network."
         store.record_pairing(&identity.serial, &reader, nickname.as_deref());
         store.save(&path)?;
     }
-    println!("Paperterm is paired with {reader}. Open it on the reader and type the pairing code.");
+    // Said once the trust root is actually on the reader, and carrying the
+    // address and code the owner now needs, which the mint used to print
+    // before anyone knew whether this point would be reached.
+    println!(
+        "Paperterm is paired with {reader}. Open it on the reader and enter:\n{}",
+        kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
+    );
     Ok(())
 }
 
