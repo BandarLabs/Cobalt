@@ -230,6 +230,22 @@ struct LegacySaved {
 /// line, which is what a printed book of verse leaves.
 const STANZA_AIR: u16 = 75;
 
+/// The size verse is set at: one step above whatever the reader chose.
+///
+/// A poem is a page looked at rather than moved through, and these are short
+/// lines with wide margins either side, so verse carries a step more than
+/// prose would. It is a step above the reader's own setting rather than a
+/// fixed size, because a fixed one is an override: a reader who asked for the
+/// smallest type got three steps more than they asked for, and at that size
+/// a sonnet no longer fits the panel it is measured against.
+///
+/// Pagination is measured at this size too. A page measured at one size and
+/// set at another loses its last lines.
+fn poem_scale(context: &Context) -> kobo_ui::TextScale {
+    let chosen = context.metrics().text_scale;
+    chosen.larger().unwrap_or(chosen)
+}
+
 /// The lines of one stanza that belong on one page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VerseRun {
@@ -426,7 +442,7 @@ impl Verses {
         if self.view == View::Today {
             screen = screen.secondary("Today");
         }
-        screen = screen.reading(true);
+        screen = screen.reading(true).text_scale(poem_scale(context));
         for (index, run) in pages[page].iter().enumerate() {
             for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
                 .iter()
@@ -495,13 +511,23 @@ impl Verses {
     /// the measurement too.
     fn poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
         let poem = CORPUS[self.poem];
+        // One paragraph per line, because a page is counted here in lines of
+        // verse and paginate counts paragraphs. Measured at the size the poem
+        // is drawn at: a page measured at one size and set at another loses
+        // its last lines.
         let one_per_paragraph = poem.lines().collect::<Vec<_>>().join("\n\n");
-        let measured = context.paginate_reading(&one_per_paragraph, true);
-        // The fullest page the panel offered, less the line the day's label or
-        // the attribution takes on the first and last pages. Taking the
-        // smallest instead read the remainder page as the panel's capacity and
-        // put one stanza on each of six pages with four fifths of every page
-        // empty.
+        let measured = context.paginate_at(&one_per_paragraph, true, poem_scale(context));
+        // The fullest page the panel offered. Taking the smallest instead read
+        // the remainder page as the panel's capacity and put one stanza on
+        // each of six pages with four fifths of every page empty.
+        // One line is held back for the day's label or the attribution, which
+        // are set in the same column as the verse. That reservation is why
+        // Ozymandias, fourteen lines that the panel measures as fitting,
+        // paginates as thirteen and strands its last line. Removing it was
+        // tried and the page then clipped: fourteen lines and an attribution
+        // genuinely do not both fit. Giving that line back needs the
+        // attribution to leave the verse column, which is a design change
+        // rather than an arithmetic one.
         let capacity = measured
             .iter()
             .map(Vec::len)
