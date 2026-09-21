@@ -119,6 +119,13 @@ enum View {
     Reading,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ArticleSearch {
+    #[default]
+    ThisFeed,
+    EverySaved,
+}
+
 /// What the one outstanding request is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
@@ -153,6 +160,8 @@ struct Feeds {
     /// What was typed, kept to caption the results screen.
     query: String,
     article_query: String,
+    /// Search every saved subscription, not only the feed that is open.
+    article_search: ArticleSearch,
     /// What the search found, best first.
     found: Vec<search::Found>,
     direct: bool,
@@ -403,6 +412,11 @@ impl Feeds {
             View::Search => self.search(),
             View::Starters => self.starters(context),
             View::Found => self.results(context),
+            View::Items
+                if self.article_search == ArticleSearch::EverySaved && self.open.is_none() =>
+            {
+                self.saved_results(context)
+            }
             View::Items => self.articles(context),
             View::ArticleSearch => self.article_search(),
             View::Import => self.import_screen(context),
@@ -441,6 +455,7 @@ impl Feeds {
         if !self.loaded {
             return screen.activity("Opening your feeds", None).build();
         }
+        screen = screen.top_bar_action("search-saved", "Search saved");
         if self.subscriptions.is_empty() {
             // Centred under a mark rather than ranged left at the top: this
             // is the first screen anybody sees, and a lone paragraph in the
@@ -685,7 +700,8 @@ impl Feeds {
         let skipped = preview.skipped + preview.feeds.len() - fresh.len();
         let mut notice = format!(
             "{} new {}. {skipped} duplicate or unsupported {} skipped. Tap a feed to include or leave it out.",
-            fresh.len(), if fresh.len() == 1 { "feed" } else { "feeds" },
+            fresh.len(),
+            if fresh.len() == 1 { "feed" } else { "feeds" },
             if skipped == 1 { "entry" } else { "entries" }
         );
         if let Some(problem) = &self.problem {
@@ -758,11 +774,102 @@ impl Feeds {
 
     fn article_search(&self) -> Screen {
         ScreenBuilder::new("rss-article-search")
-            .top_bar("Search saved articles")
+            .top_bar(if self.article_search == ArticleSearch::EverySaved {
+                "Search all saved articles"
+            } else {
+                "Search saved articles"
+            })
             .top_bar_action("clear-search", "Clear")
             .typed(&self.keyboard, "Words in the title, author or article")
             .keyboard(&self.keyboard, "Search")
             .build()
+    }
+
+    fn saved_hits(&self) -> Vec<(usize, usize)> {
+        let query = self.article_query.to_lowercase();
+        let words: Vec<_> = query.split_whitespace().collect();
+        if words.is_empty() {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for (feed_index, subscription) in self.subscriptions.iter().enumerate() {
+            let Some(parsed) = self
+                .caches
+                .get(&subscription.url)
+                .and_then(|cached| cached.bytes.as_deref())
+                .and_then(feed::parse)
+            else {
+                continue;
+            };
+            for (item_index, item) in parsed.items.iter().enumerate() {
+                let text = format!("{} {} {}", item.title, item.author, item.body).to_lowercase();
+                if words.iter().all(|word| text.contains(word)) {
+                    hits.push((feed_index, item_index));
+                }
+            }
+        }
+        hits
+    }
+
+    fn saved_results(&self, context: &Context) -> Screen {
+        let hits = self.saved_hits();
+        let mut screen = ScreenBuilder::new("rss-saved-search")
+            .top_bar(format!("Results for {}", self.article_query))
+            .top_bar_action("clear-search", "Clear");
+        if hits.is_empty() {
+            return screen
+                .empty_state("No saved articles match this search.")
+                .build();
+        }
+        let rows: Vec<(String, String, String)> = hits
+            .iter()
+            .map(|(feed_index, item_index)| {
+                let title = self
+                    .subscriptions
+                    .get(*feed_index)
+                    .map_or("Feed", |feed| feed.title.as_str());
+                let item = self
+                    .caches
+                    .get(
+                        self.subscriptions
+                            .get(*feed_index)
+                            .map_or("", |feed| feed.url.as_str()),
+                    )
+                    .and_then(|cached| cached.bytes.as_deref())
+                    .and_then(feed::parse)
+                    .and_then(|parsed| parsed.items.get(*item_index).cloned());
+                let heading = item
+                    .as_ref()
+                    .map(|item| item.title.clone())
+                    .unwrap_or_default();
+                (
+                    format!("hit-{feed_index}-{item_index}"),
+                    context.clamped_row(&heading, 2, true),
+                    context.one_line_row(title, true),
+                )
+            })
+            .collect();
+        let borrowed: Vec<_> = rows
+            .iter()
+            .map(|(_, title, summary)| (title.as_str(), summary.as_str()))
+            .collect();
+        let pages = context.paginate_rows(&borrowed, false);
+        let page = self.list_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).cloned().unwrap_or_default();
+        screen = screen.rows(shown.iter().map(|index| {
+            (
+                rows[*index].0.clone(),
+                rows[*index].1.clone(),
+                rows[*index].2.clone(),
+                u16::try_from(index + 1).unwrap_or(u16::MAX),
+            )
+        }));
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("list-back", "list-next")
+                .page_position(page_number(page), page_total(pages.len()));
+        }
+        screen.build()
     }
 
     fn matching_items(&self) -> Vec<usize> {
@@ -1506,16 +1613,32 @@ impl KoboApp for Feeds {
                 return;
             }
         }
+        if action == action_id("search-saved") && self.view == View::Shelf {
+            self.article_search = ArticleSearch::EverySaved;
+            self.open = None;
+            self.article_query.clear();
+            self.keyboard = Keyboard::new();
+            self.list_page = 0;
+            self.view = View::ArticleSearch;
+            self.show(context);
+            return;
+        }
         if action == action_id("search-articles") && self.view == View::Items {
+            self.article_search = ArticleSearch::ThisFeed;
             self.keyboard = Keyboard::with_text(&self.article_query);
             self.view = View::ArticleSearch;
             self.show(context);
             return;
         }
-        if action == action_id("clear-search") && self.view == View::ArticleSearch {
+        if action == action_id("clear-search")
+            && matches!(self.view, View::ArticleSearch | View::Items)
+        {
+            let everywhere =
+                self.article_search == ArticleSearch::EverySaved && self.open.is_none();
             self.article_query.clear();
+            self.article_search = ArticleSearch::ThisFeed;
             self.list_page = 0;
-            self.view = View::Items;
+            self.view = if everywhere { View::Shelf } else { View::Items };
             self.show(context);
             return;
         }
@@ -1631,12 +1754,28 @@ impl KoboApp for Feeds {
             self.menu_open = None;
             match self.view {
                 View::Shelf => {}
+                View::Items
+                    if self.article_search == ArticleSearch::EverySaved && self.open.is_none() =>
+                {
+                    self.article_search = ArticleSearch::ThisFeed;
+                    self.article_query.clear();
+                    self.view = View::Shelf;
+                    self.list_page = 0;
+                }
                 View::Search | View::Items => {
                     self.view = View::Shelf;
                     self.list_page = 0;
                 }
                 View::Found | View::Starters => self.view = View::Search,
-                View::ArticleSearch => self.view = View::Items,
+                View::ArticleSearch => {
+                    self.view = if self.article_search == ArticleSearch::EverySaved
+                        && self.open.is_none()
+                    {
+                        View::Shelf
+                    } else {
+                        View::Items
+                    };
+                }
                 View::Import => {
                     self.view = View::Search;
                     self.import_read = None;
@@ -1645,6 +1784,10 @@ impl KoboApp for Feeds {
                 View::Reading => {
                     self.view = View::Items;
                     self.article = None;
+                    if self.article_search == ArticleSearch::EverySaved {
+                        self.open = None;
+                        self.items.clear();
+                    }
                 }
             }
             self.show(context);
@@ -1730,6 +1873,7 @@ impl KoboApp for Feeds {
                         self.items.clear();
                     }
                     self.article_query.clear();
+                    self.article_search = ArticleSearch::ThisFeed;
                     self.open = Some(position);
                     self.list_page = 0;
                     self.view = View::Items;
@@ -1752,10 +1896,61 @@ impl KoboApp for Feeds {
                     self.items.clear();
                 }
                 self.article_query.clear();
+                self.article_search = ArticleSearch::ThisFeed;
                 self.open = Some(index);
                 self.list_page = 0;
                 self.view = View::Items;
                 self.open_cached(context);
+                self.show(context);
+                return;
+            }
+        }
+
+        if self.view == View::Items
+            && self.article_search == ArticleSearch::EverySaved
+            && self.open.is_none()
+        {
+            if let Some((feed_index, item_index)) = self
+                .saved_hits()
+                .into_iter()
+                .find(|(feed, item)| action == action_id(&format!("hit-{feed}-{item}")))
+            {
+                self.open = Some(feed_index);
+                self.open_cached(context);
+                self.article = Some(item_index);
+                self.view = View::Reading;
+                self.reader.close(context);
+                if let Some(item) = self.items.get(item_index) {
+                    let origin = if item.link.is_empty() {
+                        self.subscriptions
+                            .get(feed_index)
+                            .map_or("", |feed| feed.url.as_str())
+                    } else {
+                        item.link.as_str()
+                    };
+                    let article_body = if item.html.is_empty() {
+                        article_text(item)
+                    } else {
+                        item.html.clone()
+                    };
+                    let id = article_id(item, origin);
+                    let memory = self.progress.memory(&id);
+                    self.reading_id = Some(id);
+                    if item.html.is_empty() {
+                        if self
+                            .reader
+                            .open_bytes(context, "article.txt", article_body.as_bytes(), memory)
+                            .is_err()
+                        {
+                            self.problem = Some("This article could not be opened.".to_owned());
+                        }
+                    } else {
+                        self.reader
+                            .open(context, kobo_doc::html::parse(&article_body), memory);
+                        self.illustrations.open(context, &mut self.reader, origin);
+                    }
+                    self.keep_position(context);
+                }
                 self.show(context);
                 return;
             }
@@ -2776,8 +2971,9 @@ mod tests {
             ..Feeds::default()
         });
         let long = "Some prose about the state of the world, at length. ".repeat(80);
-        let source =
-            format!("<rss><channel><title>A Journal</title><item><title>Long</title><description>{long}</description></item></channel></rss>");
+        let source = format!(
+            "<rss><channel><title>A Journal</title><item><title>Long</title><description>{long}</description></item></channel></rss>"
+        );
         runner.task_outcome(TaskId(1), TaskOutcome::Completed(source.into_bytes()));
         runner.action(action_id("item-0"));
         let application = runner.app_mut();

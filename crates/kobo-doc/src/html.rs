@@ -98,6 +98,19 @@ impl Allowance {
 /// budget spent afresh on every chapter is thirty times the budget.
 #[must_use]
 pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> Document {
+    parse_within_noted(source, external_css, allowance).0
+}
+
+/// Parses HTML and reports whether some formulas were left as text.
+///
+/// That happens once the picture budget is spent. The words of those formulas
+/// stay in the document.
+#[must_use]
+pub fn parse_noting_formula_fallback(source: &str) -> (Document, bool) {
+    parse_within_noted(source, "", Allowance::whole())
+}
+
+fn parse_within_noted(source: &str, external_css: &str, allowance: Allowance) -> (Document, bool) {
     let mut take = external_css.len().min(MAX_CSS_BYTES);
     while !external_css.is_char_boundary(take) {
         take -= 1;
@@ -209,7 +222,8 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
         }
     }
     state.words(rest);
-    state.finish()
+    let formulae_as_text = state.formulae_as_text > 0;
+    (state.finish(), formulae_as_text)
 }
 
 /// Whether a row of groups belongs to the row of column names under it.
@@ -408,6 +422,8 @@ struct State {
     /// The source, not a picture: what to draw rather than the drawing, so
     /// that the parse costs a formula nothing but the note of it.
     formulae: BTreeMap<String, String>,
+    /// How many formulas were left as text because the picture budget was spent.
+    formulae_as_text: u16,
     /// How many more formulae this file may name.
     allowance: Allowance,
     /// The displayed equation being read, once an equation row has opened one.
@@ -501,6 +517,7 @@ impl State {
             builder: Builder::new(),
             equation: None,
             formulae: BTreeMap::new(),
+            formulae_as_text: 0,
             allowance,
             link: None,
             text: String::new(),
@@ -1261,9 +1278,13 @@ impl State {
     /// Returns whether the formula was taken; `false` leaves it to be read as
     /// text by the caller.
     fn display_formula(&mut self, inside: &str, drawn: &str) -> bool {
-        if attribute(inside, "display").is_none_or(|display| display != "block")
-            || !self.allowance.open(self.formulae.len())
-        {
+        if attribute(inside, "display").is_none_or(|display| display != "block") {
+            return false;
+        }
+        if !self.allowance.open(self.formulae.len()) {
+            if attribute(inside, "alttext").is_some() {
+                self.formulae_as_text = self.formulae_as_text.saturating_add(1);
+            }
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {
@@ -1292,7 +1313,13 @@ impl State {
     ///
     /// Returns whether the formula was taken.
     fn inline_formula(&mut self, inside: &str, drawn: &str) -> bool {
-        if drawn.trim().is_empty() || !self.allowance.open(self.formulae.len()) {
+        if drawn.trim().is_empty() {
+            return false;
+        }
+        if !self.allowance.open(self.formulae.len()) {
+            if attribute(inside, "alttext").is_some() {
+                self.formulae_as_text = self.formulae_as_text.saturating_add(1);
+            }
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {

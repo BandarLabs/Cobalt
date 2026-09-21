@@ -2,8 +2,10 @@
 
 A fully offline habit tracker. Habits and completions stay on the reader;
 nothing connects an account or uploads progress. Settings can export a backup
-as a verified text copy for your paired computer; the original stays on the
-reader.
+as a verified text copy for your paired computer, and import one back from the
+shelf. Replace removes the habits on the reader. Merge keeps them and adds
+days from the backup when the name matches. The original stays on the reader
+until you confirm.
 
 | The empty Today offer | A finished day |
 | --- | --- |

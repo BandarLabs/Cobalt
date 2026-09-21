@@ -38,11 +38,11 @@ controls; tap either side to navigate. A photo pushed with `--fit pad` keeps
 its whole composition letterboxed instead of filling the panel. Missing or
 malformed shelf images are skipped and reported on the home screen.
 
-Every push records a digest of the exact bytes that landed on the shelf. When
-Frame opens a photo it re-checks those bytes and the photo's transfer state
-reads **Verified against the manifest**; albums pushed before verification
-existed read **Not yet checked** instead. A photo whose bytes no longer match
-is skipped with a re-push notice rather than shown.
+Every push records a digest of the exact bytes that landed on the shelf. Frame
+checks those bytes in the background, and again when a photo is opened. The
+transfer state reads **Verified against the manifest** once the bytes match.
+A photo whose bytes no longer match is skipped with a re-push notice rather
+than shown.
 
 <img width="300" src="../../docs/quality/evidence/frame/frame-home.png" alt="Frame home listing the album position, photo name, album and taken date above the current photo">
 <img width="300" src="../../docs/quality/evidence/frame/frame-show-pad.png" alt="A wide panorama letterboxed with pad fitting in Frame">

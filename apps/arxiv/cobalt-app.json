@@ -3,11 +3,11 @@
   "display_name": "arXiv",
   "short_label": "arXiv",
   "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "glyph": "note",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
+  "release_notes": "A paper with more formulas than can be drawn says so, and shows the rest as text.",
   "page_description": "Browse a subject's newest arXiv preprints or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints for offline reading on your Kobo."
 }

@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.2",
-  "release_notes": "Plainer sync error copy.",
+  "version": "0.2.3",
+  "release_notes": "An article with a queued archive or star says Waiting to sync on its row.",
   "glyph": "bookmark",
   "capabilities": [
     "network"

@@ -15,6 +15,16 @@ use std::collections::{BTreeMap, VecDeque};
 
 const MAX_IMAGES: usize = 16;
 const MAX_CACHED: usize = 64;
+/// Idle shelf copies kept after their records leave memory.
+const MAX_DISK_FILES: usize = 128;
+/// Idle shelf copies, plus the copies still held in memory.
+const MAX_DISK_BYTES: usize = 8 * 1024 * 1024;
+
+struct ShelfCopy {
+    key: String,
+    slots: [String; 2],
+    bytes: usize,
+}
 
 /// Saved image identities carry this prefix. It reads as one application's
 /// name because Feeds published copies under it before this code was shared,
@@ -29,6 +39,8 @@ pub struct Illustrations {
     names: BTreeMap<String, Vec<String>>,
     queue: VecDeque<String>,
     fetching: Option<(TaskId, String)>,
+    /// Published copies whose memory record has been dropped, oldest first.
+    disk: VecDeque<ShelfCopy>,
     pub failed: bool,
 }
 
@@ -76,8 +88,9 @@ impl Illustrations {
                 } else if !cache.busy() {
                     self.queue.push_back(url.clone());
                 }
-            } else if self.make_room() {
+            } else if self.make_room(context) {
                 let cache = Cache::new(&format!("{KEY_PREFIX}{url}"));
+                self.disk.retain(|copy| copy.key != cache.key);
                 cache.start(context);
                 self.caches.insert(url, cache);
             } else {
@@ -88,7 +101,7 @@ impl Illustrations {
         self.advance(context);
     }
 
-    fn make_room(&mut self) -> bool {
+    fn make_room(&mut self, context: &mut Context) -> bool {
         if self.caches.len() < MAX_CACHED {
             return true;
         }
@@ -97,13 +110,53 @@ impl Illustrations {
                 .then(|| url.clone())
         });
         if let Some(url) = released {
-            // Release only memory. The verified shelf copy is still available
-            // when this image is opened again. Keep active and failed writes
-            // resident so their acknowledgements/retry candidates are not lost.
-            self.caches.remove(&url);
+            // Keep active and failed writes resident so their
+            // acknowledgements and retry candidates are not lost. An idle
+            // published copy stays on the shelf until the disk cap, then
+            // both slots and the pointer are removed.
+            if let Some(cache) = self.caches.remove(&url) {
+                if let Some(slots) = cache.published_slots() {
+                    self.disk.push_back(ShelfCopy {
+                        key: cache.key.clone(),
+                        slots,
+                        bytes: cache.bytes.as_ref().map_or(0, Vec::len),
+                    });
+                    self.trim_disk(context);
+                }
+            }
             true
         } else {
             false
+        }
+    }
+
+    fn trim_disk(&mut self, context: &mut Context) {
+        let resident = self
+            .caches
+            .values()
+            .filter(|cache| cache.published_slots().is_some())
+            .count();
+        let mut bytes = self.disk.iter().map(|copy| copy.bytes).sum::<usize>()
+            + self
+                .caches
+                .values()
+                .filter_map(|cache| {
+                    cache
+                        .published_slots()
+                        .map(|_| cache.bytes.as_ref().map_or(0, Vec::len))
+                })
+                .sum::<usize>();
+        while !self.disk.is_empty()
+            && (self.disk.len() + resident > MAX_DISK_FILES || bytes > MAX_DISK_BYTES)
+        {
+            let Some(old) = self.disk.pop_front() else {
+                break;
+            };
+            bytes = bytes.saturating_sub(old.bytes);
+            for slot in old.slots {
+                context.shelf().remove(slot);
+            }
+            context.store().forget(old.key);
         }
     }
 
@@ -246,15 +299,36 @@ mod tests {
             }
             images.caches.insert(url, cache);
         }
-        assert!(!images.make_room());
+        assert!(!images.make_room(&mut context));
         assert_eq!(images.caches.len(), MAX_CACHED);
         images.names.clear();
-        assert!(images.make_room());
+        assert!(images.make_room(&mut context));
         assert_eq!(images.caches.len(), MAX_CACHED - 1);
         for index in (0..MAX_CACHED).step_by(2) {
             assert!(images
                 .caches
                 .contains_key(&format!("https://example.com/{index}.png")));
         }
+    }
+
+    #[test]
+    fn idle_shelf_copies_leave_once_the_byte_cap_is_passed() {
+        let mut context = Context::default();
+        let mut images = Illustrations::default();
+        images.disk.push_back(ShelfCopy {
+            key: "rss-image-old".into(),
+            slots: ["old.0".into(), "old.1".into()],
+            bytes: MAX_DISK_BYTES + 1,
+        });
+        images.trim_disk(&mut context);
+        assert!(images.disk.is_empty());
+        let removed = context.commands().iter().any(|command| {
+            matches!(
+                command,
+                kobo_sdk::Command::Store(kobo_sdk::StoreRequest::ShelfRemove { name })
+                    if name == "old.0" || name == "old.1"
+            )
+        });
+        assert!(removed, "the idle copy was left on the shelf");
     }
 }

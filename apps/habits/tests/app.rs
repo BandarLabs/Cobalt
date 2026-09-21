@@ -17,6 +17,18 @@ fn custom_schedule_and_skip_keep_streak_honest() {
     assert_eq!(habit.best_streak(8), 4);
 }
 #[test]
+fn a_backup_merges_days_onto_the_habit_with_the_same_name() {
+    let mut existing = vec![Habit::new("Read".into())];
+    existing[0].toggle_complete(1);
+    let mut incoming = Habit::new("Read".into());
+    incoming.toggle_complete(2);
+    incoming.schedule = Schedule::Weekdays;
+    merge(&mut existing, vec![incoming]);
+    assert_eq!(existing[0].done, vec![1, 2]);
+    assert_eq!(existing[0].schedule, Schedule::Daily);
+}
+
+#[test]
 fn persisted_habits_round_trip() {
     let mut habit = Habit::new("Walk".into());
     habit.toggle_complete(12);

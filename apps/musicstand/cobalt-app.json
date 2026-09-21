@@ -4,8 +4,8 @@
   "short_label": "Music",
   "summary": "Read music scores with setlists and half-page turns.",
   "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
-  "version": "0.1.4",
-  "release_notes": "Reads the shelf the companion CLI pushes: real score pages with overlapping half-page turns, staff-width zoom, per-score marks, and rehearsal setlists.",
+  "version": "0.1.5",
+  "release_notes": "An empty setlist says how to fill it: New setlist from the library copies every score on the shelf.",
   "glyph": "note",
   "capabilities": [
     "keep-awake"

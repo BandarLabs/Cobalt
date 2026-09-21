@@ -233,6 +233,25 @@ pub fn decode_with_blank_names(bytes: &[u8]) -> (Vec<Habit>, usize) {
     (habits, blank_names)
 }
 
+/// Adds habits from a backup. A habit with the same name keeps the schedule
+/// already on the reader and gains any days the backup recorded.
+pub fn merge(existing: &mut Vec<Habit>, incoming: Vec<Habit>) {
+    for habit in incoming {
+        if let Some(found) = existing.iter_mut().find(|item| item.name == habit.name) {
+            for day in habit.done {
+                insert_day(&mut found.done, day);
+            }
+            for day in habit.skipped {
+                if found.done.binary_search(&day).is_err() {
+                    insert_day(&mut found.skipped, day);
+                }
+            }
+        } else {
+            existing.push(habit);
+        }
+    }
+}
+
 #[cfg(test)]
 pub fn decode(bytes: &[u8]) -> Vec<Habit> {
     decode_with_blank_names(bytes).0

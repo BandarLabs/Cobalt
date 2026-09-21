@@ -349,7 +349,11 @@ impl ReadLater {
                 (
                     format!("entry-{i}"),
                     e.title.clone(),
-                    format!("{} · {} min", e.site, e.reading_time),
+                    if self.pending.iter().any(|action| action.id == e.id) {
+                        format!("{} · {} min · Waiting to sync", e.site, e.reading_time)
+                    } else {
+                        format!("{} · {} min", e.site, e.reading_time)
+                    },
                     if e.starred {
                         Glyph::Heart
                     } else {

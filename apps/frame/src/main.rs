@@ -109,6 +109,11 @@ struct Frame {
     startup: Startup,
     unreadable: BTreeSet<String>,
     verified: BTreeSet<String>,
+    /// A photo being checked against the digest sidecar, apart from the one on screen.
+    verify_load: Option<ShelfDownload>,
+    verify_id: Option<String>,
+    /// Photos this session could not re-check. Opening one still uses the ordinary path.
+    verify_paused: BTreeSet<String>,
     fit_load: Option<ShelfDownload>,
     digest_load: Option<ShelfDownload>,
     digests: BTreeMap<String, String>,
@@ -370,6 +375,7 @@ impl Frame {
             return;
         }
         self.advance(context, true);
+        self.pump_verify(context);
     }
 
     fn apply_power_policy(&mut self, context: &mut Context) {
@@ -406,15 +412,74 @@ impl Frame {
             self.settings.position %= self.photos.len().max(1);
             self.apply_power_policy(context);
             self.start_current(context);
+            self.pump_verify(context);
             if self.view == View::Opening {
                 self.view = View::Home;
             }
         }
     }
 
+    /// Checks photos that already have a digest without waiting for each one to be opened.
+    fn pump_verify(&mut self, context: &mut Context) {
+        if self.verify_load.is_some() || self.digests.is_empty() || self.photos.is_empty() {
+            return;
+        }
+        let skip = self.photo_load_id.as_deref();
+        let next = self.photos.iter().find(|photo| {
+            self.digests.contains_key(&photo.id)
+                && !self.verified.contains(&photo.id)
+                && !self.unreadable.contains(&photo.id)
+                && !self.verify_paused.contains(&photo.id)
+                && Some(photo.id.as_str()) != skip
+        });
+        let Some(id) = next.map(|photo| photo.id.clone()) else {
+            return;
+        };
+        let mut load = ShelfDownload::new(format!("{id}.png")).at_most(MAX_FRAME_BYTES);
+        load.start(context);
+        self.verify_load = Some(load);
+        self.verify_id = Some(id);
+    }
+
+    fn advance_verify(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.verify_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self.verify_load.take().expect("active verification").take();
+                let id = self.verify_id.take().expect("verification identity");
+                if let Some(expected) = self.digests.get(&id) {
+                    let digest = blake3::hash(&bytes).to_hex().to_string();
+                    if &digest == expected {
+                        self.verified.insert(id);
+                    } else {
+                        self.verify_paused.insert(id);
+                    }
+                }
+                self.pump_verify(context);
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                if let Some(id) = self.verify_id.take() {
+                    self.verify_paused.insert(id);
+                }
+                self.verify_load = None;
+                self.pump_verify(context);
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+        }
+    }
+
     fn accept_picture(&mut self, context: &mut Context, id: &str, bytes: &[u8]) {
         self.stop_load_watch(context);
-        let expected = self.photos.iter().find(|photo| photo.id == id);
+        let fit = self
+            .photos
+            .iter()
+            .find(|photo| photo.id == id)
+            .map_or(FitChoice::Crop, |photo| photo.fit);
         // The manifest digest identifies the source photo; the transfer
         // check runs against the pushed bytes recorded in the sidecar.
         if let Some(expected_digest) = self.digests.get(id) {
@@ -429,7 +494,6 @@ impl Frame {
             }
             self.verified.insert(id.to_owned());
         }
-        let fit = expected.map_or(FitChoice::Crop, |photo| photo.fit);
         let picture = kobo_image::decode(bytes).and_then(|picture| {
             if picture.width() == self.panel_width && picture.height() == self.panel_height {
                 Ok(picture)
@@ -464,6 +528,7 @@ impl Frame {
                 "A photo could not be read and was skipped.".to_owned(),
             ),
         }
+        self.pump_verify(context);
     }
 
     fn advance_manifest(&mut self, context: &mut Context, result: &StoreResult) -> bool {
@@ -534,6 +599,7 @@ impl Frame {
             ShelfProgress::Done => {
                 let bytes = self.digest_load.take().expect("active digest map").take();
                 self.digests = decode_digest_map(&bytes);
+                self.pump_verify(context);
                 true
             }
             ShelfProgress::Failed(_) => {
@@ -605,6 +671,7 @@ impl KoboApp for Frame {
             || self.advance_fit_map(context, &result)
             || self.advance_digest_map(context, &result)
             || self.advance_photo(context, &result)
+            || self.advance_verify(context, &result)
         {
             self.start_when_ready(context);
             self.show(context);

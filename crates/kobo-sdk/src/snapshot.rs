@@ -79,6 +79,20 @@ impl Snapshot {
         self.file() == name
     }
 
+    /// Both shelf slots for a snapshot that has been published and is idle.
+    ///
+    /// The published slot is the one the pointer names. The other slot can
+    /// still hold the previous copy. Callers that drop the snapshot from
+    /// memory use both names when they later remove the files.
+    #[must_use]
+    pub fn published_slots(&self) -> Option<[String; 2]> {
+        if self.digest.is_empty() || !matches!(self.phase, Phase::Ready) {
+            return None;
+        }
+        let stem = &self.stem[..60];
+        Some([format!("{stem}.0"), format!("{stem}.1")])
+    }
+
     #[must_use]
     pub fn busy(&self) -> bool {
         matches!(

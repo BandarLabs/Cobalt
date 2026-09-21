@@ -5078,9 +5078,9 @@ pub enum TileState {
     /// reached must not answer a tap, or the application is obliged to explain
     /// the refusal on a screen the reader did not ask for.
     Unavailable,
-    /// Something is happening to it right now. A clock in the trailing corner.
-    /// Still tappable, because a tap during a download is how a reader asks
-    /// what the download is doing.
+    /// Something is happening to it right now. An ink dot in the trailing
+    /// corner. Still tappable, because a tap during a download is how a reader
+    /// asks what the download is doing.
     Busy,
 }
 
@@ -6260,7 +6260,10 @@ impl std::fmt::Display for LayoutIssue {
                 write!(formatter, "{node}: content is clipped by a panel edge")
             }
             LayoutIssueKind::InteractiveOffscreen => {
-                write!(formatter, "{node}: interactive control is outside the visible panel")
+                write!(
+                    formatter,
+                    "{node}: interactive control is outside the visible panel"
+                )
             }
             LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
                 formatter,
@@ -6293,7 +6296,9 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::EmptyChoice => {
                 write!(formatter, "{node}: choice has no tappable answers")
             }
-            LayoutIssueKind::InvalidBoard => formatter.write_str("Board viewport has invalid dimensions, marks or clues."),
+            LayoutIssueKind::InvalidBoard => {
+                formatter.write_str("Board viewport has invalid dimensions, marks or clues.")
+            }
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
@@ -9004,7 +9009,8 @@ fn layout_node(
                 } else {
                     ControlState::Disabled
                 };
-                let outlined = *shape == TileShape::Card;
+                let outlined = *shape == TileShape::Card
+                    || (*shape == TileShape::Square && !legacy_typography());
                 let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
                     id: *id,
@@ -9052,7 +9058,7 @@ fn layout_node(
                 } else {
                     let size = if legacy_typography() {
                         metrics.tenth_mm(110)
-                    } else if *shape == TileShape::Card {
+                    } else if *shape == TileShape::Card || *shape == TileShape::Square {
                         metrics.tenth_mm(55)
                     } else {
                         metrics.tenth_mm(70)
@@ -13449,11 +13455,12 @@ fn board_label_size(node: &LayoutNode) -> FontSize {
 fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     let current = text_scale();
     let fits = |size: FontSize| {
-        size.line_height() <= node.rect.height
+        let pad = 2;
+        size.line_height() + pad <= node.rect.height
             && node
                 .text_lines
                 .iter()
-                .all(|line| measure_text(line, size).0 <= node.rect.width)
+                .all(|line| measure_text(line, size).0 + pad <= node.rect.width)
     };
     for size in [FontSize::Body, FontSize::Caption] {
         if fits(size) {
@@ -15111,6 +15118,20 @@ fn render_all_with_selected_font(
             // Paper first, then the border, then the mark. The corner a chip
             // sits in is very often a cover, and a tick drawn straight onto a
             // dark cover is a tick nobody can see.
+            LayoutKind::TileState(TileState::Busy) => {
+                let dot = max_i32(2, node.rect.width / 3);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: node.rect.x + (node.rect.width - dot) / 2,
+                        y: node.rect.y + (node.rect.height - dot) / 2,
+                        width: dot,
+                        height: dot,
+                    },
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::TileState(state) => {
                 if let Some(glyph) = state.glyph() {
                     fill_clipped(surface, node.rect, tone::PAPER, clip);

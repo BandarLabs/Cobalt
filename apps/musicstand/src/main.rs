@@ -429,7 +429,11 @@ impl Stand {
             .top_bar("Setlist")
             .heading(list.name.clone());
         if list.entries.is_empty() {
-            screen = screen.secondary("No scores on this setlist yet.");
+            screen = screen.splash(
+                Some(Glyph::Note),
+                "No scores on this setlist yet",
+                "On Setlists, choose New setlist from the library to copy every score on the shelf.",
+            );
         }
         for (position, id) in list.entries.iter().enumerate() {
             let Some(score) = self.scores.iter().find(|score| &score.id == id) else {

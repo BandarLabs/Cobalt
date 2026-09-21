@@ -617,6 +617,8 @@ struct Gutenbird {
 
     task: Option<(TaskId, Awaiting)>,
     cached_feed: Option<CachedFeed>,
+    /// The shelf is the last saved catalog page, not a fresh fetch.
+    saved_page: bool,
     problem: Option<String>,
     trouble: Option<Failure>,
 
@@ -691,6 +693,7 @@ impl Default for Gutenbird {
             federating: false,
             task: None,
             cached_feed: None,
+            saved_page: false,
             problem: None,
             trouble: None,
             wanted: Vec::new(),
@@ -977,6 +980,7 @@ impl Gutenbird {
         let cache = self.cached_feed.take().expect("cached response ready");
         self.problem = None;
         self.trouble = None;
+        self.saved_page = true;
         self.took_feed(
             context,
             &cache.bytes.unwrap_or_default(),
@@ -1370,6 +1374,11 @@ impl Gutenbird {
             .top_bar_glyph("catalogs", "Catalogs", Glyph::Globe);
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
+        } else if self.saved_page {
+            screen = screen.banner(
+                BannerLevel::Info,
+                "Showing a saved catalog page. Reconnect to refresh.",
+            );
         }
         if self.awaiting_feed() {
             return screen
@@ -3851,6 +3860,7 @@ impl KoboApp for Gutenbird {
             TaskOutcome::Completed(bytes) => match awaiting {
                 Awaiting::Feed(purpose, base) => {
                     self.cached_feed = None;
+                    self.saved_page = false;
                     if bytes.len() <= MAX_STORE_VALUE && kobo_opds::parse(&bytes, &base).is_ok() {
                         context
                             .store()
