@@ -799,9 +799,14 @@ impl Verses {
         let poem = CORPUS[self.poem];
         let pages = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
+        // The card is a picture of the poem, so it is set at the size the poem
+        // is set at. It also shares the poem's pagination, and pagination is
+        // measured at that size: a card measured at one size and drawn at
+        // another breaks its lines where the poem does not.
         let mut screen = ScreenBuilder::new("verses-card")
             .top_bar(poem.title)
-            .reading(true);
+            .reading(true)
+            .text_scale(poem_scale(context));
         for (index, run) in pages[page].iter().enumerate() {
             for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
                 .iter()
@@ -1360,6 +1365,53 @@ mod tests {
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    #[test]
+    fn every_card_of_every_poem_fits_at_every_text_size() {
+        // The card shares the poem's pagination, so it has to share the size
+        // that pagination was measured at. It did not: the poem gained a size
+        // override and the card kept drawing at the reader's own, so pages
+        // measured for one were set in the other and the card broke its lines
+        // where the poem did not. Only the poem had a test like this, which is
+        // why nothing said so.
+        let chrome = Chrome::measuring(true);
+        for scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for (index, poem) in CORPUS.iter().enumerate() {
+                let context = AppRunner::with_metrics(Verses::default(), metrics).context();
+                let mut app = Verses {
+                    poem: index,
+                    view: View::Reading,
+                    ..Verses::default()
+                };
+                for page in 0..app.poem_pages(&context).len() {
+                    app.poem_page = page;
+                    let card = app.quote_card(&context);
+                    let issues = card.diagnostics(&metrics, &chrome).issues;
+                    assert!(
+                        issues.is_empty(),
+                        "{:?} {} card page {page}: {issues:?}",
+                        scale,
+                        poem.title
+                    );
+                    // The size it is set at, not merely that it fits. A card
+                    // measured large and drawn small still fits: it under-fills
+                    // and breaks its lines where the poem does not, which no
+                    // overflow diagnostic reports.
+                    assert_eq!(
+                        card.text_scale,
+                        app.local_poem(&context).text_scale,
+                        "{:?} {} card page {page} is set at another size than the poem it copies",
+                        scale,
+                        poem.title
+                    );
+                }
+            }
+        }
     }
 
     #[test]
