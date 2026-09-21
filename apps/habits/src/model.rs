@@ -239,6 +239,7 @@ pub fn merge(existing: &mut Vec<Habit>, incoming: Vec<Habit>) {
     for habit in incoming {
         if let Some(found) = existing.iter_mut().find(|item| item.name == habit.name) {
             for day in habit.done {
+                remove_day(&mut found.skipped, day);
                 insert_day(&mut found.done, day);
             }
             for day in habit.skipped {

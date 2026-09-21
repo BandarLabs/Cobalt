@@ -1,7 +1,7 @@
 #[path = "../src/model.rs"]
 mod model;
-use kobo_sdk::{action_id, ScreenBuilder};
-use kobo_ui::{Chrome, CLARA_BW_METRICS};
+use kobo_sdk::{ScreenBuilder, action_id};
+use kobo_ui::{CLARA_BW_METRICS, Chrome};
 use model::*;
 #[test]
 fn custom_schedule_and_skip_keep_streak_honest() {
@@ -20,11 +20,14 @@ fn custom_schedule_and_skip_keep_streak_honest() {
 fn a_backup_merges_days_onto_the_habit_with_the_same_name() {
     let mut existing = vec![Habit::new("Read".into())];
     existing[0].toggle_complete(1);
+    existing[0].skip(3);
     let mut incoming = Habit::new("Read".into());
     incoming.toggle_complete(2);
+    incoming.toggle_complete(3);
     incoming.schedule = Schedule::Weekdays;
     merge(&mut existing, vec![incoming]);
-    assert_eq!(existing[0].done, vec![1, 2]);
+    assert_eq!(existing[0].done, vec![1, 2, 3]);
+    assert!(existing[0].skipped.is_empty());
     assert_eq!(existing[0].schedule, Schedule::Daily);
 }
 
@@ -155,10 +158,12 @@ fn clara_bw_today_controls_fit() {
         let rect = layout.rect_of_action(action_id(action)).expect("control");
         assert!(rect.height >= CLARA_BW_METRICS.touch_target_minimum());
     }
-    assert!(screen
-        .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
-        .issues
-        .is_empty());
+    assert!(
+        screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty()
+    );
 }
 #[test]
 fn a_week_sums_only_due_days() {
