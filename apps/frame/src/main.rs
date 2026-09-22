@@ -114,6 +114,9 @@ struct Frame {
     verify_id: Option<String>,
     /// Photos this session could not re-check. Opening one still uses the ordinary path.
     verify_paused: BTreeSet<String>,
+    /// Photos whose bytes do not match the transfer record. Checked once and remembered,
+    /// so the details panel can say so rather than calling them unchecked.
+    mismatched: BTreeSet<String>,
     fit_load: Option<ShelfDownload>,
     digest_load: Option<ShelfDownload>,
     digests: BTreeMap<String, String>,
@@ -266,6 +269,8 @@ impl Frame {
                             "Transfer",
                             if self.verified.contains(&selected.id) {
                                 "Verified against the manifest".to_owned()
+                            } else if self.mismatched.contains(&selected.id) {
+                                "Does not match the transfer record".to_owned()
                             } else {
                                 "Not yet checked".to_owned()
                             },
@@ -339,12 +344,36 @@ impl Frame {
         if self.loading_selected() {
             return;
         }
+        // A shelf read is answered by name, and a refusal carries no name at
+        // all, so two reads in flight cannot be told apart: the answer meant
+        // for one is taken by the other. Only ever run one. A background check
+        // already reading this photo becomes the photo load; any other one is
+        // left to finish first and the screen waits the few turns it takes.
+        if self.verify_load.is_some() {
+            if self.verify_id.as_deref() == Some(id.as_str()) {
+                self.abandon_photo_load(context);
+                self.photo_load = self.verify_load.take();
+                self.photo_load_id = self.verify_id.take();
+                self.arm_load_watch(context);
+            }
+            return;
+        }
         self.abandon_photo_load(context);
         let mut load = ShelfDownload::new(format!("{id}.png")).at_most(MAX_FRAME_BYTES);
         load.start(context);
         self.photo_load = Some(load);
         self.photo_load_id = Some(id);
         self.arm_load_watch(context);
+    }
+
+    /// Starts the photo that stood back while a background check held the shelf.
+    ///
+    /// Only when the screen is still waiting for one: a photo already on the
+    /// panel must not be read again every time a check finishes.
+    fn start_deferred(&mut self, context: &mut Context) {
+        if self.picture.is_none() {
+            self.start_current(context);
+        }
     }
 
     fn advance(&mut self, context: &mut Context, forward: bool) {
@@ -424,13 +453,17 @@ impl Frame {
         if self.verify_load.is_some() || self.digests.is_empty() || self.photos.is_empty() {
             return;
         }
-        let skip = self.photo_load_id.as_deref();
+        // The photo somebody is waiting for owns the shelf until it arrives.
+        // Checking the rest of the album is work nobody asked for yet.
+        if self.photo_load.is_some() {
+            return;
+        }
         let next = self.photos.iter().find(|photo| {
             self.digests.contains_key(&photo.id)
                 && !self.verified.contains(&photo.id)
                 && !self.unreadable.contains(&photo.id)
+                && !self.mismatched.contains(&photo.id)
                 && !self.verify_paused.contains(&photo.id)
-                && Some(photo.id.as_str()) != skip
         });
         let Some(id) = next.map(|photo| photo.id.clone()) else {
             return;
@@ -454,9 +487,17 @@ impl Frame {
                     if &digest == expected {
                         self.verified.insert(id);
                     } else {
-                        self.verify_paused.insert(id);
+                        // Finding this early is the point of checking ahead, so
+                        // say it. The photo stays in the album: the owner is
+                        // told which one to re-push rather than losing it here.
+                        self.mismatched.insert(id);
+                        self.notice = Some(
+                            "A photo does not match the transfer record. Re-push it from your computer."
+                                .to_owned(),
+                        );
                     }
                 }
+                self.start_deferred(context);
                 self.pump_verify(context);
                 true
             }
@@ -465,6 +506,7 @@ impl Frame {
                     self.verify_paused.insert(id);
                 }
                 self.verify_load = None;
+                self.start_deferred(context);
                 self.pump_verify(context);
                 true
             }
@@ -485,6 +527,7 @@ impl Frame {
         if let Some(expected_digest) = self.digests.get(id) {
             let digest = blake3::hash(bytes).to_hex().to_string();
             if &digest != expected_digest {
+                self.mismatched.insert(id.to_owned());
                 self.skip_unreadable(
                     context,
                     id,
@@ -1055,6 +1098,61 @@ mod tests {
         assert_eq!(
             frame.photo_load_id.as_deref(),
             Some("photo-bbbbbbbbbbbbbbbb")
+        );
+    }
+
+    /// Only one shelf read at a time, so every answer has one owner.
+    ///
+    /// A shelf refusal carries no file name, so whichever read is asked first
+    /// takes it. With a background check running beside the photo somebody is
+    /// waiting for, a digest whose picture was lost in a half-finished push
+    /// would mark an intact photo unreadable and skip past it.
+    #[test]
+    fn a_background_check_never_reads_the_shelf_beside_the_photo_on_screen() {
+        let mut frame = Frame {
+            photos: vec![
+                photo("photo-aaaaaaaaaaaaaaaa", 1),
+                photo("photo-bbbbbbbbbbbbbbbb", 2),
+            ],
+            digests: BTreeMap::from([
+                ("photo-aaaaaaaaaaaaaaaa".to_owned(), "a".to_owned()),
+                ("photo-bbbbbbbbbbbbbbbb".to_owned(), "b".to_owned()),
+            ]),
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        };
+        let mut context = Context::default();
+        frame.start_current(&mut context);
+        frame.pump_verify(&mut context);
+        assert!(
+            frame.verify_load.is_none(),
+            "a check was started beside the photo the screen is waiting for"
+        );
+    }
+
+    /// A check already reading this photo becomes the photo load.
+    ///
+    /// Both reads would name the same file, and the answers to two reads of
+    /// one name cannot be told apart. The bytes on their way are the bytes the
+    /// screen wants, so they are taken over rather than asked for twice.
+    #[test]
+    fn opening_a_photo_a_check_is_already_reading_takes_over_that_read() {
+        let mut frame = Frame {
+            photos: vec![photo("photo-aaaaaaaaaaaaaaaa", 1)],
+            digests: BTreeMap::from([("photo-aaaaaaaaaaaaaaaa".to_owned(), "a".to_owned())]),
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        };
+        let mut context = Context::default();
+        frame.pump_verify(&mut context);
+        assert_eq!(frame.verify_id.as_deref(), Some("photo-aaaaaaaaaaaaaaaa"));
+        frame.start_current(&mut context);
+        assert!(frame.verify_load.is_none(), "the check was left running");
+        assert_eq!(
+            frame.photo_load_id.as_deref(),
+            Some("photo-aaaaaaaaaaaaaaaa")
         );
     }
 
