@@ -8990,7 +8990,10 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, tile) in tiles.iter().enumerate() {
-                if layout.nodes.len() + 7 > MAX_LAYOUT_NODES {
+                // Tile, outline, mark, label, subtitle, value, state, badge:
+                // eight is what one tile can put down now that every shape but
+                // the legacy one is outlined.
+                if layout.nodes.len() + 8 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let column = position as i32 % columns;
@@ -9166,7 +9169,11 @@ fn layout_node(
                 // is the one part of the tile that is certainly text.
                 let chip = caption.saturating_add(inset);
                 let chip_inset = metrics.rule_thickness().saturating_mul(2);
-                if tile.state.glyph().is_some() && !muted {
+                // The mark is drawn even on a muted tile. Muting says the
+                // tile is not for tapping; the chip says why, and a tile that
+                // refuses a tap with nothing to show for it is just a tile
+                // that appears to be broken.
+                if tile.state.glyph().is_some() {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -15119,6 +15126,14 @@ fn render_all_with_selected_font(
             // sits in is very often a cover, and a tick drawn straight onto a
             // dark cover is a tick nobody can see.
             LayoutKind::TileState(TileState::Busy) => {
+                fill_clipped(surface, node.rect, tone::PAPER, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
                 let dot = max_i32(2, node.rect.width / 3);
                 fill_clipped(
                     surface,
@@ -22483,6 +22498,37 @@ mod prose_tests {
             with_lines, no_lines,
             "a preview without lines was indistinguishable from one with them"
         );
+    }
+
+    /// A tile that refuses a tap has to show the mark that says so.
+    ///
+    /// Muting says a tile is not for tapping; the cross says why. Outlining
+    /// the square shape brought every unavailable square tile into the muted
+    /// branch, which dropped the chip, leaving a tile that looks ordinary,
+    /// ignores taps and explains nothing.
+    #[test]
+    fn an_unavailable_tile_shows_its_mark_in_every_shape() {
+        for shape in [TileShape::Square, TileShape::Card] {
+            let screen = Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape,
+                    tiles: vec![
+                        Tile::new(ActionId(1), "Gone", Glyph::Book)
+                            .with_state(TileState::Unavailable),
+                    ],
+                }],
+            );
+            assert!(
+                screen
+                    .layout()
+                    .nodes
+                    .iter()
+                    .any(|node| matches!(node.kind, LayoutKind::TileState(TileState::Unavailable))),
+                "{shape:?}: an unavailable tile drew nothing to say it was unavailable"
+            );
+        }
     }
 
     #[test]
