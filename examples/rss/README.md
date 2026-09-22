@@ -106,7 +106,9 @@ discarded.
 Open a feed and choose **Search articles**. Searches match all entered words
 across article titles, authors and saved text, ignoring case. No network request
 is needed. **Change search** edits the query; **Clear** restores the full list.
-Search covers the open feed. **Search saved** on the shelf covers every subscription that is already on the reader.
+Search covers the open feed. **Search saved** on the shelf covers every
+subscription whose articles are saved on the reader, reading the ones it has
+not opened yet as it goes.
 
 ![Searching saved article text](screenshots/search-articles.png)
 

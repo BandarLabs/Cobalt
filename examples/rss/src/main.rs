@@ -112,11 +112,22 @@ enum View {
     Found,
     /// One feed's articles.
     Items,
+    /// What searching every saved subscription found.
+    SavedResults,
     ArticleSearch,
     Import,
     Starters,
     /// One article.
     Reading,
+}
+
+/// One article found by searching every saved subscription.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SavedHit {
+    feed: usize,
+    item: usize,
+    /// The title as it was read, so drawing the row parses nothing.
+    title: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -162,6 +173,11 @@ struct Feeds {
     article_query: String,
     /// Search every saved subscription, not only the feed that is open.
     article_search: ArticleSearch,
+    /// What searching every saved subscription found, in the order found.
+    ///
+    /// Kept rather than searched for again on every repaint: the search reads
+    /// every saved feed, and the screen it draws turns pages.
+    saved_hits: Vec<SavedHit>,
     /// What the search found, best first.
     found: Vec<search::Found>,
     direct: bool,
@@ -291,6 +307,12 @@ impl Feeds {
             .and_then(|index| self.subscriptions.get(index))
             .is_some_and(|feed| feed.url == url);
         if !current {
+            // A search of everything saved is waiting on every feed, not on
+            // the open one, so its results grow as the copies arrive.
+            if self.view == View::SavedResults && event == Some(cache::Event::Loaded) {
+                self.find_saved_hits();
+                self.show(context);
+            }
             return;
         }
         match event {
@@ -412,11 +434,7 @@ impl Feeds {
             View::Search => self.search(),
             View::Starters => self.starters(context),
             View::Found => self.results(context),
-            View::Items
-                if self.article_search == ArticleSearch::EverySaved && self.open.is_none() =>
-            {
-                self.saved_results(context)
-            }
+            View::SavedResults => self.saved_results(context),
             View::Items => self.articles(context),
             View::ArticleSearch => self.article_search(),
             View::Import => self.import_screen(context),
@@ -785,14 +803,19 @@ impl Feeds {
             .build()
     }
 
-    fn saved_hits(&self) -> Vec<(usize, usize)> {
+    /// Reads every saved feed once and keeps what matched.
+    ///
+    /// Called when the query changes and when a saved copy arrives, never
+    /// while drawing: each feed parsed here is a whole file of articles turned
+    /// into text, and the results screen turns pages.
+    fn find_saved_hits(&mut self) {
+        self.saved_hits.clear();
         let query = self.article_query.to_lowercase();
         let words: Vec<_> = query.split_whitespace().collect();
         if words.is_empty() {
-            return Vec::new();
+            return;
         }
-        let mut hits = Vec::new();
-        for (feed_index, subscription) in self.subscriptions.iter().enumerate() {
+        for (feed, subscription) in self.subscriptions.iter().enumerate() {
             let Some(parsed) = self
                 .caches
                 .get(&subscription.url)
@@ -801,50 +824,76 @@ impl Feeds {
             else {
                 continue;
             };
-            for (item_index, item) in parsed.items.iter().enumerate() {
-                let text = format!("{} {} {}", item.title, item.author, item.body).to_lowercase();
-                if words.iter().all(|word| text.contains(word)) {
-                    hits.push((feed_index, item_index));
+            for (item, article) in parsed.items.iter().enumerate() {
+                if matches_words(article, &words) {
+                    self.saved_hits.push(SavedHit {
+                        feed,
+                        item,
+                        title: article.title.clone(),
+                    });
                 }
             }
         }
-        hits
+    }
+
+    /// Opens the saved copy of every subscription that has not been read yet.
+    ///
+    /// Searching what is saved has to mean everything saved. The caches are
+    /// otherwise filled one feed at a time as feeds are opened, so a search
+    /// made before opening anything would have looked at nothing and said the
+    /// words appear nowhere.
+    fn load_saved_caches(&mut self, context: &mut Context) {
+        let urls: Vec<String> = self
+            .subscriptions
+            .iter()
+            .map(|feed| feed.url.clone())
+            .filter(|url| !self.caches.contains_key(url))
+            .collect();
+        for url in urls {
+            let cached = cache::Cache::new(&url);
+            cached.start(context);
+            self.caches.insert(url, cached);
+        }
+    }
+
+    /// Whether any saved copy is still being read.
+    fn saved_copies_arriving(&self) -> bool {
+        self.subscriptions.iter().any(|feed| {
+            self.caches
+                .get(&feed.url)
+                .is_some_and(|cached| cached.bytes.is_none() && cached.busy())
+        })
     }
 
     fn saved_results(&self, context: &Context) -> Screen {
-        let hits = self.saved_hits();
         let mut screen = ScreenBuilder::new("rss-saved-search")
             .top_bar(format!("Results for {}", self.article_query))
             .top_bar_action("clear-search", "Clear");
-        if hits.is_empty() {
-            return screen
-                .empty_state("No saved articles match this search.")
-                .build();
+        let arriving = self.saved_copies_arriving();
+        if self.saved_hits.is_empty() {
+            return if arriving {
+                screen.activity("Reading the saved articles", None).build()
+            } else {
+                screen
+                    .empty_state("No saved articles match this search.")
+                    .build()
+            };
         }
-        let rows: Vec<(String, String, String)> = hits
+        if arriving {
+            // Saying so beats a list that silently grows under the reader.
+            screen = screen.banner(BannerLevel::Info, "Still reading the saved articles.");
+        }
+        let rows: Vec<(String, String, String)> = self
+            .saved_hits
             .iter()
-            .map(|(feed_index, item_index)| {
+            .map(|hit| {
                 let title = self
                     .subscriptions
-                    .get(*feed_index)
+                    .get(hit.feed)
                     .map_or("Feed", |feed| feed.title.as_str());
-                let item = self
-                    .caches
-                    .get(
-                        self.subscriptions
-                            .get(*feed_index)
-                            .map_or("", |feed| feed.url.as_str()),
-                    )
-                    .and_then(|cached| cached.bytes.as_deref())
-                    .and_then(feed::parse)
-                    .and_then(|parsed| parsed.items.get(*item_index).cloned());
-                let heading = item
-                    .as_ref()
-                    .map(|item| item.title.clone())
-                    .unwrap_or_default();
                 (
-                    format!("hit-{feed_index}-{item_index}"),
-                    context.clamped_row(&heading, 2, true),
+                    format!("hit-{}-{}", hit.feed, hit.item),
+                    context.clamped_row(&hit.title, 2, true),
                     context.one_line_row(title, true),
                 )
             })
@@ -872,19 +921,73 @@ impl Feeds {
         screen.build()
     }
 
+    /// Returns from an article to the list it was opened from.
+    ///
+    /// An article reached from a search of everything saved goes back to those
+    /// results, not to the articles of whichever feed happened to hold it. The
+    /// reader is closed by three separate paths, so the answer lives here
+    /// rather than being remembered correctly at each of them.
+    fn close_article(&mut self) {
+        self.article = None;
+        if self.article_search == ArticleSearch::EverySaved {
+            self.view = View::SavedResults;
+            self.open = None;
+            self.items.clear();
+        } else {
+            self.view = View::Items;
+        }
+    }
+
+    /// Opens an article of the open feed in the reader.
+    ///
+    /// Both lists that lead to an article come through here, so a saved-search
+    /// result is read on exactly the terms a result in its own feed is.
+    fn open_article(&mut self, context: &mut Context, index: usize) {
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        self.article = Some(index);
+        self.view = View::Reading;
+        self.reader.close(context);
+        let item = item.clone();
+        let origin = if item.link.is_empty() {
+            self.open
+                .and_then(|i| self.subscriptions.get(i))
+                .map_or(String::new(), |feed| feed.url.clone())
+        } else {
+            item.link.clone()
+        };
+        let article_body = if item.html.is_empty() {
+            article_text(&item)
+        } else {
+            item.html.clone()
+        };
+        let id = article_id(&item, &origin);
+        let memory = self.progress.memory(&id);
+        self.reading_id = Some(id);
+        if item.html.is_empty() {
+            if self
+                .reader
+                .open_bytes(context, "article.txt", article_body.as_bytes(), memory)
+                .is_err()
+            {
+                self.problem = Some("This article could not be opened.".to_owned());
+            }
+        } else {
+            self.reader
+                .open(context, kobo_doc::html::parse(&article_body), memory);
+            self.illustrations.open(context, &mut self.reader, &origin);
+        }
+        self.keep_position(context);
+    }
+
     fn matching_items(&self) -> Vec<usize> {
         let query = self.article_query.to_lowercase();
         let words: Vec<_> = query.split_whitespace().collect();
         self.items
             .iter()
             .enumerate()
-            .filter_map(|(index, item)| {
-                let text = format!("{} {} {}", item.title, item.author, item.body).to_lowercase();
-                words
-                    .iter()
-                    .all(|word| text.contains(word))
-                    .then_some(index)
-            })
+            .filter_map(|(index, item)| matches_words(item, &words).then_some(index))
             .collect()
     }
 
@@ -1202,6 +1305,15 @@ fn article_id(item: &feed::Item, feed_url: &str) -> String {
 }
 
 /// The whole article as one piece of prose, ready to be cut into pages.
+/// Whether an article holds every word, ignoring case.
+///
+/// One rule, so that searching the open feed and searching everything saved
+/// cannot come to answer the same words differently.
+fn matches_words(item: &feed::Item, words: &[&str]) -> bool {
+    let text = format!("{} {} {}", item.title, item.author, item.body).to_lowercase();
+    words.iter().all(|word| text.contains(word))
+}
+
 fn article_text(item: &feed::Item) -> String {
     let mut text = String::new();
     let byline = byline(item);
@@ -1617,9 +1729,13 @@ impl KoboApp for Feeds {
             self.article_search = ArticleSearch::EverySaved;
             self.open = None;
             self.article_query.clear();
+            self.saved_hits.clear();
             self.keyboard = Keyboard::new();
             self.list_page = 0;
             self.view = View::ArticleSearch;
+            // The saved copies are read one feed at a time as feeds are
+            // opened. A search of everything saved asks for the rest now.
+            self.load_saved_caches(context);
             self.show(context);
             return;
         }
@@ -1631,11 +1747,16 @@ impl KoboApp for Feeds {
             return;
         }
         if action == action_id("clear-search")
-            && matches!(self.view, View::ArticleSearch | View::Items)
+            && matches!(
+                self.view,
+                View::ArticleSearch | View::Items | View::SavedResults
+            )
         {
-            let everywhere =
-                self.article_search == ArticleSearch::EverySaved && self.open.is_none();
+            let everywhere = self.view == View::SavedResults
+                || (self.view == View::ArticleSearch
+                    && self.article_search == ArticleSearch::EverySaved);
             self.article_query.clear();
+            self.saved_hits.clear();
             self.article_search = ArticleSearch::ThisFeed;
             self.list_page = 0;
             self.view = if everywhere { View::Shelf } else { View::Items };
@@ -1650,7 +1771,12 @@ impl KoboApp for Feeds {
                         .trim()
                         .clone_into(&mut self.article_query);
                     self.list_page = 0;
-                    self.view = View::Items;
+                    if self.article_search == ArticleSearch::EverySaved {
+                        self.view = View::SavedResults;
+                        self.find_saved_hits();
+                    } else {
+                        self.view = View::Items;
+                    }
                     self.show(context);
                     return;
                 }
@@ -1693,15 +1819,13 @@ impl KoboApp for Feeds {
                     self.keep_position(context);
                     self.illustrations.close(context);
                     self.reader.close(context);
-                    self.view = View::Items;
-                    self.article = None;
+                    self.close_article();
                 }
                 Some(kobo_read::Outcome::Close) => {
                     self.keep_position(context);
                     self.illustrations.close(context);
                     self.reader.close(context);
-                    self.view = View::Items;
-                    self.article = None;
+                    self.close_article();
                 }
                 Some(kobo_read::Outcome::Save) => self.keep_position(context),
                 Some(kobo_read::Outcome::Light(level)) => {
@@ -1754,11 +1878,10 @@ impl KoboApp for Feeds {
             self.menu_open = None;
             match self.view {
                 View::Shelf => {}
-                View::Items
-                    if self.article_search == ArticleSearch::EverySaved && self.open.is_none() =>
-                {
+                View::SavedResults => {
                     self.article_search = ArticleSearch::ThisFeed;
                     self.article_query.clear();
+                    self.saved_hits.clear();
                     self.view = View::Shelf;
                     self.list_page = 0;
                 }
@@ -1768,9 +1891,7 @@ impl KoboApp for Feeds {
                 }
                 View::Found | View::Starters => self.view = View::Search,
                 View::ArticleSearch => {
-                    self.view = if self.article_search == ArticleSearch::EverySaved
-                        && self.open.is_none()
-                    {
+                    self.view = if self.article_search == ArticleSearch::EverySaved {
                         View::Shelf
                     } else {
                         View::Items
@@ -1781,14 +1902,7 @@ impl KoboApp for Feeds {
                     self.import_read = None;
                     self.import_preview = None;
                 }
-                View::Reading => {
-                    self.view = View::Items;
-                    self.article = None;
-                    if self.article_search == ArticleSearch::EverySaved {
-                        self.open = None;
-                        self.items.clear();
-                    }
-                }
+                View::Reading => self.close_article(),
             }
             self.show(context);
             return;
@@ -1906,51 +2020,16 @@ impl KoboApp for Feeds {
             }
         }
 
-        if self.view == View::Items
-            && self.article_search == ArticleSearch::EverySaved
-            && self.open.is_none()
-        {
-            if let Some((feed_index, item_index)) = self
-                .saved_hits()
-                .into_iter()
-                .find(|(feed, item)| action == action_id(&format!("hit-{feed}-{item}")))
+        if self.view == View::SavedResults {
+            if let Some(hit) = self
+                .saved_hits
+                .iter()
+                .find(|hit| action == action_id(&format!("hit-{}-{}", hit.feed, hit.item)))
+                .cloned()
             {
-                self.open = Some(feed_index);
+                self.open = Some(hit.feed);
                 self.open_cached(context);
-                self.article = Some(item_index);
-                self.view = View::Reading;
-                self.reader.close(context);
-                if let Some(item) = self.items.get(item_index) {
-                    let origin = if item.link.is_empty() {
-                        self.subscriptions
-                            .get(feed_index)
-                            .map_or("", |feed| feed.url.as_str())
-                    } else {
-                        item.link.as_str()
-                    };
-                    let article_body = if item.html.is_empty() {
-                        article_text(item)
-                    } else {
-                        item.html.clone()
-                    };
-                    let id = article_id(item, origin);
-                    let memory = self.progress.memory(&id);
-                    self.reading_id = Some(id);
-                    if item.html.is_empty() {
-                        if self
-                            .reader
-                            .open_bytes(context, "article.txt", article_body.as_bytes(), memory)
-                            .is_err()
-                        {
-                            self.problem = Some("This article could not be opened.".to_owned());
-                        }
-                    } else {
-                        self.reader
-                            .open(context, kobo_doc::html::parse(&article_body), memory);
-                        self.illustrations.open(context, &mut self.reader, origin);
-                    }
-                    self.keep_position(context);
-                }
+                self.open_article(context, hit.item);
                 self.show(context);
                 return;
             }
@@ -1958,39 +2037,7 @@ impl KoboApp for Feeds {
 
         if self.view == View::Items {
             if let Some(index) = indexed(action, "item", self.items.len()) {
-                self.article = Some(index);
-                self.view = View::Reading;
-                self.reader.close(context);
-                let item = &self.items[index];
-                let origin = if item.link.is_empty() {
-                    self.open
-                        .and_then(|i| self.subscriptions.get(i))
-                        .map_or("", |feed| feed.url.as_str())
-                } else {
-                    &item.link
-                };
-                let article_body = if item.html.is_empty() {
-                    article_text(item)
-                } else {
-                    item.html.clone()
-                };
-                let id = article_id(item, origin);
-                let memory = self.progress.memory(&id);
-                self.reading_id = Some(id);
-                if item.html.is_empty() {
-                    if self
-                        .reader
-                        .open_bytes(context, "article.txt", article_body.as_bytes(), memory)
-                        .is_err()
-                    {
-                        self.problem = Some("This article could not be opened.".to_owned());
-                    }
-                } else {
-                    self.reader
-                        .open(context, kobo_doc::html::parse(&article_body), memory);
-                    self.illustrations.open(context, &mut self.reader, origin);
-                }
-                self.keep_position(context);
+                self.open_article(context, index);
                 self.show(context);
             }
         }
@@ -2916,6 +2963,76 @@ mod tests {
         revised.body.push_str(" A correction.");
         revised.html.clear();
         assert_eq!(restored.article_was_read(&revised), Some(false));
+    }
+
+    /// Searching what is saved means every subscription, not the opened ones.
+    ///
+    /// The saved copies are read one feed at a time as feeds are opened, so a
+    /// search made from the shelf before opening anything was looking at an
+    /// empty set and answering that the words appear nowhere.
+    ///
+    /// Back from one of its results returns to the results. The reader is
+    /// closed by a path that only knew about a feed's own article list, so it
+    /// used to land on the articles of whichever feed happened to hold the
+    /// result, with every other feed's matches gone.
+    #[test]
+    fn searching_every_saved_subscription_covers_feeds_that_were_never_opened() {
+        let feed = |title: &str, body: &str| {
+            format!(
+                "<rss><channel><title>{title}</title><item><title>{title} piece</title>\
+                 <description>{body}</description></item></channel></rss>"
+            )
+            .into_bytes()
+        };
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: vec![
+                Subscription {
+                    url: "https://one.example/feed".into(),
+                    title: "One".into(),
+                    site: "one.example".into(),
+                },
+                Subscription {
+                    url: "https://two.example/feed".into(),
+                    title: "Two".into(),
+                    site: "two.example".into(),
+                },
+            ],
+            ..Feeds::default()
+        };
+        for (url, body) in [
+            ("https://one.example/feed", feed("One", "nothing here")),
+            ("https://two.example/feed", feed("Two", "a word about quartz")),
+        ] {
+            let mut cache = super::cache::Cache::new(url);
+            cache.bytes = Some(body);
+            app.caches.insert(url.to_owned(), cache);
+        }
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("search-saved"));
+        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text("quartz");
+        let commands = runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app_mut().view, View::SavedResults);
+        assert_eq!(
+            runner
+                .app_mut()
+                .saved_hits
+                .iter()
+                .map(|hit| hit.feed)
+                .collect::<Vec<_>>(),
+            vec![1],
+            "a subscription nobody had opened was left out of the search"
+        );
+        fits_the_panel(&screen_of(&commands), "saved search results");
+        runner.action(action_id("hit-1-0"));
+        assert_eq!(runner.app_mut().view, View::Reading);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(
+            runner.app_mut().view,
+            View::SavedResults,
+            "back from a result left the search it came from"
+        );
+        assert_eq!(runner.app_mut().saved_hits.len(), 1);
     }
 
     #[test]
