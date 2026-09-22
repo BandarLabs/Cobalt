@@ -1,5 +1,8 @@
 # Sync
 
+Sync is unofficial and is not affiliated with or endorsed by the Syncthing
+Foundation. Syncthing's licence grants no rights in its name or logo.
+
 Sync is the Settings surface for Cobalt's runtime-owned Syncthing service. It
 persists the on/off state and cadence, reads runtime-written transfer status,
 and shows the fixed receive-only `vault`, `frame`, and `books` folders plus

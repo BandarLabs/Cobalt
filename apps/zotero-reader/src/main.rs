@@ -858,7 +858,7 @@ impl ReadingList {
 
     fn setup_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("zotero-reader-setup")
-            .top_bar("Zotero Reader")
+            .top_bar("Stacks")
             .heading("Connect your Zotero library")
             .text(
                 "Create a dedicated read-only key in Zotero, install it with `kobo secret set \
@@ -937,7 +937,7 @@ impl ReadingList {
         let title = self
             .selected
             .as_ref()
-            .map_or("Zotero Reader", |collection| collection.name.as_str());
+            .map_or("Stacks", |collection| collection.name.as_str());
         let mut screen = ScreenBuilder::new("zotero-reader-feed").top_bar(title);
         let mut actions = vec![
             (REFRESH, "Refresh", Some(Glyph::Download)),
@@ -1181,7 +1181,7 @@ impl ReadingList {
 
     fn show(&mut self, context: &mut Context) {
         if self.credential_setup.is_open() {
-            context.set_screen(self.credential_setup.screen("Zotero Reader"));
+            context.set_screen(self.credential_setup.screen("Stacks"));
             return;
         }
         let screen = match self.view {

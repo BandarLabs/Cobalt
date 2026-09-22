@@ -672,7 +672,7 @@ impl Arxiv {
     }
 
     fn subjects(&self, context: &Context) -> Screen {
-        let mut screen = ScreenBuilder::new("arxiv-subjects").top_bar("arXiv");
+        let mut screen = ScreenBuilder::new("arxiv-subjects").top_bar("Preprints");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -873,7 +873,7 @@ impl Arxiv {
         let title = self
             .query
             .as_ref()
-            .map_or_else(|| "arXiv".to_owned(), Query::title);
+            .map_or_else(|| "Preprints".to_owned(), Query::title);
         let mut screen = ScreenBuilder::new("arxiv-listing").top_bar(title);
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
@@ -964,7 +964,9 @@ impl Arxiv {
 
     fn reading(&self) -> Screen {
         let Some(paper) = self.paper() else {
-            return ScreenBuilder::new("arxiv-paper").top_bar("arXiv").build();
+            return ScreenBuilder::new("arxiv-paper")
+                .top_bar("Preprints")
+                .build();
         };
         let mut screen = ScreenBuilder::new("arxiv-paper").top_bar(paper.id.clone());
         if let Some(trouble) = &self.trouble {
@@ -1023,7 +1025,7 @@ impl Arxiv {
     fn full_text(&self) -> Screen {
         let title = self
             .paper()
-            .map_or_else(|| "arXiv".to_owned(), |paper| paper.id.clone());
+            .map_or_else(|| "Preprints".to_owned(), |paper| paper.id.clone());
         self.book.screen(&title).unwrap_or_else(|| self.reading())
     }
 

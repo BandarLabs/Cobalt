@@ -30,7 +30,7 @@ const systemApps = [
   }
 ];
 const screenshots = {
-  arxiv: ["arxiv.png", "The newest machine learning preprints listed in the arXiv app on a Kobo"],
+  arxiv: ["arxiv.png", "The newest machine learning preprints listed in the Preprints app on a Kobo"],
   audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
   backgammon: ["backgammon.png", "Backgammon board on a Kobo after Black opened with 4 and 6, with dice, cube and match score."],
   birds: ["birds.png", "A labelled collage of public-domain bird plates filling a Kobo screen."],
@@ -54,7 +54,6 @@ const screenshots = {
   lichess: ["lichess.png", "Lichess on Kobo with Account/Games and Puzzles tiles plus rapid and classical time controls."],
   logicpack: ["logicpack.png", "Logic Pack's Minesweeper board after a revealed cell and contradiction check."],
   launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
-  lichess: ["lichess.png", "Lichess on Kobo with Account/Games and Puzzles tiles plus rapid and classical time controls."],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
   musicstand: ["musicstand.png", "Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."],
@@ -68,7 +67,7 @@ const screenshots = {
   pubquiz: ["pubquiz.png", "Pub Quiz pass-around question with four large answer choices for Ada."],
   readlater: ["readlater.png", "Read Later setup screen showing Wallabag credential instructions."],
   rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
-  "rss-miniflux": ["rss-miniflux.png", "RSS Reader starter directory listing Science News, engineering blogs, and long-form writing."],
+  "rss-miniflux": ["rss-miniflux.png", "Digest starter directory listing Science News, engineering blogs, and long-form writing."],
   settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
   sidekick: ["sidekick.png", "Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
@@ -418,3 +417,66 @@ ${sitemapUrls.map(url => `  <url><loc>${url}</loc></url>`).join("\n")}
 </urlset>
 `;
 writeFileSync(resolve(root, "docs/sitemap.xml"), sitemap);
+
+// The landing page used to carry a hand-written excerpt of the catalog, which
+// drifted until twenty-six shipped apps were missing from it. The grid is now
+// derived from the same manifests the app pages come from, so an app that
+// ships is an app the site shows.
+const gridApps = [
+  ...systemApps.filter(app => app.id !== "terminal"),
+  ...[...catalog.apps].sort((a, b) => a.display_name.localeCompare(b.display_name))
+];
+const gridCard = app => {
+  const [screenshot, screenshotAlt] = screenshotFor(app);
+  return `      <div class="app">
+        <a class="shot" href="apps/${app.id}/"><img src="media/site/apps/${screenshot}" width="1072" height="1448" loading="lazy" alt="${escape(screenshotAlt)}"></a>
+        <h3><a href="apps/${app.id}/">${escape(app.display_name)}</a></h3>
+        <p>${escape(app.summary)}</p>
+      </div>`;
+};
+const indexPath = resolve(root, "docs/index.html");
+const indexHtml = readFileSync(indexPath, "utf8");
+const gridStart = "<!-- apps-grid:start -->";
+const gridEnd = "<!-- apps-grid:end -->";
+const startIndex = indexHtml.indexOf(gridStart);
+const endIndex = indexHtml.indexOf(gridEnd);
+if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+  throw new Error(`docs/index.html is missing its ${gridStart} / ${gridEnd} markers`);
+}
+writeFileSync(
+  indexPath,
+  `${indexHtml.slice(0, startIndex + gridStart.length)}\n${gridApps
+    .map(gridCard)
+    .join("\n")}\n      ${indexHtml.slice(endIndex)}`
+);
+
+// The README's hand-written table had drifted to two Store apps out of
+// thirty-four. This table is derived, so publishing an app lists it.
+const storeApps = [...catalog.apps].sort((a, b) =>
+  a.display_name.localeCompare(b.display_name)
+);
+const readmeCell = app => {
+  const [screenshot, screenshotAlt] = screenshotFor(app);
+  const href = `apps/${app.id}/README.md`;
+  return `<td width="33%" valign="top"><a href="${href}"><img width="230" src="docs/media/site/apps/${screenshot}" alt="${escape(screenshotAlt)}"></a><br><b><a href="${href}">${escape(app.display_name)}</a></b><br>${escape(app.summary)}</td>`;
+};
+const readmeRows = [];
+for (let index = 0; index < storeApps.length; index += 3) {
+  const row = storeApps.slice(index, index + 3).map(readmeCell);
+  while (row.length < 3) row.push("<td></td>");
+  readmeRows.push(`<tr>\n${row.join("\n")}\n</tr>`);
+}
+const readmeTable = `<table>\n${readmeRows.join("\n")}\n</table>`;
+const readmePath = resolve(root, "README.md");
+const readmeText = readFileSync(readmePath, "utf8");
+const storeStart = "<!-- store-apps:start -->";
+const storeEnd = "<!-- store-apps:end -->";
+const storeStartIndex = readmeText.indexOf(storeStart);
+const storeEndIndex = readmeText.indexOf(storeEnd);
+if (storeStartIndex === -1 || storeEndIndex === -1 || storeEndIndex < storeStartIndex) {
+  throw new Error(`README.md is missing its ${storeStart} / ${storeEnd} markers`);
+}
+writeFileSync(
+  readmePath,
+  `${readmeText.slice(0, storeStartIndex + storeStart.length)}\n${readmeTable}\n${readmeText.slice(storeEndIndex)}`
+);

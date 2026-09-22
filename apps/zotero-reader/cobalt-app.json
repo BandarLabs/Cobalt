@@ -1,10 +1,11 @@
 {
   "id": "zotero-reader",
-  "display_name": "Zotero Reader",
-  "short_label": "Zotero",
+  "display_name": "Stacks",
+  "short_label": "Stacks",
   "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-  "version": "1.0.6",
-  "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early.",
+  "page_description": "Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship.",
+  "version": "1.0.7",
+  "release_notes": "Renamed from Zotero Reader to Stacks, because Zotero is a registered trademark and this client is independent of the Zotero project.",
   "glyph": "book",
   "capabilities": [
     "network",
@@ -20,14 +21,14 @@
         }
       },
       {
-        "text": "Copy the numeric user ID shown on the Zotero API key settings page. Zotero Reader asks for it on first launch."
+        "text": "Copy the numeric user ID shown on the Zotero API key settings page. Stacks asks for it on first launch."
       },
       {
         "text": "Install the API key on your Kobo under the exact secret name zotero.",
         "command": "kobo secret set zotero --device <address>"
       },
       {
-        "text": "Launch Zotero Reader, enter the numeric user ID, and select a collection."
+        "text": "Launch Stacks, enter the numeric user ID, and select a collection."
       },
       {
         "text": "Direct mode reads indexed text. Structured PDF layout, tables, figures, formulas, and OCR require the optional self-hosted conversion service.",

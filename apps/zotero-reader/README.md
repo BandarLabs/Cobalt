@@ -1,7 +1,9 @@
-# Zotero Reader
+# Stacks
 
-Zotero Reader is a read-only Cobalt app for browsing personal Zotero
-collections and reading papers on a Kobo. Google Scholar can remain an input
+Stacks is a read-only Cobalt app for browsing personal Zotero
+collections and reading papers on a Kobo. It is unofficial and is not
+affiliated with or endorsed by Zotero or the Corporation for Digital
+Scholarship, which owns the Zotero trademark. Google Scholar can remain an input
 through the Zotero Connector; the app never accesses or scrapes Scholar.
 
 The public Store build reads metadata, abstracts, stored-PDF attachment

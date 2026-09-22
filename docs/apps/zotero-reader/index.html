@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Install Zotero Reader on Kobo | Cobalt</title>
-<meta name="description" content="Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline. Install it on a supported Kobo e-reader with Cobalt.">
+<title>Install Stacks on Kobo | Cobalt</title>
+<meta name="description" content="Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/zotero-reader/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Install Zotero Reader on Kobo | Cobalt">
-<meta property="og:description" content="Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:title" content="Install Stacks on Kobo | Cobalt">
+<meta property="og:description" content="Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/zotero-reader/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/zotero-reader.png">
@@ -17,18 +17,18 @@
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="Reading a paper with structured layout and Zotero metadata on a Kobo">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Install Zotero Reader on Kobo | Cobalt">
-<meta name="twitter:description" content="Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:title" content="Install Stacks on Kobo | Cobalt">
+<meta name="twitter:description" content="Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/zotero-reader.png">
 <meta name="twitter:image:alt" content="Reading a paper with structured layout and Zotero metadata on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-3SsRr74gZFIUY7WF2ApLmIPes0jjti+dzcdTz8ASc8w='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-z/134rGGOA7pti6QdSWfdZYA7yIYV5gHfTxfHtK2kaI='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "name": "Zotero Reader",
-      "description": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
+      "name": "Stacks",
+      "description": "Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/zotero-reader/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.6",
+      "softwareVersion": "1.0.7",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -67,7 +67,7 @@
         {
           "@type": "ListItem",
           "position": 3,
-          "name": "Zotero Reader",
+          "name": "Stacks",
           "item": "https://bandarlabs.github.io/Cobalt/apps/zotero-reader/"
         }
       ]
@@ -95,9 +95,9 @@
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
-      <h1>Zotero Reader</h1>
-      <p class="summary">Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.</p>
-      <div class="meta"><span>Version 1.0.6</span><span>network, frontlight-control</span></div>
+      <h1>Stacks</h1>
+      <p class="summary">Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship.</p>
+      <div class="meta"><span>Version 1.0.7</span><span>network, frontlight-control</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/zotero-reader.png" width="1072" height="1448" alt="Reading a paper with structured layout and Zotero metadata on a Kobo">
@@ -108,10 +108,10 @@
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
       <li>Create a dedicated Zotero API key with read-only access to your personal library. <a href="https://www.zotero.org/settings/keys">Zotero API key settings</a></li>
-      <li>Copy the numeric user ID shown on the Zotero API key settings page. Zotero Reader asks for it on first launch.</li>
+      <li>Copy the numeric user ID shown on the Zotero API key settings page. Stacks asks for it on first launch.</li>
       <li>Install the API key on your Kobo under the exact secret name zotero.
         <code class="setup-command">kobo secret set zotero --device &lt;address&gt;</code></li>
-      <li>Launch Zotero Reader, enter the numeric user ID, and select a collection.</li>
+      <li>Launch Stacks, enter the numeric user ID, and select a collection.</li>
       <li>Direct mode reads indexed text. Structured PDF layout, tables, figures, formulas, and OCR require the optional self-hosted conversion service. <a href="https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html">Self-hosting guide</a></li>
     </ol>
   </section>
@@ -145,7 +145,7 @@
     <h2>Install on <span id="device-name">your Kobo</span></h2>
     <p>Cobalt verifies the signed catalog and app package before changing the installed copy.</p>
     <div class="actions">
-      <button type="button" id="install">Install Zotero Reader</button>
+      <button type="button" id="install">Install Stacks</button>
       <button type="button" id="forget" class="secondary">Forget this Kobo</button>
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>

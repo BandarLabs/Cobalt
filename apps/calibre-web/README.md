@@ -1,6 +1,9 @@
-# calibre-web library
+# Library
 
 Browse your library's OPDS catalog, download books and keep reading offline.
+
+Library is an unofficial OPDS client. It is not affiliated with or endorsed by
+the calibre-web or calibre projects, and it works with any OPDS server.
 The app follows the server's sections, authors, shelves and book links. Back
 returns to the previous catalog page and keeps its place.
 

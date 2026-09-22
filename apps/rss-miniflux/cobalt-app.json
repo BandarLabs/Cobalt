@@ -1,11 +1,11 @@
 {
   "id": "rss-miniflux",
-  "display_name": "RSS Reader \u2014 Miniflux",
-  "short_label": "RSS Reader",
+  "display_name": "Digest",
+  "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere.",
-  "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
+  "version": "0.1.3",
+  "release_notes": "Renamed from RSS Reader - Miniflux to Digest, so the app carries its own name rather than the name of the server it talks to.",
   "glyph": "rss",
   "capabilities": [
     "network"

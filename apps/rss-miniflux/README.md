@@ -1,4 +1,7 @@
-# RSS Reader — Miniflux
+# Digest
+
+Digest is an unofficial client and is not affiliated with or endorsed by the
+Miniflux project.
 
 Read the articles in your [Miniflux](https://miniflux.app/) account on a Kobo,
 including where there is no Wi-Fi. The API token stays in the runtime and is
