@@ -19,6 +19,10 @@ const MAX_MANIFEST: usize = 4 * 1024 * 1024;
 /// a runaway push (a vault accidentally pointed at something enormous) fails
 /// with a clear message instead of silently filling the card.
 const MAX_CAPACITY: usize = 200 * 1024 * 1024;
+/// Must match `apps/clippings/src/model.rs`'s `MAX_BODY`: the reader refuses
+/// to open any body over that size, so pushing one past it here would list
+/// a note that can never be opened instead of refusing the push up front.
+const MAX_NOTE_BODY: usize = 1024 * 1024;
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,6 +137,21 @@ fn fnv1a(value: &str) -> u64 {
     })
 }
 
+/// `MAX_CAPACITY` catches a vault accidentally pointed at something
+/// enormous; this catches the one note inside an otherwise-reasonable vault
+/// that the reader can list but never actually open, because it exceeds the
+/// app's own per-note ceiling.
+fn check_note_body_size(path: &str, body: &str) -> Result<(), String> {
+    if body.len() > MAX_NOTE_BODY {
+        return Err(format!(
+            "{path} is {} KB, over the {} KB the reader will open a note at; shorten it or split it before pushing",
+            body.len() / 1024,
+            MAX_NOTE_BODY / 1024
+        ));
+    }
+    Ok(())
+}
+
 enum Target {
     Device(String),
     Sim,
@@ -174,6 +193,7 @@ fn push(arguments: &[String]) -> Result<(), String> {
             .map(|(_, v)| v.as_list())
             .unwrap_or_default();
         let body = body.trim_start_matches('\n');
+        check_note_body_size(path, body)?;
         let digest = kobo_net::sha256::hex_digest(body.as_bytes());
         let id = note_id(path);
         let title = {
@@ -670,5 +690,15 @@ mod tests {
         fs::write(&path, "not a clippings folder").expect("file");
         assert!(collect_notes(&path).is_err());
         fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn a_note_over_the_readers_open_ceiling_is_refused_during_packing() {
+        assert!(check_note_body_size("Short.md", &"x".repeat(1024)).is_ok());
+        let error = check_note_body_size("Huge.md", &"x".repeat(MAX_NOTE_BODY + 1)).unwrap_err();
+        assert!(
+            error.contains("Huge.md"),
+            "the message should name the offending note: {error}"
+        );
     }
 }
