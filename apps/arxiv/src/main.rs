@@ -629,6 +629,7 @@ impl Arxiv {
         self.ask_place(context, &id);
         self.trouble = None;
         self.truncated = false;
+        self.formulae_as_text = false;
         match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
@@ -667,6 +668,7 @@ impl Arxiv {
             .collect();
         self.page = 0;
         self.truncated = false;
+        self.formulae_as_text = false;
     }
 
     fn subjects(&self, context: &Context) -> Screen {
@@ -982,7 +984,7 @@ impl Arxiv {
         } else if self.formulae_as_text {
             screen = screen.banner(
                 BannerLevel::Info,
-                "Some formulas are shown as text. This paper has more mathematics than the reader can draw.",
+                "Some formulas in the full text are shown as text. This paper has more mathematics than the reader can draw.",
             );
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));
@@ -1342,6 +1344,7 @@ impl Arxiv {
         self.save_place(context);
         self.book.close(context);
         self.truncated = false;
+        self.formulae_as_text = false;
         self.fetched = None;
     }
 }

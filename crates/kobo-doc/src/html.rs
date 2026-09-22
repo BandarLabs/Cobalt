@@ -222,7 +222,7 @@ fn parse_within_noted(source: &str, external_css: &str, allowance: Allowance) ->
         }
     }
     state.words(rest);
-    let formulae_as_text = state.formulae_as_text > 0;
+    let formulae_as_text = state.formulae_as_text;
     (state.finish(), formulae_as_text)
 }
 
@@ -422,8 +422,11 @@ struct State {
     /// The source, not a picture: what to draw rather than the drawing, so
     /// that the parse costs a formula nothing but the note of it.
     formulae: BTreeMap<String, String>,
-    /// How many formulas were left as text because the picture budget was spent.
-    formulae_as_text: u16,
+    /// Whether any formula was left as text because the picture budget was spent.
+    ///
+    /// Nobody counts them. The reader says the page holds more mathematics
+    /// than it can draw, and one formula is enough to make that true.
+    formulae_as_text: bool,
     /// How many more formulae this file may name.
     allowance: Allowance,
     /// The displayed equation being read, once an equation row has opened one.
@@ -517,7 +520,7 @@ impl State {
             builder: Builder::new(),
             equation: None,
             formulae: BTreeMap::new(),
-            formulae_as_text: 0,
+            formulae_as_text: false,
             allowance,
             link: None,
             text: String::new(),
@@ -1058,6 +1061,13 @@ impl State {
         // with nothing to draw it has always looked like.
         if self.allowance.open(self.formulae.len()) && !latex.is_empty() {
             self.formulae.insert(name.clone(), latex);
+        } else if !latex.is_empty() {
+            // An equation that had a form to draw and did not get a picture is
+            // the same fallback the inline and display paths note. Papers that
+            // number their equations arrive almost entirely through here, so
+            // leaving it out meant the reader never heard about the ones the
+            // notice was written for.
+            self.formulae_as_text = true;
         }
         self.builder.push(Block::Picture {
             name,
@@ -1265,6 +1275,22 @@ impl State {
         }
     }
 
+    /// Whether the picture budget is spent, noting a formula left as text.
+    ///
+    /// The note is what the notice is drawn from, so it is only worth making
+    /// when the formula had something to draw in the first place: one with no
+    /// written form would have stayed words whatever the budget said, and
+    /// blaming the ceiling for it would be untrue.
+    fn formula_budget_spent(&mut self, inside: &str) -> bool {
+        if self.allowance.open(self.formulae.len()) {
+            return false;
+        }
+        if attribute(inside, "alttext").is_some() {
+            self.formulae_as_text = true;
+        }
+        true
+    }
+
     /// Sets a formula that stands on its own line as a picture of itself.
     ///
     /// Only a displayed formula: one set into a sentence has to sit on the
@@ -1281,10 +1307,7 @@ impl State {
         if attribute(inside, "display").is_none_or(|display| display != "block") {
             return false;
         }
-        if !self.allowance.open(self.formulae.len()) {
-            if attribute(inside, "alttext").is_some() {
-                self.formulae_as_text = self.formulae_as_text.saturating_add(1);
-            }
+        if self.formula_budget_spent(inside) {
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {
@@ -1316,10 +1339,7 @@ impl State {
         if drawn.trim().is_empty() {
             return false;
         }
-        if !self.allowance.open(self.formulae.len()) {
-            if attribute(inside, "alttext").is_some() {
-                self.formulae_as_text = self.formulae_as_text.saturating_add(1);
-            }
+        if self.formula_budget_spent(inside) {
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {
@@ -2027,6 +2047,32 @@ mod tests {
             Some("x=1"),
             "a label this does not understand was handed to the typesetter"
         );
+    }
+
+    /// The notice exists for papers whose equations are numbered.
+    ///
+    /// Those arrive as equation rows, which drop their picture in a different
+    /// place from the displayed and inline formulas. Noting the fallback in
+    /// only the other two left the reader silent about the papers it was
+    /// written for: pages of mathematics set as words and nothing saying why.
+    #[test]
+    fn numbered_equations_past_the_picture_budget_say_they_are_shown_as_text() {
+        let mut source = String::from("<table class=\"ltx_eqn_table\"><tbody>");
+        for index in 0..=crate::MAX_FORMULA_PICTURES {
+            source.push_str(&format!(
+                "<tr class=\"ltx_eqn_row\">\
+                 <td class=\"ltx_eqn_cell\">\
+                 <math alttext=\"x={index}\" display=\"inline\"><mi>x</mi></math></td>\
+                 </tr>"
+            ));
+        }
+        source.push_str("</tbody></table>");
+        let (document, formulae_as_text) = parse_noting_formula_fallback(&source);
+        assert!(
+            document.formulae.len() <= crate::MAX_FORMULA_PICTURES,
+            "the budget was not reached, so this proves nothing"
+        );
+        assert!(formulae_as_text);
     }
 
     /// A formula that a comma follows does not leave a space in front of it.
