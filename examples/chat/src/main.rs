@@ -258,7 +258,12 @@ impl Chat {
         }
 
         if on_latest && self.view != View::Waiting && self.can_retry() {
-            screen = screen.button(RETRY, "Try again");
+            screen = screen.rows([(
+                RETRY,
+                "Try again".to_owned(),
+                "The last reply did not arrive.".to_owned(),
+                Glyph::Refresh,
+            )]);
         }
         if self.confirming_new {
             screen = screen.confirm(

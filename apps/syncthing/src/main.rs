@@ -240,7 +240,7 @@ impl Sync {
                 (
                     "refresh",
                     "Refresh status".to_owned(),
-                    "Read the runtime-owned Sync status.".to_owned(),
+                    "Check whether Sync has run.".to_owned(),
                     Glyph::Refresh,
                 ),
             ])

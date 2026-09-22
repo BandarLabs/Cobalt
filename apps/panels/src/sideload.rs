@@ -74,6 +74,20 @@ impl Panels {
         }
     }
 
+    pub(super) fn probe_sideload(&mut self, context: &mut Context) {
+        if self.library.is_none()
+            || self.local_load.is_some()
+            || self.import.is_some()
+            || self.pending_open.is_some()
+            || self.shelf_load.is_some()
+        {
+            return;
+        }
+        let mut load = ShelfDownload::new(SIDELOAD).at_most(transfer::MAX_COMIC);
+        load.start(context);
+        self.local_load = Some(load);
+    }
+
     pub(super) fn load_sideload(&mut self, context: &mut Context) {
         if self.library.is_none()
             || self.local_load.is_some()
@@ -112,7 +126,10 @@ impl Panels {
     }
 
     pub(super) fn advance_local_load(&mut self, context: &mut Context, result: &StoreResult) {
-        if self.route != Route::Import {
+        // A look started from the empty shelf keeps Library as the route, so a
+        // missing volume.cbz does not open the import instructions.
+        let quiet = self.route == Route::Library;
+        if self.route != Route::Import && !quiet {
             self.local_load = None;
             return;
         }
@@ -121,8 +138,12 @@ impl Panels {
         };
         match load.advance(context, result) {
             ShelfProgress::Done => {
+                self.route = Route::Import;
                 let bytes = self.local_load.take().expect("active local load").take();
                 self.preview_comic(bytes);
+            }
+            ShelfProgress::Failed(_) if quiet => {
+                self.local_load = None;
             }
             ShelfProgress::Failed(error) => {
                 self.local_load = None;

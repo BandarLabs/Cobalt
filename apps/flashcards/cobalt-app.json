@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
-  "version": "0.2.5",
-  "release_notes": "First launch without a collection now offers a built-in sample deck or walks you through staging one from your computer. Review settings explain how grades are kept in the local review log.",
+  "version": "0.2.6",
+  "release_notes": "First use names the import and stage commands, and no longer offers a second reread button before a collection exists.",
   "glyph": "bookmark",
   "capabilities": []
 }

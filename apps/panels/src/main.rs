@@ -297,13 +297,11 @@ impl Panels {
             return screen.activity("Opening your shelf", None).build();
         }
         if self.library_entries().is_empty() {
-            screen = screen
-                .splash(
-                    Some(Glyph::Reader),
-                    "Your shelf is empty",
-                    "Browse your home library or add a comic from your computer.",
-                )
-                .button("sample-comic", "Try a sample comic");
+            screen = screen.top_bar_action("browse-komga", "Browse").splash(
+                Some(Glyph::Reader),
+                "Your shelf is empty",
+                "Try the sample, or add a comic you already copied with kobo panels push.",
+            );
         } else {
             let pages = self.library_pages(context);
             let page = self.library_page.min(pages.len().saturating_sub(1));
@@ -347,6 +345,13 @@ impl Panels {
                     ("load-sideload", "Add comic"),
                     ("browse-komga", "Browse"),
                     ("show-download", "Download"),
+                ])
+                .build()
+        } else if self.library_entries().is_empty() {
+            screen
+                .action_bar([
+                    ("sample-comic", "Try a sample"),
+                    ("load-sideload", "Add comic"),
                 ])
                 .build()
         } else {
@@ -817,6 +822,9 @@ impl KoboApp for Panels {
                             library.pump(context);
                             self.library = Some(library);
                             self.library_error = None;
+                            if self.library_entries().is_empty() {
+                                self.probe_sideload(context);
+                            }
                         }
                         Err(error) => self.library_error = Some(error.to_string()),
                     }

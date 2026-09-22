@@ -2,7 +2,7 @@
 # Now playing names the sample with the honest firmware note where the sim
 # has no audio backend, and the shelf keeps it afterwards.
 wait-for Audiobooks
-expect Nothing here yet
+expect No audiobooks yet
 clean
 shot audiobook-empty
 tap-id sample
@@ -14,6 +14,6 @@ shot audiobook-playing
 tap back
 wait-for Audiobooks
 expect The Quiet Shelf
-expect-missing Nothing here yet
+expect-missing No audiobooks yet
 clean
 shot audiobook-shelf

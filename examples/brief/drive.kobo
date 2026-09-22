@@ -2,7 +2,7 @@
 # fills the page with the live list. Assertions stay on stable text: the
 # fetch stamp, the source name and the pager, never a story title.
 wait-for Daily brief
-expect Nothing yet
+expect No stories yet
 expect not fetched yet
 clean
 shot brief-empty

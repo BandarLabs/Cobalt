@@ -430,8 +430,8 @@ impl Brief {
             // a tap instead of a page that failed to load.
             screen = screen.splash(
                 Some(Glyph::News),
-                "Nothing yet",
-                "Tap Refresh once the device is online.",
+                "No stories yet",
+                "Refresh when this reader is online.",
             );
         } else if !self.stories.is_empty() {
             // Numbered rather than illustrated: the same note icon beside

@@ -455,6 +455,7 @@ impl Feeds {
                 .primary_button("add", "Add a feed")
                 .build();
         }
+        screen = screen.top_bar_action("search-saved", "Search saved");
         // Clamped against the narrower column the overflow mark leaves, or
         // the longest titles run under the dots.
         let rows: Vec<(String, String)> = self

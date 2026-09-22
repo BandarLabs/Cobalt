@@ -68,9 +68,17 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         }
         Some("ls") => {
             let target = parse_target(&arguments[1..])?;
-            let bytes = read_target(&target, MANIFEST, MAX_MANIFEST, true)?;
-            print_summary(&inspect(&bytes)?);
-            Ok(())
+            match read_target(&target, MANIFEST, MAX_MANIFEST, true) {
+                Ok(bytes) => {
+                    print_summary(&inspect(&bytes)?);
+                    Ok(())
+                }
+                Err(message) if message.contains("No such file") => {
+                    println!("No packs on this shelf yet.");
+                    Ok(())
+                }
+                Err(message) => Err(message),
+            }
         }
         Some("export") => export(&arguments[1..]),
         _ => Err(USAGE.into()),

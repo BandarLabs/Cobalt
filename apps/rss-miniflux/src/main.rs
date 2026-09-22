@@ -451,7 +451,6 @@ impl Reader {
         }));
         screen
             .secondary("A feed is added to your Miniflux account after you choose it.")
-            .button("back", "Back")
             .build()
     }
 

@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
-  "version": "0.3.2",
-  "release_notes": "EPUB download and reading verified end to end against a local archive fixture.",
+  "version": "0.3.3",
+  "release_notes": "A work with no known chapter count says it is still updating, instead of printing a question mark.",
   "glyph": "book",
   "capabilities": [
     "network"

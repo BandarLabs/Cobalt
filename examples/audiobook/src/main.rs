@@ -295,8 +295,10 @@ impl Audiobook {
                 screen
                     .error_state("The shelf could not be read, so what is saved cannot be listed.")
             } else {
-                screen.empty_state(
-                    "No audiobooks yet. One made here stays on the reader and plays offline.",
+                screen.splash(
+                    Some(Glyph::Headphones),
+                    "No audiobooks yet",
+                    "One made here stays on the reader and plays offline.",
                 )
             };
             return screen
