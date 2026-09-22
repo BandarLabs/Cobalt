@@ -47,13 +47,12 @@ pub struct Work {
 
 impl Work {
     pub fn chapters_label(&self) -> String {
-        format!(
-            "{}/{}{}",
-            self.chapters,
-            self.total_chapters
-                .map_or_else(|| "?".to_owned(), |total| total.to_string()),
-            if self.complete { " complete" } else { " WIP" }
-        )
+        match (self.total_chapters, self.complete) {
+            (Some(total), true) => format!("{}/{} complete", self.chapters, total),
+            (Some(total), false) => format!("{}/{} WIP", self.chapters, total),
+            (None, true) => format!("{} chapters, complete", self.chapters),
+            (None, false) => format!("{} chapters, still updating", self.chapters),
+        }
     }
 
     pub const fn downloaded(&self) -> bool {
@@ -770,7 +769,7 @@ mod tests {
         );
         assert_eq!(work.rating, "Teen And Up Audiences");
         assert_eq!(work.warnings, "No Archive Warnings Apply");
-        assert_eq!(work.chapters_label(), "12/? WIP");
+        assert_eq!(work.chapters_label(), "12 chapters, still updating");
         assert!(work.epub.ends_with(".epub?updated_at=1"));
     }
 
@@ -787,7 +786,7 @@ mod tests {
             assert!(!field.ends_with(':'), "a label leaked into {field}");
         }
         assert_eq!(work.updated, "2026-09-01");
-        assert_eq!(work.chapters_label(), "12/? WIP");
+        assert_eq!(work.chapters_label(), "12 chapters, still updating");
     }
 
     #[test]

@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-  "version": "0.1.5",
-  "release_notes": "Add a habit is offered on the empty Today screen, Stats sums up the week, Settings states the streak rules and exports a backup for your paired computer, and every habit has an edit screen: rename, schedule, archive.",
+  "version": "0.1.6",
+  "release_notes": "Skip sits in a full-width row under the habit, lined up with the checklist instead of floating in the middle.",
   "glyph": "check",
   "capabilities": []
 }

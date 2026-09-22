@@ -4,8 +4,8 @@
   "short_label": "RSS Reader",
   "summary": "Read your Miniflux feeds anywhere.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "version": "0.1.3",
+  "release_notes": "The directory uses the system back control instead of a second Back button.",
   "glyph": "rss",
   "capabilities": [
     "network"

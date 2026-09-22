@@ -148,8 +148,9 @@ impl Frame {
                 .splash(
                     Some(Glyph::App),
                     "Your frame is empty",
-                    "On your computer, run `kobo frame init --device IP`, then `kobo frame push PHOTO_OR_FOLDER --device IP`.",
+                    "On your computer, run kobo frame init, then kobo frame push with a photo. Then check again here.",
                 )
+                .primary_button("reload-shelf", "Check for photos")
                 .build();
         }
         let index = self.settings.position % self.photos.len().max(1) + 1;
@@ -400,6 +401,23 @@ impl Frame {
         context.store().save(STATE, self.settings.encode());
     }
 
+    fn reload_shelf(&mut self, context: &mut Context) {
+        if self.manifest_load.is_some() {
+            return;
+        }
+        self.abandon_photo_load(context);
+        self.photos.clear();
+        self.picture = None;
+        self.notice = None;
+        self.startup.manifest_loaded = false;
+        self.startup.started = false;
+        self.view = View::Home;
+        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
+        manifest.start(context);
+        self.manifest_load = Some(manifest);
+        self.show(context);
+    }
+
     fn start_when_ready(&mut self, context: &mut Context) {
         if self.startup.state_loaded && self.startup.manifest_loaded && !self.startup.started {
             self.startup.started = true;
@@ -633,6 +651,8 @@ impl KoboApp for Frame {
             } else {
                 context.exit();
             }
+        } else if action == action_id("reload-shelf") {
+            self.reload_shelf(context);
         } else if action == action_id(SHOW) {
             if let Some(id) = self.selected().map(|photo| photo.id.clone()) {
                 self.unreadable.remove(&id);

@@ -2,5 +2,6 @@
 expect Frame
 expect Your frame is empty
 expect kobo frame
+expect Check for photos
 clean
 shot empty

@@ -8,9 +8,11 @@ are outside the current supported formats; obtain a CBZ copy of a CBR comic.
 
 ## Add and read a local comic
 
-Choose **Try a sample comic** to read the bundled four-page *A small garden*
+Choose **Try a sample** to read the bundled four-page *A small garden*
 offline. Its artwork and text are original to Cobalt, and its import follows the
-same confirmation and receipt flow as any other CBZ.
+same confirmation and receipt flow as any other CBZ. A `volume.cbz` already on
+the shelf, including one placed with `kobo panels push`, is previewed when the
+shelf is empty. A missing file stays on the empty shelf.
 
 To add your own file, choose **Add comic** for the USB guide. Connect the reader
 by USB, open its drive on your computer, and copy your CBZ as `volume.cbz` under

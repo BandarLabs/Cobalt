@@ -1230,10 +1230,9 @@ fn first_use_screen(menu_open: bool) -> Screen {
         .heading("No collection yet")
         .text("Start with the sample deck, or stage your own collection from your computer.")
         .text(
-            "With Cobalt on your computer: kobo flashcards import deck.apkg --merge              collection.cobfc, then kobo flashcards stage collection.cobfc.",
+            "On your computer: kobo flashcards import deck.apkg --merge collection.cobfc, then kobo flashcards stage collection.cobfc.",
         )
         .buttons([("sample", "Start with the sample")])
-        .bottom_action("retry", "Read collection again")
         .build()
 }
 

@@ -306,7 +306,7 @@ impl Stand {
                 .splash(
                     Some(Glyph::Note),
                     "Your stand is empty",
-                    "On your computer, run `kobo musicstand init --device IP`, then `kobo musicstand push SCORE.pdf --device IP`.",
+                    "On your computer, run kobo musicstand init, then kobo musicstand push with the score.",
                 )
                 .build();
         }

@@ -82,6 +82,27 @@ impl Birds {
         };
         let age = unix_seconds().saturating_sub(snapshot.generated_at);
         let mut screen = ScreenBuilder::new("birds-home");
+        if self.menu_open {
+            let freshness = if age >= 24 * 60 * 60 {
+                format!("Stale - last update was {} ago", age_label(age))
+            } else if age < 60 {
+                "Updated just now".into()
+            } else {
+                format!("Updated {} ago", age_label(age))
+            };
+            screen = screen.top_bar("Birds").modal("Birds", |overlay| {
+                let overlay =
+                    overlay.facts([("Status", freshness), ("Source", snapshot.source.clone())]);
+                if let Some(notice) = &self.notice {
+                    overlay
+                        .banner(BannerLevel::Attention, notice)
+                        .buttons([(REFRESH, "Refresh"), (EXIT, "Exit")])
+                } else {
+                    overlay.buttons([(REFRESH, "Refresh"), (EXIT, "Exit")])
+                }
+            });
+            return screen.build();
+        }
         if let Some(picture) = self.picture {
             // Fugleramme renders the names into the plate. The art is the
             // screen: no app bar over it and no margin around it, so the
@@ -101,26 +122,6 @@ impl Birds {
             screen = screen
                 .splash(Some(Glyph::App), "The collage needs a refresh", &detail)
                 .buttons([(REFRESH, "Refresh"), (EXIT, "Exit")]);
-        }
-        if self.menu_open {
-            let freshness = if age >= 24 * 60 * 60 {
-                format!("Stale - last update was {} ago", age_label(age))
-            } else if age < 60 {
-                "Updated just now".into()
-            } else {
-                format!("Updated {} ago", age_label(age))
-            };
-            screen = screen.modal("Birds", |overlay| {
-                let overlay =
-                    overlay.facts([("Status", freshness), ("Source", snapshot.source.clone())]);
-                if let Some(notice) = &self.notice {
-                    overlay
-                        .banner(BannerLevel::Attention, notice)
-                        .buttons([(REFRESH, "Refresh"), (EXIT, "Exit")])
-                } else {
-                    overlay.buttons([(REFRESH, "Refresh"), (EXIT, "Exit")])
-                }
-            });
         }
         // Fugleramme renders the names into the plate, so a bar across the top
         // of it is somebody else's furniture laid over the art. Only while

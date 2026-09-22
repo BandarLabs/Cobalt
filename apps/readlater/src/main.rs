@@ -342,7 +342,6 @@ impl ReadLater {
                 },
                 "Sync Wallabag to add some.",
             )
-            .button("sync", "Sync")
             .build()
         } else {
             page.rows(visible.into_iter().map(|(i, e)| {
@@ -867,9 +866,11 @@ impl KoboApp for ReadLater {
                 }
             }
             (_, TaskOutcome::Failed(_)) => {
-                self.notice = Some(
-                    "Off the air. Cached articles remain readable; join Wi-Fi to sync.".to_owned(),
-                );
+                self.notice = Some(if self.entries.is_empty() {
+                    "No network. Join Wi-Fi, then sync.".to_owned()
+                } else {
+                    "Off the air. Saved articles stay readable. Join Wi-Fi to sync.".to_owned()
+                });
             }
             (_, TaskOutcome::Cancelled) => self.notice = Some("Sync cancelled.".to_owned()),
         }

@@ -12,7 +12,6 @@ use model::{
 use std::process::ExitCode;
 const HABITS: &str = "habits-v1";
 const ROWS_PER_PAGE: usize = 3;
-const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EntryMode {
     Add,
@@ -133,9 +132,6 @@ impl Habits {
     }
     fn display_name(name: &str) -> String {
         Self::shortened_name(name, MAX_HABIT_NAME_CHARS)
-    }
-    fn action_name(name: &str) -> String {
-        Self::shortened_name(name, ACTION_NAME_CHARS)
     }
     fn shortened_name(name: &str, maximum: usize) -> String {
         let mut display: String = name.chars().take(maximum).collect();
@@ -264,7 +260,7 @@ impl Habits {
                                 done,
                             )
                         }))
-                        .buttons(
+                        .rows(
                             visible
                                 .iter()
                                 .filter(|(_, h)| {
@@ -273,7 +269,9 @@ impl Habits {
                                 .map(|(i, h)| {
                                     (
                                         format!("skip-{i}"),
-                                        format!("Skip {}", Self::action_name(&h.name)),
+                                        format!("Skip {}", Self::display_name(&h.name)),
+                                        "A skipped day keeps the streak".to_owned(),
+                                        Glyph::Close,
                                     )
                                 })
                                 .take(3),
