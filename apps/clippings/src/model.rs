@@ -7,7 +7,16 @@ use kobo_json::{ObjectBuilder, Value};
 /// notes; each note's body is its own shelf blob, fetched only when opened.
 pub const MANIFEST: &str = "manifest.v1";
 pub const MAX_MANIFEST: usize = 4 * 1024 * 1024;
-pub const MAX_BODY: usize = 4 * 1024 * 1024;
+/// Bounds both the shelf fetch and, through `md::render`'s ceiling, the
+/// rendered text `paginate_reading` measures for the open note. Even
+/// chunked (see `Clippings::extend_note_pages`), the render step itself is
+/// still one synchronous call sized to the whole body -- measured on host
+/// at 4 * 1024 * 1024 bytes, ~14ms; on the device's slower CPU that is close
+/// enough to the 250ms lifecycle-callback budget on its own, before a
+/// single page has been measured, that a much smaller ceiling is worth
+/// keeping. 1 MiB of Markdown is already a far longer article than
+/// `kobo clippings push` is likely to ever see in practice.
+pub const MAX_BODY: usize = 1024 * 1024;
 pub const PENDING_KEY: &str = "clippings-pending-v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
