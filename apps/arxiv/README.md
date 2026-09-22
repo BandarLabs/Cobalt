@@ -1,7 +1,12 @@
-# arXiv
+# Preprints
 
 Browse a subject's newest preprints or search the archive, and read what comes
 back on the panel rather than downloading it.
+
+Preprints is an unofficial reader built on the public arXiv export API. It is
+not affiliated with, endorsed by, or connected to arXiv. arXiv asks that
+independent projects not carry its name, which is why this app does not.
+Thank you to arXiv for use of its open access interoperability.
 
 <img width="300" src="screenshots/listing.png" alt="The Artificial Intelligence subject listing, three preprints with authors and dates, newest first"> <img width="300" src="screenshots/abstract.png" alt="A paper's abstract, set for reading">
 

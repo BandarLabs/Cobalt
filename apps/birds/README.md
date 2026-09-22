@@ -1,5 +1,8 @@
 # Birds
 
+Birds is unofficial and is not affiliated with or endorsed by the BirdNET-Go or
+Fugleramme projects.
+
 An offline Kobo viewer for the birds [BirdNET-Go](https://github.com/tphakala/birdnet-go) hears on your computer's microphone, drawn as [Fugleramme](https://github.com/arnegiacomo/fugleramme)'s labelled plates. The reader has no microphone and never runs the model.
 
 <p>

@@ -94,15 +94,32 @@
 <main class="wrap" data-app-id="panels" data-minimum-cobalt-version="0.3.18">
   <div class="app-hero">
     <div class="app-copy">
-      <p class="eyebrow">Kobo app</p>
+      <p class="eyebrow">Reading</p>
       <h1>Panels</h1>
       <p class="summary">Enjoy your comics on Kobo with clear page controls and support for Komga libraries.</p>
-      <div class="meta"><span>Version 0.1.3</span><span>network</span></div>
+      <dl class="facts">
+        <div><dt>Version</dt><dd>0.1.3</dd></div>
+        <div><dt>Permissions</dt><dd>network</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+      </dl>
+      <a class="cta" href="#setup-panel">Install on your Kobo</a>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/panels.png" width="1072" height="1448" alt="Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4.">
     </figure>
   </div>
+  <section class="gallery" aria-label="Panels screenshots">
+    <div class="strip">
+      <figure><img src="../../media/site/apps/panels/download-recovery.png" loading="lazy" alt="Panels on a Kobo Clara BW: download recovery"></figure>
+      <figure><img src="../../media/site/apps/panels/import-guide.png" loading="lazy" alt="Panels on a Kobo Clara BW: import guide"></figure>
+      <figure><img src="../../media/site/apps/panels/library.png" loading="lazy" alt="Panels on a Kobo Clara BW: library"></figure>
+      <figure><img src="../../media/site/apps/panels/reader.png" loading="lazy" alt="Panels on a Kobo Clara BW: reader"></figure>
+    </div>
+  </section>
+  <section class="whats-new">
+    <h2>New in 0.1.3</h2>
+    <p>See comic covers and saved reading progress, import verified CBZ copies, connect Komga on your reader, and recover interrupted downloads. Requires Cobalt 0.3.12.</p>
+  </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
@@ -116,7 +133,7 @@
     <div class="get-cobalt-copy">
       <p class="eyebrow">Do not have Cobalt yet?</p>
       <h2>Install Cobalt directly from your browser</h2>
-      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi, with no cable.</p>
+      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi from the Cobalt Apps Catalog, with no cable.</p>
       <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
     </div>
     <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
@@ -124,7 +141,7 @@
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, then <strong>Install links</strong>. Scan the QR code, or enter the pairing code and verification key shown there.</p>
+    <p>On your Kobo, open <strong>App Store</strong> and tap the globe in the top bar. Choose <strong>Link browser</strong>, then scan the QR code or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>

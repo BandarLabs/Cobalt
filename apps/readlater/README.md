@@ -1,6 +1,7 @@
 # Read Later
 
-A Wallabag reading app for the Kobo. Save links from Wallabag's phone or
+An unofficial Wallabag reading app for the Kobo, not affiliated with or
+endorsed by the Wallabag project. Save links from Wallabag's phone or
 browser tools, then sync their extracted articles to the reader.
 
 Fetched article bodies survive metadata refreshes during the current session.

@@ -117,7 +117,7 @@ utilities.
 <td valign="top"><a href="examples/tictactoe/README.md"><img width="230" src="examples/tictactoe/screenshots/game.png" alt="A completed game of tic-tac-toe"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>A two-player touch game using partial refreshes for individual cells.</td>
 </tr>
 <tr>
-<td valign="top"><a href="apps/arxiv/README.md"><img width="230" src="apps/arxiv/screenshots/listing.png" alt="The newest machine learning preprints on a Kobo Clara BW, newest first"></a><br><b><a href="apps/arxiv/README.md">arXiv Reader</a></b><br>Browses and searches preprints, keeps them for offline reading, and sets their mathematics as type.</td>
+<td valign="top"><a href="apps/arxiv/README.md"><img width="230" src="apps/arxiv/screenshots/listing.png" alt="The newest machine learning preprints on a Kobo Clara BW, newest first"></a><br><b><a href="apps/arxiv/README.md">Preprints</a></b><br>Browses and searches arXiv preprints, keeps them for offline reading, and sets their mathematics as type.</td>
 <td valign="top"><a href="apps/morse/README.md"><img width="230" src="apps/morse/screenshots/sending.png" alt="The letter S filling the panel while the beacon sends it"></a><br><b><a href="apps/morse/README.md">Morse</a></b><br>Sends a typed message on the front light, a letter at a time, drawn across the panel as it goes.</td>
 </tr>
 <tr>
@@ -126,6 +126,91 @@ utilities.
 <td></td>
 </tr>
 </table>
+
+### Every app in the Store
+
+Every application published to the Cobalt App Store, generated from the same
+manifests the app pages come from by `tools/generate-app-pages.mjs`.
+
+<!-- store-apps:start -->
+<table>
+<tr>
+<td width="33%" valign="top"><a href="apps/chat/README.md"><img width="230" src="docs/media/site/apps/chat.png" alt="An answer displayed for touch-friendly reading on a Kobo"></a><br><b><a href="apps/chat/README.md">AI Command Center</a></b><br>Ask a question, then read and navigate the answer with touch controls.</td>
+<td width="33%" valign="top"><a href="apps/audiobook/README.md"><img width="230" src="docs/media/site/apps/audiobook.png" alt="An audiobook player with cover art and playback controls on a Kobo"></a><br><b><a href="apps/audiobook/README.md">Audiobook Studio</a></b><br>Turn a topic into an original narrated audiobook and listen on your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/backgammon/README.md"><img width="230" src="docs/media/site/apps/backgammon.png" alt="Backgammon board on a Kobo after Black opened with 4 and 6, with dice, cube and match score."></a><br><b><a href="apps/backgammon/README.md">Backgammon</a></b><br>Play complete solo or pass-and-play backgammon on one Kobo.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/birds/README.md"><img width="230" src="docs/media/site/apps/birds.png" alt="A labelled collage of public-domain bird plates filling a Kobo screen."></a><br><b><a href="apps/birds/README.md">Birds</a></b><br>Show the birds heard by BirdNET-Go on your Mac or Linux computer.</td>
+<td width="33%" valign="top"><a href="apps/gallery/README.md"><img width="230" src="docs/media/site/apps/components.png" alt="Cobalt typography and interface components on a Kobo"></a><br><b><a href="apps/gallery/README.md">Components</a></b><br>See every Cobalt UI component on the device in one reference app.</td>
+<td width="33%" valign="top"><a href="apps/crossword/README.md"><img width="230" src="docs/media/site/apps/crossword.png" alt="Crossword grid on a Kobo with the first answer filled in and numbered cells."></a><br><b><a href="apps/crossword/README.md">Crossword</a></b><br>Solve a compact touch-first crossword with clue navigation.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/brief/README.md"><img width="230" src="docs/media/site/apps/brief.png" alt="A numbered daily news brief on a Kobo"></a><br><b><a href="apps/brief/README.md">Daily Brief</a></b><br>Build a daily news brief in the background while you use other apps.</td>
+<td width="33%" valign="top"><a href="apps/deck/README.md"><img width="230" src="docs/media/site/apps/deck.png" alt="Deck paired with a computer, showing Test, Format and Deploy command pads."></a><br><b><a href="apps/deck/README.md">Deck</a></b><br>Turn your Kobo into a remote control for your computer.</td>
+<td width="33%" valign="top"><a href="apps/rss-miniflux/README.md"><img width="230" src="docs/media/site/apps/rss-miniflux.png" alt="A Miniflux article open on a Kobo with text-size and front-light controls."></a><br><b><a href="apps/rss-miniflux/README.md">Digest</a></b><br>Read your Miniflux feeds anywhere.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/fanshelf/README.md"><img width="230" src="docs/media/site/apps/fanshelf.png" alt="A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."></a><br><b><a href="apps/fanshelf/README.md">Fanshelf</a></b><br>Save public AO3 works to a shelf made for offline reading.</td>
+<td width="33%" valign="top"><a href="apps/rss/README.md"><img width="230" src="docs/media/site/apps/feeds.png" alt="Subscribed feeds and articles in the Feeds app on a Kobo"></a><br><b><a href="apps/rss/README.md">Feeds</a></b><br>Follow feeds, search saved articles and read offline with images.</td>
+<td width="33%" valign="top"><a href="apps/fieldbook/README.md"><img width="230" src="docs/media/site/apps/fieldbook.png" alt="Fieldbook outing screen tallying an American Robin from a pushed field pack."></a><br><b><a href="apps/fieldbook/README.md">Fieldbook</a></b><br>Log bird sightings anywhere and build your life list.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/flashcards/README.md"><img width="230" src="docs/media/site/apps/flashcards.png" alt="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."></a><br><b><a href="apps/flashcards/README.md">Flashcards</a></b><br>Review flashcards anywhere, even without Wi-Fi.</td>
+<td width="33%" valign="top"><a href="apps/frame/README.md"><img width="230" src="docs/media/site/apps/frame.png" alt="A full-area monochrome photograph in Frame on a Kobo Clara BW."></a><br><b><a href="apps/frame/README.md">Frame</a></b><br>Show computer-pushed monochrome photos in awake or scheduled slideshow modes.</td>
+<td width="33%" valign="top"><a href="apps/grimoire/README.md"><img width="230" src="docs/media/site/apps/grimoire.png" alt="Grimoire initiative order showing the active combatant and round counter on a Kobo."></a><br><b><a href="apps/grimoire/README.md">Grimoire</a></b><br>Browse offline SRD references and manage tabletop combat.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/gutenbird/README.md"><img width="230" src="docs/media/site/apps/gutenbird.png" alt="A shelf of books from an OPDS library on a Kobo"></a><br><b><a href="apps/gutenbird/README.md">Gutenbird</a></b><br>Browse OPDS libraries and read their books on your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/habits/README.md"><img width="230" src="docs/media/site/apps/habits.png" alt="Habits today screen on a Kobo Clara BW, with daily and weekday streak tasks."></a><br><b><a href="apps/habits/README.md">Habits</a></b><br>Track daily and weekday habits with local streaks.</td>
+<td width="33%" valign="top"><a href="apps/hn/README.md"><img width="230" src="docs/media/site/apps/hackernews.png" alt="A ranked list of Hacker News stories on a Kobo"></a><br><b><a href="apps/hn/README.md">Hacker News</a></b><br>Read Top, New, Ask, and Show stories with complete comment threads.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/homepanel/README.md"><img width="230" src="docs/media/site/apps/homepanel.png" alt="Home Panel tile grid on a Kobo showing four Home Assistant tiles with the last refresh time."></a><br><b><a href="apps/homepanel/README.md">Home Panel</a></b><br>Control saved Home Assistant tiles from a low-power panel.</td>
+<td width="33%" valign="top"><a href="apps/inkling/README.md"><img width="230" src="docs/media/site/apps/inkling.png" alt="A solved Inkling five-letter daily puzzle with grayscale shape feedback."></a><br><b><a href="apps/inkling/README.md">Inkling</a></b><br>Solve a fresh five-letter puzzle each day.</td>
+<td width="33%" valign="top"><a href="apps/kitchencard/README.md"><img width="230" src="docs/media/site/apps/kitchencard.png" alt="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."></a><br><b><a href="apps/kitchencard/README.md">Kitchen Card</a></b><br>Keep Mealie recipes handy in a counter-friendly cooking view.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/calibre-web/README.md"><img width="230" src="docs/media/site/apps/calibre-web.png" alt="A book from a calibre-web library open on a Kobo, with text-size and front-light controls and the page count."></a><br><b><a href="apps/calibre-web/README.md">Library</a></b><br>Browse and read books from your calibre-web library.</td>
+<td width="33%" valign="top"><a href="apps/lichess/README.md"><img width="230" src="docs/media/site/apps/lichess.png" alt="Lichess on Kobo with Account/Games and Puzzles tiles plus rapid and classical time controls."></a><br><b><a href="apps/lichess/README.md">Lichess</a></b><br>Play Lichess games, challenge players, solve puzzles, or play offline.</td>
+<td width="33%" valign="top"><a href="apps/logicpack/README.md"><img width="230" src="docs/media/site/apps/logicpack.png" alt="Logic Pack's Minesweeper board after a revealed cell and contradiction check."></a><br><b><a href="apps/logicpack/README.md">Logic Pack</a></b><br>Play four familiar logic games offline.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/magnet/README.md"><img width="230" src="docs/media/site/apps/magnet.png" alt="The Kobo hall sensor responding to a magnet"></a><br><b><a href="apps/magnet/README.md">Magnet</a></b><br>Find the hall sensor behind the bezel and watch it respond to a magnet.</td>
+<td width="33%" valign="top"><a href="apps/morse/README.md"><img width="230" src="docs/media/site/apps/morse.png" alt="A letter filling the Kobo screen while the front light sends Morse code"></a><br><b><a href="apps/morse/README.md">Morse</a></b><br>Type a message and send it in Morse code with the front light.</td>
+<td width="33%" valign="top"><a href="apps/musicstand/README.md"><img width="230" src="docs/media/site/apps/musicstand.png" alt="Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."></a><br><b><a href="apps/musicstand/README.md">Music Stand</a></b><br>Read music scores with setlists and half-page turns.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/needles/README.md"><img width="230" src="docs/media/site/apps/needles.png" alt="Needles pattern screen with row and repeat counters and a large +1 row button."></a><br><b><a href="apps/needles/README.md">Needles</a></b><br>Count rows, browse Ravelry collections, and read your synced patterns offline.</td>
+<td width="33%" valign="top"><a href="apps/nonograms/README.md"><img width="230" src="docs/media/site/apps/nonograms.png" alt="Actual Nonograms simulator capture showing a selected square and its matching row and column clues."></a><br><b><a href="apps/nonograms/README.md">Nonograms</a></b><br>Solve 18 original picture puzzles with attached clues, saved undo and larger grids.</td>
+<td width="33%" valign="top"><a href="apps/panels/README.md"><img width="230" src="docs/media/site/apps/panels.png" alt="Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4."></a><br><b><a href="apps/panels/README.md">Panels</a></b><br>Read comics added from your computer or Komga library.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/paperterm/README.md"><img width="230" src="docs/media/site/apps/paperterm.png" alt="Paperterm sharing a real laptop terminal in portrait, with its keyboard open on a Clara BW simulator."></a><br><b><a href="apps/paperterm/README.md">Paperterm</a></b><br>Pair with a computer to mirror a terminal session on e-ink.</td>
+<td width="33%" valign="top"><a href="apps/parlor/README.md"><img width="230" src="docs/media/site/apps/parlor.png" alt="Reversi opening board showing four legal moves and touch controls."></a><br><b><a href="apps/parlor/README.md">Parlor</a></b><br>Play touch-first Reversi together on one Kobo.</td>
+<td width="33%" valign="top"><a href="apps/parser/README.md"><img width="230" src="docs/media/site/apps/parser.png" alt="Parser's book-like transcript after taking a brass lamp and entering the garden."></a><br><b><a href="apps/parser/README.md">Parser</a></b><br>Play an original interactive story without Wi-Fi.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/post/README.md"><img width="230" src="docs/media/site/apps/post.png" alt="Post inbox showing completed Hermes letters, newest first."></a><br><b><a href="apps/post/README.md">Post</a></b><br>Read and reply to letters from Hermes.</td>
+<td width="33%" valign="top"><a href="apps/arxiv/README.md"><img width="230" src="docs/media/site/apps/arxiv.png" alt="The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"></a><br><b><a href="apps/arxiv/README.md">Preprints</a></b><br>Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/pubquiz/README.md"><img width="230" src="docs/media/site/apps/pubquiz.png" alt="Pub Quiz pass-around question with four large answer choices for Ada."></a><br><b><a href="apps/pubquiz/README.md">Pub Quiz</a></b><br>Play offline solo or pass-around trivia rounds.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/readlater/README.md"><img width="230" src="docs/media/site/apps/readlater.png" alt="Read Later setup screen showing Wallabag credential instructions."></a><br><b><a href="apps/readlater/README.md">Read Later</a></b><br>Read your Wallabag articles anywhere.</td>
+<td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/zotero-reader/README.md"><img width="230" src="docs/media/site/apps/zotero-reader.png" alt="Reading a paper with structured layout and Zotero metadata on a Kobo"></a><br><b><a href="apps/zotero-reader/README.md">Stacks</a></b><br>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/sudoku/README.md"><img width="230" src="docs/media/site/apps/sudoku.png" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"></a><br><b><a href="apps/sudoku/README.md">Sudoku</a></b><br>Play 36 original Sudoku puzzles with pencil notes, undo and saved games.</td>
+<td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders showing receive-only vault, frame, books, and send-only out."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Choose folders and a battery-friendly sync schedule.</td>
+<td width="33%" valign="top"><a href="apps/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="apps/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
+</tr>
+<tr>
+<td width="33%" valign="top"><a href="apps/todo/README.md"><img width="230" src="docs/media/site/apps/todo.png" alt="A to-do list with completed items on a Kobo"></a><br><b><a href="apps/todo/README.md">Todo</a></b><br>Keep a simple to-do list that stays on your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/vault/README.md"><img width="230" src="docs/media/site/apps/vault.png" alt="Vault home on a Kobo with four synced notes and Browse, Tags, Recent and Search rows."></a><br><b><a href="apps/vault/README.md">Vault</a></b><br>Browse your notes by folder, tag, link, and backlink.</td>
+<td width="33%" valign="top"><a href="apps/verses/README.md"><img width="230" src="docs/media/site/apps/verses.png" alt="Verses displaying a public-domain daily poem in a spacious Kobo reading layout."></a><br><b><a href="apps/verses/README.md">Verses</a></b><br>Read a public-domain poem each day.</td>
+</tr>
+</table>
+<!-- store-apps:end -->
 
 ### Suggest an app
 

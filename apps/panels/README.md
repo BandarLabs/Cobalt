@@ -1,5 +1,8 @@
 # Panels
 
+Panels is an unofficial client and is not affiliated with or endorsed by the
+Komga project.
+
 Panels reads local CBZ comics and catalogs from your own Komga library. Comic
 archive inspection, page decoding and reading controls are shared Cobalt
 components. ZIP decoding uses the pinned MIT-licensed `zip` crate with default

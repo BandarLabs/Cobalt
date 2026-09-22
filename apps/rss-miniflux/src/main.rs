@@ -288,7 +288,7 @@ impl Reader {
 
     fn shelf_prefix(&self, notice: Option<&str>) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("rss-miniflux")
-            .top_bar("RSS Reader")
+            .top_bar("Digest")
             .top_bar_glyph("sync", "Sync", Glyph::Refresh)
             .top_bar_glyph("settings", "Settings", Glyph::Settings)
             .tabs(
@@ -417,7 +417,7 @@ impl Reader {
 
     fn settings(&self) -> Screen {
         ScreenBuilder::new("rss-miniflux")
-            .top_bar("RSS Reader settings")
+            .top_bar("Digest settings")
             .field("server", &self.server, "https://miniflux.example")
             .field("credential", &self.credential, "miniflux")
             .secondary(
@@ -477,7 +477,7 @@ impl Reader {
             };
             context.set_screen(
                 ScreenBuilder::new("rss-miniflux")
-                    .top_bar("RSS Reader settings")
+                    .top_bar("Digest settings")
                     .typed(&self.keyboard, prompt)
                     .keyboard(&self.keyboard, "Save")
                     .build()
@@ -487,7 +487,7 @@ impl Reader {
         }
         let screen = match view {
             View::Shelf if !self.configured() => ScreenBuilder::new("rss-miniflux")
-                .top_bar("RSS Reader")
+                .top_bar("Digest")
                 .splash(
                     Some(Glyph::Rss),
                     "Connect Miniflux",
