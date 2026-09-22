@@ -1,16 +1,21 @@
 mod model;
 use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::keyboard::{TextEntry, Typing};
+use kobo_sdk::ShelfDownload;
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreError,
+    StoreResult,
 };
 #[cfg(test)]
 use model::decode;
 use model::{
-    canonical_name, decode_with_blank_names, encode, Habit, Schedule, MAX_HABIT_NAME_CHARS,
+    canonical_name, decode_with_blank_names, encode, merge, Habit, Schedule, MAX_HABIT_NAME_CHARS,
 };
 use std::process::ExitCode;
 const HABITS: &str = "habits-v1";
+/// How large a backup this reader will read back in. A year of daily habits is
+/// a few kilobytes, so this is room to spare rather than a limit anybody meets.
+const MAX_BACKUP_BYTES: usize = 64 * 1024;
 const ROWS_PER_PAGE: usize = 3;
 const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,17 +51,26 @@ impl Page {
         ]
     }
 }
+enum Import {
+    Choose,
+    Confirm(Vec<Habit>),
+}
+
 struct Habits {
     items: Vec<Habit>,
     loaded: bool,
     page: Page,
     today_page: usize,
     manage_page: usize,
+    import_page: usize,
     streaks_page: usize,
     entry: TextEntry,
     entry_mode: EntryMode,
     editing: Option<usize>,
     export: Option<Export>,
+    import: Option<Import>,
+    import_files: Vec<String>,
+    import_read: Option<ShelfDownload>,
     notice: Option<String>,
     loading: bool,
     save_in_flight: bool,
@@ -70,11 +84,15 @@ impl Default for Habits {
             page: Page::Today,
             today_page: 0,
             manage_page: 0,
+            import_page: 0,
             streaks_page: 0,
             entry: TextEntry::new().opened_by("add"),
             entry_mode: EntryMode::Add,
             editing: None,
             export: None,
+            import: None,
+            import_files: Vec::new(),
+            import_read: None,
             notice: None,
             loading: false,
             save_in_flight: false,
@@ -175,11 +193,17 @@ impl Habits {
         }
     }
     fn owns_back(&self) -> bool {
-        self.export.is_some() || self.entry.is_open() || self.back_target().is_some()
+        self.export.is_some()
+            || self.import.is_some()
+            || self.entry.is_open()
+            || self.back_target().is_some()
     }
     fn go_back(&mut self) {
         if self.export.is_some() {
             self.export = None;
+        } else if self.import.is_some() {
+            self.import = None;
+            self.import_read = None;
         } else if self.entry.is_open() {
             self.entry.close();
         } else if let Some(page) = self.back_target() {
@@ -194,6 +218,9 @@ impl Habits {
     fn screen(&self) -> Screen {
         if let Some(export) = &self.export {
             return export.screen();
+        }
+        if let Some(import) = &self.import {
+            return self.import_screen(import);
         }
         if self.entry.is_open() {
             let submit = match self.entry_mode {
@@ -400,11 +427,135 @@ impl Habits {
                     )])
                     .text("A missed day breaks a streak.")
                     .text("A skipped day keeps it.")
-                    .text("Habits never connect or upload your completions.")
-                    .button("backup", "Export a backup");
+                    .text("Completions never leave this reader.")
+                    .button("backup", "Export a backup")
+                    .button("import-backup", "Import a backup");
             }
         }
         s.build()
+    }
+    fn handle_entry(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        let Some(event) = self.entry.handle(a) else {
+            return false;
+        };
+        if let Typing::Submitted(name) = event {
+            if let Some(name) = canonical_name(&name) {
+                match self.entry_mode {
+                    EntryMode::Add => self.items.push(Habit::new(name)),
+                    EntryMode::Rename => {
+                        if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                            habit.name = name;
+                        }
+                    }
+                }
+                self.save(cx);
+            } else {
+                self.notice = Some(format!(
+                    "Habit names must be 1 to {MAX_HABIT_NAME_CHARS} characters. Nothing was added."
+                ));
+            }
+            self.entry_mode = EntryMode::Add;
+        }
+        self.show(cx);
+        true
+    }
+    fn handle_import(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if a == action_id("import-backup") {
+            self.export = None;
+            self.import = Some(Import::Choose);
+            self.import_files.clear();
+            self.import_read = None;
+            self.notice = None;
+            cx.shelf().list();
+            self.show(cx);
+            return true;
+        }
+        if matches!(self.import, Some(Import::Choose)) {
+            if let Some(index) = (0..self.import_files.len())
+                .find(|index| a == action_id(&format!("import-file-{index}")))
+            {
+                let mut read =
+                    ShelfDownload::new(self.import_files[index].clone()).at_most(MAX_BACKUP_BYTES);
+                read.start(cx);
+                self.import_read = Some(read);
+                self.notice = None;
+                self.show(cx);
+                return true;
+            }
+        }
+        // Only the two answers this screen offers take the backup out. Taking
+        // it out to look at it drops it on the way past for anything else, and
+        // the reader lands back in Settings with their choice gone.
+        let replacing = a == action_id("import-replace");
+        if (replacing || a == action_id("import-merge"))
+            && matches!(self.import, Some(Import::Confirm(_)))
+        {
+            let Some(Import::Confirm(incoming)) = self.import.take() else {
+                return false;
+            };
+            self.notice = Some(if replacing {
+                self.items = incoming;
+                "The backup replaced the habits on this reader.".to_owned()
+            } else {
+                merge(&mut self.items, incoming);
+                "The backup was merged with the habits on this reader.".to_owned()
+            });
+            self.save(cx);
+            self.page = Page::Today;
+            self.show(cx);
+            return true;
+        }
+        false
+    }
+    fn import_screen(&self, import: &Import) -> Screen {
+        match import {
+            Import::Choose => {
+                let mut screen = ScreenBuilder::new("hb-import")
+                    .top_bar("Import a backup")
+                    .text("Choose a text backup already on this reader. Replace removes the habits on this reader. Merge keeps them and adds days from the backup when the name matches.");
+                // This screen is returned before the shared banner is reached,
+                // so a backup that could not be read says so here or nowhere.
+                if let Some(note) = &self.notice {
+                    screen = screen.banner(BannerLevel::Attention, note);
+                }
+                if self.import_read.is_some() {
+                    return screen.activity("Reading the backup", None).build();
+                }
+                if self.import_files.is_empty() {
+                    screen = screen.splash(
+                        Some(Glyph::Settings),
+                        "No files on this reader",
+                        "Copy a habits backup onto the shelf, then try again.",
+                    );
+                } else {
+                    let (start, end, page, pages) =
+                        Self::page_bounds(self.import_page, self.import_files.len());
+                    screen = screen.rows(self.import_files[start..end].iter().enumerate().map(
+                        |(index, name)| {
+                            (
+                                format!("import-file-{}", start + index),
+                                name.clone(),
+                                "Text backup".to_owned(),
+                                Glyph::Settings,
+                            )
+                        },
+                    ));
+                    screen = Self::paged(screen, page, pages, "import-prev", "import-next");
+                }
+                screen.build()
+            }
+            Import::Confirm(habits) => ScreenBuilder::new("hb-import-confirm")
+                .top_bar("Import a backup")
+                .heading(format!(
+                    "{} {}",
+                    habits.len(),
+                    if habits.len() == 1 { "habit" } else { "habits" }
+                ))
+                .text("Replace removes the habits on this reader. Merge keeps them and adds days from the backup when the name matches.")
+                .button("import-replace", "Replace habits on this reader")
+                .button("import-merge", "Merge with habits on this reader")
+                .build(),
+        }
     }
     /// Previous/More on every paged list. Returns whether the action turned
     /// a page.
@@ -413,6 +564,7 @@ impl Habits {
             ("due-prev", "due-next", 0usize),
             ("manage-prev", "manage-next", 1),
             ("streaks-prev", "streaks-next", 2),
+            ("import-prev", "import-next", 3),
         ];
         for (previous, next, which) in pagers {
             let delta = if a == action_id(previous) {
@@ -425,7 +577,8 @@ impl Habits {
             let page = match which {
                 0 => &mut self.today_page,
                 1 => &mut self.manage_page,
-                _ => &mut self.streaks_page,
+                2 => &mut self.streaks_page,
+                _ => &mut self.import_page,
             };
             *page = page.saturating_add_signed(delta);
             self.show(cx);
@@ -475,6 +628,39 @@ impl KoboApp for Habits {
         self.show(cx);
     }
     fn on_shelf(&mut self, cx: &mut Context, name: &str, result: StoreResult) {
+        if let Some(read) = &mut self.import_read {
+            if read.name() == name {
+                match read.advance(cx, &result) {
+                    kobo_sdk::ShelfProgress::Done => {
+                        let bytes = self.import_read.take().expect("active backup").take();
+                        let (habits, _blank) = decode_with_blank_names(&bytes);
+                        if habits.is_empty() {
+                            self.notice =
+                                Some("That file has no habits this reader can import.".to_owned());
+                            self.import = Some(Import::Choose);
+                        } else {
+                            self.notice = None;
+                            self.import = Some(Import::Confirm(habits));
+                        }
+                    }
+                    kobo_sdk::ShelfProgress::Failed(error) => {
+                        self.import_read = None;
+                        self.notice = Some(if matches!(error, StoreError::TooFull) {
+                            format!(
+                                "That backup is larger than {} KB, which is more than this reader imports.",
+                                MAX_BACKUP_BYTES / 1024
+                            )
+                        } else {
+                            "That backup could not be read.".to_owned()
+                        });
+                        self.import = Some(Import::Choose);
+                    }
+                    _ => return,
+                }
+                self.show(cx);
+                return;
+            }
+        }
         if let Some(export) = self.export.as_mut() {
             if export.on_shelf(cx, name, &result) {
                 self.show(cx);
@@ -491,6 +677,29 @@ impl KoboApp for Habits {
                 _ => String::new(),
             };
             if key != HABITS && export.on_save(cx, &key, &result) {
+                self.show(cx);
+                return;
+            }
+        }
+        if let StoreResult::Shelf(files) = &result {
+            if matches!(self.import, Some(Import::Choose)) {
+                // A backup is written as text, and the shelf is shared with
+                // every other application here. Offering somebody's pictures
+                // as habits to import is a row that can only disappoint.
+                self.import_files = files
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .filter(|name| {
+                        std::path::Path::new(name.as_str())
+                            .extension()
+                            .is_some_and(|extension| {
+                                extension.eq_ignore_ascii_case("txt")
+                                    || extension.eq_ignore_ascii_case("md")
+                            })
+                    })
+                    .collect();
+                self.import_files.sort();
+                self.import_page = 0;
                 self.show(cx);
                 return;
             }
@@ -541,26 +750,7 @@ impl KoboApp for Habits {
             self.show(cx);
             return;
         }
-        if let Some(event) = self.entry.handle(a) {
-            if let Typing::Submitted(name) = event {
-                if let Some(name) = canonical_name(&name) {
-                    match self.entry_mode {
-                        EntryMode::Add => self.items.push(Habit::new(name)),
-                        EntryMode::Rename => {
-                            if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
-                                habit.name = name;
-                            }
-                        }
-                    }
-                    self.save(cx);
-                } else {
-                    self.notice = Some(format!(
-                        "Habit names must be 1 to {MAX_HABIT_NAME_CHARS} characters. Nothing was added."
-                    ));
-                }
-                self.entry_mode = EntryMode::Add;
-            }
-            self.show(cx);
+        if self.handle_entry(cx, a) {
             return;
         }
         let pages = [Page::Today, Page::Streaks, Page::Manage, Page::Stats];
@@ -587,6 +777,9 @@ impl KoboApp for Habits {
             return;
         }
         if self.page_turn(cx, a) {
+            return;
+        }
+        if self.handle_import(cx, a) {
             return;
         }
         if a == action_id("backup") {
@@ -701,6 +894,51 @@ mod tests {
         runner.start();
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().page, Page::Stats);
+    }
+
+    /// A backup that cannot be read has to say so on the screen it fails on.
+    ///
+    /// The import screen is returned before the shared banner is reached, so
+    /// the message written when a file turns out not to be a backup was going
+    /// nowhere: the list came back unchanged and the same tap was worth trying
+    /// again forever.
+    #[test]
+    fn a_file_that_is_not_a_backup_says_so_on_the_import_screen() {
+        use kobo_sdk::Node;
+
+        let app = Habits {
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HABITS.to_owned(),
+            value: None,
+        });
+        runner.action(action_id("import-backup"));
+        runner.store_result(StoreResult::Shelf(vec![
+            ("habits-backup.txt".to_owned(), 64),
+            ("holiday.png".to_owned(), 4096),
+        ]));
+        assert_eq!(
+            runner.app().import_files,
+            vec!["habits-backup.txt".to_owned()],
+            "a picture was offered as a habits backup"
+        );
+        runner.action(action_id("import-file-0"));
+        runner.store_result(StoreResult::Denied(StoreError::Missing));
+        assert!(matches!(runner.app().import, Some(Import::Choose)));
+        let screen = runner.app().screen();
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Banner { text, .. } if text.contains("could not be read"))),
+            "the import screen kept the message to itself: {:?}",
+            screen.nodes
+        );
     }
 
     #[test]

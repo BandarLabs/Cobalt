@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.2",
-  "release_notes": "Climate tiles now adjust the target temperature and power, tiles can be reordered or removed from Settings, and an optional one-column wall-panel layout is persisted. The README gallery was refreshed with current captures.",
+  "version": "0.2.3",
+  "release_notes": "Sensors and other readings open a detail screen instead of sending a toggle. Lights, switches, scenes, scripts, automations, buttons, and climate keep their controls.",
   "glyph": "light",
   "capabilities": [
     "network"

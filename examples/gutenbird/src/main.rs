@@ -319,6 +319,12 @@ struct StackEntry {
     /// place from the first draw, which is what stops the page moving under
     /// the reader.
     nav_covers: Vec<Option<TilePicture>>,
+    /// Whether this page came from the saved copy rather than the catalog.
+    ///
+    /// A fact about the page and not about the application: stepping back to
+    /// a page that was fetched must take the notice away again, and stepping
+    /// back to one that was restored must bring it back.
+    saved: bool,
 }
 
 impl StackEntry {
@@ -338,7 +344,13 @@ impl StackEntry {
             covers,
             nav_covers: vec![None; navigation],
             examined: BTreeSet::new(),
+            saved: false,
         }
+    }
+
+    fn with_saved(mut self, saved: bool) -> Self {
+        self.saved = saved;
+        self
     }
 }
 
@@ -617,6 +629,12 @@ struct Gutenbird {
 
     task: Option<(TaskId, Awaiting)>,
     cached_feed: Option<CachedFeed>,
+    /// The shelf is the last saved catalog page, not a fresh fetch.
+    /// Whether the answer being taken came from the saved copy.
+    ///
+    /// True only between restoring a saved page and that page reaching the
+    /// stack, which is where the fact is kept.
+    restored: bool,
     problem: Option<String>,
     trouble: Option<Failure>,
 
@@ -691,6 +709,7 @@ impl Default for Gutenbird {
             federating: false,
             task: None,
             cached_feed: None,
+            restored: false,
             problem: None,
             trouble: None,
             wanted: Vec::new(),
@@ -977,6 +996,7 @@ impl Gutenbird {
         let cache = self.cached_feed.take().expect("cached response ready");
         self.problem = None;
         self.trouble = None;
+        self.restored = true;
         self.took_feed(
             context,
             &cache.bytes.unwrap_or_default(),
@@ -1033,13 +1053,14 @@ impl Gutenbird {
             return;
         };
         fold_groups(&mut feed);
+        let restored = std::mem::take(&mut self.restored);
         match purpose {
             FeedPurpose::Root { catalog } => {
                 self.seed_search(catalog, &feed);
                 if let Some(publication) = Self::resolve_entry(&feed) {
                     self.open_publication(context, publication);
                 } else {
-                    self.stack = vec![StackEntry::fresh(feed, base)];
+                    self.stack = vec![StackEntry::fresh(feed, base).with_saved(restored)];
                     self.view = View::Shelf;
                     self.want_covers(context);
                     self.hydrate_visible(context);
@@ -1050,7 +1071,8 @@ impl Gutenbird {
                 if let Some(publication) = Self::resolve_entry(&feed) {
                     self.open_publication(context, publication);
                 } else {
-                    self.stack.push(StackEntry::fresh(feed, base));
+                    self.stack
+                        .push(StackEntry::fresh(feed, base).with_saved(restored));
                     self.view = View::Shelf;
                     self.want_covers(context);
                     self.hydrate_visible(context);
@@ -1058,6 +1080,10 @@ impl Gutenbird {
             }
             FeedPurpose::More => {
                 if let Some(entry) = self.stack.last_mut() {
+                    // More rows on the same page: saved rows make it a saved
+                    // page, and fetched ones do not take that back, since the
+                    // rows already on it came from where they came from.
+                    entry.saved |= restored;
                     let origin = entry.url.clone();
                     let next = feed
                         .next()
@@ -1370,6 +1396,11 @@ impl Gutenbird {
             .top_bar_glyph("catalogs", "Catalogs", Glyph::Globe);
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
+        } else if self.stack.last().is_some_and(|entry| entry.saved) {
+            screen = screen.banner(
+                BannerLevel::Info,
+                "Showing a saved catalog page. Reconnect to refresh.",
+            );
         }
         if self.awaiting_feed() {
             return screen
@@ -3851,6 +3882,7 @@ impl KoboApp for Gutenbird {
             TaskOutcome::Completed(bytes) => match awaiting {
                 Awaiting::Feed(purpose, base) => {
                     self.cached_feed = None;
+                    self.restored = false;
                     if bytes.len() <= MAX_STORE_VALUE && kobo_opds::parse(&bytes, &base).is_ok() {
                         context
                             .store()
@@ -4110,6 +4142,42 @@ mod tests {
             TaskOutcome::Completed(two_publication_feed_json().into_bytes()),
         );
         runner
+    }
+
+    /// The saved-page notice belongs to a page, not to the application.
+    ///
+    /// Following a link whose fetch fails shows the saved copy of that page.
+    /// Stepping back to the page that was fetched left the notice up, telling
+    /// a reader who was online a moment ago to reconnect.
+    #[test]
+    fn stepping_back_from_a_saved_page_leaves_its_notice_behind() {
+        let mut app = Gutenbird {
+            stack: vec![StackEntry::fresh(Feed::default(), BASE.to_owned())],
+            view: View::Shelf,
+            ..Gutenbird::default()
+        };
+        let mut context = Context::default();
+        app.restored = true;
+        app.took_feed(
+            &mut context,
+            two_publication_feed_json().as_bytes(),
+            FeedPurpose::Push { catalog: 0 },
+            BASE.to_owned(),
+        );
+        assert_eq!(app.stack.len(), 2);
+        assert!(app.stack.last().expect("the saved page").saved);
+        assert!(says_saved(&app.shelf_screen(&context)));
+        app.stack.pop();
+        assert!(
+            !says_saved(&app.shelf_screen(&context)),
+            "a page fetched from the catalog was called a saved one"
+        );
+    }
+
+    fn says_saved(screen: &kobo_sdk::Screen) -> bool {
+        screen.nodes.iter().any(|node| {
+            matches!(node, kobo_sdk::Node::Banner { text, .. } if text.contains("saved catalog page"))
+        })
     }
 
     /// The same two-publication feed, as the OPDS 2.0 JSON body a real feed

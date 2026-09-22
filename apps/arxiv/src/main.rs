@@ -358,6 +358,8 @@ struct Arxiv {
     book: BookView,
     /// Whether the full text arrived cut off at the byte ceiling.
     truncated: bool,
+    /// Some formulas in the open paper were left as text.
+    formulae_as_text: bool,
     task: Option<(TaskId, Awaiting)>,
     trouble: Option<String>,
     /// How far back listings reach.
@@ -627,6 +629,7 @@ impl Arxiv {
         self.ask_place(context, &id);
         self.trouble = None;
         self.truncated = false;
+        self.formulae_as_text = false;
         match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
@@ -665,6 +668,7 @@ impl Arxiv {
             .collect();
         self.page = 0;
         self.truncated = false;
+        self.formulae_as_text = false;
     }
 
     fn subjects(&self, context: &Context) -> Screen {
@@ -977,6 +981,11 @@ impl Arxiv {
                 BannerLevel::Attention,
                 "This paper is too long to open completely, so only the beginning is shown.",
             );
+        } else if self.formulae_as_text {
+            screen = screen.banner(
+                BannerLevel::Info,
+                "Some formulas in the full text are shown as text. This paper has more mathematics than the reader can draw.",
+            );
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));
         if page == 0 {
@@ -1105,10 +1114,12 @@ impl Arxiv {
         // opened anyway.
         let memory = self.place.take().unwrap_or_default();
         if !self.book.open_html(context, body, &origin, memory) {
+            self.formulae_as_text = false;
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
             return;
         }
+        self.formulae_as_text = self.book.formulae_as_text();
         // A rendering cut off at the byte ceiling has no closing tag, which is
         // the honest signal: the fetched bytes are markup, and a paper can sit
         // at the transport limit with every word of it delivered.
@@ -1333,6 +1344,7 @@ impl Arxiv {
         self.save_place(context);
         self.book.close(context);
         self.truncated = false;
+        self.formulae_as_text = false;
         self.fetched = None;
     }
 }

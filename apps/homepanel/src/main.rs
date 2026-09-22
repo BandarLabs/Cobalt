@@ -36,6 +36,8 @@ enum View {
     Add,
     Search,
     Climate(String),
+    /// A tile that is shown and not switched.
+    Detail(String),
 }
 
 struct HomePanel {
@@ -248,6 +250,7 @@ impl HomePanel {
             View::Add => self.add(),
             View::Search => self.search(),
             View::Climate(id) => self.climate_screen(id),
+            View::Detail(id) => self.detail_screen(id),
         };
         context.set_screen(screen.with_own_back(matches!(
             self.view,
@@ -257,6 +260,7 @@ impl HomePanel {
                 | View::Add
                 | View::Search
                 | View::Climate(_)
+                | View::Detail(_)
         )));
     }
 
@@ -410,6 +414,21 @@ impl HomePanel {
         }
         s.buttons([("cool", "Cooler"), ("warm", "Warmer"), ("power", "Power")])
             .build()
+    }
+
+    fn detail_screen(&self, id: &str) -> Screen {
+        let mut s = ScreenBuilder::new("homepanel-reading")
+            .top_bar(title(id))
+            .text(format!(
+                "State: {}",
+                self.state_of(id).unwrap_or("Not connected")
+            ))
+            .text(id)
+            .secondary("This tile only shows its reading. It is not switched from here.");
+        if let Some(banner) = &self.banner {
+            s = s.banner(BannerLevel::Attention, banner);
+        }
+        s.build()
     }
 
     fn add(&self) -> Screen {
@@ -721,7 +740,13 @@ impl HomePanel {
     }
 
     fn toggle_tile(&mut self, context: &mut Context, id: &str) {
-        if let Some(task) = context.spawn(ha::service(&self.base, id)) {
+        let Some(request) = ha::service(&self.base, id) else {
+            self.banner = None;
+            self.view = View::Detail(id.to_owned());
+            self.show(context);
+            return;
+        };
+        if let Some(task) = context.spawn(request) {
             self.task = Some((task, "service"));
             let state = self.state_of(id).unwrap_or_default().to_owned();
             self.banner = Some(format!("Updating {}…", title(id)));

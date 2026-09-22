@@ -5078,9 +5078,9 @@ pub enum TileState {
     /// reached must not answer a tap, or the application is obliged to explain
     /// the refusal on a screen the reader did not ask for.
     Unavailable,
-    /// Something is happening to it right now. A clock in the trailing corner.
-    /// Still tappable, because a tap during a download is how a reader asks
-    /// what the download is doing.
+    /// Something is happening to it right now. An ink dot in the trailing
+    /// corner. Still tappable, because a tap during a download is how a reader
+    /// asks what the download is doing.
     Busy,
 }
 
@@ -6260,7 +6260,10 @@ impl std::fmt::Display for LayoutIssue {
                 write!(formatter, "{node}: content is clipped by a panel edge")
             }
             LayoutIssueKind::InteractiveOffscreen => {
-                write!(formatter, "{node}: interactive control is outside the visible panel")
+                write!(
+                    formatter,
+                    "{node}: interactive control is outside the visible panel"
+                )
             }
             LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
                 formatter,
@@ -6293,7 +6296,9 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::EmptyChoice => {
                 write!(formatter, "{node}: choice has no tappable answers")
             }
-            LayoutIssueKind::InvalidBoard => formatter.write_str("Board viewport has invalid dimensions, marks or clues."),
+            LayoutIssueKind::InvalidBoard => {
+                formatter.write_str("Board viewport has invalid dimensions, marks or clues.")
+            }
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
@@ -8985,7 +8990,10 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, tile) in tiles.iter().enumerate() {
-                if layout.nodes.len() + 7 > MAX_LAYOUT_NODES {
+                // Tile, outline, mark, label, subtitle, value, state, badge:
+                // eight is what one tile can put down now that every shape but
+                // the legacy one is outlined.
+                if layout.nodes.len() + 8 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let column = position as i32 % columns;
@@ -9004,7 +9012,8 @@ fn layout_node(
                 } else {
                     ControlState::Disabled
                 };
-                let outlined = *shape == TileShape::Card;
+                let outlined = *shape == TileShape::Card
+                    || (*shape == TileShape::Square && !legacy_typography());
                 let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
                     id: *id,
@@ -9052,7 +9061,7 @@ fn layout_node(
                 } else {
                     let size = if legacy_typography() {
                         metrics.tenth_mm(110)
-                    } else if *shape == TileShape::Card {
+                    } else if *shape == TileShape::Card || *shape == TileShape::Square {
                         metrics.tenth_mm(55)
                     } else {
                         metrics.tenth_mm(70)
@@ -9160,7 +9169,13 @@ fn layout_node(
                 // is the one part of the tile that is certainly text.
                 let chip = caption.saturating_add(inset);
                 let chip_inset = metrics.rule_thickness().saturating_mul(2);
-                if tile.state.glyph().is_some() && !muted {
+                // A muted card drops its chip: a grid of cards that cannot be
+                // used yet is explained once by the screen rather than by a
+                // cross on every one of them. A square tile stands among
+                // working tiles, so it keeps the mark that says why it refuses
+                // a tap; without it, it is just a tile that appears broken.
+                let chip_muted = muted && *shape == TileShape::Card;
+                if tile.state.glyph().is_some() && !chip_muted {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -13449,11 +13464,12 @@ fn board_label_size(node: &LayoutNode) -> FontSize {
 fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     let current = text_scale();
     let fits = |size: FontSize| {
-        size.line_height() <= node.rect.height
+        let pad = 2;
+        size.line_height() + pad <= node.rect.height
             && node
                 .text_lines
                 .iter()
-                .all(|line| measure_text(line, size).0 <= node.rect.width)
+                .all(|line| measure_text(line, size).0 + pad <= node.rect.width)
     };
     for size in [FontSize::Body, FontSize::Caption] {
         if fits(size) {
@@ -15111,6 +15127,28 @@ fn render_all_with_selected_font(
             // Paper first, then the border, then the mark. The corner a chip
             // sits in is very often a cover, and a tick drawn straight onto a
             // dark cover is a tick nobody can see.
+            LayoutKind::TileState(TileState::Busy) => {
+                fill_clipped(surface, node.rect, tone::PAPER, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                let dot = max_i32(2, node.rect.width / 3);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: node.rect.x + (node.rect.width - dot) / 2,
+                        y: node.rect.y + (node.rect.height - dot) / 2,
+                        width: dot,
+                        height: dot,
+                    },
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::TileState(state) => {
                 if let Some(glyph) = state.glyph() {
                     fill_clipped(surface, node.rect, tone::PAPER, clip);
@@ -22461,6 +22499,34 @@ mod prose_tests {
         assert_ne!(
             with_lines, no_lines,
             "a preview without lines was indistinguishable from one with them"
+        );
+    }
+
+    /// A square tile that refuses a tap has to show the mark that says so.
+    ///
+    /// Outlining the square shape brought every unavailable square tile into
+    /// the branch that mutes a card, which drops the chip, leaving a tile that
+    /// looks ordinary, ignores taps and explains nothing. A muted card is a
+    /// different case: a whole grid of them is explained once by the screen.
+    #[test]
+    fn an_unavailable_square_tile_still_shows_its_mark() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![
+                    Tile::new(ActionId(1), "Gone", Glyph::Book).with_state(TileState::Unavailable)
+                ],
+            }],
+        );
+        assert!(
+            screen
+                .layout()
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::TileState(TileState::Unavailable))),
+            "an unavailable square tile drew nothing to say it was unavailable"
         );
     }
 
