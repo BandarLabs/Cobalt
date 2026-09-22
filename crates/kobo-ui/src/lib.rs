@@ -9169,11 +9169,13 @@ fn layout_node(
                 // is the one part of the tile that is certainly text.
                 let chip = caption.saturating_add(inset);
                 let chip_inset = metrics.rule_thickness().saturating_mul(2);
-                // The mark is drawn even on a muted tile. Muting says the
-                // tile is not for tapping; the chip says why, and a tile that
-                // refuses a tap with nothing to show for it is just a tile
-                // that appears to be broken.
-                if tile.state.glyph().is_some() {
+                // A muted card drops its chip: a grid of cards that cannot be
+                // used yet is explained once by the screen rather than by a
+                // cross on every one of them. A square tile stands among
+                // working tiles, so it keeps the mark that says why it refuses
+                // a tap; without it, it is just a tile that appears broken.
+                let chip_muted = muted && *shape == TileShape::Card;
+                if tile.state.glyph().is_some() && !chip_muted {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -22500,35 +22502,32 @@ mod prose_tests {
         );
     }
 
-    /// A tile that refuses a tap has to show the mark that says so.
+    /// A square tile that refuses a tap has to show the mark that says so.
     ///
-    /// Muting says a tile is not for tapping; the cross says why. Outlining
-    /// the square shape brought every unavailable square tile into the muted
-    /// branch, which dropped the chip, leaving a tile that looks ordinary,
-    /// ignores taps and explains nothing.
+    /// Outlining the square shape brought every unavailable square tile into
+    /// the branch that mutes a card, which drops the chip, leaving a tile that
+    /// looks ordinary, ignores taps and explains nothing. A muted card is a
+    /// different case: a whole grid of them is explained once by the screen.
     #[test]
-    fn an_unavailable_tile_shows_its_mark_in_every_shape() {
-        for shape in [TileShape::Square, TileShape::Card] {
-            let screen = Screen::new(
-                1,
-                vec![Node::TileGrid {
-                    id: NodeId(1),
-                    shape,
-                    tiles: vec![
-                        Tile::new(ActionId(1), "Gone", Glyph::Book)
-                            .with_state(TileState::Unavailable),
-                    ],
-                }],
-            );
-            assert!(
-                screen
-                    .layout()
-                    .nodes
-                    .iter()
-                    .any(|node| matches!(node.kind, LayoutKind::TileState(TileState::Unavailable))),
-                "{shape:?}: an unavailable tile drew nothing to say it was unavailable"
-            );
-        }
+    fn an_unavailable_square_tile_still_shows_its_mark() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![
+                    Tile::new(ActionId(1), "Gone", Glyph::Book).with_state(TileState::Unavailable)
+                ],
+            }],
+        );
+        assert!(
+            screen
+                .layout()
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::TileState(TileState::Unavailable))),
+            "an unavailable square tile drew nothing to say it was unavailable"
+        );
     }
 
     #[test]

@@ -348,7 +348,7 @@ impl StackEntry {
         }
     }
 
-    fn from_saved(mut self, saved: bool) -> Self {
+    fn with_saved(mut self, saved: bool) -> Self {
         self.saved = saved;
         self
     }
@@ -1060,7 +1060,7 @@ impl Gutenbird {
                 if let Some(publication) = Self::resolve_entry(&feed) {
                     self.open_publication(context, publication);
                 } else {
-                    self.stack = vec![StackEntry::fresh(feed, base).from_saved(restored)];
+                    self.stack = vec![StackEntry::fresh(feed, base).with_saved(restored)];
                     self.view = View::Shelf;
                     self.want_covers(context);
                     self.hydrate_visible(context);
@@ -1071,7 +1071,8 @@ impl Gutenbird {
                 if let Some(publication) = Self::resolve_entry(&feed) {
                     self.open_publication(context, publication);
                 } else {
-                    self.stack.push(StackEntry::fresh(feed, base).from_saved(restored));
+                    self.stack
+                        .push(StackEntry::fresh(feed, base).with_saved(restored));
                     self.view = View::Shelf;
                     self.want_covers(context);
                     self.hydrate_visible(context);
@@ -4160,9 +4161,7 @@ mod tests {
         app.took_feed(
             &mut context,
             two_publication_feed_json().as_bytes(),
-            FeedPurpose::Push {
-                catalog: 0,
-            },
+            FeedPurpose::Push { catalog: 0 },
             BASE.to_owned(),
         );
         assert_eq!(app.stack.len(), 2);

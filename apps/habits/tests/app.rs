@@ -1,7 +1,7 @@
 #[path = "../src/model.rs"]
 mod model;
-use kobo_sdk::{ScreenBuilder, action_id};
-use kobo_ui::{CLARA_BW_METRICS, Chrome};
+use kobo_sdk::{action_id, ScreenBuilder};
+use kobo_ui::{Chrome, CLARA_BW_METRICS};
 use model::*;
 #[test]
 fn custom_schedule_and_skip_keep_streak_honest() {
@@ -158,12 +158,10 @@ fn clara_bw_today_controls_fit() {
         let rect = layout.rect_of_action(action_id(action)).expect("control");
         assert!(rect.height >= CLARA_BW_METRICS.touch_target_minimum());
     }
-    assert!(
-        screen
-            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
-            .issues
-            .is_empty()
-    );
+    assert!(screen
+        .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+        .issues
+        .is_empty());
 }
 #[test]
 fn a_week_sums_only_due_days() {

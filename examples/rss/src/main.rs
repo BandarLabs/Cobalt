@@ -3002,7 +3002,10 @@ mod tests {
         };
         for (url, body) in [
             ("https://one.example/feed", feed("One", "nothing here")),
-            ("https://two.example/feed", feed("Two", "a word about quartz")),
+            (
+                "https://two.example/feed",
+                feed("Two", "a word about quartz"),
+            ),
         ] {
             let mut cache = super::cache::Cache::new(url);
             cache.bytes = Some(body);

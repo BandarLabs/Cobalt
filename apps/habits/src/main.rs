@@ -690,8 +690,12 @@ impl KoboApp for Habits {
                     .iter()
                     .map(|(name, _)| name.clone())
                     .filter(|name| {
-                        let name = name.to_ascii_lowercase();
-                        name.ends_with(".txt") || name.ends_with(".md")
+                        std::path::Path::new(name.as_str())
+                            .extension()
+                            .is_some_and(|extension| {
+                                extension.eq_ignore_ascii_case("txt")
+                                    || extension.eq_ignore_ascii_case("md")
+                            })
                     })
                     .collect();
                 self.import_files.sort();

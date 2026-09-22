@@ -388,6 +388,9 @@ fn has_class(inside: &str, wanted: &[&str]) -> bool {
     })
 }
 
+// A parser's state is a handful of flags for what is currently open. Naming
+// each one is what makes the rules legible; grouping them would not.
+#[allow(clippy::struct_excessive_bools)]
 struct State {
     builder: Builder,
     text: String,
@@ -2059,12 +2062,14 @@ mod tests {
     fn numbered_equations_past_the_picture_budget_say_they_are_shown_as_text() {
         let mut source = String::from("<table class=\"ltx_eqn_table\"><tbody>");
         for index in 0..=crate::MAX_FORMULA_PICTURES {
-            source.push_str(&format!(
+            use std::fmt::Write;
+            let _ = write!(
+                source,
                 "<tr class=\"ltx_eqn_row\">\
                  <td class=\"ltx_eqn_cell\">\
                  <math alttext=\"x={index}\" display=\"inline\"><mi>x</mi></math></td>\
                  </tr>"
-            ));
+            );
         }
         source.push_str("</tbody></table>");
         let (document, formulae_as_text) = parse_noting_formula_fallback(&source);

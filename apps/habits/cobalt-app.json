@@ -5,7 +5,7 @@
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
   "version": "0.1.6",
-  "release_notes": "Settings can import a text backup from the shelf. Replace removes the habits on the reader. Merge keeps them and adds days when the name matches.",
+  "release_notes": "Settings can import a text backup from the shelf. Replace removes the habits on this reader. Merge keeps them and adds days from the backup when the name matches.",
   "glyph": "check",
   "capabilities": []
 }
