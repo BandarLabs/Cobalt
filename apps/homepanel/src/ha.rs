@@ -80,22 +80,28 @@ pub fn entities(base: &str) -> Task {
     }
 }
 
-/// Lights, switches, scenes, scripts, automations, and buttons can be
-/// triggered. Everything else is a reading.
+/// Sensors and the other domains that only ever report are readings.
+/// Everything else keeps its control.
+///
+/// Named the other way round on purpose. Home Assistant gains domains, and a
+/// list of the ones that may be triggered would quietly take the controls off
+/// a cover or a media player the day somebody adds one.
 #[must_use]
 pub fn can_trigger(entity: &str) -> bool {
-    matches!(
+    !matches!(
         entity.split('.').next(),
         Some(
-            "light"
-                | "switch"
-                | "input_boolean"
-                | "fan"
-                | "scene"
-                | "script"
-                | "automation"
-                | "button"
-                | "climate"
+            "sensor"
+                | "binary_sensor"
+                | "person"
+                | "device_tracker"
+                | "sun"
+                | "weather"
+                | "zone"
+                | "update"
+                | "calendar"
+                | "image"
+                | "camera"
         )
     )
 }
@@ -107,7 +113,7 @@ pub fn service(base: &str, entity: &str) -> Option<Task> {
     let domain = entity.split('.').next().unwrap_or("homeassistant");
     let action = match domain {
         "scene" | "script" | "automation" => "turn_on",
-        "button" => "press",
+        "button" | "input_button" => "press",
         _ => "toggle",
     };
     Some(Task::Post {
@@ -331,5 +337,26 @@ mod tests {
         assert!(!can_trigger("binary_sensor.door"));
         assert!(service("https://ha.example", "sensor.office").is_none());
         assert!(service("https://ha.example", "light.kitchen").is_some());
+    }
+
+    /// A tile that could be switched before must not quietly stop switching.
+    ///
+    /// These all posted a service call until the readings were separated out.
+    /// A list of what may be triggered turns every domain nobody thought of
+    /// into a tile that answers a tap by explaining it does nothing.
+    #[test]
+    fn a_domain_that_is_not_a_reading_keeps_its_control() {
+        for entity in [
+            "cover.garage_door",
+            "media_player.living_room",
+            "humidifier.nursery",
+            "valve.irrigation",
+            "siren.alarm",
+            "remote.tv",
+            "group.downstairs",
+        ] {
+            assert!(can_trigger(entity), "{entity}");
+            assert!(service("https://ha.example", entity).is_some(), "{entity}");
+        }
     }
 }

@@ -130,22 +130,21 @@ impl Illustrations {
         }
     }
 
+    /// Keeps the idle copies left on the shelf inside the cap.
+    ///
+    /// The byte cap counts idle copies only. A published cache that is still
+    /// resident holds its slots until it is released here, so charging its
+    /// bytes to a total this loop can only reduce by dropping idle copies
+    /// would empty the whole queue every time memory filled up, and offline
+    /// reading would quietly stop working. The file count is different: it
+    /// counts residents too, because that total stays reachable.
     fn trim_disk(&mut self, context: &mut Context) {
         let resident = self
             .caches
             .values()
-            .filter(|cache| cache.published_slots().is_some())
+            .filter(|cache| cache.is_published())
             .count();
-        let mut bytes = self.disk.iter().map(|copy| copy.bytes).sum::<usize>()
-            + self
-                .caches
-                .values()
-                .filter_map(|cache| {
-                    cache
-                        .published_slots()
-                        .map(|_| cache.bytes.as_ref().map_or(0, Vec::len))
-                })
-                .sum::<usize>();
+        let mut bytes = self.disk.iter().map(|copy| copy.bytes).sum::<usize>();
         while !self.disk.is_empty()
             && (self.disk.len() + resident > MAX_DISK_FILES || bytes > MAX_DISK_BYTES)
         {
@@ -330,5 +329,63 @@ mod tests {
             )
         });
         assert!(removed, "the idle copy was left on the shelf");
+    }
+
+    /// Memory filling up must not empty the shelf.
+    ///
+    /// The cap on idle copies can only be met by dropping idle copies, so
+    /// counting the images still held in memory against it made the loop
+    /// unsatisfiable: every eviction swept the whole queue, and an article
+    /// reopened offline had lost every picture it had saved.
+    #[test]
+    fn images_still_in_memory_do_not_push_idle_copies_off_the_shelf() {
+        let mut context = Context::default();
+        let mut images = Illustrations::default();
+        let image = vec![b'x'; 200 * 1024];
+        let mut published = 0;
+        for index in 0..MAX_CACHED - 1 {
+            let url = format!("https://example.com/{index}.png");
+            let mut cache = Cache::new(&url);
+            cache.stored(
+                &mut context,
+                &StoreResult::Loaded {
+                    key: cache.key.clone(),
+                    value: None,
+                },
+            );
+            cache.save(&mut context, image.clone());
+            cache.shelf(
+                &mut context,
+                &StoreResult::ShelfWritten {
+                    name: format!("{}.1", &cache.key[..60]),
+                    size: u32::try_from(image.len()).expect("fits"),
+                },
+            );
+            cache.stored(
+                &mut context,
+                &StoreResult::Saved {
+                    key: cache.key.clone(),
+                },
+            );
+            if cache.is_published() {
+                published += 1;
+            }
+            images.caches.insert(url, cache);
+        }
+        assert!(
+            published * image.len() > MAX_DISK_BYTES,
+            "the resident images must outweigh the cap for this to prove anything"
+        );
+        images.disk.push_back(ShelfCopy {
+            key: "rss-image-old".into(),
+            slots: ["old.0".into(), "old.1".into()],
+            bytes: 16,
+        });
+        images.trim_disk(&mut context);
+        assert_eq!(
+            images.disk.len(),
+            1,
+            "an idle copy well inside the cap was removed to pay for memory"
+        );
     }
 }

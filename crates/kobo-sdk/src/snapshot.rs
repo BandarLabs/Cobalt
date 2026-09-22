@@ -79,6 +79,15 @@ impl Snapshot {
         self.file() == name
     }
 
+    /// Whether this snapshot has been published and is idle.
+    ///
+    /// The same test `published_slots` makes, for callers that are counting
+    /// rather than removing and have no use for two freshly built names.
+    #[must_use]
+    pub fn is_published(&self) -> bool {
+        !self.digest.is_empty() && matches!(self.phase, Phase::Ready)
+    }
+
     /// Both shelf slots for a snapshot that has been published and is idle.
     ///
     /// The published slot is the one the pointer names. The other slot can
@@ -86,7 +95,7 @@ impl Snapshot {
     /// memory use both names when they later remove the files.
     #[must_use]
     pub fn published_slots(&self) -> Option<[String; 2]> {
-        if self.digest.is_empty() || !matches!(self.phase, Phase::Ready) {
+        if !self.is_published() {
             return None;
         }
         let stem = &self.stem[..60];

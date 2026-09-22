@@ -384,17 +384,17 @@ impl BookView {
         true
     }
 
-    /// Says the document stopped short of its own end.
-    ///
-    /// For a page fetched under a byte ceiling. The reader says so on the last
-    /// page, which is the only place it matters and the only place somebody is
-    /// looking when it does.
     /// Whether opening HTML left some formulas as text past the picture budget.
     #[must_use]
     pub const fn formulae_as_text(&self) -> bool {
         self.formulae_as_text
     }
 
+    /// Says the document stopped short of its own end.
+    ///
+    /// For a page fetched under a byte ceiling. The reader says so on the last
+    /// page, which is the only place it matters and the only place somebody is
+    /// looking when it does.
     pub fn mark_truncated(&mut self, truncated: bool) {
         if let Some(reader) = &mut self.reader {
             reader.mark_truncated(truncated);
