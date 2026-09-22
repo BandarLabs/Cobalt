@@ -17,6 +17,15 @@ use std::process::ExitCode;
 /// lifecycle-callback budget; see the comment on `Clippings::pages`.
 const HOME_PAGINATION_CHUNK: usize = 60;
 
+/// How many bytes of the open note's rendered body `extend_note_pages`
+/// measures per call. Measured on host: 32 KiB of rendered text paginates
+/// in ~5ms, against ~650ms for a full 4 MiB body measured in one call --
+/// the gap `md::render` silently closed by truncating every note to 8 KiB
+/// until its doc comment explains why that was wrong. Small enough to stay
+/// well under the 250 ms budget on the device's slower CPU with real margin
+/// left over for the chunk's own render and screen-diff costs.
+const NOTE_PAGINATION_CHUNK: usize = 32 * 1024;
+
 /// Tags shown per page of the Filter screen's tag picker. Tag labels are
 /// short and single-line, unlike a note title, so this is a plain fixed-size
 /// slice rather than the real text-layout pagination `extend_home_pages`
@@ -70,6 +79,16 @@ struct Clippings {
     body: Option<String>,
     body_load: Option<ShelfDownload>,
     body_load_id: Option<String>,
+    /// The open note's body, rendered to plain text once and then measured
+    /// in `NOTE_PAGINATION_CHUNK`-sized slices across possibly several
+    /// lifecycle callbacks -- see `extend_note_pages`. `None` once the whole
+    /// thing has been consumed into `note_pages`; kept until then since
+    /// re-rendering per chunk would mean re-running the Markdown parser
+    /// over the whole body on every call instead of once.
+    note_rendered: Option<String>,
+    /// How many bytes of `note_rendered` have been measured into
+    /// `note_pages` so far.
+    note_paginated_through: usize,
     /// The open note's rendered body, broken into pages the reading face
     /// actually fits -- physical page-turn buttons only reach a screen that
     /// declares `page_turns`; without pages to turn between, they arrive as
@@ -78,8 +97,22 @@ struct Clippings {
     /// Which of `note_pages` is showing. Reset to 0 whenever a note is opened
     /// or its body finishes loading.
     note_page: usize,
+    /// Set when the open note's body failed to load or was not readable
+    /// text. Checked before `body` in the note view, so a failure shows the
+    /// reason instead of leaving the loading skeleton up forever -- `body`
+    /// alone can't tell "still loading" apart from "never going to load".
+    body_error: Option<String>,
     entry: TextEntry,
     export: Option<Export>,
+    /// Set when `pending` changes while `export` is still outstanding (not
+    /// `is_ready()`). An `Export` is a single owner-initiated slot whose
+    /// callbacks the runtime matches by key, not by which `Export` value
+    /// asked for them (see `kobo_sdk::exports`'s doc comment); replacing
+    /// `self.export` while one is still in flight would abandon those
+    /// callbacks, or worse, let them land on the replacement's state. Left
+    /// set until the outstanding export reaches `is_ready()`, at which point
+    /// `on_save`/`on_shelf` publish a fresh one from the latest `pending`.
+    export_dirty: bool,
     notice: Option<String>,
 }
 impl Default for Clippings {
@@ -103,10 +136,14 @@ impl Default for Clippings {
             body: None,
             body_load: None,
             body_load_id: None,
+            note_rendered: None,
+            note_paginated_through: 0,
             note_pages: vec![],
             note_page: 0,
+            body_error: None,
             entry: TextEntry::new().opened_by("add-tag"),
             export: None,
+            export_dirty: false,
             notice: None,
         }
     }
@@ -114,6 +151,15 @@ impl Default for Clippings {
 impl Clippings {
     fn loaded(&self) -> bool {
         self.manifest_loaded && self.pending_loaded
+    }
+    /// Starts fetching the manifest fresh, unless one is already in flight.
+    fn refresh_manifest(&mut self, cx: &mut Context) {
+        if self.manifest_load.is_some() {
+            return;
+        }
+        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
+        manifest.start(cx);
+        self.manifest_load = Some(manifest);
     }
     fn pending_index(&self, path: &str) -> Option<usize> {
         self.pending.iter().position(|edit| edit.path == path)
@@ -152,11 +198,16 @@ impl Clippings {
         }
         set.into_iter().collect()
     }
-    fn edit(&mut self, path: &str) -> &mut PendingEdit {
+    /// A new edit starts from the note's own current read state, not a
+    /// hardcoded default -- otherwise tagging an already-read note (the only
+    /// caller that doesn't also set `read` itself) would silently mark it
+    /// unread in the pending edit, and export that unintended state to the
+    /// companion plugin.
+    fn edit(&mut self, path: &str, base_read: bool) -> &mut PendingEdit {
         if self.pending_index(path).is_none() {
             self.pending.push(PendingEdit {
                 path: path.to_owned(),
-                read: false,
+                read: base_read,
                 added_tags: vec![],
             });
         }
@@ -168,7 +219,7 @@ impl Clippings {
         let was_read = self.is_read(note);
         let path = note.path.clone();
         let base_read = note.read;
-        let edit = self.edit(&path);
+        let edit = self.edit(&path, base_read);
         edit.read = !was_read;
         if edit.read == base_read && edit.added_tags.is_empty() {
             let i = self.pending_index(&path).expect("just edited");
@@ -191,7 +242,8 @@ impl Clippings {
             return;
         }
         let path = note.path.clone();
-        let edit = self.edit(&path);
+        let base_read = note.read;
+        let edit = self.edit(&path, base_read);
         if !edit.added_tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
             edit.added_tags.push(tag.to_owned());
         }
@@ -200,15 +252,39 @@ impl Clippings {
         self.recompute_home_pages(cx);
         self.sync_pending(cx);
     }
-    fn save_pending(&self, cx: &mut Context) {
+    /// `pending` grows with every read/tag toggle, but one store key is
+    /// capped at `MAX_STORE_VALUE`; a big vault worked through in one
+    /// sitting, without a sync in between, can outgrow it. A save the
+    /// runtime refuses is not reported back here (see `on_store`), so
+    /// letting that happen would leave every edit since the last successful
+    /// save looking queued in memory while actually gone after a restart.
+    /// Dropping the oldest edits first -- the ones a companion plugin
+    /// polling every few minutes has had the most chances to already pick
+    /// up -- keeps the write within budget instead.
+    fn save_pending(&mut self, cx: &mut Context) {
+        let mut dropped = false;
+        while encode_pending(&self.pending).len() > kobo_sdk::MAX_STORE_VALUE
+            && !self.pending.is_empty()
+        {
+            self.pending.remove(0);
+            dropped = true;
+        }
+        if dropped {
+            self.notice = Some(
+                "Too many unsynced changes to keep them all on the device -- the oldest were dropped. Sync soon to avoid losing more.".to_owned(),
+            );
+        }
         cx.store().save(PENDING_KEY, encode_pending(&self.pending));
     }
     fn open_note(&mut self, cx: &mut Context, index: usize) {
         self.current = index;
         self.view = View::Note;
         self.body = None;
+        self.note_rendered = None;
+        self.note_paginated_through = 0;
         self.note_pages = vec![];
         self.note_page = 0;
+        self.body_error = None;
         let id = self.notes[index].id.clone();
         // Pushed bodies are written to disk as `{id}.md` (see
         // `kobo-cli`'s `clippings::transfer`); the shelf name requested here
@@ -229,7 +305,28 @@ impl Clippings {
     /// tapping a "Prepare sync" button themselves -- a fresh offer, matching
     /// the latest edits, is always either being prepared or already sitting
     /// on the shelf.
+    ///
+    /// Only actually replaces `self.export` when the outstanding one (if
+    /// any) has reached `is_ready()`. An edit made while the previous export
+    /// is still being prepared just marks `export_dirty`; `on_save`/
+    /// `on_shelf` publish the fresh content once that export settles. See
+    /// `export_dirty`'s field comment for why replacing mid-flight is unsafe.
     fn sync_pending(&mut self, cx: &mut Context) {
+        if let Some(export) = &self.export {
+            if !export.is_ready() {
+                // Reconciliation needed once this export settles even if
+                // `pending` is now empty: a ready export sitting there for
+                // edits that were since reverted is exactly as stale as one
+                // that no longer matches non-empty `pending`, and both need
+                // `publish_pending` to either replace it or clear it.
+                self.export_dirty = true;
+                return;
+            }
+        }
+        self.publish_pending(cx);
+    }
+    fn publish_pending(&mut self, cx: &mut Context) {
+        self.export_dirty = false;
         if self.pending.is_empty() {
             self.export = None;
             return;
@@ -257,8 +354,29 @@ impl Clippings {
                 let bytes = self.manifest_load.take().expect("active manifest").take();
                 match decode_manifest(&bytes) {
                     Ok(notes) => {
+                        // A refresh (see `on_foreground`) replaces `notes`
+                        // wholesale; `self.current` is an index into it, and
+                        // a reordered or shortened list can leave that index
+                        // pointing at a different note than the one on
+                        // screen. Re-anchor on the open note's stable id
+                        // instead of trusting the index to still mean the
+                        // same thing.
+                        let open_note_id = (self.view == View::Note)
+                            .then(|| self.notes.get(self.current))
+                            .flatten()
+                            .map(|note| note.id.clone());
                         self.notes = notes;
                         self.notice = None;
+                        if let Some(id) = open_note_id {
+                            match self.notes.iter().position(|note| note.id == id) {
+                                Some(index) => self.current = index,
+                                // The open note is gone from the refreshed
+                                // manifest; back out rather than show a
+                                // stale note or silently jump to whatever
+                                // now sits at the old index.
+                                None => self.view = View::Home,
+                            }
+                        }
                         self.recompute_home_pages(cx);
                     }
                     Err(error) => {
@@ -300,14 +418,16 @@ impl Clippings {
                     .is_some_and(|note| note.id == id)
                 {
                     if let Ok(text) = String::from_utf8(bytes) {
-                        self.note_pages = cx.paginate_reading(&md::render(&text), false);
-                        self.note_page = 0;
-                        self.body = Some(text);
-                    } else {
-                        self.body = Some(String::new());
+                        self.note_rendered = Some(md::render(&text, MAX_BODY));
+                        self.note_paginated_through = 0;
                         self.note_pages = vec![];
                         self.note_page = 0;
-                        self.notice = Some("This note could not be read.".to_owned());
+                        self.body = Some(text);
+                        self.extend_note_pages(cx);
+                    } else {
+                        self.note_pages = vec![];
+                        self.note_page = 0;
+                        self.body_error = Some("This note could not be read.".to_owned());
                     }
                 }
                 true
@@ -320,7 +440,7 @@ impl Clippings {
                         .get(self.current)
                         .is_some_and(|note| note.id == id)
                 }) {
-                    self.notice = Some(
+                    self.body_error = Some(
                         "This note could not be read. Re-push your vault and try again.".to_owned(),
                     );
                 }
@@ -423,6 +543,34 @@ impl Clippings {
             self.extend_home_pages(cx);
         }
     }
+    /// Measures and paginates the next `NOTE_PAGINATION_CHUNK` bytes of the
+    /// open note's rendered body, appending to `note_pages`. A no-op once
+    /// the whole body has been measured (`note_rendered` is cleared then, to
+    /// free it rather than hold a second copy of the note alongside
+    /// `note_pages` for the rest of the time it stays open).
+    fn extend_note_pages(&mut self, cx: &Context) {
+        let Some(rendered) = &self.note_rendered else {
+            return;
+        };
+        let mut end = (self.note_paginated_through + NOTE_PAGINATION_CHUNK).min(rendered.len());
+        while end < rendered.len() && !rendered.is_char_boundary(end) {
+            end += 1;
+        }
+        let pages = cx.paginate_reading(&rendered[self.note_paginated_through..end], false);
+        self.note_pages.extend(pages);
+        self.note_paginated_through = end;
+        if end >= rendered.len() {
+            self.note_rendered = None;
+        }
+    }
+    /// Extends `note_pages` once more if the reader is about to turn past
+    /// what has been measured so far, so `note-next` never has to wait on
+    /// the boundary tap itself. Mirrors `ensure_pages_ahead`.
+    fn ensure_note_pages_ahead(&mut self, cx: &Context) {
+        if self.note_page + 2 >= self.note_pages.len() && self.note_rendered.is_some() {
+            self.extend_note_pages(cx);
+        }
+    }
     #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
         if self.entry.is_open() {
@@ -492,7 +640,9 @@ impl Clippings {
                     .top_bar_glyph("add-tag", "Tag", Glyph::Tag)
                     .reading(true);
                 let note_page = self.note_page.min(self.note_pages.len().saturating_sub(1));
-                if self.body.is_some() {
+                if let Some(error) = &self.body_error {
+                    s = s.text(error.clone());
+                } else if self.body.is_some() {
                     for line in self
                         .note_pages
                         .get(note_page)
@@ -572,9 +722,16 @@ impl Clippings {
 impl KoboApp for Clippings {
     fn on_start(&mut self, cx: &mut Context) {
         cx.store().load(PENDING_KEY);
-        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
-        manifest.start(cx);
-        self.manifest_load = Some(manifest);
+        self.refresh_manifest(cx);
+        self.show(cx);
+    }
+    /// `kobo clippings push` writes straight to the shelf; a companion
+    /// plugin's interval push while Clippings sits backgrounded produces no
+    /// callback here to notice by itself, so the list on screen would
+    /// otherwise still be whatever was loaded at process start until the
+    /// reader restarts the app. Re-fetching on every return keeps it honest.
+    fn on_foreground(&mut self, cx: &mut Context) {
+        self.refresh_manifest(cx);
         self.show(cx);
     }
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
@@ -590,8 +747,24 @@ impl KoboApp for Clippings {
         self.show(cx);
     }
     fn on_save(&mut self, cx: &mut Context, key: &str, result: StoreResult) {
+        if key == PENDING_KEY {
+            // save_pending already bounds the write to fit, so a refusal
+            // here means the store itself rejected it for some other
+            // reason; say so rather than let the edits look queued when
+            // they were not actually kept.
+            if matches!(result, StoreResult::Denied(_)) {
+                self.notice = Some(
+                    "Your latest change could not be saved on the device. Try it again.".to_owned(),
+                );
+            }
+            self.show(cx);
+            return;
+        }
         if let Some(export) = self.export.as_mut() {
             if export.on_save(cx, key, &result) {
+                if export.is_ready() && self.export_dirty {
+                    self.publish_pending(cx);
+                }
                 self.show(cx);
                 return;
             }
@@ -691,6 +864,7 @@ impl KoboApp for Clippings {
         } else if a == action_id("note-previous") {
             self.note_page = self.note_page.saturating_sub(1);
         } else if a == action_id("note-next") {
+            self.ensure_note_pages_ahead(cx);
             self.note_page = (self.note_page + 1).min(self.note_pages.len().saturating_sub(1));
         } else if a == ActionId::BACK && self.view == View::Note {
             self.view = View::Home;
@@ -721,7 +895,67 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_sdk::AppRunner;
+    use kobo_sdk::{AppRunner, Command, StoreRequest};
+
+    /// Feeds a generic success back to every store command an `Export`'s
+    /// `Import` issues (check-existing miss, upload, re-verify, receipt
+    /// save, then the offer save itself), driving it all the way to
+    /// `is_ready()` the same way the runtime eventually would. Mirrors
+    /// `kobo_sdk::exports`'s own test, adapted to go through `AppRunner`
+    /// instead of a bare `Context` + fake shelf/store.
+    ///
+    /// A shelf name's bytes are recorded as each `ShelfWrite` lands, so the
+    /// re-verify `ShelfRead` for that same name can hand back what was
+    /// actually written (its digest has to match for `Import` to accept
+    /// it); a name with nothing recorded yet is the initial check-existing
+    /// read, which is genuinely missing.
+    fn settle_export(runner: &mut AppRunner<Clippings>, commands: Vec<Command>) {
+        let mut pending = commands;
+        let mut written: std::collections::HashMap<String, Vec<u8>> =
+            std::collections::HashMap::new();
+        for _ in 0..64 {
+            let Some(request) = pending.iter().find_map(|command| match command {
+                Command::Store(request) => Some(request.clone()),
+                _ => None,
+            }) else {
+                return;
+            };
+            pending.retain(|command| !matches!(command, Command::Store(r) if r == &request));
+            let result = match &request {
+                StoreRequest::Save { key, .. } => StoreResult::Saved { key: key.clone() },
+                StoreRequest::ShelfWrite {
+                    name,
+                    offset,
+                    bytes,
+                    ..
+                } => {
+                    let entry = written.entry(name.clone()).or_default();
+                    let start = usize::try_from(*offset).unwrap_or(0);
+                    if entry.len() < start {
+                        entry.resize(start, 0);
+                    }
+                    entry.truncate(start);
+                    entry.extend_from_slice(bytes);
+                    StoreResult::ShelfWritten {
+                        name: name.clone(),
+                        size: u32::try_from(entry.len()).unwrap_or(u32::MAX),
+                    }
+                }
+                StoreRequest::ShelfRead { name, .. } => match written.get(name) {
+                    Some(bytes) => StoreResult::ShelfRead {
+                        name: name.clone(),
+                        offset: 0,
+                        size: u32::try_from(bytes.len()).unwrap_or(0),
+                        bytes: bytes.clone(),
+                    },
+                    None => StoreResult::Denied(kobo_sdk::StoreError::Missing),
+                },
+                _ => panic!("unexpected export command {request:?}"),
+            };
+            pending.extend(runner.store_result(result));
+        }
+        panic!("export did not settle within 64 store round-trips");
+    }
 
     #[test]
     fn timing_probe_for_sync_pending_with_a_realistic_pending_list() {
@@ -806,7 +1040,7 @@ mod tests {
             text_scale: kobo_ui::TextScale::Default,
         };
         let t0 = std::time::Instant::now();
-        let rendered = md::render(&raw);
+        let rendered = md::render(&raw, MAX_BODY);
         let render_time = t0.elapsed();
         let context = kobo_sdk::AppRunner::with_metrics(Clippings::default(), metrics).context();
         let t1 = std::time::Instant::now();
@@ -842,6 +1076,20 @@ mod tests {
             note_pages.len(),
             issues.len()
         );
+    }
+
+    fn screen_text(screen: &Screen, needle: &str) -> bool {
+        screen.nodes.iter().any(|node| match node {
+            kobo_sdk::Node::Heading { text, .. }
+            | kobo_sdk::Node::Text { text, .. }
+            | kobo_sdk::Node::Secondary { text, .. }
+            | kobo_sdk::Node::RichText { text, .. } => text.contains(needle),
+            kobo_sdk::Node::Rows { rows, .. } => rows
+                .iter()
+                .any(|row| row.title.contains(needle) || row.summary.contains(needle)),
+            kobo_sdk::Node::Button { label, .. } => label.contains(needle),
+            _ => false,
+        })
     }
 
     fn manifest_bytes() -> Vec<u8> {
@@ -1098,16 +1346,166 @@ mod tests {
     fn marking_a_note_read_publishes_an_export_offer_without_being_asked() {
         let mut runner = seeded();
         runner.action(action_id("note-0"));
-        runner.action(action_id("toggle-read"));
+        // Opening the note also starts its own body fetch; settle that
+        // (unrelated to this test) before it sits ahead of the export's own
+        // requests in the runner's reply queue.
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        let commands = runner.action(action_id("toggle-read"));
         assert!(
             runner.app().export.is_some(),
             "an edit should publish an offer on its own, with no \"Prepare sync\" tap"
         );
         assert_eq!(runner.app().view, View::Note, "publishing stays invisible");
+        // Settle the outstanding export before reverting, matching the real
+        // runtime: `sync_pending` must not replace or drop `export` while
+        // its own callbacks are still in flight (see `export_dirty`), so
+        // reverting while it is still being prepared only clears it once
+        // this finishes, not immediately.
+        settle_export(&mut runner, commands);
+        assert!(runner.app().export.as_ref().is_some_and(Export::is_ready));
         // Reverting the same edit empties `pending` again, and the offer
         // goes with it -- nothing left worth a paired computer pulling.
         runner.action(action_id("toggle-read"));
         assert!(runner.app().export.is_none());
+    }
+
+    #[test]
+    fn tagging_an_already_read_note_does_not_mark_it_unread() {
+        let mut runner = seeded();
+        runner.app_mut().notes[0].read = true;
+        let mut context = runner.context();
+        runner.app_mut().add_tag(&mut context, "recipe");
+        let edit = runner
+            .app()
+            .pending
+            .iter()
+            .find(|edit| edit.path == "A.md")
+            .expect("adding a tag creates a pending edit");
+        assert!(
+            edit.read,
+            "a tag-only edit on an already-read note must not flip it to unread"
+        );
+    }
+
+    #[test]
+    fn save_pending_drops_the_oldest_edits_once_the_store_value_cap_is_reached() {
+        let mut runner = seeded();
+        // Each path is unique and long enough that a few thousand of them
+        // clears MAX_STORE_VALUE (256 KiB) well before running out of
+        // patience, without needing a real multi-thousand-note vault.
+        runner.app_mut().pending = (0..5000)
+            .map(|i| PendingEdit {
+                path: format!("Clippings/2026/a-fairly-long-article-title-{i:04}.md"),
+                read: true,
+                added_tags: vec![],
+            })
+            .collect();
+        let mut context = runner.context();
+        runner.app_mut().save_pending(&mut context);
+        let app = runner.app();
+        assert!(
+            encode_pending(&app.pending).len() <= kobo_sdk::MAX_STORE_VALUE,
+            "save_pending must bound the write to the store's own cap"
+        );
+        assert!(
+            app.pending.len() < 5000,
+            "oldest edits should have been dropped to fit"
+        );
+        assert_eq!(
+            app.pending.last().unwrap().path,
+            "Clippings/2026/a-fairly-long-article-title-4999.md",
+            "the newest edit should survive; dropping starts from the front"
+        );
+        assert!(
+            app.notice.as_deref().is_some_and(|n| n.contains("dropped")),
+            "the reader should be told edits were dropped, not left to find out at restart"
+        );
+    }
+
+    #[test]
+    fn a_failed_body_load_shows_an_error_instead_of_the_loading_skeleton_forever() {
+        let mut runner = seeded();
+        runner.action(action_id("note-0"));
+        assert!(
+            runner.app().body_error.is_none(),
+            "no error before the load answers"
+        );
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert!(
+            runner.app().body_error.is_some(),
+            "a failed load must leave a visible reason, not just clear body_load"
+        );
+        assert!(runner.app().body.is_none());
+        assert!(
+            screen_text(&runner.app().screen(), "could not be read"),
+            "the note view itself should say so"
+        );
+    }
+
+    #[test]
+    fn extend_note_pages_only_measures_one_chunk_at_a_time() {
+        let mut runner = seeded();
+        runner.action(action_id("note-0"));
+        let paragraph = "The quick brown fox jumps over the lazy dog near the riverbank.\n\n";
+        let mut body = String::new();
+        while body.len() < NOTE_PAGINATION_CHUNK * 3 {
+            body.push_str(paragraph);
+        }
+        runner.store_result(StoreResult::ShelfRead {
+            name: "note-0000000000000001.md".into(),
+            offset: 0,
+            size: u32::try_from(body.len()).unwrap(),
+            bytes: body.clone().into_bytes(),
+        });
+        assert!(
+            runner.app().note_pages.len() < body.len() / 40,
+            "the first callback should only have measured one chunk, not the whole body"
+        );
+        assert!(
+            runner.app().note_rendered.is_some(),
+            "there is more of the body left to paginate"
+        );
+        let first_chunk_pages = runner.app().note_pages.len();
+        // Turning forward past what has been measured extends it just in
+        // time, the same as `ensure_pages_ahead` does for Home.
+        while runner.app().note_page + 2 < runner.app().note_pages.len() {
+            runner.action(action_id("note-next"));
+        }
+        runner.action(action_id("note-next"));
+        assert!(
+            runner.app().note_pages.len() > first_chunk_pages,
+            "turning near the measured edge should have extended note_pages"
+        );
+    }
+
+    #[test]
+    fn on_foreground_refetches_the_manifest_and_keeps_the_open_note_anchored_by_id() {
+        let mut runner = seeded();
+        runner.action(action_id("note-1"));
+        assert_eq!(
+            runner.app().notes[runner.app().current].id,
+            "note-0000000000000002"
+        );
+        runner.resume();
+        // A push while backgrounded reordered the manifest (Beta now comes
+        // first) and dropped nothing -- `current` must follow Beta's id, not
+        // stay pinned to index 1, which is Alpha's new position.
+        let reordered = br#"{"version":1,"notes":[
+            {"id":"note-0000000000000002","path":"B.md","title":"Beta","published":"2026-02-01","read":false},
+            {"id":"note-0000000000000001","path":"A.md","title":"Alpha","published":"2026-01-01","tags":["one"],"read":false}
+        ]}"#;
+        runner.store_result(StoreResult::ShelfRead {
+            name: MANIFEST.into(),
+            offset: 0,
+            bytes: reordered.to_vec(),
+            size: u32::try_from(reordered.len()).unwrap(),
+        });
+        assert_eq!(runner.app().view, View::Note, "the open note stays open");
+        assert_eq!(
+            runner.app().notes[runner.app().current].id,
+            "note-0000000000000002",
+            "current must follow Beta's id to its new index, not stay at the old one"
+        );
     }
 
     #[test]
@@ -1166,7 +1564,8 @@ mod tests {
                 let context =
                     kobo_sdk::AppRunner::with_metrics(Clippings::default(), metrics).context();
                 app.recompute_home_pages(&context);
-                app.note_pages = context.paginate_reading(&md::render("Alpha body."), false);
+                app.note_pages =
+                    context.paginate_reading(&md::render("Alpha body.", MAX_BODY), false);
                 app.note_page = 0;
                 for view in [View::Home, View::Note, View::Filter] {
                     app.view = view;
