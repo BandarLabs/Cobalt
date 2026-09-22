@@ -1936,7 +1936,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
             }
             TaskError::Offline => "This reader is offline. Cached papers are still available.".to_owned(),
             TaskError::Denied => {
-                "Zotero Reader is not allowed to reach the conversion service.".to_owned()
+                "Stacks is not allowed to reach the conversion service.".to_owned()
             }
             TaskError::Unauthorized => {
                 "The conversion service rejected its credential.".to_owned()
@@ -1963,7 +1963,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
         TaskError::Offline => {
             "This reader is offline. Cached papers are still available.".to_owned()
         }
-        TaskError::Denied => "Zotero Reader is not allowed to reach this endpoint.".to_owned(),
+        TaskError::Denied => "Stacks is not allowed to reach this endpoint.".to_owned(),
         TaskError::Unauthorized => "Zotero rejected its credential.".to_owned(),
         TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
         TaskError::TimedOut => "Zotero took too long to answer.".to_owned(),

@@ -529,7 +529,7 @@ writeFileSync(resolve(root, "docs/sitemap.xml"), sitemap);
 // derived from the same manifests the app pages come from, so an app that
 // ships is an app the site shows.
 const gridApps = [
-  ...systemApps.filter(app => app.id !== "terminal"),
+  ...systemApps,
   ...[...catalog.apps].sort((a, b) => a.display_name.localeCompare(b.display_name))
 ];
 const gridCard = app => {

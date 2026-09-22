@@ -147,7 +147,7 @@ manifests the app pages come from by `tools/generate-app-pages.mjs`.
 <tr>
 <td width="33%" valign="top"><a href="apps/brief/README.md"><img width="230" src="docs/media/site/apps/brief.png" alt="A numbered daily news brief on a Kobo"></a><br><b><a href="apps/brief/README.md">Daily Brief</a></b><br>Build a daily news brief in the background while you use other apps.</td>
 <td width="33%" valign="top"><a href="apps/deck/README.md"><img width="230" src="docs/media/site/apps/deck.png" alt="Deck paired with a computer, showing Test, Format and Deploy command pads."></a><br><b><a href="apps/deck/README.md">Deck</a></b><br>Turn your Kobo into a remote control for your computer.</td>
-<td width="33%" valign="top"><a href="apps/rss-miniflux/README.md"><img width="230" src="docs/media/site/apps/rss-miniflux.png" alt="Digest starter directory listing Science News, engineering blogs, and long-form writing."></a><br><b><a href="apps/rss-miniflux/README.md">Digest</a></b><br>Read your Miniflux feeds anywhere.</td>
+<td width="33%" valign="top"><a href="apps/rss-miniflux/README.md"><img width="230" src="docs/media/site/apps/rss-miniflux.png" alt="A Miniflux article open on a Kobo with text-size and front-light controls."></a><br><b><a href="apps/rss-miniflux/README.md">Digest</a></b><br>Read your Miniflux feeds anywhere.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/fanshelf/README.md"><img width="230" src="docs/media/site/apps/fanshelf.png" alt="A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."></a><br><b><a href="apps/fanshelf/README.md">Fanshelf</a></b><br>Save public AO3 works to a shelf made for offline reading.</td>
@@ -170,7 +170,7 @@ manifests the app pages come from by `tools/generate-app-pages.mjs`.
 <td width="33%" valign="top"><a href="apps/kitchencard/README.md"><img width="230" src="docs/media/site/apps/kitchencard.png" alt="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."></a><br><b><a href="apps/kitchencard/README.md">Kitchen Card</a></b><br>Keep Mealie recipes handy in a counter-friendly cooking view.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><a href="apps/calibre-web/README.md"><img width="230" src="docs/media/site/apps/calibre-web.png" alt="Private-library list with an Add control and an empty-state explanation."></a><br><b><a href="apps/calibre-web/README.md">Library</a></b><br>Browse and read books from your calibre-web library.</td>
+<td width="33%" valign="top"><a href="apps/calibre-web/README.md"><img width="230" src="docs/media/site/apps/calibre-web.png" alt="A book from a calibre-web library open on a Kobo, with text-size and front-light controls and the page count."></a><br><b><a href="apps/calibre-web/README.md">Library</a></b><br>Browse and read books from your calibre-web library.</td>
 <td width="33%" valign="top"><a href="apps/lichess/README.md"><img width="230" src="docs/media/site/apps/lichess.png" alt="Lichess on Kobo with Account/Games and Puzzles tiles plus rapid and classical time controls."></a><br><b><a href="apps/lichess/README.md">Lichess</a></b><br>Play Lichess games, challenge players, solve puzzles, or play offline.</td>
 <td width="33%" valign="top"><a href="apps/logicpack/README.md"><img width="230" src="docs/media/site/apps/logicpack.png" alt="Logic Pack's Minesweeper board after a revealed cell and contradiction check."></a><br><b><a href="apps/logicpack/README.md">Logic Pack</a></b><br>Play four familiar logic games offline.</td>
 </tr>
@@ -191,7 +191,7 @@ manifests the app pages come from by `tools/generate-app-pages.mjs`.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/post/README.md"><img width="230" src="docs/media/site/apps/post.png" alt="Post inbox showing completed Hermes letters, newest first."></a><br><b><a href="apps/post/README.md">Post</a></b><br>Read and reply to letters from Hermes.</td>
-<td width="33%" valign="top"><a href="apps/arxiv/README.md"><img width="230" src="docs/media/site/apps/arxiv.png" alt="The newest machine learning preprints listed in the Preprints app on a Kobo"></a><br><b><a href="apps/arxiv/README.md">Preprints</a></b><br>Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/arxiv/README.md"><img width="230" src="docs/media/site/apps/arxiv.png" alt="The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"></a><br><b><a href="apps/arxiv/README.md">Preprints</a></b><br>Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.</td>
 <td width="33%" valign="top"><a href="apps/pubquiz/README.md"><img width="230" src="docs/media/site/apps/pubquiz.png" alt="Pub Quiz pass-around question with four large answer choices for Ada."></a><br><b><a href="apps/pubquiz/README.md">Pub Quiz</a></b><br>Play offline solo or pass-around trivia rounds.</td>
 </tr>
 <tr>
