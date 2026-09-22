@@ -29,7 +29,7 @@ Each catalog app also has a shareable page at
 `https://bandarlabs.github.io/Cobalt/apps/<app-id>/`. A reader can link a
 browser without creating an account:
 
-1. Open **App Store** on the Kobo and select **Install links**.
+1. Open **App Store** on the Kobo and tap the globe in the top bar to reach **Install links**.
 2. Scan the QR code, or open the displayed address and enter its pairing code
    and verification key.
 3. Choose **Install** on an app page.
