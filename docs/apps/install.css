@@ -52,10 +52,10 @@ nav.top a.active, nav.top a:hover { color: var(--blue); }
 main { padding: 52px 0 80px; }
 .app-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 56px;
   align-items: center;
-  margin-bottom: 40px;
+  margin-bottom: 44px;
 }
 .app-copy { min-width: 0; }
 .app-shot { margin: 0; }
@@ -82,6 +82,78 @@ h1 {
 
 .summary { max-width: 35em; margin: 18px 0 0; color: var(--muted); font-size: 19px; }
 .meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 22px 0 0; color: var(--muted); font-size: 14px; }
+
+/* A visitor arriving from a search result or a marketing link decides in a
+   few seconds. The facts they weigh first are what it costs them: which
+   version, what it may reach, and whether their Cobalt is new enough. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 26px 0 0;
+}
+.facts div {
+  border: 1px solid var(--rule);
+  background: #fff;
+  padding: 9px 15px;
+  min-width: 0;
+}
+.facts dt {
+  color: var(--muted);
+  font: 600 11px/1.2 var(--mono);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.facts dd { margin: 5px 0 0; font-size: 15px; overflow-wrap: anywhere; }
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 28px 0 0;
+  padding: 14px 30px;
+  border: 1px solid var(--blue);
+  background: var(--blue);
+  color: #fff;
+  font-size: 17px;
+  text-decoration: none;
+}
+.cta:hover { background: var(--blue-dark); border-color: var(--blue-dark); }
+
+/* The strip scrolls rather than wraps so a long gallery cannot push the
+   install panels off the first screen, on a phone least of all. */
+.gallery { margin: 0 0 44px; }
+.gallery .strip {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.gallery figure {
+  flex: 0 0 auto;
+  margin: 0;
+  scroll-snap-align: start;
+}
+.gallery img {
+  display: block;
+  height: 440px;
+  width: auto;
+  max-width: none;
+  border: 1px solid var(--rule);
+  background: #fff;
+}
+
+.whats-new {
+  width: min(720px, 100%);
+  border-left: 3px solid var(--blue);
+  padding: 2px 0 2px 20px;
+  margin: 0 0 40px;
+}
+.whats-new h2 { margin: 0; font: 700 20px/1.2 var(--serif); }
+.whats-new p { margin: 10px 0 0; color: var(--muted); }
 
 .panel {
   width: min(720px, 100%);
@@ -206,10 +278,21 @@ footer nav { display: flex; gap: 18px; flex-wrap: wrap; }
   .app-shot { width: min(240px, 72vw); }
   .panel { box-shadow: none; }
   .actions button { width: 100%; }
+  .cta { width: 100%; }
+  .facts { gap: 8px; }
+  .facts div { flex: 1 1 calc(50% - 4px); padding: 8px 13px; }
+  /* The strip scrolls inside the page gutter rather than bleeding past it.
+     A negative margin here would widen the document and give the whole page
+     a horizontal scrollbar on a phone. */
+  .gallery { margin-bottom: 34px; }
+  .gallery .strip { gap: 12px; }
+  .gallery img { height: min(420px, 62vh); }
+  .whats-new { margin-bottom: 30px; padding-left: 16px; }
 }
 
 @media (min-width: 541px) and (max-width: 760px) {
-  .app-hero { grid-template-columns: minmax(0, 1fr) 200px; gap: 32px; }
+  .app-hero { grid-template-columns: minmax(0, 1fr) 220px; gap: 32px; }
+  .gallery img { height: 360px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

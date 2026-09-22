@@ -84,7 +84,7 @@ const screenshotFor = app => {
   const screenshot = screenshots[app.id];
   return screenshot || [
     "store.png",
-    `${app.display_name} available from the signed Cobalt App Store`
+    `${app.display_name} available from the signed Cobalt Apps Catalog`
   ];
 };
 const appsRoot = resolve(root, "docs/apps");
@@ -115,6 +115,49 @@ const escape = value => value
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
 const jsonLd = value => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c");
+
+// A listing with one thumbnail tells a visitor nothing about what the app is
+// like to use. Any app that published extra captures under its own media
+// directory gets them as a gallery; the file names are already descriptive
+// enough to carry the alt text.
+const galleryShots = id => {
+  try {
+    return readdirSync(resolve(root, "docs/media/site/apps", id))
+      .filter(file => file.endsWith(".png"))
+      .sort();
+  } catch {
+    return [];
+  }
+};
+const shotCaption = file =>
+  file
+    .replace(/\.png$/, "")
+    .replaceAll("-", " ")
+    .replaceAll("_", " ");
+const gallery = (app, name) => {
+  const shots = galleryShots(app.id);
+  if (shots.length < 2) return "";
+  const figures = shots
+    .map(
+      file =>
+        `      <figure><img src="../../media/site/apps/${app.id}/${file}" loading="lazy" alt="${name} on a Kobo Clara BW: ${escape(shotCaption(file))}"></figure>`
+    )
+    .join("\n");
+  return `
+  <section class="gallery" aria-label="${name} screenshots">
+    <div class="strip">
+${figures}
+    </div>
+  </section>`;
+};
+const whatsNew = app =>
+  app.release_notes
+    ? `
+  <section class="whats-new">
+    <h2>New in ${escape(app.version)}</h2>
+    <p>${escape(app.release_notes)}</p>
+  </section>`
+    : "";
 const scriptHash = value => createHash("sha256").update(value).digest("base64");
 const pageDescription = app => {
   if (app.page_description === undefined) return app.summary;
@@ -242,17 +285,22 @@ for (const app of catalog.apps) {
       <p class="eyebrow">Kobo app</p>
       <h1>${name}</h1>
       <p class="summary">${summary}</p>
-      <div class="meta"><span>Version ${escape(app.version)}</span><span>${capabilities}</span></div>
+      <dl class="facts">
+        <div><dt>Version</dt><dd>${escape(app.version)}</dd></div>
+        <div><dt>Permissions</dt><dd>${capabilities}</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt ${escape(app.minimum_cobalt_version)}</dd></div>
+      </dl>
+      <a class="cta" href="#setup-panel">Install on your Kobo</a>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
-  </div>${prerequisites}
+  </div>${gallery(app, name)}${whatsNew(app)}${prerequisites}
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">
       <p class="eyebrow">Do not have Cobalt yet?</p>
       <h2>Install Cobalt directly from your browser</h2>
-      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi, with no cable.</p>
+      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi from the Cobalt Apps Catalog, with no cable.</p>
       <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
     </div>
     <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
