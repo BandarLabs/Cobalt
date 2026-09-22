@@ -30,12 +30,12 @@ const systemApps = [
   }
 ];
 const screenshots = {
-  arxiv: ["arxiv.png", "The newest machine learning preprints listed in the Preprints app on a Kobo"],
+  arxiv: ["arxiv.png", "The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"],
   audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
   backgammon: ["backgammon.png", "Backgammon board on a Kobo after Black opened with 4 and 6, with dice, cube and match score."],
   birds: ["birds.png", "A labelled collage of public-domain bird plates filling a Kobo screen."],
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
-  "calibre-web": ["calibre-web.png", "Private-library list with an Add control and an empty-state explanation."],
+  "calibre-web": ["calibre-web.png", "A book from a calibre-web library open on a Kobo, with text-size and front-light controls and the page count."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
   crossword: ["crossword.png", "Crossword grid on a Kobo with the first answer filled in and numbered cells."],
   deck: ["deck.png", "Deck paired with a computer, showing Test, Format and Deploy command pads."],
@@ -67,7 +67,7 @@ const screenshots = {
   pubquiz: ["pubquiz.png", "Pub Quiz pass-around question with four large answer choices for Ada."],
   readlater: ["readlater.png", "Read Later setup screen showing Wallabag credential instructions."],
   rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
-  "rss-miniflux": ["rss-miniflux.png", "Digest starter directory listing Science News, engineering blogs, and long-form writing."],
+  "rss-miniflux": ["rss-miniflux.png", "A Miniflux article open on a Kobo with text-size and front-light controls."],
   settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
   sidekick: ["sidekick.png", "Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
@@ -79,6 +79,64 @@ const screenshots = {
   vault: ["vault.png", "Vault home on a Kobo with four synced notes and Browse, Tags, Recent and Search rows."],
   verses: ["verses.png", "Verses displaying a public-domain daily poem in a spacious Kobo reading layout."],
   "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
+};
+// Categories are a property of the listing, not of the app, so they live here
+// rather than in cobalt-app.json. A manifest field would ship inside every
+// package and force all 45 apps to publish a new version for a line of text
+// that only the website draws.
+const categories = {
+  arxiv: "Reading",
+  audiobook: "Audio",
+  backgammon: "Games",
+  birds: "Devices",
+  brief: "Reading",
+  "calibre-web": "Reading",
+  chat: "Developer",
+  crossword: "Games",
+  deck: "Devices",
+  fanshelf: "Reading",
+  fieldbook: "Productivity",
+  flashcards: "Productivity",
+  frame: "Devices",
+  gallery: "Developer",
+  grimoire: "Reference",
+  gutenbird: "Reading",
+  habits: "Productivity",
+  hn: "Reading",
+  homepanel: "Devices",
+  inkling: "Games",
+  kitchencard: "Productivity",
+  lichess: "Games",
+  logicpack: "Games",
+  magnet: "Developer",
+  morse: "Devices",
+  musicstand: "Reference",
+  needles: "Productivity",
+  nonograms: "Games",
+  panels: "Reading",
+  paperterm: "Devices",
+  parlor: "Games",
+  parser: "Games",
+  post: "Productivity",
+  pubquiz: "Games",
+  readlater: "Reading",
+  rss: "Reading",
+  "rss-miniflux": "Reading",
+  sidekick: "Developer",
+  sudoku: "Games",
+  syncthing: "Devices",
+  tictactoe: "Games",
+  todo: "Productivity",
+  vault: "Reference",
+  verses: "Reading",
+  "zotero-reader": "Reading"
+};
+const categoryFor = app => {
+  const category = categories[app.id];
+  if (!category) {
+    throw new Error(`${app.id} has no listing category; add one to categories`);
+  }
+  return category;
 };
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];
@@ -282,7 +340,7 @@ for (const app of catalog.apps) {
 <main class="wrap" data-app-id="${id}" data-minimum-cobalt-version="${escape(app.minimum_cobalt_version)}">
   <div class="app-hero">
     <div class="app-copy">
-      <p class="eyebrow">Kobo app</p>
+      <p class="eyebrow">${escape(categoryFor(app))}</p>
       <h1>${name}</h1>
       <p class="summary">${summary}</p>
       <dl class="facts">
