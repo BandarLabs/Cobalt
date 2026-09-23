@@ -22535,6 +22535,42 @@ mod prose_tests {
         );
     }
 
+    /// Only the card shape is outlined, and the square shape is not.
+    ///
+    /// A tile outline is drawn in ink at the button weight rather than in grey
+    /// at the rule weight, so one reads as a hairline and a grid of them reads
+    /// as a box around every cell. The launcher is a grid of square tiles, and
+    /// it once shipped with a box around every app on it. A card is the other
+    /// case: they arrive a few at a time, and the outline is what separates one
+    /// card's worth of text from the next.
+    #[test]
+    fn only_a_card_is_outlined_and_a_square_tile_is_not() {
+        let outlines = |shape| {
+            Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape,
+                    tiles: vec![Tile::new(ActionId(1), "Read", Glyph::Book)],
+                }],
+            )
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
+            .count()
+        };
+        assert_eq!(
+            outlines(TileShape::Square),
+            0,
+            "a square tile drew an outline, which boxes every app on the launcher"
+        );
+        assert!(
+            outlines(TileShape::Card) > 0,
+            "a card lost the outline that separates it from the next card"
+        );
+    }
+
     #[test]
     fn a_tile_with_nothing_extra_to_say_emits_no_chips_at_all() {
         let screen = Screen::new(
