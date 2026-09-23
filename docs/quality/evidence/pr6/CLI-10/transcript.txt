@@ -1,0 +1,23 @@
+$ kobo setup --dry-run --volume /tmp/fake-reader   (every change named before anything is written)
+found Kobo Clara BW (N365, profile clara-bw-391, device code 391) at /tmp/fake-reader · firmware 4.45.23697
+would install Cobalt into /tmp/fake-reader/.adds/cobalt
+would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)
+would set DeveloperSettings/ForceWifiOn=true, PowerOptions/AutoSleepMinutes=90
+would copy this machine's trust roots (stream) into .adds/cobalt/trust
+would write a Cobalt entry to .adds/nm/cobalt, and stage NickelMenu v0.6.0 in .kobo/KoboRoot.tgz
+  for the firmware to extract, after checking that the archive contains
+  nothing but ./mnt/onboard/.adds/nm/doc and ./usr/local/Kobo/imageformats/libnm.so
+would install no key, because there is no SSH server to use it
+would add Welcome from Cobalt.txt to the library, a short welcome note to open after the restart
+would eject, then stop after ejecting, because SSH was not enabled
+nothing outside the book partition, and nothing extracted as root but NickelMenu's own two files
+release: Cobalt 0.3.18 from this source checkout
+exit: 0
+
+$ kobo setup --non-interactive --volume /tmp/fake-reader   (a change without --yes is refused as usage, exit 2)
+kobo: usage: --non-interactive requires --yes for any change
+exit: 2
+
+$ kobo setup --dry-run --no-sample --volume /tmp/fake-reader | grep welcome   (opt-out is named too)
+would add no welcome note, because --no-sample was given
+exit: 0

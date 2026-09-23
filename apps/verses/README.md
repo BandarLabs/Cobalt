@@ -3,6 +3,9 @@
 One public-domain poem each day, typeset as a reading page.
 
 ![Verses daily poem](screenshots/today.png)
+![Reading page](screenshots/reading.png)
+![Offline shelf browse](screenshots/browse-offline.png)
+![Poem with attribution](screenshots/attribution.png)
 
 The offline shelf keeps its provenance with every poem: author, first
 publication year, and source. Search covers PoetryDB by title, poet, and lines,

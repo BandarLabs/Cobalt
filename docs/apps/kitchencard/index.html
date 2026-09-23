@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/kitchencard.png">
 <meta name="twitter:image:alt" content="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-tTUEvMPDwB52USws1xjE79QGeOdgGFbwsBZT8m2fnr0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-FuSPkw/Y30WuOdwiUwpkaq7rEJLonHrO71DzHcsqEhU='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.2",
+      "softwareVersion": "0.1.4",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -91,18 +91,35 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="kitchencard" data-minimum-cobalt-version="0.3.12">
+<main class="wrap" data-app-id="kitchencard" data-minimum-cobalt-version="0.3.18">
   <div class="app-hero">
     <div class="app-copy">
-      <p class="eyebrow">Kobo app</p>
+      <p class="eyebrow">Productivity</p>
       <h1>Kitchen Card</h1>
       <p class="summary">A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.</p>
-      <div class="meta"><span>Version 0.1.2</span><span>network, keep-awake</span></div>
+      <dl class="facts">
+        <div><dt>Version</dt><dd>0.1.4</dd></div>
+        <div><dt>Permissions</dt><dd>network, keep-awake</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+      </dl>
+      <a class="cta" href="#setup-panel">Install on your Kobo</a>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/kitchencard.png" width="1072" height="1448" alt="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs.">
     </figure>
   </div>
+  <section class="gallery" aria-label="Kitchen Card screenshots">
+    <div class="strip">
+      <figure><img src="../../media/site/apps/kitchencard/browse.png" loading="lazy" alt="Kitchen Card on a Kobo Clara BW: browse"></figure>
+      <figure><img src="../../media/site/apps/kitchencard/cooking.png" loading="lazy" alt="Kitchen Card on a Kobo Clara BW: cooking"></figure>
+      <figure><img src="../../media/site/apps/kitchencard/ingredients.png" loading="lazy" alt="Kitchen Card on a Kobo Clara BW: ingredients"></figure>
+      <figure><img src="../../media/site/apps/kitchencard/tonight.png" loading="lazy" alt="Kitchen Card on a Kobo Clara BW: tonight"></figure>
+    </div>
+  </section>
+  <section class="whats-new">
+    <h2>New in 0.1.4</h2>
+    <p>Reads servings from real Mealie recipeYield text, keeps ingredient rows single-line, shows a visible Next step button while cooking, and carries parser fixtures captured from a live Mealie account.</p>
+  </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
@@ -116,7 +133,7 @@
     <div class="get-cobalt-copy">
       <p class="eyebrow">Do not have Cobalt yet?</p>
       <h2>Install Cobalt directly from your browser</h2>
-      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi, with no cable.</p>
+      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi from the Cobalt Apps Catalog, with no cable.</p>
       <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
     </div>
     <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
@@ -124,7 +141,7 @@
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, then <strong>Install links</strong>. Scan the QR code, or enter the pairing code and verification key shown there.</p>
+    <p>On your Kobo, open <strong>App Store</strong> and tap the globe in the top bar. Choose <strong>Link browser</strong>, then scan the QR code or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>

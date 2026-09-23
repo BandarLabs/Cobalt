@@ -28,12 +28,26 @@ belong in Frame v1.
 
 ## On the reader
 
-The home screen shows the photo count, awake **Frame mode** or battery-saving
-**Slow slideshow** mode, interval, and stable shuffle/by-date order. It
-remembers those settings and the current position. A displayed photo fills the
-available unframed picture surface: tap the center for its file, album, date,
-previous/next, and exit controls; tap either side to navigate. Missing or
+The home screen shows the photo count with the current photo's name, album,
+and taken date, plus the awake **Frame mode** or battery-saving **Slow
+slideshow** mode, interval, and stable shuffle/by-date order. It remembers
+those settings and the current position. A displayed photo fills the
+available unframed picture surface and the title bar names it; tap the center
+for its file, album, taken date, and transfer state, previous/next, and exit
+controls; tap either side to navigate. A photo pushed with `--fit pad` keeps
+its whole composition letterboxed instead of filling the panel. Missing or
 malformed shelf images are skipped and reported on the home screen.
+
+Every push records a digest of the exact bytes that landed on the shelf. Frame
+checks those bytes in the background, and again when a photo is opened. The
+transfer state reads **Verified against the manifest** once the bytes match.
+A photo whose bytes no longer match is skipped with a re-push notice rather
+than shown.
+
+<img width="300" src="../../docs/quality/evidence/frame/frame-home.png" alt="Frame home listing the album position, photo name, album and taken date above the current photo">
+<img width="300" src="../../docs/quality/evidence/frame/frame-show-pad.png" alt="A wide panorama letterboxed with pad fitting in Frame">
+<img width="300" src="../../docs/quality/evidence/frame/frame-next.png" alt="Photo facts naming the file, album, taken date and verified transfer state">
+<img width="300" src="../../docs/quality/evidence/frame/frame-settings.png" alt="Frame settings for slideshow mode, interval and order">
 
 Frame mode keeps the app awake and advances with the SDK heartbeat at 5, 15,
 or 60 minutes. Slow slideshow schedules a real SDK wake at 1, 6, or 24 hours,

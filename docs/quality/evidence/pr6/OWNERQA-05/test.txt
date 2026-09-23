@@ -1,0 +1,17 @@
+   Compiling kobo-cli v0.3.18 (/home/sandbox/cobalt-lane/crates/kobo-cli)
+    Finished `test` profile [unoptimized] target(s) in 7.91s
+     Running unittests src/main.rs (target/debug/deps/kobo-a7eff67e6a60e467)
+
+running 1 test
+test setup::tests::two_arrivals_at_once_are_reported_rather_than_guessed_between ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 364 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized] target(s) in 0.10s
+     Running unittests src/main.rs (target/debug/deps/kobo-a7eff67e6a60e467)
+
+running 1 test
+test setup::tests::only_the_reader_among_several_arrivals_is_named ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 364 filtered out; finished in 0.00s
+

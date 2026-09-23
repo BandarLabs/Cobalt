@@ -1,7 +1,9 @@
-# Zotero Reader
+# Stacks
 
-Zotero Reader is a read-only Cobalt app for browsing personal Zotero
-collections and reading papers on a Kobo. Google Scholar can remain an input
+Stacks is a read-only Cobalt app for browsing personal Zotero
+collections and reading papers on a Kobo. It is unofficial and is not
+affiliated with or endorsed by Zotero or the Corporation for Digital
+Scholarship, which owns the Zotero trademark. Google Scholar can remain an input
 through the Zotero Connector; the app never accesses or scrapes Scholar.
 
 The public Store build reads metadata, abstracts, stored-PDF attachment
@@ -9,7 +11,7 @@ records, and Zotero-indexed text directly from Zotero Web API v3. It makes no
 Zotero write requests. It also supports multiple collections, local search,
 offline text, reading position, and annotations.
 
-![Zotero Reader displaying a paper on a Kobo](screenshots/reading.png)
+![Stacks displaying a Zotero paper on a Kobo](screenshots/reading.png)
 
 ## Set up direct Zotero access
 
@@ -23,7 +25,7 @@ offline text, reading position, and annotations.
    kobo secret set zotero --device <address>
    ```
 
-5. Launch Zotero Reader, enter the numeric user ID, and select a collection.
+5. Launch Stacks, enter the numeric user ID, and select a collection.
    Use **Collections** in the feed header whenever you want to switch.
 
 The runtime—not the app—stores and attaches the key. Its platform policy binds
@@ -64,7 +66,7 @@ user information, or alternate port.
 
 ## Permissions and privacy
 
-Zotero Reader requests only:
+Stacks requests only:
 
 - `network` for Zotero and an explicitly authorized conversion service;
 - `frontlight-control` for the reading view.

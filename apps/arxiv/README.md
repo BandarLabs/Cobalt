@@ -1,9 +1,14 @@
-# arXiv
+# Preprints
 
 Browse a subject's newest preprints or search the archive, and read what comes
 back on the panel rather than downloading it.
 
-<img width="300" src="screenshots/listing.png" alt="The newest machine learning preprints, newest first"> <img width="300" src="screenshots/abstract.png" alt="A paper's abstract, set for reading">
+Preprints is an unofficial reader built on the public arXiv export API. It is
+not affiliated with, endorsed by, or connected to arXiv. arXiv asks that
+independent projects not carry its name, which is why this app does not.
+Thank you to arXiv for use of its open access interoperability.
+
+<img width="300" src="screenshots/listing.png" alt="The Artificial Intelligence subject listing, three preprints with authors and dates, newest first"> <img width="300" src="screenshots/abstract.png" alt="A paper's abstract, set for reading">
 
 ## The abstract is the document
 
@@ -71,6 +76,17 @@ opens from **Library** with no network at all. The same button becomes **Remove
 from library**, so keeping is a decision the reader can take back. This matters
 on a device that spends most of its life away from Wi-Fi: a paper found on a
 sofa is readable on a train.
+
+## Searches and subjects worth keeping
+
+A search worth running once is often worth running again, and retyping it is
+the worst way to find that out. A word listing offers **Save this search** and
+a subject listing offers **Follow this subject**; both live in **Saved**, a tap
+from the subject list. A row there runs its search or opens its subject without
+the keyboard, and **Manage** removes whatever stopped being worth keeping.
+Following also pins the subject to the top of the list.
+
+<img width="300" src="screenshots/saved.png" alt="A saved search and a followed subject in Saved">
 
 ## Newest first, always
 

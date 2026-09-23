@@ -7,6 +7,7 @@
 # bytes nobody reads.
 /crates/kobod/target/
 /crates/kobo-cli/target/
+/crates/kobo-flashcards-import/target/
 /.pass
 
 # Credentials. `kobo secret` reads keys off this machine and writes them

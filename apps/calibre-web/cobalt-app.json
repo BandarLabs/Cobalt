@@ -1,11 +1,11 @@
 {
   "id": "calibre-web",
-  "display_name": "calibre-web",
-  "short_label": "calibre-web",
+  "display_name": "Library",
+  "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library.",
-  "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline.",
-  "version": "0.1.3",
-  "release_notes": "Browse real library catalogs, sign in on the reader, download EPUBs and keep reading offline with save recovery.",
+  "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
+  "version": "0.1.4",
+  "release_notes": "Renamed from calibre-web to Library, so the app carries its own name rather than the name of the server software it reads from.",
   "glyph": "book",
   "capabilities": [
     "network"

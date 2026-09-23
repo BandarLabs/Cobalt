@@ -7,7 +7,7 @@ Actual SDK app in the Clara BW simulator at 1072 × 1448 with extra-large interf
 | game.png | [Pencil notes](../../../docs/quality/evidence/sudoku/02-pencil-notes.json) |
 | completed.png | [Completed puzzle](../../../docs/quality/evidence/sudoku/09-completed-puzzle.json) |
 | recovery.png | [Failed-save recovery](../../../docs/quality/evidence/sudoku/05-save-recovery.json) |
-| landscape.png | [Lower landscape rows](../../../docs/quality/evidence/sudoku/15-landscape-lower.json) |
+| landscape.png | [Restored landscape game](../../../docs/quality/evidence/sudoku/16-landscape-restored.json) |
 
 The public app page uses `game.png` at `docs/media/site/apps/sudoku.png`. Each source capture records binary and source digests, fonts, profile, text scale, orientation and fixture identity. Landscape captures retain the physical panel orientation recorded by the CLI.
 

@@ -267,6 +267,19 @@ pub struct Memory {
     /// `None` means the reader has never set one here, so the device's own
     /// level is left alone. Zero is a real setting and is not the same thing.
     pub light: Option<u8>,
+    /// Whether the bar stays out of the way while reading.
+    ///
+    /// Off unless asked for, and asked for from the panel rather than guessed
+    /// at: the bar is what teaches the middle-column tap, so a reader who has
+    /// not yet learned the gesture must not be the one it is taken from.
+    ///
+    /// Kept here, so it belongs to this book the way the type size does. A
+    /// reader who wants a bare page for a novel and the bar for a manual gets
+    /// both; a reader who wants it everywhere asks for it once per book. An
+    /// application-wide preference would be a better answer to the second
+    /// reader and a worse one to the first, and this record is the only
+    /// storage the reader itself has.
+    pub full_page: bool,
 }
 
 impl Default for Memory {
@@ -276,6 +289,7 @@ impl Default for Memory {
             bookmarks: BTreeSet::new(),
             highlights: BTreeSet::new(),
             annotations: BTreeMap::new(),
+            full_page: false,
             next_annotation_id: 1,
             scale: TextScale::default(),
             light: None,
@@ -299,6 +313,9 @@ impl Memory {
         let _ = writeln!(text, "scale {}", self.scale.wire_value());
         if let Some(light) = self.light {
             let _ = writeln!(text, "light {light}");
+        }
+        if self.full_page {
+            let _ = writeln!(text, "full 1");
         }
         for bookmark in &self.bookmarks {
             let _ = writeln!(text, "mark {bookmark}");
@@ -342,6 +359,7 @@ impl Memory {
                     }
                 }
                 "light" => memory.light = value.parse().ok(),
+                "full" => memory.full_page = value == "1",
                 "mark" => {
                     if let Ok(at) = value.parse() {
                         memory.bookmarks.insert(at);
@@ -480,6 +498,8 @@ pub mod action {
     pub const MARK: &str = "reader-mark-";
     /// One per stored mark, suffixed with its block index.
     pub const GO: &str = "reader-go-";
+    /// Turns the bar away while reading, or asks for it back.
+    pub const FULL_PAGE: &str = "reader-full-page";
     /// Opens the book's own table of contents.
     pub const CONTENTS: &str = "reader-contents";
     /// Opens the links the page being read points at.
@@ -1275,6 +1295,7 @@ impl Reader {
                 self.set_chrome(next, panel);
                 Outcome::Repaint
             }
+            action::FULL_PAGE => self.turn_full_page_over(panel),
             action::HIGHLIGHTS => {
                 self.set_chrome(Chrome::Highlights, panel);
                 Outcome::Repaint
@@ -1336,6 +1357,18 @@ impl Reader {
         }
     }
 
+    /// Gives the page the panel, or gives the bar back.
+    ///
+    /// The panel goes away with it: the setting is about what the page looks
+    /// like, and a reader cannot see what they changed through the panel that
+    /// changed it. Saved rather than merely repainted, so the book reopens the
+    /// way it was left.
+    fn turn_full_page_over(&mut self, panel: &DisplayMetrics) -> Outcome {
+        self.memory.full_page = !self.memory.full_page;
+        self.set_chrome(Chrome::Hidden, panel);
+        Outcome::Save
+    }
+
     /// The same as [`Self::act`], for an application that is handed a hashed
     /// identifier rather than a name.
     ///
@@ -1355,6 +1388,7 @@ impl Reader {
             action::BACK.into(),
             action::CONTROLS.into(),
             action::LIGHT.into(),
+            action::FULL_PAGE.into(),
             action::CLOSE.into(),
             action::LARGER.into(),
             action::SMALLER.into(),
@@ -1571,7 +1605,9 @@ impl Reader {
             // No panel and no bar over the page: a book, the reader's own
             // hands, and the muted place at the foot. This is the point of the
             // reading screen.
-            return screen.build();
+            return screen
+                .build()
+                .with_auto_hidden_top_bar(self.memory.full_page);
         }
         // A panel over the page rather than a bar under it. A bar takes its
         // height out of the content, so opening the controls repaginated the
@@ -1669,6 +1705,21 @@ impl Reader {
             row.push((action::LINKS.to_owned(), "Links", Glyph::Globe));
         }
         row.push((action::HIGHLIGHTS.to_owned(), "Notes", Glyph::Note));
+        // Named rather than gestured. The bar is what teaches the tap that
+        // opens this panel, so the reader who gives it up should be one who
+        // has already found their way here and can read what they are turning
+        // off. It says what the next tap does, not what is true now, which is
+        // the one wording that never leaves somebody guessing which state they
+        // are looking at.
+        row.push((
+            action::FULL_PAGE.to_owned(),
+            if self.memory.full_page {
+                "Show bar"
+            } else {
+                "Full page"
+            },
+            Glyph::Reader,
+        ));
         // Four across at most: a fifth control on this panel would be narrower
         // than a fingertip, and the row wraps rather than shrinking.
         let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
@@ -3957,6 +4008,55 @@ mod tests {
     /// The panel is what the controls are, so everything a reader can do to a
     /// book has to be on it. The bar it replaced carried five things and
     /// dropped the sixth without saying so.
+    #[test]
+    fn a_full_page_is_asked_for_from_the_panel_and_kept_with_the_book() {
+        // The bar is what teaches the middle-column tap, so it is never taken
+        // from a reader who has not gone looking for the setting themselves.
+        let mut reader = reader(40);
+        assert!(
+            !reader.memory().full_page,
+            "a reader who has asked for nothing keeps the bar"
+        );
+        assert!(
+            !reader.screen("Pride and Prejudice").auto_hide_top_bar,
+            "and the shell is not told to hide it"
+        );
+
+        reader.act(action::CONTROLS, &panel());
+        let outcome = reader.act(action::FULL_PAGE, &panel());
+        assert_eq!(
+            outcome,
+            Outcome::Save,
+            "the book has to reopen the way it was left, so it is written down"
+        );
+        assert!(reader.memory().full_page);
+        let screen = reader.screen("Pride and Prejudice");
+        assert!(screen.auto_hide_top_bar, "the page is the whole page now");
+        assert!(
+            screen.overlay.is_none(),
+            "the panel that changed the page cannot be what hides it"
+        );
+
+        // Written and read back by name, so a reader that has never heard of
+        // the setting simply skips the line rather than losing the record.
+        let carried = Memory::decode(&reader.memory().encode());
+        assert!(carried.full_page);
+
+        // This record belongs to one book, so the next book starts with the
+        // bar. That is the same place the type size is kept, and it is worth
+        // being plain about: setting it here does not set it everywhere.
+        assert!(
+            !Memory::default().full_page,
+            "another book opens with its bar until it is asked otherwise"
+        );
+
+        // And it is a setting, not a trap: the same control gives the bar back.
+        reader.act(action::CONTROLS, &panel());
+        reader.act(action::FULL_PAGE, &panel());
+        assert!(!reader.memory().full_page);
+        assert!(!reader.screen("Pride and Prejudice").auto_hide_top_bar);
+    }
+
     #[test]
     fn the_controls_panel_carries_every_reading_control() {
         let mut reader = reader(40);

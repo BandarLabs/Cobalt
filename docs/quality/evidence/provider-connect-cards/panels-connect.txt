@@ -1,0 +1,6 @@
+Connect Panels
+Read comics added from your computer or Komga library.
+
+No computer-side sign-in is declared. Open the app and follow its on-reader connection steps.
+
+Full setup: kobo apps setup panels

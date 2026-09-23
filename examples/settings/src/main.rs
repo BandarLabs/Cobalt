@@ -3,9 +3,9 @@
 use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceIdentity, DeviceRequest,
-    DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId,
-    TaskOutcome, UpdateChannel, WifiNetwork,
+    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DenyReason, DeviceIdentity,
+    DeviceRequest, DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task,
+    TaskId, TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -40,7 +40,25 @@ const NETWORK_ACTIONS: [&str; 10] = [
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
-const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
+/// Only the newest few releases, because a hundred of them is a megabyte and
+/// a half of assets a reader downloads over their own Wi-Fi to learn one
+/// version number, and because that is how the feed outgrew its window.
+/// Betas and stables alternate, so fifteen always holds several betas.
+const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=15";
+
+/// How much of a release feed this reader will take.
+///
+/// A fetch carries a byte range, and GitHub honours it: a feed longer than
+/// its window comes back as a 206 holding the first window of it, which is
+/// valid JSON up to the point it stops being any JSON at all. Nothing in the
+/// transport can tell that from a whole document, so the only defence is a
+/// window the feed cannot outgrow, and a sentence for the day it does.
+const fn release_window(channel: UpdateChannel) -> u32 {
+    match channel {
+        UpdateChannel::Stable => 256 * 1024,
+        UpdateChannel::Beta => 4 * 1024 * 1024,
+    }
+}
 
 const fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
@@ -72,15 +90,25 @@ enum View {
 /// `Unavailable` is a confirmed hardware fact: it is only ever produced by
 /// `new`, from a successful device reply reporting `available: false`. It
 /// must never be assumed from the absence of an answer -- `Unknown`, the
-/// default, is what every radio starts as before its first read replies, and
-/// what a failed or denied read leaves it as, precisely so a pending or
-/// backend-failed read can never be mistaken for a device that has no radio
-/// at all.
+/// default, is what every radio starts as before its first read replies,
+/// precisely so a pending or backend-failed read can never be mistaken for a
+/// device that has no radio at all.
+///
+/// `Unsupported` is the second settled answer, and it is a fact about this
+/// runtime rather than about the hardware: the reading was refused with
+/// `DenyReason::Unsupported`, which the protocol defines as this runtime not
+/// being able to do it on this hardware *yet*. That is not the same claim as
+/// a missing radio, and the two must not be collapsed: a reader whose
+/// Bluetooth the runtime has not brought up has the hardware, and telling
+/// them it does not exist is a worse answer than the "Checking..." this
+/// replaced. Anything that is neither a reading nor a refusal still leaves
+/// the radio `Unknown`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum RadioState {
     #[default]
     Unknown,
     Unavailable,
+    Unsupported,
     Off,
     On,
 }
@@ -269,6 +297,7 @@ impl Settings {
         let bluetooth = match self.bluetooth_state {
             RadioState::Unknown => "Checking…".to_owned(),
             RadioState::Unavailable => "Not available on this device".to_owned(),
+            RadioState::Unsupported => "Not supported by this runtime".to_owned(),
             RadioState::Off => "Off".to_owned(),
             RadioState::On => {
                 let connected = self
@@ -282,6 +311,7 @@ impl Settings {
         let wifi = match (self.wifi_state, &self.connected_ssid) {
             (RadioState::Unknown, _) => "Checking…".to_owned(),
             (RadioState::Unavailable, _) => "Not available on this device".to_owned(),
+            (RadioState::Unsupported, _) => "Not supported by this runtime".to_owned(),
             (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
             (RadioState::On, None) => "On · Not connected".to_owned(),
             (RadioState::Off, _) => "Off".to_owned(),
@@ -504,11 +534,18 @@ impl Settings {
         // No radio was found on this hardware. A toggle that only fails once
         // tapped is worse than no toggle: it invites the exact action that
         // cannot succeed. Say so plainly instead and stop there.
-        if self.bluetooth_state == RadioState::Unavailable {
+        if matches!(
+            self.bluetooth_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
             return ScreenBuilder::new("settings-bluetooth")
                 .top_bar("Bluetooth")
                 .owns_back(true)
-                .text("This device has no Bluetooth hardware.")
+                .text(if self.bluetooth_state == RadioState::Unavailable {
+                    "This device has no Bluetooth hardware."
+                } else {
+                    "This runtime cannot use Bluetooth on this hardware."
+                })
                 .build();
         }
         let mut screen = ScreenBuilder::new("settings-bluetooth")
@@ -591,11 +628,18 @@ impl Settings {
     fn wifi(&self) -> Screen {
         // Same reasoning as the Bluetooth screen: a toggle that can only fail
         // is worse than no toggle.
-        if self.wifi_state == RadioState::Unavailable {
+        if matches!(
+            self.wifi_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
             return ScreenBuilder::new("settings-wifi")
                 .top_bar("Wi-Fi")
                 .owns_back(true)
-                .text("This device has no Wi-Fi hardware.")
+                .text(if self.wifi_state == RadioState::Unavailable {
+                    "This device has no Wi-Fi hardware."
+                } else {
+                    "This runtime cannot use Wi-Fi on this hardware."
+                })
                 .build();
         }
         let mut screen = ScreenBuilder::new("settings-wifi")
@@ -850,10 +894,7 @@ impl Settings {
             }
             .to_owned(),
             offset: 0,
-            max_bytes: match channel {
-                UpdateChannel::Stable => 256 * 1024,
-                UpdateChannel::Beta => 1024 * 1024,
-            },
+            max_bytes: release_window(channel),
             credential: None,
             headers: Vec::new(),
         });
@@ -1001,6 +1042,29 @@ impl Settings {
     fn fail(&mut self, topic: Topic, error: impl Into<String>) {
         self.pending = None;
         self.trouble = Some((topic, error.into()));
+    }
+
+    /// Answers a radio row that this runtime can never read.
+    ///
+    /// Only the success arm ever moved a radio off `Unknown`, and `Unknown`
+    /// is drawn as "Checking…". A reader whose Bluetooth the runtime cannot
+    /// drive therefore sat on "Checking…" for the rest of the session while
+    /// the banner directly under it already said the reading would never
+    /// come: one row promising a result, one banner saying there would not be
+    /// one. `Unsupported` is a settled answer, so the row gives it.
+    ///
+    /// Only `Unsupported` settles anything. Every other failure is a reading
+    /// that may yet succeed, and claiming the radio is absent because one
+    /// read failed would be a worse lie than the one this fixes.
+    fn settle_unreadable_radio(&mut self, topic: Topic, reason: DenyReason) {
+        if reason != DenyReason::Unsupported {
+            return;
+        }
+        match topic {
+            Topic::Bluetooth => self.bluetooth_state = RadioState::Unsupported,
+            Topic::Wifi => self.wifi_state = RadioState::Unsupported,
+            Topic::Battery | Topic::About => {}
+        }
     }
 
     /// Clears a failure once the same row answers successfully. A Wi-Fi
@@ -1282,6 +1346,7 @@ impl KoboApp for Settings {
                 if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(reason.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
+                    self.settle_unreadable_radio(topic, reason);
                     self.fail(topic, reason.to_string());
                 }
             }
@@ -1315,7 +1380,8 @@ impl KoboApp for Settings {
             | DeviceResult::AppLink(_)
             | DeviceResult::RemoteInstall(_)
             | DeviceResult::Library { .. }
-            | DeviceResult::LibraryDocument { .. } => {}
+            | DeviceResult::LibraryDocument { .. }
+            | DeviceResult::Secrets { .. } => {}
         }
         self.show(context);
     }
@@ -1429,8 +1495,17 @@ fn archive_name(version: &str) -> String {
 /// Reads the selected GitHub release feed down to the two URLs this device
 /// needs. Beta selection is by numeric version rather than response order.
 fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String> {
-    let value = kobo_json::parse(body)
-        .map_err(|_| "GitHub sent something that is not a release.".to_owned())?;
+    // A reply that filled its window and then failed to parse is a window
+    // into a longer feed, not a broken one, and telling the reader their
+    // release list is unreadable rubbish sends them looking for a fault at
+    // GitHub that is not there.
+    let value = kobo_json::parse(body).map_err(|_| {
+        if body.len() >= release_window(channel) as usize {
+            "GitHub's release list is longer than this reader can read.".to_owned()
+        } else {
+            "GitHub sent something that is not a release.".to_owned()
+        }
+    })?;
     match channel {
         UpdateChannel::Stable => stable_release(&value),
         UpdateChannel::Beta => value
@@ -1586,13 +1661,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
+        RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
         CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel, WifiNetwork,
-        CLARA_BW_METRICS,
+        DenyReason, DeviceIdentity, DeviceRequest, DeviceResult, Emphasis, Glyph, Node,
+        UpdateChannel, WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1702,6 +1777,67 @@ mod tests {
         );
         assert_eq!(settings.update_channel, Some(UpdateChannel::Beta));
         assert_eq!(settings.update, super::UpdateFlow::Idle);
+    }
+
+    #[test]
+    fn a_radio_the_runtime_cannot_read_stops_saying_it_is_being_checked() {
+        // The bug this pins: only a successful reading moved a radio off
+        // Unknown, and Unknown draws as "Checking...". On hardware whose
+        // Bluetooth this runtime cannot drive, the home row promised a
+        // reading for the rest of the session while the banner under it
+        // already said the reading would never come.
+        let mut settings = Settings::default();
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        let before = format!("{:?}", settings.home());
+        assert!(before.contains("Checking"), "{before}");
+
+        settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Unsupported);
+
+        assert_eq!(settings.bluetooth_state, RadioState::Unsupported);
+        let after = format!("{:?}", settings.home());
+        assert!(after.contains("Not supported by this runtime"), "{after}");
+    }
+
+    #[test]
+    fn a_refused_bluetooth_reading_settles_the_row_through_the_runtime() {
+        // Driven through on_device_result rather than the helper, because the
+        // helper passing proves only that the helper works: the defect was
+        // that the refusal never reached a state change at all, and a test
+        // that calls the transition directly would pass with the call site
+        // deleted.
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        assert_eq!(runner.app().bluetooth_state, RadioState::Unknown);
+
+        // read_bluetooth is the first reading refresh asks for, so the first
+        // answer delivered is the one it is matched to.
+        runner.device_result(DeviceResult::Denied(DenyReason::Unsupported));
+
+        assert_eq!(runner.app().bluetooth_state, RadioState::Unsupported);
+        let home = format!("{:?}", runner.app().home());
+        assert!(home.contains("Not supported by this runtime"), "{home}");
+        // The refusal is about the runtime, so the screen must not go on to
+        // claim the hardware is missing: this reader may well have a radio
+        // the runtime has simply not brought up.
+        let screen = text_of(&runner.app().bluetooth());
+        assert!(
+            screen.contains("This runtime cannot use Bluetooth on this hardware."),
+            "{screen}"
+        );
+        assert!(!screen.contains("no Bluetooth hardware"), "{screen}");
+    }
+
+    #[test]
+    fn a_radio_that_merely_failed_once_is_still_worth_reading_again() {
+        // The narrower half of the same fix: a refusal for any other reason
+        // may yet be followed by a reading that succeeds, so the row must not
+        // claim the hardware is absent on the strength of one refusal.
+        let mut settings = Settings::default();
+
+        settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Busy);
+
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
     }
 
     #[test]
@@ -2119,6 +2255,39 @@ mod tests {
     }
 
     #[test]
+    fn a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense() {
+        let window = super::release_window(UpdateChannel::Beta) as usize;
+        let cut_off = r#"[{"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[{"#
+            .to_owned()
+            + &" ".repeat(window);
+        assert!(
+            super::latest_release(&cut_off, UpdateChannel::Beta)
+                .expect_err("a window into a feed is not a feed")
+                .contains("longer than this reader can read"),
+            "a reply that filled its window names the length as the fault"
+        );
+        assert!(
+            super::latest_release("<html>", UpdateChannel::Beta)
+                .expect_err("not a feed at all")
+                .contains("not a release"),
+            "a short reply that is not a feed keeps its own sentence"
+        );
+    }
+
+    #[test]
+    fn the_beta_feed_asks_for_few_enough_releases_to_stay_inside_its_window() {
+        assert!(
+            super::BETA_RELEASES.ends_with("per_page=15"),
+            "the whole list outgrew the window once and must not be asked for again"
+        );
+        assert!(
+            super::release_window(UpdateChannel::Beta)
+                > 8 * super::release_window(UpdateChannel::Stable),
+            "the beta feed is the long one and needs room to grow"
+        );
+    }
+
+    #[test]
     fn beta_release_selection_orders_versions_and_excludes_other_releases() {
         let body = r#"[
           {"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[
@@ -2228,6 +2397,9 @@ mod tests {
                 version: "9.9.9".to_owned(),
             },
             super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+            super::UpdateFlow::Failed(
+                "GitHub's release list is longer than this reader can read.".to_owned(),
+            ),
         ];
         for flow in flows {
             let settings = Settings {

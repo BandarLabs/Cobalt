@@ -11,6 +11,9 @@ const CHECKERS: u8 = 15;
 const MAX_CUBE: u8 = 64;
 const POINTS_PER_PAGE: usize = 6;
 const SAVE: &str = "backgammon-autosave-v4";
+/// Shown in place of the usual note until a write lands again.
+const SAVE_FAILED: &str =
+    "Progress is not saved. Keep the app open while you make room on your reader; the next move tries again.";
 /// The save this replaces. A game left half-played survives the upgrade.
 const OLD_SAVE: &str = "backgammon-autosave-v3";
 /// How many finished turns the board remembers out loud.
@@ -439,6 +442,14 @@ impl Phase {
     }
 }
 
+/// Whether the last autosave landed, so a refusal stays on screen until a
+/// write does.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SaveState {
+    Kept,
+    Refused,
+}
+
 struct Game {
     position: Position,
     turn: Player,
@@ -463,6 +474,7 @@ struct Game {
     phase: Phase,
     history: Vec<Snapshot>,
     message: String,
+    save: SaveState,
     initial_load: InitialLoad,
     view: View,
 }
@@ -489,6 +501,7 @@ impl Default for Game {
             phase: Phase::Playing,
             history: Vec::new(),
             message: "Tap Roll to begin.".into(),
+            save: SaveState::Kept,
             initial_load: InitialLoad::Pending,
             view: View::Board,
         }
@@ -901,6 +914,7 @@ impl Game {
             phase,
             history: Vec::new(),
             message: saved_message(phase),
+            save: SaveState::Kept,
             initial_load: InitialLoad::Pending,
             view: View::Board,
         };
@@ -1515,7 +1529,11 @@ fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
             .build(),
         Phase::GameOver(_) => ScreenBuilder::new("backgammon-game-over")
             .top_bar("Backgammon")
-            .secondary(&game.message)
+            .secondary(if game.save == SaveState::Refused {
+                SAVE_FAILED
+            } else {
+                &game.message
+            })
             .grid(
                 2,
                 false,
@@ -1545,7 +1563,11 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
         // which is the one thing somebody picking the reader up again needs to
         // read at a glance.
         .section(turn_line(game))
-        .secondary(&game.message);
+        .secondary(if game.save == SaveState::Refused {
+            SAVE_FAILED
+        } else {
+            &game.message
+        });
     if let Some(picture) = picture {
         screen = screen.unframed_picture(picture, 52);
     }
@@ -1719,6 +1741,19 @@ impl KoboApp for Game {
         }
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        match &result {
+            StoreResult::Denied(_) => {
+                self.save = SaveState::Refused;
+                self.show(context);
+                return;
+            }
+            StoreResult::Saved { .. } if self.save == SaveState::Refused => {
+                self.save = SaveState::Kept;
+                self.show(context);
+                return;
+            }
+            _ => {}
+        }
         if let StoreResult::Loaded { key, value } = result {
             if key == OLD_SAVE {
                 // Only when this session has nothing newer to show for itself.
@@ -2610,6 +2645,23 @@ mod tests {
 
     /// A seeded run replays exactly, and two seeds do not agree. Without this
     /// the dice were a counter: every game dealt the same rolls in the same
+    #[test]
+    fn a_denied_autosave_is_announced_until_a_write_lands() {
+        use kobo_sdk::{AppRunner, StoreError};
+
+        let mut runner = AppRunner::new(Game::default());
+        runner.store_result(StoreResult::Denied(StoreError::NoRoom));
+        assert!(runner.app().save == SaveState::Refused);
+        let drawn = format!("{:?}", test_screen(runner.app()));
+        assert!(drawn.contains("Progress is not saved"), "{drawn}");
+        runner.store_result(StoreResult::Saved {
+            key: SAVE.to_owned(),
+        });
+        assert!(runner.app().save == SaveState::Kept);
+        let drawn = format!("{:?}", test_screen(runner.app()));
+        assert!(!drawn.contains("Progress is not saved"), "{drawn}");
+    }
+
     /// order, which is not a game of backgammon.
     #[test]
     fn seeded_dice_replay_and_two_seeds_differ_while_staying_in_range() {

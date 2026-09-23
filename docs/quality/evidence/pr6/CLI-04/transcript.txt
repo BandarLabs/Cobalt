@@ -1,0 +1,45 @@
+$ printf "5\n" | script -qec "kobo" /dev/null   (guided surface -> the same --help operation)
+5
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+0. Exit
+Choose a number: Kobo application SDK
+
+Usage: kobo <command>
+
+
+$ printf "6\n1\n" | script -qec "kobo" /dev/null | head -8   (guided surface -> the same apps setup operation)
+6
+1
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+
+$ kobo </dev/null   (noninteractive: compact help names the same owner operations, exits 0)
+Cobalt - tools for your reader
+
+  kobo setup
+    Set up a reader connected by USB
+  kobo apps
+    Find apps and read setup guides
+  kobo frame --help
+    Prepare and send photos
+  kobo flashcards --help
+    Import cards and review progress
+  kobo feeds --help
+    Check and send feed subscriptions
+  kobo stream
+    Share a terminal with Paperterm
+
+Run kobo in a terminal for guided choices.
+Developer and release commands: kobo --help
+exit: 0

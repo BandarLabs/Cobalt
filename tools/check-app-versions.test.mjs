@@ -604,7 +604,8 @@ test("no drive script in this tree counts as a release input", () => {
 test("an app drawing a board the runtime learned late says which release it needs", () => {
   const LATE_NODES = [
     ["crossword_board", "0.3.14"],
-    ["pencil_board", "0.3.14"]
+    ["pencil_board", "0.3.14"],
+    ["PencilMarkKind::Candidates", "0.3.18"]
   ];
   const packages = [
     ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),
@@ -636,15 +637,23 @@ test("an app drawing a board the runtime learned late says which release it need
     } catch {
       continue;
     }
-    for (const [node, floor] of LATE_NODES) {
-      if (!sources.includes(`${node}(`)) continue;
-      checked += 1;
-      assert.equal(
-        manifest.minimum_cobalt_version,
-        floor,
-        `${entry.name} draws ${node} and must declare minimum_cobalt_version ${floor}`
-      );
-    }
+    const floors = LATE_NODES.filter(([node]) => sources.includes(`${node}(`));
+    if (floors.length === 0) continue;
+    checked += 1;
+    // The install floor is the newest node the app draws.
+    const floor = floors
+      .map(([, version]) => version)
+      .sort((a, b) => {
+        const pa = a.split(".").map(Number);
+        const pb = b.split(".").map(Number);
+        return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+      })
+      .at(-1);
+    assert.equal(
+      manifest.minimum_cobalt_version,
+      floor,
+      `${entry.name} draws ${floors.map(([node]) => node).join(" and ")} and must declare minimum_cobalt_version ${floor}`
+    );
   }
   assert.ok(checked >= 2, `expected the board apps, found ${checked}`);
 });

@@ -1,0 +1,17 @@
+Needles
+Count rows, browse Ravelry collections, and read your synced patterns offline.
+
+Bundled guide: version 0.1.3
+
+What the app can use:
+  - Connects to online services
+  - Can keep the reader awake while in use
+
+Setup:
+1. Ravelry library sync requires an approved Ravelry API account and HTTP Basic credential.
+2. Install the credential under the exact name ravelry.
+   kobo secret set ravelry --device <address>
+3. Prepare and transfer a PDF you own with Poppler's pdftotext installed.
+   kobo needles push PATTERN.pdf --device <address>
+
+This guide does not check installation or account access.

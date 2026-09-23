@@ -8,6 +8,8 @@ guides, not measured solving times. The previous 5×5 puzzle remains available a
 
 ![Numbered crossword in the simulator](screenshots/crossword-play.png)
 
+![Entering an answer against its clue](screenshots/clue-entry.png)
+
 Crossword opens in portrait. Tap a square or choose an Across or Down clue.
 The board shades the active word. While entering an answer, the full clue stays
 above the word and keyboard; the outlined square is the target. The arrow in

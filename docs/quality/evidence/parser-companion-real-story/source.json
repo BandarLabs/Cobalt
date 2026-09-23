@@ -1,0 +1,21 @@
+{
+  "source_repository": "https://github.com/historicalsource/zork1",
+  "source_commit": "97b7b3d68c075dd9af7da499c3e9690ada3471fd",
+  "artifact": "COMPILED/zork1.z3",
+  "artifact_sha256": "37084966477dff679282de42974b2077156b1bd68fad92a65d4ea94d8eb64d79",
+  "license": "MIT",
+  "bytes": 86838,
+  "inspection": {
+    "title": "zork1",
+    "format": "Z-machine v3",
+    "release": 119,
+    "serial": "880429",
+    "checksum": "bf44",
+    "compatibility": "Playable in Parser's text-only v3/v5/v8 interpreter"
+  },
+  "integration": {
+    "app_lineage": "pr5-apps-polish c3a2dc20",
+    "cli_lineage": "pr6-companion-clis d4a041f3 plus this patch",
+    "physical_hardware": false
+  }
+}

@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/readlater.png">
 <meta name="twitter:image:alt" content="Read Later setup screen showing Wallabag credential instructions.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-GX5wOUYPvBlL+thDC2wjfhHkPHKC4bWZ8nZvMggP4jk='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-w/srHav9CQLsfiu4zFCIH25X704Dy+jJnVgo2qqaIEU='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.4",
+      "softwareVersion": "0.2.3",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -91,18 +91,27 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="readlater" data-minimum-cobalt-version="0.3.12">
+<main class="wrap" data-app-id="readlater" data-minimum-cobalt-version="0.3.18">
   <div class="app-hero">
     <div class="app-copy">
-      <p class="eyebrow">Kobo app</p>
+      <p class="eyebrow">Reading</p>
       <h1>Read Later</h1>
       <p class="summary">Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.</p>
-      <div class="meta"><span>Version 0.1.4</span><span>network</span></div>
+      <dl class="facts">
+        <div><dt>Version</dt><dd>0.2.3</dd></div>
+        <div><dt>Permissions</dt><dd>network</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+      </dl>
+      <a class="cta" href="#setup-panel">Install on your Kobo</a>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/readlater.png" width="1072" height="1448" alt="Read Later setup screen showing Wallabag credential instructions.">
     </figure>
   </div>
+  <section class="whats-new">
+    <h2>New in 0.2.3</h2>
+    <p>An article with a queued archive or star says Waiting to sync on its row.</p>
+  </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
@@ -116,7 +125,7 @@
     <div class="get-cobalt-copy">
       <p class="eyebrow">Do not have Cobalt yet?</p>
       <h2>Install Cobalt directly from your browser</h2>
-      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi, with no cable.</p>
+      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi from the Cobalt Apps Catalog, with no cable.</p>
       <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
     </div>
     <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
@@ -124,7 +133,7 @@
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, then <strong>Install links</strong>. Scan the QR code, or enter the pairing code and verification key shown there.</p>
+    <p>On your Kobo, open <strong>App Store</strong> and tap the globe in the top bar. Choose <strong>Link browser</strong>, then scan the QR code or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>

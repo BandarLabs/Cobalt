@@ -1,18 +1,21 @@
 mod cache;
+mod session;
 mod wallabag;
 
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, Glyph, KoboApp, ScreenBuilder,
-    StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, Glyph,
+    KoboApp, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome, UpdateMethod,
 };
 use std::process::ExitCode;
 use wallabag::Entry;
 
 const CONFIG: &str = "config";
 const ACTIONS: &str = "actions";
+/// The one credential name this application is policy-authorized to use.
+const CREDENTIAL: &str = "wallabag";
 const CACHE_ERROR: &str = "Articles could not be saved or opened. Retry saving before closing.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,12 +27,100 @@ enum View {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Setting {
     Server,
-    Credential,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingTask {
     Queue,
     Article(usize),
+    /// The outbox entry at index zero is in flight.
+    Outbox,
+    /// A token refresh; `resume` holds what to replay when it lands.
+    Refresh,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Tab {
+    #[default]
+    Unread,
+    Starred,
+    Archive,
+}
+
+impl Tab {
+    fn params(self) -> (bool, bool) {
+        match self {
+            Tab::Unread => (false, false),
+            Tab::Starred => (true, false),
+            Tab::Archive => (false, true),
+        }
+    }
+
+    fn shows(self, entry: &Entry) -> bool {
+        match self {
+            Tab::Unread => !entry.archived,
+            Tab::Starred => entry.starred && !entry.archived,
+            Tab::Archive => entry.archived,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Tab::Unread => 0,
+            Tab::Starred => 1,
+            Tab::Archive => 2,
+        }
+    }
+}
+
+/// One local change waiting for the server: archive, or star either way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OutboxAction {
+    id: u64,
+    kind: OutboxKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutboxKind {
+    Archive,
+    Star,
+    Unstar,
+}
+
+impl OutboxAction {
+    fn encode(self) -> String {
+        let tag = match self.kind {
+            OutboxKind::Archive => "a",
+            OutboxKind::Star => "s",
+            OutboxKind::Unstar => "u",
+        };
+        format!("{tag}:{}", self.id)
+    }
+
+    fn decode(token: &str) -> Option<Self> {
+        let (tag, id) = match token.split_once(':') {
+            Some((tag, id)) => (tag, id),
+            // The pre-outbox format stored bare ids, all archives.
+            None => ("a", token),
+        };
+        let kind = match tag {
+            "a" => OutboxKind::Archive,
+            "s" => OutboxKind::Star,
+            "u" => OutboxKind::Unstar,
+            _ => return None,
+        };
+        Some(Self {
+            id: id.parse().ok()?,
+            kind,
+        })
+    }
+
+    fn body(self) -> String {
+        match self.kind {
+            OutboxKind::Archive => wallabag::archive_body(true),
+            OutboxKind::Star => wallabag::star_body(true),
+            OutboxKind::Unstar => wallabag::star_body(false),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -37,15 +128,21 @@ struct ReadLater {
     snapshot: Option<Snapshot>,
     cache_dirty: bool,
     server: String,
-    credential: String,
+    session: Option<session::Session>,
     depth: u16,
+    tab: Tab,
     entries: Vec<Entry>,
-    entries_origin: Option<(String, String)>,
-    task_origin: Option<(String, String)>,
+    entries_origin: Option<String>,
+    task_origin: Option<String>,
     open: Option<usize>,
     view: Option<View>,
-    pending: Vec<u64>,
+    pending: Vec<OutboxAction>,
     task: Option<(TaskId, PendingTask)>,
+    resume: Option<PendingTask>,
+    refreshing: bool,
+    /// Consecutive refreshes without one succeeding request; caps the
+    /// refresh-refused-refresh loop at a single renewal.
+    refresh_attempts: u8,
     notice: Option<String>,
     keyboard: Keyboard,
     editing: Option<Setting>,
@@ -56,11 +153,8 @@ impl ReadLater {
         if !self.ready() {
             return;
         }
-        let snapshot = Snapshot::new(&format!(
-            "readlater-v1:{}\n{}",
-            self.server, self.credential
-        ))
-        .at_most(cache::LIMIT);
+        let snapshot = Snapshot::new(&format!("readlater-v1:{}\n{CREDENTIAL}", self.server()))
+            .at_most(cache::LIMIT);
         snapshot.start(context);
         self.snapshot = Some(snapshot);
         self.cache_dirty = false;
@@ -112,8 +206,7 @@ impl ReadLater {
                             }
                         } else {
                             self.entries = entries;
-                            self.entries_origin =
-                                Some((self.server.clone(), self.credential.clone()));
+                            self.entries_origin = Some(self.server());
                         }
                     } else {
                         self.notice = Some(
@@ -136,14 +229,21 @@ impl ReadLater {
     }
 
     fn ready(&self) -> bool {
-        self.server.starts_with("https://") && !self.credential.is_empty()
+        self.session.is_some() || self.server.starts_with("https://")
+    }
+
+    /// The server every request and cache is scoped to: the signed-in account's
+    /// own, or the address typed in settings when no session is installed.
+    fn server(&self) -> String {
+        self.session
+            .as_ref()
+            .map_or_else(|| self.server.clone(), |session| session.server.clone())
     }
     fn show(&self, context: &mut Context) {
         let view = self.view.unwrap_or(View::Queue);
         if let Some(setting) = self.editing {
             let prompt = match setting {
                 Setting::Server => "Wallabag HTTPS server",
-                Setting::Credential => "Credential name",
             };
             context.set_screen(
                 ScreenBuilder::new("readlater")
@@ -155,59 +255,7 @@ impl ReadLater {
             return;
         }
         let screen = match view {
-            View::Queue if !self.ready() => ScreenBuilder::new("readlater")
-                .top_bar("Read Later")
-                .splash(
-                    Some(Glyph::Bookmark),
-                    "Connect Wallabag",
-                    "On your computer run `kobo secret set wallabag`, then add the HTTPS address here.",
-                )
-                .primary_button("settings", "Add address")
-                .build(),
-            View::Queue => {
-                let mut page = ScreenBuilder::new("readlater")
-                    .top_bar("Read Later")
-                    .top_bar_action("sync", "Sync")
-                    .top_bar_glyph("settings", "Settings", Glyph::Settings)
-                    .tabs(
-                        0,
-                        [
-                            ("unread", "Unread"),
-                            ("starred", "Starred"),
-                            ("archive-tab", "Archive"),
-                        ],
-                    );
-                if let Some(note) = &self.notice {
-                    page = page.banner(BannerLevel::Attention, note);
-                }
-                if self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty {
-                    page = page.button("retry-save", "Retry saving");
-                }
-                if self.entries.is_empty() {
-                    page.splash(
-                        Some(Glyph::Bookmark),
-                        "No saved articles",
-                        "Sync Wallabag to add some.",
-                    )
-                    .button("sync", "Sync")
-                    .build()
-                } else {
-                    page.rows(self.entries.iter().enumerate().map(|(i, e)| {
-                        (
-                            format!("entry-{i}"),
-                            e.title.clone(),
-                            format!("{} · {} min", e.site, e.reading_time),
-                            Glyph::Bookmark,
-                        )
-                    }))
-                    .secondary(format!(
-                        "{} action{} pending sync",
-                        self.pending.len(),
-                        if self.pending.len() == 1 { "" } else { "s" }
-                    ))
-                    .build()
-                }
-            }
+            View::Queue => self.queue_screen(),
             View::Article => {
                 let entry = self.open.and_then(|i| self.entries.get(i));
                 let loading = matches!(self.task, Some((_, PendingTask::Article(_))));
@@ -218,11 +266,18 @@ impl ReadLater {
                     None => ScreenBuilder::new("readlater").top_bar("Read Later").splash(Some(Glyph::Bookmark), "Choose an article", "Open one from your reading list.").build(),
                 }
             }
-            View::Settings => ScreenBuilder::new("readlater")
-                .top_bar("Read Later settings")
-                .field("server", &self.server, "https://wallabag.example")
-                .secondary("Finish Wallabag setup on your computer.")
-                .choose(
+            View::Settings => {
+                let page = ScreenBuilder::new("readlater").top_bar("Read Later settings");
+                let page = if let Some(session) = &self.session {
+                    page.secondary(format!(
+                        "Signed in to {}. Run `kobo readlater login` on your computer to switch accounts.",
+                        session.server
+                    ))
+                } else {
+                    page.field("server", &self.server, "https://wallabag.example")
+                        .secondary("Finish Wallabag setup on your computer.")
+                };
+                page.choose(
                     "Articles to keep",
                     [
                         ("depth-20", "20 newest"),
@@ -236,25 +291,251 @@ impl ReadLater {
                     _ => 0,
                 })
                 .button("back", "Back")
-                .build(),
+                .build()
+            }
         };
         context.set_screen(screen);
     }
+    fn queue_screen(&self) -> kobo_sdk::Screen {
+        if !self.ready() {
+            return ScreenBuilder::new("readlater")
+                .top_bar("Read Later")
+                .splash(
+                    Some(Glyph::Bookmark),
+                    "Connect Wallabag",
+                    "On your computer run `kobo readlater login`, or install a credential named wallabag and add the HTTPS address here.",
+                )
+                .primary_button("settings", "Add address")
+                .build();
+        }
+        let mut page = ScreenBuilder::new("readlater")
+            .top_bar("Read Later")
+            .top_bar_action("sync", "Sync")
+            .top_bar_glyph("settings", "Settings", Glyph::Settings)
+            .tabs(
+                self.tab.index(),
+                [
+                    ("unread", "Unread"),
+                    ("starred", "Starred"),
+                    ("archive-tab", "Archive"),
+                ],
+            );
+        if let Some(note) = &self.notice {
+            page = page.banner(BannerLevel::Attention, note);
+        }
+        if self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty {
+            page = page.button("retry-save", "Retry saving");
+        }
+        let visible: Vec<(usize, &Entry)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| self.tab.shows(entry))
+            .collect();
+        if visible.is_empty() {
+            page.splash(
+                Some(Glyph::Bookmark),
+                match self.tab {
+                    Tab::Unread => "No saved articles",
+                    Tab::Starred => "No starred articles",
+                    Tab::Archive => "No archived articles",
+                },
+                "Sync Wallabag to add some.",
+            )
+            .button("sync", "Sync")
+            .build()
+        } else {
+            page.rows(visible.into_iter().map(|(i, e)| {
+                (
+                    format!("entry-{i}"),
+                    e.title.clone(),
+                    if self.pending.iter().any(|action| action.id == e.id) {
+                        format!("{} · {} min · Waiting to sync", e.site, e.reading_time)
+                    } else {
+                        format!("{} · {} min", e.site, e.reading_time)
+                    },
+                    if e.starred {
+                        Glyph::Heart
+                    } else {
+                        Glyph::Bookmark
+                    },
+                )
+            }))
+            .secondary(format!(
+                "{} action{} pending sync",
+                self.pending.len(),
+                if self.pending.len() == 1 { "" } else { "s" }
+            ))
+            .build()
+        }
+    }
+
     fn sync(&mut self, context: &mut Context) {
         if !self.ready() {
             self.view = Some(View::Settings);
             return;
         }
-        self.notice = Some("Syncing newest articles…".to_owned());
+        if self.task.is_some() {
+            return;
+        }
+        // Local changes reach Wallabag before the list is read back, so an
+        // archived article is gone from the fresh list rather than reappearing.
+        if !self.pending.is_empty() {
+            self.post_outbox(context);
+            return;
+        }
+        self.fetch_queue(context);
+    }
+
+    fn switch_tab(&mut self, context: &mut Context, tab: Tab) {
+        if self.tab == tab {
+            return;
+        }
+        self.tab = tab;
+        self.open = None;
+        self.view = Some(View::Queue);
+        self.sync(context);
+    }
+
+    fn fetch_queue(&mut self, context: &mut Context) {
+        self.notice = Some("Syncing articles…".to_owned());
+        let (starred, archived) = self.tab.params();
         if let Some(id) = context.spawn_retrying(Task::Fetch {
-            url: wallabag::queue_url(&self.server, self.depth.max(20)),
+            url: wallabag::queue_url(&self.server(), self.depth.max(20), starred, archived),
             offset: 0,
             max_bytes: 512 * 1024,
-            credential: Some(Credential::bearer(&self.credential)),
+            credential: Some(Credential::bearer(CREDENTIAL)),
             headers: Vec::new(),
         }) {
             self.task = Some((id, PendingTask::Queue));
-            self.task_origin = Some((self.server.clone(), self.credential.clone()));
+            self.task_origin = Some(self.server());
+        }
+    }
+
+    /// The server list is the truth for the current tab; bodies and reading
+    /// places carry over only within one library, never across servers by id.
+    fn queue_completed(&mut self, context: &mut Context, origin: &str, bytes: &[u8]) {
+        let Some(mut entries) = wallabag::parse_entries(bytes) else {
+            self.notice =
+                Some("Couldn't load the reading list. Current articles are unchanged.".into());
+            return;
+        };
+        if self.entries_origin.as_deref() == Some(origin) {
+            for entry in &mut entries {
+                if let Some(previous) = self.entries.iter_mut().find(|old| old.id == entry.id) {
+                    entry.position = previous.position;
+                    if entry.content.is_empty() {
+                        entry.content = std::mem::take(&mut previous.content);
+                    }
+                }
+            }
+        }
+        let tab = self.tab;
+        self.entries
+            .retain(|entry| !tab.shows(entry) || entries.iter().any(|e| e.id == entry.id));
+        for entry in entries {
+            if let Some(slot) = self.entries.iter_mut().find(|old| old.id == entry.id) {
+                *slot = entry;
+            } else {
+                self.entries.push(entry);
+            }
+        }
+        self.entries_origin = Some(origin.to_owned());
+        self.notice = Some("Reading list synced.".to_owned());
+        self.keep_articles(context);
+    }
+
+    fn post_outbox(&mut self, context: &mut Context) {
+        let Some(action) = self.pending.first().copied() else {
+            return;
+        };
+        self.notice = Some(format!(
+            "Syncing {} change{}…",
+            self.pending.len(),
+            if self.pending.len() == 1 { "" } else { "s" }
+        ));
+        // Wallabag applies entry flags by PATCH; POST is refused there. The
+        // answer echoes the whole entry, body included, so the ceiling is the
+        // fetch ceiling rather than a flag's size.
+        if let Some(id) = context.spawn_retrying(Task::Update {
+            method: UpdateMethod::Patch,
+            url: wallabag::entry_url(&self.server(), action.id),
+            body: action.body(),
+            content_type: "application/json".to_owned(),
+            credential: Some(Credential::bearer(CREDENTIAL)),
+            headers: Vec::new(),
+            max_bytes: 512 * 1024,
+        }) {
+            self.task = Some((id, PendingTask::Outbox));
+            self.task_origin = Some(self.server());
+        }
+    }
+
+    /// Archive is optimistic: the article leaves the list now and the server
+    /// hears about it from the outbox on the next sync.
+    fn archive_open(&mut self, context: &mut Context) {
+        let Some(index) = self.open else { return };
+        let Some(entry) = self.entries.get_mut(index) else {
+            return;
+        };
+        entry.archived = true;
+        self.pending.push(OutboxAction {
+            id: entry.id,
+            kind: OutboxKind::Archive,
+        });
+        self.persist_actions(context);
+        self.keep_articles(context);
+        self.notice = Some("Archived; sending on the next sync.".to_owned());
+        self.view = Some(View::Queue);
+    }
+
+    fn star_open(&mut self, context: &mut Context) {
+        let Some(index) = self.open else { return };
+        let Some(entry) = self.entries.get_mut(index) else {
+            return;
+        };
+        entry.starred = !entry.starred;
+        let action = OutboxAction {
+            id: entry.id,
+            kind: if entry.starred {
+                OutboxKind::Star
+            } else {
+                OutboxKind::Unstar
+            },
+        };
+        self.pending.push(action);
+        self.persist_actions(context);
+        self.keep_articles(context);
+        self.notice = Some(if action.kind == OutboxKind::Star {
+            "Starred; sending on the next sync.".to_owned()
+        } else {
+            "Unstarred; sending on the next sync.".to_owned()
+        });
+    }
+
+    /// An expired token is not the end of a sync: refresh once, install the
+    /// replacement through the runtime, and replay what was refused.
+    fn refresh(&mut self, context: &mut Context, resume: PendingTask) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        if self.refreshing || self.refresh_attempts > 0 {
+            return;
+        }
+        self.refreshing = true;
+        self.refresh_attempts += 1;
+        self.resume = Some(resume);
+        self.notice = Some("Refreshing the Wallabag sign-in…".to_owned());
+        if let Some(id) = context.spawn_retrying(Task::Post {
+            url: session.token_url(),
+            body: session.refresh_body(),
+            content_type: "application/x-www-form-urlencoded".to_owned(),
+            credential: None,
+            headers: Vec::new(),
+            max_bytes: 16 * 1024,
+        }) {
+            self.task = Some((id, PendingTask::Refresh));
+            self.task_origin = None;
         }
     }
     fn open_article(&mut self, context: &mut Context, index: usize) {
@@ -267,14 +548,14 @@ impl ReadLater {
             return;
         }
         if let Some(id) = context.spawn_retrying(Task::Fetch {
-            url: wallabag::entry_url(&self.server, entry.id),
+            url: wallabag::entry_url(&self.server(), entry.id),
             offset: 0,
             max_bytes: 512 * 1024,
-            credential: Some(Credential::bearer(&self.credential)),
+            credential: Some(Credential::bearer(CREDENTIAL)),
             headers: Vec::new(),
         }) {
             self.task = Some((id, PendingTask::Article(index)));
-            self.task_origin = Some((self.server.clone(), self.credential.clone()));
+            self.task_origin = Some(self.server());
         }
     }
     fn persist_actions(&self, context: &mut Context) {
@@ -282,7 +563,7 @@ impl ReadLater {
             ACTIONS,
             self.pending
                 .iter()
-                .map(u64::to_string)
+                .map(|action| action.encode())
                 .collect::<Vec<_>>()
                 .join(","),
         );
@@ -290,16 +571,21 @@ impl ReadLater {
     fn persist_config(&self, context: &mut Context) {
         context
             .store()
-            .save(CONFIG, format!("{}\n{}", self.server, self.credential));
+            .save(CONFIG, format!("{}\n{CREDENTIAL}", self.server));
     }
 }
 
 impl KoboApp for ReadLater {
     fn on_start(&mut self, context: &mut Context) {
-        "wallabag".clone_into(&mut self.credential);
         self.depth = 50;
         context.store().load(CONFIG);
         context.store().load(ACTIONS);
+        context.store().load(session::STORE_KEY);
+        context.shelf().read(
+            session::SHELF_FILE,
+            0,
+            u32::try_from(session::LIMIT).unwrap_or(u32::MAX),
+        );
         self.show(context);
     }
     fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
@@ -327,7 +613,32 @@ impl KoboApp for ReadLater {
     }
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
-        if let Some(snapshot) = self
+        if name == session::SHELF_FILE {
+            if let StoreResult::ShelfRead { bytes, .. } = result {
+                match session::decode_import(&bytes) {
+                    Some(import) => {
+                        let server = import.session.server.clone();
+                        let access = import.access_token.clone();
+                        self.session = Some(import.session);
+                        context.store().save(
+                            session::STORE_KEY,
+                            session::encode(self.session.as_ref().unwrap()),
+                        );
+                        context.secrets().set_server(CREDENTIAL, &server, access);
+                        context.shelf().remove(session::SHELF_FILE);
+                        self.entries_origin = None;
+                        self.open_cache(context);
+                        self.notice = Some(format!("Signed in to {server}."));
+                    }
+                    None => {
+                        self.notice = Some(
+                            "The session file could not be read. Run `kobo readlater login` again."
+                                .into(),
+                        );
+                    }
+                }
+            }
+        } else if let Some(snapshot) = self
             .snapshot
             .as_mut()
             .filter(|snapshot| snapshot.owns_file(name))
@@ -335,6 +646,7 @@ impl KoboApp for ReadLater {
             let event = snapshot.shelf(context, &result);
             self.cache_event(context, event);
         }
+        self.show(context);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
@@ -342,15 +654,20 @@ impl KoboApp for ReadLater {
             if key == CONFIG {
                 if let Some(value) = &value {
                     let text = String::from_utf8_lossy(value);
-                    let mut parts = text.lines();
-                    parts
-                        .next()
-                        .unwrap_or_default()
-                        .clone_into(&mut self.server);
-                    parts
-                        .next()
-                        .unwrap_or("wallabag")
-                        .clone_into(&mut self.credential);
+                    // The second line named a credential; the one authorized
+                    // name is fixed now, so only the server is read back.
+                    self.server
+                        .clone_from(&text.lines().next().unwrap_or_default().to_owned());
+                }
+            }
+            if key == session::STORE_KEY {
+                if let Some(value) = &value {
+                    self.session = session::decode(value);
+                }
+                // CONFIG and the session load concurrently; whichever arrives
+                // last opens the cache.
+                if self.snapshot.is_none() {
+                    self.open_cache(context);
                 }
             }
             if key == CONFIG {
@@ -362,7 +679,8 @@ impl KoboApp for ReadLater {
                     .map(|v| {
                         String::from_utf8_lossy(v)
                             .split(',')
-                            .filter_map(|x| x.parse().ok())
+                            .filter(|token| !token.is_empty())
+                            .filter_map(OutboxAction::decode)
                             .collect()
                     })
                     .unwrap_or_default();
@@ -389,7 +707,6 @@ impl KoboApp for ReadLater {
                         }
                         match setting {
                             Setting::Server => self.server = value,
-                            Setting::Credential => self.credential = value,
                         }
                         self.persist_config(context);
                         self.entries.clear();
@@ -414,9 +731,6 @@ impl KoboApp for ReadLater {
                 &self.server
             });
             self.editing = Some(Setting::Server);
-        } else if action == action_id("credential") {
-            self.keyboard.clear();
-            self.editing = Some(Setting::Credential);
         } else if action == action_id("retry-save") {
             if let Some(snapshot) = &mut self.snapshot {
                 snapshot.retry(context);
@@ -424,6 +738,12 @@ impl KoboApp for ReadLater {
             self.flush_cache(context);
         } else if action == action_id("sync") {
             self.sync(context);
+        } else if action == action_id("unread") {
+            self.switch_tab(context, Tab::Unread);
+        } else if action == action_id("starred") {
+            self.switch_tab(context, Tab::Starred);
+        } else if action == action_id("archive-tab") {
+            self.switch_tab(context, Tab::Archive);
         } else if action == action_id("back") || action == ActionId::BACK {
             self.view = Some(View::Queue);
         } else if action == action_id("depth-20") {
@@ -449,12 +769,9 @@ impl KoboApp for ReadLater {
                 }
             }
         } else if action == action_id("archive") {
-            if let Some(e) = self.open.and_then(|i| self.entries.get(i)) {
-                self.pending.push(e.id);
-                self.persist_actions(context);
-                self.notice = Some("Archived locally; pending sync.".to_owned());
-                self.view = Some(View::Queue);
-            }
+            self.archive_open(context);
+        } else if action == action_id("star") {
+            self.star_open(context);
         } else if let Some(index) =
             (0..self.entries.len()).find(|i| action == action_id(&format!("entry-{i}")))
         {
@@ -470,8 +787,10 @@ impl KoboApp for ReadLater {
             return;
         }
         self.task = None;
-        let origin = (self.server.clone(), self.credential.clone());
-        if self
+        let origin = self.server();
+        if kind == PendingTask::Refresh {
+            self.task_origin = None;
+        } else if self
             .task_origin
             .take()
             .is_some_and(|requested| requested != origin)
@@ -480,37 +799,75 @@ impl KoboApp for ReadLater {
         }
         match (kind, outcome) {
             (PendingTask::Queue, TaskOutcome::Completed(bytes)) => {
-                if let Some(mut entries) = wallabag::parse_entries(&bytes) {
-                    if self.entries_origin.as_ref() == Some(&origin) {
-                        for entry in &mut entries {
-                            if let Some(previous) =
-                                self.entries.iter_mut().find(|old| old.id == entry.id)
-                            {
-                                entry.position = previous.position;
-                                if entry.content.is_empty() {
-                                    entry.content = std::mem::take(&mut previous.content);
-                                }
-                            }
-                        }
-                    }
-                    self.entries = entries;
-                    self.entries_origin = Some(origin);
-                    self.notice = Some(format!("Synced {} articles.", self.entries.len()));
-                    self.keep_articles(context);
-                } else {
-                    self.notice = Some("The reading list could not be loaded. Your current articles are unchanged. Try syncing again.".into());
-                }
+                self.refreshing = false;
+                self.refresh_attempts = 0;
+                self.queue_completed(context, &origin, &bytes);
             }
             (PendingTask::Article(index), TaskOutcome::Completed(bytes)) => {
+                self.refreshing = false;
+                self.refresh_attempts = 0;
                 if let Some(entry) = wallabag::parse_entry_document(&bytes) {
                     if let Some(slot) = self.entries.get_mut(index) {
                         if slot.id == entry.id {
                             let position = slot.position;
+                            let (starred, archived) = (slot.starred, slot.archived);
                             *slot = entry;
                             slot.position = position;
+                            slot.starred = starred;
+                            slot.archived = archived;
                             self.keep_articles(context);
                         }
                     }
+                }
+            }
+            (PendingTask::Outbox, TaskOutcome::Completed(_)) => {
+                self.refreshing = false;
+                self.refresh_attempts = 0;
+                if !self.pending.is_empty() {
+                    self.pending.remove(0);
+                    self.persist_actions(context);
+                }
+                // The rest of the outbox goes first; a fresh list follows it.
+                self.sync(context);
+            }
+            (PendingTask::Refresh, TaskOutcome::Completed(bytes)) => {
+                if let Some((access, rolled)) = session::parse_token(&bytes) {
+                    let server = self.server();
+                    if let Some(session) = &mut self.session {
+                        if let Some(rolled) = rolled {
+                            session.refresh_token = rolled;
+                        }
+                        let stored = session::encode(session);
+                        context.store().save(session::STORE_KEY, stored);
+                    }
+                    context.secrets().set_server(CREDENTIAL, server, access);
+                    // The refused request replays when the runtime
+                    // acknowledges the replacement token.
+                } else {
+                    self.resume = None;
+                    self.notice = Some(
+                        "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
+                            .into(),
+                    );
+                }
+            }
+            (PendingTask::Refresh, TaskOutcome::Failed(_) | TaskOutcome::Cancelled) => {
+                self.resume = None;
+                self.notice = Some(
+                    "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
+                        .into(),
+                );
+            }
+            (kind, TaskOutcome::Failed(TaskError::Unauthorized)) => {
+                // An expired token: refresh once and replay, unless the
+                // refusal came from a request made after a refresh.
+                if self.session.is_some() && !self.refreshing {
+                    self.refresh(context, kind);
+                } else {
+                    self.notice = Some(
+                        "Wallabag refused the installed credential. Run `kobo readlater login` again."
+                            .into(),
+                    );
                 }
             }
             (_, TaskOutcome::Failed(_)) => {
@@ -521,6 +878,37 @@ impl KoboApp for ReadLater {
             (_, TaskOutcome::Cancelled) => self.notice = Some("Sync cancelled.".to_owned()),
         }
         self.show(context);
+    }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        if matches!(
+            request,
+            DeviceRequest::SetServerSecret { ref name, .. } if name == CREDENTIAL
+        ) {
+            if result == DeviceResult::Done {
+                self.refreshing = false;
+                if let Some(resume) = self.resume.take() {
+                    match resume {
+                        PendingTask::Queue => self.fetch_queue(context),
+                        PendingTask::Article(index) => {
+                            self.open_article(context, index);
+                        }
+                        PendingTask::Outbox => self.post_outbox(context),
+                        PendingTask::Refresh => {}
+                    }
+                }
+            } else {
+                self.resume = None;
+                self.notice =
+                    Some("The refreshed sign-in could not be installed on this reader.".into());
+            }
+            self.show(context);
+        }
     }
 }
 
@@ -535,7 +923,19 @@ fn article_screen(context: &mut Context, entry: &Entry) -> kobo_sdk::Screen {
     let index = article_page(&pages, entry.position);
     let mut page = ScreenBuilder::new("readlater")
         .top_bar(&entry.title)
-        .top_bar_action("archive", "Archive")
+        .top_bar_action(
+            "archive",
+            if entry.archived {
+                "Archived"
+            } else {
+                "Archive"
+            },
+        )
+        .top_bar_glyph(
+            "star",
+            if entry.starred { "Starred" } else { "Star" },
+            Glyph::Heart,
+        )
         .reading(true)
         .page_position(
             u16::try_from(index + 1).unwrap_or(u16::MAX),
@@ -606,6 +1006,8 @@ mod tests {
                     reading_time: 8,
                     content: article.clone(),
                     position: 0,
+                    starred: false,
+                    archived: false,
                 }],
                 ..ReadLater::default()
             };
@@ -658,7 +1060,6 @@ mod tests {
         use kobo_sdk::{Command, StoreRequest};
         let mut app = ReadLater {
             server: "https://bag.example".into(),
-            credential: "wallabag".into(),
             ..ReadLater::default()
         };
         let mut context = Context::default();
@@ -680,6 +1081,8 @@ mod tests {
             reading_time: 2,
             position: 0,
             content: "First paragraph.\n\nUse <section> literally.".into(),
+            starred: false,
+            archived: false,
         }];
         app.keep_articles(&mut context);
         let (name, bytes) = context
@@ -717,7 +1120,6 @@ mod tests {
         assert!(app.snapshot.as_ref().unwrap().bytes.is_some());
         let mut reopened = ReadLater {
             server: app.server.clone(),
-            credential: app.credential.clone(),
             ..ReadLater::default()
         };
         reopened.open_cache(&mut context);
@@ -740,11 +1142,38 @@ mod tests {
             },
         );
         assert_eq!(reopened.entries, app.entries);
-        assert_eq!(
-            reopened.entries_origin,
-            Some((app.server.clone(), app.credential.clone()))
-        );
+        assert_eq!(reopened.entries_origin, Some(app.server.clone()));
         failed_save_preserves_snapshot(&mut app, &mut context);
+    }
+
+    #[test]
+    fn session_loaded_after_config_still_opens_the_cache() {
+        let mut app = ReadLater::default();
+        let mut context = Context::default();
+        app.on_load(
+            &mut context,
+            CONFIG,
+            StoreResult::Loaded {
+                key: CONFIG.into(),
+                value: None,
+            },
+        );
+        assert!(app.snapshot.is_none());
+        let session = session::Session {
+            server: "https://bag.example".into(),
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+            refresh_token: "refresh".into(),
+        };
+        app.on_load(
+            &mut context,
+            session::STORE_KEY,
+            StoreResult::Loaded {
+                key: session::STORE_KEY.into(),
+                value: Some(session::encode(&session)),
+            },
+        );
+        assert!(app.snapshot.is_some());
     }
 
     fn failed_save_preserves_snapshot(app: &mut ReadLater, context: &mut Context) {
@@ -782,10 +1211,11 @@ mod tests {
             reading_time: 2,
             position: 0,
             content: "Saved full body".into(),
+            starred: false,
+            archived: false,
         };
         let mut app = ReadLater {
             server: "https://bag.example".into(),
-            credential: "wallabag".into(),
             ..ReadLater::default()
         };
         let mut context = Context::default();
@@ -798,6 +1228,8 @@ mod tests {
             reading_time: 3,
             position: 0,
             content: String::new(),
+            starred: false,
+            archived: false,
         }];
         app.cache_dirty = true;
         app.cache_event(&mut context, Some(SnapshotEvent::Loaded));
@@ -808,10 +1240,9 @@ mod tests {
 
     #[test]
     fn refresh_keeps_fetched_bodies_and_rejects_invalid_lists() {
-        let origin = ("https://bag.example".to_owned(), "wallabag".to_owned());
+        let origin = "https://bag.example".to_owned();
         let mut app = ReadLater {
-            server: origin.0.clone(),
-            credential: origin.1.clone(),
+            server: origin.clone(),
             entries_origin: Some(origin.clone()),
             entries: vec![Entry {
                 id: 7,
@@ -820,6 +1251,8 @@ mod tests {
                 reading_time: 2,
                 position: 0,
                 content: "An original saved article body.".into(),
+                starred: false,
+                archived: false,
             }],
             ..ReadLater::default()
         };
@@ -858,7 +1291,7 @@ mod tests {
             "late old-server reply replaced the list"
         );
         app.task = Some((TaskId(4), PendingTask::Queue));
-        app.task_origin = Some((app.server.clone(), app.credential.clone()));
+        app.task_origin = Some(app.server.clone());
         app.on_task(
             &mut context,
             TaskId(4),
@@ -868,6 +1301,47 @@ mod tests {
             app.entries[0].content.is_empty(),
             "old-server content crossed into a new library"
         );
+    }
+
+    #[test]
+    fn refused_token_refreshes_once_and_replays() {
+        let mut app = ReadLater {
+            session: Some(session::Session {
+                server: "https://bag.example".into(),
+                client_id: "1_abc".into(),
+                client_secret: "secret".into(),
+                refresh_token: "ref".into(),
+            }),
+            ..ReadLater::default()
+        };
+        let mut context = Context::default();
+        app.task = Some((TaskId(1), PendingTask::Queue));
+        app.task_origin = Some(app.server());
+        app.on_task(
+            &mut context,
+            TaskId(1),
+            TaskOutcome::Failed(TaskError::Unauthorized),
+        );
+        assert!(app.refreshing);
+        assert_eq!(app.resume, Some(PendingTask::Queue));
+        let posted = context.commands().iter().any(|command| {
+            matches!(
+                command,
+                kobo_sdk::Command::Spawn {
+                    work: Task::Post { url, credential: None, body, .. },
+                    ..
+                }
+                if url == "https://bag.example/oauth/v2/token" && body.contains("refresh_token=ref")
+            )
+        });
+        assert!(posted, "an uncredentialed refresh was spawned");
+        // A second refusal while refreshing must not spawn another.
+        app.on_task(
+            &mut context,
+            TaskId(2),
+            TaskOutcome::Failed(TaskError::Unauthorized),
+        );
+        assert_eq!(app.refresh_attempts, 1);
     }
 
     fn capture_queue(app: &ReadLater, name: &str) {
@@ -907,7 +1381,6 @@ mod tests {
             ReadLater::default(),
             ReadLater {
                 server: "https://bag.example".into(),
-                credential: "wallabag".into(),
                 depth: 50,
                 ..ReadLater::default()
             },
@@ -954,12 +1427,33 @@ mod tests {
                 reading_time: 1,
                 position: 0,
                 content: String::new(),
+                starred: false,
+                archived: false,
             }],
             open: Some(0),
             ..ReadLater::default()
         };
-        app.pending.push(app.entries[0].id);
-        assert_eq!(app.pending, [1]);
+        app.pending.push(OutboxAction {
+            id: app.entries[0].id,
+            kind: OutboxKind::Archive,
+        });
+        assert_eq!(
+            app.pending,
+            [OutboxAction {
+                id: 1,
+                kind: OutboxKind::Archive
+            }]
+        );
+        assert_eq!(OutboxAction::decode("a:1"), Some(app.pending[0]));
+        assert_eq!(OutboxAction::decode("1"), Some(app.pending[0]));
+        assert_eq!(
+            OutboxAction::decode("s:9"),
+            Some(OutboxAction {
+                id: 9,
+                kind: OutboxKind::Star
+            })
+        );
+        assert_eq!(OutboxAction::decode("x:1"), None);
     }
     impl ReadLater {
         fn sync_rect(&self) -> kobo_ui::Rect {

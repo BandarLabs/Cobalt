@@ -1,0 +1,102 @@
+{
+  "paints": 23,
+  "nodes": [
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 50
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 50
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(487004783))",
+      "x": 793,
+      "y": 0,
+      "width": 232,
+      "height": 100,
+      "centre": {
+        "x": 909,
+        "y": 50
+      },
+      "action": 487004783,
+      "lines": [
+        "Reading"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 18,
+      "width": 598,
+      "height": 64,
+      "centre": {
+        "x": 470,
+        "y": 50
+      },
+      "action": null,
+      "lines": [
+        "Added comic"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 100,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 102
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 116,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 141
+      },
+      "action": 2456245216,
+      "lines": [
+        "Page 1 of 5"
+      ]
+    },
+    {
+      "kind": "Picture(PictureHandle(2000))",
+      "x": 47,
+      "y": 178,
+      "width": 978,
+      "height": 679,
+      "centre": {
+        "x": 536,
+        "y": 517
+      },
+      "action": 2456245216,
+      "lines": []
+    }
+  ]
+}

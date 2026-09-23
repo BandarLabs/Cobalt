@@ -4,8 +4,8 @@
   "short_label": "Frame",
   "summary": "Show computer-pushed monochrome photos in awake or scheduled slideshow modes.",
   "page_description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
-  "version": "1.0.4",
-  "release_notes": "Review an album before it is transferred, compare crop against pad, and keep the album you had if a transfer is interrupted. A transfer is reported as done only after the reader confirms what it holds.",
+  "version": "1.2.1",
+  "release_notes": "Photos with a transfer digest are checked in the background, so an album does not stay Not yet checked until each photograph is opened.",
   "glyph": "app",
   "capabilities": [
     "keep-awake",

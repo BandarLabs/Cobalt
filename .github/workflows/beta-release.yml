@@ -323,18 +323,22 @@ jobs:
           - platform: macos-x86_64
             runner: macos-15-intel
             target: x86_64-apple-darwin
+            helper-target: x86_64-apple-darwin
             cc: ""
           - platform: macos-arm64
             runner: macos-14
             target: aarch64-apple-darwin
+            helper-target: aarch64-apple-darwin
             cc: ""
           - platform: linux-x86_64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
+            helper-target: x86_64-unknown-linux-musl
             cc: musl-gcc
           - platform: linux-arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-musl
+            helper-target: aarch64-unknown-linux-musl
             cc: musl-gcc
     runs-on: ${{ matrix.runner }}
     steps:
@@ -343,22 +347,98 @@ jobs:
         with:
           toolchain: 1.85.1
           targets: ${{ matrix.target }}
-      - name: Install Linux cross tools
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.88.0
+          targets: ${{ matrix.helper-target }}
+      - name: Install Linux host build tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools libclang-dev pkg-config
+      - name: Install macOS importer build tools
+        if: runner.os == 'macOS'
+        run: brew install llvm
+      # Every platform compiled the importer's schema with whatever protoc its
+      # image happened to carry: 3.12 from jammy apt, which predates the proto3
+      # optional fields Anki's schema uses and so refused the build outright,
+      # against a brew protobuf on macOS that floats to whatever is current.
+      # One release built its four host binaries with two different compilers,
+      # and neither was chosen. The version here is the one the importer's own
+      # CI job already builds and tests with, so what is tested and what is
+      # shipped now agree, and neither moves unless this line moves.
+      - name: Install the protoc the importer schema needs
+        run: |
+          set -eu
+          case "${{ runner.os }}-$(uname -m)" in
+            Linux-x86_64)
+              protoc_arch=linux-x86_64
+              protoc_digest=3a4c1e5f2516c639d3079b1586e703fc7bcfa2136d58bda24d1d54f949c315e8
+              ;;
+            Linux-aarch64)
+              protoc_arch=linux-aarch_64
+              protoc_digest=2dd17f75d66a682640b136e31848da9fb2eefe68d55303baf8b32617374f6711
+              ;;
+            macOS-x86_64)
+              protoc_arch=osx-x86_64
+              protoc_digest=9448ff40278504a7ae5139bb70c962acc78c32d8fc54b4890a55c14c68b9d10a
+              ;;
+            macOS-arm64)
+              protoc_arch=osx-aarch_64
+              protoc_digest=96839af0caed64352442fc8236f4bdf7c1cd6efcfaa98fa5db37307a73fc7c70
+              ;;
+            *)
+              echo "no pinned protoc for ${{ runner.os }} $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          archive="$RUNNER_TEMP/protoc.zip"
+          curl -fL --connect-timeout 15 --max-time 120 -o "$archive" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-${protoc_arch}.zip"
+          # The runners disagree on which checksum tool they carry, and a
+          # missing one must fail the build rather than skip the check.
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "${protoc_digest}  ${archive}" | sha256sum -c -
+          else
+            echo "${protoc_digest}  ${archive}" | shasum -a 256 -c -
+          fi
+          unzip -q -o "$archive" -d "$RUNNER_TEMP/protoc"
+          # prost-build reads both: the compiler, and the well-known type
+          # definitions that ship beside it rather than with the schema.
+          echo "PROTOC=$RUNNER_TEMP/protoc/bin/protoc" >>"$GITHUB_ENV"
+          echo "PROTOC_INCLUDE=$RUNNER_TEMP/protoc/include" >>"$GITHUB_ENV"
+          "$RUNNER_TEMP/protoc/bin/protoc" --version
       - name: Build the host kobo command
         env:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
-        run: cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+        run: |
+          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          # The importer intentionally owns a separate Rust 1.88 workspace and
+          # lockfile so Anki's host-only graph never enters the reader/CLI graph.
+          if [ "${{ runner.os }}" = macOS ]; then
+            export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+          fi
+          cargo +1.88.0 build --locked --release \
+            --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+            --target "${{ matrix.helper-target }}"
       - name: Stage the host binary
         run: |
           mkdir -p host
           cp "target/${{ matrix.target }}/release/kobo" host/kobo
+          cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
+            host/flashcards-import
+      - name: Smoke the staged binaries
+        # A file that exists is not a binary that runs: link errors show up
+        # here, on CI, instead of on an owner's machine.
+        run: |
+          file host/kobo host/flashcards-import
+          host/kobo --version
+          host/flashcards-import --version
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: host-${{ matrix.platform }}
-          path: host/kobo
+          path: |
+            host/kobo
+            host/flashcards-import
           if-no-files-found: error
 
   publish:
@@ -384,9 +464,12 @@ jobs:
         run: |
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "dist/host-binaries/host-${platform}/kobo"
+            test -f "dist/host-binaries/host-${platform}/flashcards-import"
             mkdir -p "dist/host-binaries/${platform}"
             mv "dist/host-binaries/host-${platform}/kobo" \
               "dist/host-binaries/${platform}/kobo"
+            mv "dist/host-binaries/host-${platform}/flashcards-import" \
+              "dist/host-binaries/${platform}/flashcards-import"
           done
       - name: Build deterministic host release assets
         env:

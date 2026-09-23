@@ -1,0 +1,4 @@
+usage: kobo panels inspect COMIC.cbz
+       kobo panels preview COMIC.cbz --out DIRECTORY
+       kobo panels push COMIC.cbz (--sim | --device IP | --out FILE)
+CBR/RAR is not supported; convert it to CBZ without changing the page images.

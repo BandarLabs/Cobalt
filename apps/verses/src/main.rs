@@ -230,6 +230,22 @@ struct LegacySaved {
 /// line, which is what a printed book of verse leaves.
 const STANZA_AIR: u16 = 75;
 
+/// The size verse is set at: one step above whatever the reader chose.
+///
+/// A poem is a page looked at rather than moved through, and these are short
+/// lines with wide margins either side, so verse carries a step more than
+/// prose would. It is a step above the reader's own setting rather than a
+/// fixed size, because a fixed one is an override: a reader who asked for the
+/// smallest type got three steps more than they asked for, and at that size
+/// a sonnet no longer fits the panel it is measured against.
+///
+/// Pagination is measured at this size too. A page measured at one size and
+/// set at another loses its last lines.
+fn poem_scale(context: &Context) -> kobo_ui::TextScale {
+    let chosen = context.metrics().text_scale;
+    chosen.larger().unwrap_or(chosen)
+}
+
 /// The lines of one stanza that belong on one page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VerseRun {
@@ -426,7 +442,7 @@ impl Verses {
         if self.view == View::Today {
             screen = screen.secondary("Today");
         }
-        screen = screen.reading(true);
+        screen = screen.reading(true).text_scale(poem_scale(context));
         for (index, run) in pages[page].iter().enumerate() {
             for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
                 .iter()
@@ -495,13 +511,23 @@ impl Verses {
     /// the measurement too.
     fn poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
         let poem = CORPUS[self.poem];
+        // One paragraph per line, because a page is counted here in lines of
+        // verse and paginate counts paragraphs. Measured at the size the poem
+        // is drawn at: a page measured at one size and set at another loses
+        // its last lines.
         let one_per_paragraph = poem.lines().collect::<Vec<_>>().join("\n\n");
-        let measured = context.paginate_reading(&one_per_paragraph, true);
-        // The fullest page the panel offered, less the line the day's label or
-        // the attribution takes on the first and last pages. Taking the
-        // smallest instead read the remainder page as the panel's capacity and
-        // put one stanza on each of six pages with four fifths of every page
-        // empty.
+        let measured = context.paginate_at(&one_per_paragraph, true, poem_scale(context));
+        // The fullest page the panel offered. Taking the smallest instead read
+        // the remainder page as the panel's capacity and put one stanza on
+        // each of six pages with four fifths of every page empty.
+        // One line is held back for the day's label or the attribution, which
+        // are set in the same column as the verse. That reservation is why
+        // Ozymandias, fourteen lines that the panel measures as fitting,
+        // paginates as thirteen and strands its last line. Removing it was
+        // tried and the page then clipped: fourteen lines and an attribution
+        // genuinely do not both fit. Giving that line back needs the
+        // attribution to leave the verse column, which is a design change
+        // rather than an arithmetic one.
         let capacity = measured
             .iter()
             .map(Vec::len)
@@ -773,9 +799,14 @@ impl Verses {
         let poem = CORPUS[self.poem];
         let pages = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
+        // The card is a picture of the poem, so it is set at the size the poem
+        // is set at. It also shares the poem's pagination, and pagination is
+        // measured at that size: a card measured at one size and drawn at
+        // another breaks its lines where the poem does not.
         let mut screen = ScreenBuilder::new("verses-card")
             .top_bar(poem.title)
-            .reading(true);
+            .reading(true)
+            .text_scale(poem_scale(context));
         for (index, run) in pages[page].iter().enumerate() {
             for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
                 .iter()
@@ -1334,6 +1365,53 @@ mod tests {
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    #[test]
+    fn every_card_of_every_poem_fits_at_every_text_size() {
+        // The card shares the poem's pagination, so it has to share the size
+        // that pagination was measured at. It did not: the poem gained a size
+        // override and the card kept drawing at the reader's own, so pages
+        // measured for one were set in the other and the card broke its lines
+        // where the poem did not. Only the poem had a test like this, which is
+        // why nothing said so.
+        let chrome = Chrome::measuring(true);
+        for scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for (index, poem) in CORPUS.iter().enumerate() {
+                let context = AppRunner::with_metrics(Verses::default(), metrics).context();
+                let mut app = Verses {
+                    poem: index,
+                    view: View::Reading,
+                    ..Verses::default()
+                };
+                for page in 0..app.poem_pages(&context).len() {
+                    app.poem_page = page;
+                    let card = app.quote_card(&context);
+                    let issues = card.diagnostics(&metrics, &chrome).issues;
+                    assert!(
+                        issues.is_empty(),
+                        "{:?} {} card page {page}: {issues:?}",
+                        scale,
+                        poem.title
+                    );
+                    // The size it is set at, not merely that it fits. A card
+                    // measured large and drawn small still fits: it under-fills
+                    // and breaks its lines where the poem does not, which no
+                    // overflow diagnostic reports.
+                    assert_eq!(
+                        card.text_scale,
+                        app.local_poem(&context).text_scale,
+                        "{:?} {} card page {page} is set at another size than the poem it copies",
+                        scale,
+                        poem.title
+                    );
+                }
+            }
+        }
     }
 
     #[test]

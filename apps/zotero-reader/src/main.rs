@@ -858,7 +858,7 @@ impl ReadingList {
 
     fn setup_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("zotero-reader-setup")
-            .top_bar("Zotero Reader")
+            .top_bar("Stacks")
             .heading("Connect your Zotero library")
             .text(
                 "Create a dedicated read-only key in Zotero, install it with `kobo secret set \
@@ -937,7 +937,7 @@ impl ReadingList {
         let title = self
             .selected
             .as_ref()
-            .map_or("Zotero Reader", |collection| collection.name.as_str());
+            .map_or("Stacks", |collection| collection.name.as_str());
         let mut screen = ScreenBuilder::new("zotero-reader-feed").top_bar(title);
         let mut actions = vec![
             (REFRESH, "Refresh", Some(Glyph::Download)),
@@ -1181,7 +1181,7 @@ impl ReadingList {
 
     fn show(&mut self, context: &mut Context) {
         if self.credential_setup.is_open() {
-            context.set_screen(self.credential_setup.screen("Zotero Reader"));
+            context.set_screen(self.credential_setup.screen("Stacks"));
             return;
         }
         let screen = match self.view {
@@ -1936,7 +1936,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
             }
             TaskError::Offline => "This reader is offline. Cached papers are still available.".to_owned(),
             TaskError::Denied => {
-                "Zotero Reader is not allowed to reach the conversion service.".to_owned()
+                "Stacks is not allowed to reach the conversion service.".to_owned()
             }
             TaskError::Unauthorized => {
                 "The conversion service rejected its credential.".to_owned()
@@ -1963,7 +1963,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
         TaskError::Offline => {
             "This reader is offline. Cached papers are still available.".to_owned()
         }
-        TaskError::Denied => "Zotero Reader is not allowed to reach this endpoint.".to_owned(),
+        TaskError::Denied => "Stacks is not allowed to reach this endpoint.".to_owned(),
         TaskError::Unauthorized => "Zotero rejected its credential.".to_owned(),
         TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
         TaskError::TimedOut => "Zotero took too long to answer.".to_owned(),

@@ -1,14 +1,20 @@
 //! Plain numbered entry point; choices reuse the existing command handlers.
 use std::io::{BufRead, Write};
 
-pub const COMPACT_HELP: &str = "Cobalt — tools for your reader
+pub const COMPACT_HELP: &str = "Cobalt - tools for your reader
 
-  kobo setup                 Set up a reader connected by USB
-  kobo apps                  Find apps and read setup guides
-  kobo frame --help          Prepare and send photos
-  kobo flashcards --help     Import flashcards and review progress
-  kobo feeds --help          Check and send a feed subscription list
-  kobo stream                Share a computer terminal with Paperterm
+  kobo setup
+    Set up a reader connected by USB
+  kobo apps
+    Find apps and read setup guides
+  kobo frame --help
+    Prepare and send photos
+  kobo flashcards --help
+    Import cards and review progress
+  kobo feeds --help
+    Check and send feed subscriptions
+  kobo stream
+    Share a terminal with Paperterm
 
 Run kobo in a terminal for guided choices.
 Developer and release commands: kobo --help";
@@ -17,7 +23,26 @@ pub fn choose(
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<Option<Vec<String>>, String> {
-    writeln!(output, "Cobalt\n\n1. Set up a reader over USB\n2. Preview photos for Frame\n3. Check a feed subscription file\n4. Check a Paperterm connection\n5. Developer and release commands\n6. App setup guides\n0. Exit").map_err(|e| e.to_string())?;
+    writeln!(output, "Cobalt\n\n1. Set up a reader over USB\n2. Preview photos for Frame\n3. Check a feed subscription file\n4. Check a Paperterm connection\n5. Developer and release commands\n6. App setup guides\n7. Send a file\n0. Exit").map_err(|e| e.to_string())?;
+    // Where the owner is, from what this computer has actually completed -
+    // asked of the steps file, never of the owner.
+    if let Ok(done) = crate::steps::Steps::load(&crate::steps::steps_path()) {
+        if done.completed(crate::steps::SETUP, None) {
+            if let Some(setup) = done
+                .steps
+                .iter()
+                .rev()
+                .find(|step| step.name == crate::steps::SETUP)
+            {
+                writeln!(
+                    output,
+                    "Done on this computer: reader setup (serial {}\u{2026}).",
+                    setup.serial.get(..4).unwrap_or(&setup.serial)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
     loop {
         let Some(choice) = answer(input, output, "Choose a number: ")? else {
             return Ok(None);
@@ -57,33 +82,75 @@ pub fn choose(
             "5" => vec!["--help".into()],
             "6" => {
                 let apps = kobo_catalog::bundled()?;
-                for (index, app) in apps.iter().enumerate() {
-                    writeln!(output, "{}. {}", index + 1, app.title).map_err(|e| e.to_string())?;
-                }
-                loop {
-                    let Some(number) = answer(input, output, "App number (blank cancels): ")?
-                    else {
-                        return Ok(None);
-                    };
-                    if let Some(app) = number
-                        .parse::<usize>()
-                        .ok()
-                        .and_then(|number| number.checked_sub(1))
-                        .and_then(|index| apps.get(index))
-                    {
-                        break vec!["apps".into(), "setup".into(), app.id.clone()];
-                    }
-                    writeln!(output, "Choose an app number from the list.")
-                        .map_err(|e| e.to_string())?;
-                }
+                let titles: Vec<String> = apps.iter().map(|app| app.title.clone()).collect();
+                let Some(index) = crate::console::choose_numbered(
+                    input,
+                    output,
+                    &titles,
+                    "App number (blank cancels): ",
+                )?
+                else {
+                    return Ok(None);
+                };
+                vec!["apps".into(), "setup".into(), apps[index].id.clone()]
             }
+            "7" => match send_choice(input, output)? {
+                Some(command) => command,
+                None => return Ok(None),
+            },
             _ => {
-                writeln!(output, "Enter a number from 0 to 6.").map_err(|e| e.to_string())?;
+                writeln!(output, "Enter a number from 0 to 7.").map_err(|e| e.to_string())?;
                 continue;
             }
         };
         return Ok(Some(command));
     }
+}
+
+/// The "send a file" choice: an explicitly typed path (the plain-terminal
+/// picker - the file is named, not browsed), then a numbered pick of where
+/// it goes. Blank answers cancel, as everywhere in this menu.
+fn send_choice(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(file) = answer(
+        input,
+        output,
+        "File to send - photo, subscriptions, comic or story (blank cancels): ",
+    )?
+    else {
+        return Ok(None);
+    };
+    let destinations = [
+        "the simulator on this computer".to_owned(),
+        "a reader at an address".to_owned(),
+        "a saved reader by name".to_owned(),
+    ];
+    let Some(index) =
+        crate::console::choose_numbered(input, output, &destinations, "Send to (blank cancels): ")?
+    else {
+        return Ok(None);
+    };
+    let mut command = vec!["send".into(), file];
+    match index {
+        0 => command.push("--sim".into()),
+        1 => {
+            let Some(host) = answer(input, output, "Reader address (blank cancels): ")? else {
+                return Ok(None);
+            };
+            command.push("--device".into());
+            command.push(host);
+        }
+        _ => {
+            let Some(name) = answer(input, output, "Reader name (blank cancels): ")? else {
+                return Ok(None);
+            };
+            command.push("--reader".into());
+            command.push(name);
+        }
+    }
+    Ok(Some(command))
 }
 
 fn answer(
@@ -111,6 +178,25 @@ fn answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_choice_dispatches_to_a_real_command() {
+        // The guided surface and the typed commands are the same operations:
+        // each choice produces argv whose head is a command the binary
+        // actually has, so the menu can never offer a path that does not
+        // exist outside it.
+        let known = [
+            "setup", "frame", "feeds", "stream", "--help", "apps", "send",
+        ];
+        for answers in ["1\n", "2\n/x\n/y\n", "3\n/x.opml\n", "4\n", "5\n", "6\n1\n"] {
+            let mut input = std::io::BufReader::new(answers.as_bytes());
+            let mut output = Vec::new();
+            let command = choose(&mut input, &mut output)
+                .expect("a choice")
+                .expect("a command");
+            assert!(known.contains(&command[0].as_str()), "{command:?}");
+        }
+    }
+
     #[test]
     fn preview_paths_stay_literal_and_cancellation_does_nothing() {
         let mut output = Vec::new();
@@ -148,7 +234,7 @@ mod tests {
         );
         assert!(String::from_utf8(output)
             .unwrap()
-            .contains("Choose an app number"));
+            .contains("Enter a number from 1 to"));
         for input in ["6\n", "6\n\n"] {
             assert!(choose(&mut input.as_bytes(), &mut Vec::new())
                 .unwrap()

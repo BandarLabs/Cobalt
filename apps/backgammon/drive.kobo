@@ -11,3 +11,13 @@ tap Roll
 expect opened with
 clean
 shot backgammon-opening
+scenario storage-full
+tap Computer move
+expect Progress is not saved
+clean
+shot backgammon-save-refused
+scenario normal
+tap Roll
+expect-missing Progress is not saved
+clean
+shot backgammon-save-kept

@@ -21,6 +21,9 @@ use std::cmp::Ordering;
 use std::process::ExitCode;
 
 const SAVE: &str = "parlor-autosave-v1";
+/// Shown in place of the usual note until a write lands again.
+const SAVE_FAILED: &str =
+    "Progress is not saved. Keep the app open while you make room on your reader; the next move tries again.";
 const GAMES: [Title; 4] = [Title::Reversi, Title::Draughts, Title::Morris, Title::Kalah];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -208,6 +211,7 @@ struct Parlor {
     rotate: bool,
     selected: Option<usize>,
     notice: String,
+    save_failed: bool,
     history: Vec<Position>,
     record: Vec<String>,
     undo_pending: bool,
@@ -228,6 +232,7 @@ impl Default for Parlor {
             rotate: true,
             selected: None,
             notice: "Choose a table game. Pass-and-play is ready.".into(),
+            save_failed: false,
             history: Vec::new(),
             record: Vec::new(),
             undo_pending: false,
@@ -443,7 +448,11 @@ impl Parlor {
                 status,
                 format!("{}–{}", self.match_score[0], self.match_score[1]),
             )
-            .secondary(self.notice.clone());
+            .secondary(if self.save_failed {
+                SAVE_FAILED.to_owned()
+            } else {
+                self.notice.clone()
+            });
         // What just happened, in the same words the record uses. Two people
         // passing one reader between them cannot see each other's tap, and a
         // board of identical discs does not say which one moved.
@@ -1043,6 +1052,19 @@ impl KoboApp for Parlor {
         context.set_screen(self.screen());
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        match &result {
+            StoreResult::Denied(_) => {
+                self.save_failed = true;
+                context.set_screen(self.screen());
+                return;
+            }
+            StoreResult::Saved { .. } if self.save_failed => {
+                self.save_failed = false;
+                context.set_screen(self.screen());
+                return;
+            }
+            _ => {}
+        }
         if let StoreResult::Loaded { value, .. } = result {
             if !self.loaded {
                 if let Some(bytes) = value {
@@ -1285,6 +1307,7 @@ fn decode(text: &str) -> Option<Parlor> {
         rotate: settings.rotate,
         selected: settings.selected,
         notice: String::new(),
+        save_failed: false,
         history,
         record,
         undo_pending: false,
@@ -1595,6 +1618,25 @@ mod tests {
         assert_eq!(ending.pits[13], 4);
         assert!(ending.pits[0..6].iter().all(|&n| n == 0));
         assert!(ending.pits[7..13].iter().all(|&n| n == 0));
+    }
+
+    #[test]
+    fn a_denied_autosave_is_announced_until_a_write_lands() {
+        use kobo_sdk::{AppRunner, StoreError};
+
+        let mut app = Parlor::default();
+        app.start(Title::Reversi);
+        let mut runner = AppRunner::new(app);
+        runner.store_result(StoreResult::Denied(StoreError::NoRoom));
+        assert!(runner.app().save_failed);
+        let words = shown(&runner.app().screen()).join(" | ");
+        assert!(words.contains("Progress is not saved"), "{words}");
+        runner.store_result(StoreResult::Saved {
+            key: SAVE.to_owned(),
+        });
+        assert!(!runner.app().save_failed);
+        let words = shown(&runner.app().screen()).join(" | ");
+        assert!(!words.contains("Progress is not saved"), "{words}");
     }
 
     #[test]

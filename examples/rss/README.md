@@ -81,8 +81,9 @@ Images are opened from verified local copies first. Missing copies are fetched
 one at a time without account credentials, validated and saved. The current
 bounds are 16 image references per article, 512 KiB per image and 64 image
 records held in memory. As you open more articles, idle image records leave memory;
-their saved files remain available for offline reading. Active images and pending
-or failed saves stay in memory. Disk cache cleanup remains in progress. Simulator fixtures verify both locally
+their saved files remain available for offline reading until the shelf passes
+128 copies or 8 MB. Active images and pending or failed saves stay in memory
+and are not removed. Simulator fixtures verify both locally
 saved images and HTTPS acquisition with full-storage recovery.
 
 If image storage fails, choose **Retry saving** on the article list before
@@ -105,7 +106,9 @@ discarded.
 Open a feed and choose **Search articles**. Searches match all entered words
 across article titles, authors and saved text, ignoring case. No network request
 is needed. **Change search** edits the query; **Clear** restores the full list.
-Search currently covers the open feed, not every subscription at once.
+Search covers the open feed. **Search saved** on the shelf covers every
+subscription whose articles are saved on the reader, reading the ones it has
+not opened yet as it goes.
 
 ![Searching saved article text](screenshots/search-articles.png)
 

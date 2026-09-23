@@ -304,7 +304,7 @@ fn all_routes_fit_at_supported_text_sizes_and_both_orientations() {
                 );
                 if view == View::Play {
                     let layout = screen.layout_with(&metrics, &chrome);
-                    for cell in 0..if width > height { 54 } else { CELLS } {
+                    for cell in 0..CELLS {
                         let rect = layout.rect_of_action(action_id(&cell_name(cell))).unwrap();
                         assert_eq!(rect.width, rect.height);
                         assert!(rect.width >= metrics.touch_target_minimum());
@@ -316,35 +316,26 @@ fn all_routes_fit_at_supported_text_sizes_and_both_orientations() {
                         layout
                             .nodes
                             .iter()
-                            .filter(|n| matches!(
-                                n.kind,
-                                LayoutKind::Cell(_, kobo_ui::CellStyle::Board, _)
-                            ))
+                            .filter(|n| matches!(n.kind, LayoutKind::PencilMark(..)))
                             .count(),
-                        if width > height { 54 } else { CELLS }
+                        CELLS
                     );
-                    if width > height {
-                        tap(&mut r, "rows");
-                        let screen = r.app().screen(&r.context());
-                        assert!(screen.diagnostics(&metrics, &chrome).issues.is_empty());
-                        let lower = screen.layout_with(&metrics, &chrome);
-                        for cell in 27..CELLS {
-                            assert!(lower.rect_of_action(action_id(&cell_name(cell))).is_some());
-                        }
-                        tap(&mut r, "rows");
-                    }
                 }
             }
         }
     }
-    // Legacy portrait geometry still has additional separation between 3×3 boxes.
+    // The 3x3 boxes are ruled heavier at the pencil renderer.
     let r = ready();
     let layout = r
         .app()
         .screen(&r.context())
         .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
     let rect = |c| layout.rect_of_action(action_id(&cell_name(c))).unwrap();
-    assert!(rect(3).x - rect(2).x > rect(1).x - rect(0).x);
+    assert_eq!(rect(1).x - rect(0).x, rect(3).x - rect(2).x);
+    assert!(layout
+        .nodes
+        .iter()
+        .any(|n| matches!(n.kind, LayoutKind::PencilMark(_, _, _, mask) if mask != 0)));
 }
 
 #[test]

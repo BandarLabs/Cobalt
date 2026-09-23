@@ -1,5 +1,5 @@
 expect Connect Wallabag
-expect secret set
+expect readlater login
 tap Add address
 expect Read Later settings
 clean

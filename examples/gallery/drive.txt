@@ -8,27 +8,27 @@ tap Quotes
 wait 900
 tap Marks
 wait 900
-tap-id panel-next
+maybe-tap-id panel-next
 wait 900
 tap Lists
 wait-for Lists, rows and tiles
 wait 900
 tap Tiles
 wait 900
-tap-id panel-next
+maybe-tap-id panel-next
 wait 900
 tap Boards
 wait 900
 tap Icons
 wait-for Every icon the system draws
-tap-id icons-next
+maybe-tap-id icons-next
 wait 900
 tap Input
 wait-for Groups, fields and asking
 wait 900
 tap Fields
 wait 900
-tap-id panel-next
+maybe-tap-id panel-next
 wait 900
 tap Overlays
 wait 900
@@ -51,7 +51,7 @@ wait-for Request failed
 wait 900
 tap Folio
 wait-for COBALT
-tap App Store
+tap-paged App Store
 wait-for Downloading a book
 tap Download it
 wait-for Download Mrs Dalloway?

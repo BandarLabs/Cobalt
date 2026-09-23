@@ -1,0 +1,19 @@
+# The free sample is made and saved on the reader: the shelf starts empty,
+# Now playing names the sample with the honest firmware note where the sim
+# has no audio backend, and the shelf keeps it afterwards.
+wait-for Audiobooks
+expect Nothing here yet
+clean
+shot audiobook-empty
+tap-id sample
+wait-for Now playing
+expect The Quiet Shelf
+expect Saved on this reader
+clean
+shot audiobook-playing
+tap back
+wait-for Audiobooks
+expect The Quiet Shelf
+expect-missing Nothing here yet
+clean
+shot audiobook-shelf

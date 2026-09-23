@@ -55,6 +55,16 @@ impl Habit {
         insert_day(&mut self.skipped, day);
         true
     }
+    /// Takes back a skip, leaving the day simply not done. Completing is a
+    /// separate tap, so a mistaken skip costs one tap to undo, never a
+    /// completion the person did not mean.
+    pub fn unskip(&mut self, day: u32) -> bool {
+        if let Ok(index) = self.skipped.binary_search(&day) {
+            self.skipped.remove(index);
+            return true;
+        }
+        false
+    }
     pub fn current_streak(&self, today: u32) -> u32 {
         let mut day = today;
         let mut count = 0;
@@ -96,6 +106,27 @@ impl Habit {
             Schedule::Every(days) => format!("every {days} days"),
         }
     }
+}
+
+/// The last seven days across the active habits: due days, how many of
+/// them were completed, and how many were skipped. Today counts.
+pub fn week_summary(habits: &[Habit], today: u32) -> (u32, u32, u32) {
+    let mut due = 0;
+    let mut done = 0;
+    let mut skipped = 0;
+    for habit in habits.iter().filter(|habit| !habit.archived) {
+        for day in today.saturating_sub(6)..=today {
+            if habit.due(day) {
+                due += 1;
+                if has_day(&habit.done, day) {
+                    done += 1;
+                } else if has_day(&habit.skipped, day) {
+                    skipped += 1;
+                }
+            }
+        }
+    }
+    (due, done, skipped)
 }
 
 pub fn canonical_name(name: &str) -> Option<String> {
@@ -200,6 +231,26 @@ pub fn decode_with_blank_names(bytes: &[u8]) -> (Vec<Habit>, usize) {
         })
         .collect();
     (habits, blank_names)
+}
+
+/// Adds habits from a backup. A habit with the same name keeps the schedule
+/// already on the reader and gains any days the backup recorded.
+pub fn merge(existing: &mut Vec<Habit>, incoming: Vec<Habit>) {
+    for habit in incoming {
+        if let Some(found) = existing.iter_mut().find(|item| item.name == habit.name) {
+            for day in habit.done {
+                remove_day(&mut found.skipped, day);
+                insert_day(&mut found.done, day);
+            }
+            for day in habit.skipped {
+                if found.done.binary_search(&day).is_err() {
+                    insert_day(&mut found.skipped, day);
+                }
+            }
+        } else {
+            existing.push(habit);
+        }
+    }
 }
 
 #[cfg(test)]

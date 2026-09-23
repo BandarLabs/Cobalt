@@ -1,12 +1,13 @@
 {
   "id": "arxiv",
-  "display_name": "arXiv",
-  "short_label": "arXiv",
+  "display_name": "Preprints",
+  "short_label": "Preprints",
   "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-  "version": "1.3.10",
+  "version": "1.4.3",
   "glyph": "note",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Typeset a paper's numbered equations, line up a results table's columns under the headings that name them, carry the mathematics all the way through instead of stopping early, and close the gap before a comma."
+  "release_notes": "Renamed from arXiv to Preprints. The app is independent and unaffiliated, and arXiv asks that projects outside the archive not carry its name.",
+  "page_description": "Browse a subject's newest arXiv preprints or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
 }

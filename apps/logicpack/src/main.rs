@@ -356,7 +356,7 @@ impl Game {
         false
     }
     fn entry_screen(&self) -> Screen {
-        let collection::Rules::CrossSum { mask, runs, givens } = &self.puzzle().rules else {
+        let collection::Rules::CrossSum { runs, givens, .. } = &self.puzzle().rules else {
             return self.more_screen();
         };
         let full = givens
@@ -366,17 +366,6 @@ impl Game {
             .nth(self.entry)
             .expect("editable square")
             .0;
-        let (row, column) = mask
-            .iter()
-            .enumerate()
-            .flat_map(|(r, line)| {
-                line.bytes()
-                    .enumerate()
-                    .filter(|(_, b)| *b == b'.')
-                    .map(move |(c, _)| (r, c))
-            })
-            .nth(full)
-            .expect("white square");
         let across = runs
             .iter()
             .find(|r| !r.down && r.cells.contains(&full))
@@ -391,7 +380,6 @@ impl Game {
             .top_bar(&self.puzzle().title)
             .owns_back(true)
             .heading("Enter a digit")
-            .secondary(format!("Row {}, column {}", row + 1, column + 1))
             .text(format!("Across {across} · Down {down}"))
             .secondary(format!(
                 "Current: {}",

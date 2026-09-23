@@ -3,10 +3,10 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "glyph": "rss",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Read saved articles and images offline, search article text, preview direct feeds and OPML imports, browse starter feeds, and track unread articles and refresh history. Failed saves can be retried without losing the previous saved copy."
+  "release_notes": "Search saved looks across every subscription already on the reader. Idle article images are removed from the shelf once it passes 128 copies or 8 MB."
 }

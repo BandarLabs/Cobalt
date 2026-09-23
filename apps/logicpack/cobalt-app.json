@@ -5,8 +5,8 @@
   "summary": "Play four familiar logic games offline.",
   "page_description": "Twenty original offline puzzles across four logic games, with difficulty guides, separate progress and undo.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.6",
-  "release_notes": "Choose from 20 original puzzles with difficulty guides, separate progress and direct Kakuro number entry.",
+  "version": "0.1.7",
+  "release_notes": "The Kakuro entry screen drops the row and column line; the across and down sums and the current digit say what the square needs.",
   "glyph": "grid",
   "capabilities": []
 }

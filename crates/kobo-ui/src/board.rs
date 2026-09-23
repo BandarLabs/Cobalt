@@ -196,7 +196,7 @@ pub(super) fn layout(
     }
     for (vertical, clues) in [(false, &board.row_clues), (true, &board.column_clues)] {
         for (index, clue) in clues.iter().enumerate() {
-            if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+            if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
                 break;
             }
             let rect = if vertical {
@@ -237,23 +237,6 @@ pub(super) fn layout(
                         cell / usize::from(board.columns) == index
                     }
             });
-            layout.nodes.push(LayoutNode {
-                id,
-                rect,
-                kind: LayoutKind::Cell(
-                    clue.action,
-                    if selected {
-                        CellStyle::Key
-                    } else {
-                        CellStyle::Plain
-                    },
-                    selected,
-                ),
-                text_lines: vec![format!(
-                    "{axis} {} clue: {all}",
-                    usize::from(start) + index + 1
-                )],
-            });
             let lines = if clue.values.is_empty() {
                 vec!["0".into()]
             } else if vertical {
@@ -268,10 +251,45 @@ pub(super) fn layout(
                 }
                 lines
             } else if clue.values.len() == 1 {
-                vec![all]
+                vec![all.clone()]
             } else {
                 vec![format!("{} …", clue.values[0])]
             };
+            layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::Cell(clue.action, CellStyle::Plain, selected),
+                text_lines: vec![format!(
+                    "{axis} {} clue: {all}",
+                    usize::from(start) + index + 1
+                )],
+            });
+            // The selected square's clues are marked with a chip sized to
+            // their numbers, not with a slab over the whole gutter: the tap
+            // target stays the full strip, but a gutter-wide field reads as a
+            // button and shouts over the grid it serves.
+            if selected {
+                let pad = metrics.space(Space::Tight);
+                let text_width = lines
+                    .iter()
+                    .map(|line| measure_text(line, FontSize::Caption).0)
+                    .max()
+                    .unwrap_or(0);
+                let text_height = FontSize::Caption.line_height() * lines.len().max(1) as i32;
+                let chip_width = (text_width + pad * 2).min(rect.width);
+                let chip_height = (text_height + pad * 2).min(rect.height);
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect: Rect {
+                        x: rect.x + (rect.width - chip_width).max(0) / 2,
+                        y: rect.y + (rect.height - chip_height).max(0) / 2,
+                        width: chip_width,
+                        height: chip_height,
+                    },
+                    kind: LayoutKind::BoardClueChip,
+                    text_lines: Vec::new(),
+                });
+            }
             layout.nodes.push(LayoutNode {
                 id,
                 rect,
@@ -452,7 +470,7 @@ mod tests {
                 .nodes
                 .iter()
                 .filter_map(|node| match node.kind {
-                    LayoutKind::Cell(action, CellStyle::Key, true) => Some(action.0),
+                    LayoutKind::Cell(action, CellStyle::Plain, true) => Some(action.0),
                     _ => None,
                 })
                 .collect();
@@ -469,6 +487,20 @@ mod tests {
                     layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
                     Some(ActionId(action))
                 );
+                let chip = layout
+                    .nodes
+                    .iter()
+                    .find(|node| {
+                        node.kind == LayoutKind::BoardClueChip
+                            && rect.x <= node.rect.x
+                            && node.rect.x + node.rect.width <= rect.x + rect.width
+                            && rect.y <= node.rect.y
+                            && node.rect.y + node.rect.height <= rect.y + rect.height
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("selected clue {action} has no chip inside {rect:?}")
+                    });
+                assert!(chip.rect.width < rect.width || chip.rect.height < rect.height);
             }
         }
     }

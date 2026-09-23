@@ -162,6 +162,130 @@ mod folio_tests {
     }
 
     #[test]
+    fn a_screen_that_hides_its_bar_still_gets_one_back_when_it_is_asked_for() {
+        let chrome = Chrome::with_back(true);
+        let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+
+        let hidden =
+            ensure_way_back_revealed(asking.clone(), &chrome, "Birds", TopBarState::Hidden);
+        assert!(
+            hidden.top_bar.is_none(),
+            "hidden means the bar is not drawn"
+        );
+        let shown = ensure_way_back_revealed(asking, &chrome, "Birds", TopBarState::Shown);
+        assert!(
+            shown.top_bar.is_some(),
+            "asking for it back must produce a bar to leave from"
+        );
+
+        // Everything that did not opt in keeps the guarantee unchanged.
+        let ordinary = Screen::new(1, Vec::new());
+        assert!(
+            ensure_way_back_revealed(ordinary, &chrome, "Birds", TopBarState::Hidden)
+                .top_bar
+                .is_some(),
+            "a screen that never asked to hide its bar must never lose it"
+        );
+    }
+
+    #[test]
+    fn the_way_back_the_shell_draws_can_actually_be_reached_by_a_finger() {
+        // Composing and hit testing have to be done against the same screen.
+        // When they were not, the Back the shell had drawn sat in a place no
+        // touch resolved to, and every ordinary application lost its way out
+        // while still showing one.
+        let metrics = &CLARA_BW_METRICS;
+        let chrome = Chrome::with_back(true);
+        let drawn = Screen::new(1, Vec::new());
+
+        let shown = ensure_way_back_revealed(drawn.clone(), &chrome, "Books", TopBarState::Shown);
+        let layout = shown.layout_with(metrics, &chrome);
+        let rect = layout
+            .rect_of_action(ActionId::BACK)
+            .expect("the drawn way back must have a rectangle");
+        assert_eq!(
+            layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(ActionId::BACK),
+            "a touch in the middle of the drawn Back must resolve to Back"
+        );
+
+        // And the hidden case: nothing to hit, because nothing is drawn.
+        let hiding = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+        let hidden =
+            ensure_way_back_revealed(hiding.clone(), &chrome, "Birds", TopBarState::Hidden);
+        assert!(hidden
+            .layout_with(metrics, &chrome)
+            .rect_of_action(ActionId::BACK)
+            .is_none());
+        // Until it is asked for, and then it is reachable like any other.
+        let revealed = ensure_way_back_revealed(hiding, &chrome, "Birds", TopBarState::Shown);
+        let layout = revealed.layout_with(metrics, &chrome);
+        let rect = layout
+            .rect_of_action(ActionId::BACK)
+            .expect("asking for the bar back must draw one");
+        assert_eq!(
+            layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(ActionId::BACK)
+        );
+    }
+
+    #[test]
+    fn the_band_that_brings_the_bar_back_is_where_the_bar_would_be() {
+        let metrics = &CLARA_BW_METRICS;
+        let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+        let bar = metrics.top_bar_height();
+        let bare = Chrome::with_back(true);
+
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Hidden, bar / 2),
+            Some(TopBarState::Shown),
+            "touching where the bar would be asks for it back"
+        );
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Hidden, bar + 1),
+            None,
+            "below the band the touch is the screen's own"
+        );
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Shown, bar + 1),
+            Some(TopBarState::Hidden),
+            "carrying on elsewhere puts it away"
+        );
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Shown, bar / 2),
+            None,
+            "a touch on a bar that is showing belongs to the bar, so Back works"
+        );
+
+        let ordinary = Screen::new(1, Vec::new());
+        assert_eq!(
+            top_bar_touch(&ordinary, metrics, &bare, TopBarState::Hidden, bar / 2),
+            None,
+            "a screen that never asked must not have its top edge taken"
+        );
+
+        // With a status band the bar is not at the top of the panel, so the
+        // band is not claimed and the bar is never hidden in the first place.
+        let with_status = Chrome::with_back(true).with_status(Status::default());
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &with_status, TopBarState::Hidden, bar / 2),
+            None,
+            "the top edge belongs to the status band when there is one"
+        );
+        assert!(
+            ensure_way_back_revealed(
+                Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true),
+                &with_status,
+                "Birds",
+                TopBarState::Hidden
+            )
+            .top_bar
+            .is_some(),
+            "a bar under a status band stays drawn rather than hiding out of reach"
+        );
+    }
+
+    #[test]
     fn folio_section_link_is_a_caption_sized_control() {
         let action = ActionId(8);
         let screen = Screen::new(
@@ -2322,11 +2446,80 @@ pub struct Status {
 /// preview drawn without the way back is a preview of a screen that will never
 /// exist, and it hides the one defect that leaves somebody stuck.
 #[must_use]
-pub fn ensure_way_back(mut screen: Screen, chrome: &Chrome, name: &str) -> Screen {
+pub fn ensure_way_back(screen: Screen, chrome: &Chrome, name: &str) -> Screen {
+    ensure_way_back_revealed(screen, chrome, name, TopBarState::Shown)
+}
+
+/// Whether the shell is currently showing an auto-hiding top bar.
+///
+/// Held by the shell, never by the application, and never persisted: a screen
+/// is first drawn with its bar hidden, and every way of leaving the screen
+/// starts it hidden again.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TopBarState {
+    /// Out of sight, waiting for a touch on the band it would occupy.
+    #[default]
+    Hidden,
+    /// Drawn, and the reader can leave from it.
+    Shown,
+}
+
+/// [`ensure_way_back`], for a shell that can hide the bar it guarantees.
+///
+/// A screen that asked to auto-hide and is not currently shown loses its bar
+/// entirely, including one the application drew itself: a half-hidden bar is
+/// furniture with no purpose. Every other screen is untouched, so the
+/// guarantee that nothing is ever drawn without a way back is unchanged for
+/// everything that did not opt in.
+#[must_use]
+pub fn ensure_way_back_revealed(
+    mut screen: Screen,
+    chrome: &Chrome,
+    name: &str,
+    state: TopBarState,
+) -> Screen {
+    // Never while the shell is drawing its status band. The band sits above
+    // the bar and shifts it down, so hiding underneath one would put the way
+    // back somewhere other than where the reader is told to reach for it.
+    // Full-bleed art is a reading screen, and a reading screen has no band.
+    if screen.auto_hide_top_bar && state == TopBarState::Hidden && chrome.status.is_none() {
+        screen.top_bar = None;
+        return screen;
+    }
     if chrome.back && screen.top_bar.is_none() {
         screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
     }
     screen
+}
+
+/// What a touch at `y` means for an auto-hiding top bar, if anything.
+///
+/// The band is exactly where the bar is drawn, so "touch the top bar to get
+/// it back" is literally true, and a reader who has seen the bar once knows
+/// where to reach. A touch on a bar that is already shown is not handled
+/// here: it belongs to the bar, so Back keeps working.
+#[must_use]
+pub fn top_bar_touch(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    state: TopBarState,
+    y: i32,
+) -> Option<TopBarState> {
+    // The same condition the drawing side uses, so the band is only ever
+    // claimed on a screen whose bar really is at the top of the panel.
+    if !screen.auto_hide_top_bar || chrome.status.is_some() {
+        return None;
+    }
+    let within_band = y >= 0 && y < metrics.top_bar_height();
+    match (state, within_band) {
+        // Asking for it back.
+        (TopBarState::Hidden, true) => Some(TopBarState::Shown),
+        // Anywhere else puts it away again, the way a reader dismisses it by
+        // carrying on reading.
+        (TopBarState::Shown, false) => Some(TopBarState::Hidden),
+        _ => None,
+    }
 }
 
 /// A single tappable label in a bar.
@@ -2690,12 +2883,25 @@ impl NavBar {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent thing a screen declares about itself, and folding them into one state would make screens that combine them unrepresentable"
+)]
 pub struct Screen {
     pub id: u32,
     /// Optional fixed top bar. Structurally outside the node list so a screen
     /// cannot carry two of them, bury one inside a card, or place one halfway
     /// down the page.
     pub top_bar: Option<TopBar>,
+    /// Whether the shell may keep the top bar out of sight until the reader
+    /// asks for it by touching the band it would occupy.
+    ///
+    /// A screen whose whole point is the picture on it says so here; the
+    /// showing and hiding belong to the shell, never to the application,
+    /// because a way out that an application can lose is not a way out. The
+    /// shell repaints from the screen it already holds, so the band answers
+    /// even when the application that drew it has stopped answering.
+    pub auto_hide_top_bar: bool,
     pub nodes: Vec<Node>,
     /// Optional fixed bottom bar, pinned to the panel rather than the flow.
     pub nav_bar: Option<NavBar>,
@@ -2912,6 +3118,7 @@ impl Screen {
         Self {
             id,
             top_bar: None,
+            auto_hide_top_bar: false,
             nodes,
             nav_bar: None,
             bottom_action: None,
@@ -2941,6 +3148,18 @@ impl Screen {
     #[must_use]
     pub const fn with_reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Lets the shell keep the top bar out of sight until it is asked for.
+    ///
+    /// For a screen that is one picture edge to edge, where a bar is a strip
+    /// of somebody else's furniture across the top of it. The reader gets the
+    /// bar back by touching where it would be. Nothing about leaving moves
+    /// into the application: see [`Screen::auto_hide_top_bar`].
+    #[must_use]
+    pub const fn with_auto_hidden_top_bar(mut self, auto_hide: bool) -> Self {
+        self.auto_hide_top_bar = auto_hide;
         self
     }
 
@@ -4583,6 +4802,14 @@ pub enum Node {
         /// drawn rather than written, and a box around it would be as odd as
         /// a box around a sentence.
         framed: bool,
+        /// Whether the picture is the page rather than something on it.
+        ///
+        /// Measured against the panel instead of the text column, so it
+        /// reaches the bezel on every side. The margins exist to keep prose
+        /// off the edge of the glass; art that is the whole point of the
+        /// screen only loses by them, and a plate with a four millimetre
+        /// border reads as a photograph of a page rather than the page.
+        bleed: bool,
     },
     /// Work in flight, typically a network request.
     ///
@@ -4851,9 +5078,9 @@ pub enum TileState {
     /// reached must not answer a tap, or the application is obliged to explain
     /// the refusal on a screen the reader did not ask for.
     Unavailable,
-    /// Something is happening to it right now. A clock in the trailing corner.
-    /// Still tappable, because a tap during a download is how a reader asks
-    /// what the download is doing.
+    /// Something is happening to it right now. An ink dot in the trailing
+    /// corner. Still tappable, because a tap during a download is how a reader
+    /// asks what the download is doing.
     Busy,
 }
 
@@ -5752,7 +5979,12 @@ pub enum LayoutKind {
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
     BoardClue,
-    PencilMark(PencilMarkKind, bool),
+    /// The chip marking the selected square's row and column clues. Drawn
+    /// behind the clue's numbers and sized to them, never to the gutter: the
+    /// clue's tap target stays the full strip, but the highlight itself hugs
+    /// the text it points at.
+    BoardClueChip,
+    PencilMark(PencilMarkKind, bool, bool, u8),
     PencilEdge(u8, bool),
     PencilNumber(bool),
     /// The three nested squares and four connectors behind a Morris board.
@@ -6028,7 +6260,10 @@ impl std::fmt::Display for LayoutIssue {
                 write!(formatter, "{node}: content is clipped by a panel edge")
             }
             LayoutIssueKind::InteractiveOffscreen => {
-                write!(formatter, "{node}: interactive control is outside the visible panel")
+                write!(
+                    formatter,
+                    "{node}: interactive control is outside the visible panel"
+                )
             }
             LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
                 formatter,
@@ -6061,7 +6296,9 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::EmptyChoice => {
                 write!(formatter, "{node}: choice has no tappable answers")
             }
-            LayoutIssueKind::InvalidBoard => formatter.write_str("Board viewport has invalid dimensions, marks or clues."),
+            LayoutIssueKind::InvalidBoard => {
+                formatter.write_str("Board viewport has invalid dimensions, marks or clues.")
+            }
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
@@ -7955,6 +8192,11 @@ fn layout_node(
                     value_size.line_height(),
                     lines.len() as i32 * value_size.line_height(),
                 );
+                // What every node does when it runs out of panel: the facts
+                // that cannot fit whole are dropped, never drawn half-cut.
+                if cursor.saturating_add(height) > bottom {
+                    break;
+                }
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -8103,7 +8345,7 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
-            let pad_deck = *square && requested == 5 && cells.len() == 15;
+            let pad_deck = *square && requested == 5 && cells.len() <= 15;
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -8619,7 +8861,18 @@ fn layout_node(
             source,
             max_height_tenths_mm,
             framed,
+            bleed,
         } => {
+            // Against the panel, not the column. Pulled up to the top edge
+            // only when nothing has been placed above it: a picture that
+            // follows a heading bleeds sideways but must not climb over what
+            // it follows.
+            let (x, width, y, bottom) = if *bleed {
+                let top = if y <= metrics.screen_margin() { 0 } else { y };
+                (0, metrics.width, top, metrics.height)
+            } else {
+                (x, width, y, bottom)
+            };
             let ceiling = metrics
                 .tenth_mm(i32::from(*max_height_tenths_mm))
                 .min(bottom.saturating_sub(y).max(0));
@@ -8737,7 +8990,10 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, tile) in tiles.iter().enumerate() {
-                if layout.nodes.len() + 7 > MAX_LAYOUT_NODES {
+                // Tile, outline, mark, label, subtitle, value, state, badge:
+                // eight is what one tile can put down now that every shape but
+                // the legacy one is outlined.
+                if layout.nodes.len() + 8 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let column = position as i32 % columns;
@@ -8756,6 +9012,12 @@ fn layout_node(
                 } else {
                     ControlState::Disabled
                 };
+                // Only the card carries an outline. A tile outline is drawn in
+                // ink at the button weight, not in grey at the rule weight, so
+                // on a grid it is a box around every cell rather than the
+                // hairline it reads as in isolation. The launcher is a grid of
+                // square tiles, and the box says nothing the position of the
+                // tile does not already say.
                 let outlined = *shape == TileShape::Card;
                 let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
@@ -8804,7 +9066,7 @@ fn layout_node(
                 } else {
                     let size = if legacy_typography() {
                         metrics.tenth_mm(110)
-                    } else if *shape == TileShape::Card {
+                    } else if *shape == TileShape::Card || *shape == TileShape::Square {
                         metrics.tenth_mm(55)
                     } else {
                         metrics.tenth_mm(70)
@@ -8912,7 +9174,13 @@ fn layout_node(
                 // is the one part of the tile that is certainly text.
                 let chip = caption.saturating_add(inset);
                 let chip_inset = metrics.rule_thickness().saturating_mul(2);
-                if tile.state.glyph().is_some() && !muted {
+                // A muted card drops its chip: a grid of cards that cannot be
+                // used yet is explained once by the screen rather than by a
+                // cross on every one of them. A square tile stands among
+                // working tiles, so it keeps the mark that says why it refuses
+                // a tap; without it, it is just a tile that appears broken.
+                let chip_muted = muted && *shape == TileShape::Card;
+                if tile.state.glyph().is_some() && !chip_muted {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -12790,8 +13058,22 @@ fn validate_content_bounds(
 ) {
     let mut hidden = Vec::new();
     let mut clipped = Vec::new();
+    let panel = Rect {
+        x: 0,
+        y: 0,
+        width: metrics.width,
+        height: metrics.height,
+    };
     for node in nodes {
         let id = node.id();
+        // A picture that is the page is outside the content box on purpose,
+        // so it answers to the panel instead. Off the panel is still off the
+        // panel, which is the thing this check exists to catch.
+        let allowed = if matches!(node, Node::Picture { bleed: true, .. }) {
+            panel
+        } else {
+            layout.content
+        };
         let laid_out = layout
             .nodes
             .iter()
@@ -12830,16 +13112,13 @@ fn validate_content_bounds(
                     rect: None,
                 });
             }
-        } else if rects
-            .iter()
-            .any(|rect| !rect_is_inside(*rect, layout.content))
-            && !clipped.contains(&id)
+        } else if rects.iter().any(|rect| !rect_is_inside(*rect, allowed)) && !clipped.contains(&id)
         {
             clipped.push(id);
             let rect = rects
                 .iter()
                 .copied()
-                .find(|rect| !rect_is_inside(*rect, layout.content));
+                .find(|rect| !rect_is_inside(*rect, allowed));
             issues.push(LayoutIssue {
                 severity: DiagnosticSeverity::Error,
                 node: Some(id),
@@ -13079,7 +13358,16 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             } else {
                 i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
             };
-            let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+            // A lone pencil number is its glyph, not its leading: the box may
+            // clip a hair of line height the same way it clips a hairline.
+            let leading_allowance = if rows == 1 && matches!(node.kind, LayoutKind::PencilNumber(_))
+            {
+                metrics.rule_thickness() * 2
+            } else {
+                0
+            };
+            let too_tall = rows.saturating_mul(size.line_height_in(face))
+                > node.rect.height + leading_allowance;
             (too_wide, too_tall)
         });
         if too_wide || too_tall {
@@ -13181,11 +13469,12 @@ fn board_label_size(node: &LayoutNode) -> FontSize {
 fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     let current = text_scale();
     let fits = |size: FontSize| {
-        size.line_height() <= node.rect.height
+        let pad = 2;
+        size.line_height() + pad <= node.rect.height
             && node
                 .text_lines
                 .iter()
-                .all(|line| measure_text(line, size).0 <= node.rect.width)
+                .all(|line| measure_text(line, size).0 + pad <= node.rect.width)
     };
     for size in [FontSize::Body, FontSize::Caption] {
         if fits(size) {
@@ -14274,14 +14563,42 @@ fn render_all_with_selected_font(
                     );
                 });
             }
-            LayoutKind::PencilMark(mark, selected) => {
-                pencil::draw_mark(surface, node.rect, mark, selected, metrics, clip);
+            LayoutKind::PencilMark(mark, selected, peer, box_mask) => {
+                pencil::draw_mark(
+                    surface,
+                    node.rect,
+                    mark,
+                    pencil::MarkStyle {
+                        selected,
+                        peer,
+                        box_mask,
+                    },
+                    metrics,
+                    clip,
+                );
             }
             LayoutKind::PencilEdge(state, vertical) => {
                 pencil::draw_edge(surface, node.rect, state, vertical, metrics, clip);
             }
             LayoutKind::BoardMark(mark, locked) => {
                 board::draw_mark(surface, node.rect, mark, locked, metrics, clip);
+            }
+            LayoutKind::BoardClueChip => {
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::SURFACE,
+                    clip,
+                );
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::INK,
+                    metrics.button_border(),
+                    clip,
+                );
             }
             LayoutKind::BoardClue => draw_centered(
                 surface,
@@ -14815,6 +15132,28 @@ fn render_all_with_selected_font(
             // Paper first, then the border, then the mark. The corner a chip
             // sits in is very often a cover, and a tick drawn straight onto a
             // dark cover is a tick nobody can see.
+            LayoutKind::TileState(TileState::Busy) => {
+                fill_clipped(surface, node.rect, tone::PAPER, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                let dot = max_i32(2, node.rect.width / 3);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: node.rect.x + (node.rect.width - dot) / 2,
+                        y: node.rect.y + (node.rect.height - dot) / 2,
+                        width: dot,
+                        height: dot,
+                    },
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::TileState(state) => {
                 if let Some(glyph) = state.glyph() {
                     fill_clipped(surface, node.rect, tone::PAPER, clip);
@@ -16933,6 +17272,7 @@ mod tests {
                     source: (10, 10),
                     max_height_tenths_mm: 100,
                     framed,
+                    bleed: false,
                 }],
             )
             .layout()
@@ -16969,6 +17309,7 @@ mod tests {
                             source: (1072, 1448),
                             max_height_tenths_mm: 5000,
                             framed: false,
+                            bleed: false,
                         },
                         Node::Grid {
                             id: NodeId(2),
@@ -17030,6 +17371,7 @@ mod tests {
                 source: (10, 10),
                 max_height_tenths_mm: 100,
                 framed: true,
+                bleed: false,
             }],
         );
         let diagnostics = screen.diagnostics_with_pictures(
@@ -22165,6 +22507,70 @@ mod prose_tests {
         );
     }
 
+    /// A square tile that refuses a tap has to show the mark that says so.
+    ///
+    /// Outlining the square shape brought every unavailable square tile into
+    /// the branch that mutes a card, which drops the chip, leaving a tile that
+    /// looks ordinary, ignores taps and explains nothing. A muted card is a
+    /// different case: a whole grid of them is explained once by the screen.
+    #[test]
+    fn an_unavailable_square_tile_still_shows_its_mark() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![
+                    Tile::new(ActionId(1), "Gone", Glyph::Book).with_state(TileState::Unavailable)
+                ],
+            }],
+        );
+        assert!(
+            screen
+                .layout()
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::TileState(TileState::Unavailable))),
+            "an unavailable square tile drew nothing to say it was unavailable"
+        );
+    }
+
+    /// Only the card shape is outlined, and the square shape is not.
+    ///
+    /// A tile outline is drawn in ink at the button weight rather than in grey
+    /// at the rule weight, so one reads as a hairline and a grid of them reads
+    /// as a box around every cell. The launcher is a grid of square tiles, and
+    /// it once shipped with a box around every app on it. A card is the other
+    /// case: they arrive a few at a time, and the outline is what separates one
+    /// card's worth of text from the next.
+    #[test]
+    fn only_a_card_is_outlined_and_a_square_tile_is_not() {
+        let outlines = |shape| {
+            Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape,
+                    tiles: vec![Tile::new(ActionId(1), "Read", Glyph::Book)],
+                }],
+            )
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
+            .count()
+        };
+        assert_eq!(
+            outlines(TileShape::Square),
+            0,
+            "a square tile drew an outline, which boxes every app on the launcher"
+        );
+        assert!(
+            outlines(TileShape::Card) > 0,
+            "a card lost the outline that separates it from the next card"
+        );
+    }
+
     #[test]
     fn a_tile_with_nothing_extra_to_say_emits_no_chips_at_all() {
         let screen = Screen::new(
@@ -22528,6 +22934,44 @@ mod prose_tests {
             value.rect.width * 2 > layout.content.width,
             "the label column took more than half the panel from its value"
         );
+    }
+
+    #[test]
+    fn facts_that_run_out_of_panel_drop_whole_entries_instead_of_clipping() {
+        let entries = (0..20)
+            .map(|index| {
+                (
+                    format!("Label {index}"),
+                    format!("A value with enough words to wrap onto a second line {index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let screen = Screen::new(
+            1,
+            vec![Node::Facts {
+                id: NodeId(1),
+                entries: entries.clone(),
+            }],
+        );
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(
+            !issues.iter().any(|issue| matches!(
+                issue.kind,
+                LayoutIssueKind::Clipped | LayoutIssueKind::TextOverflow
+            )),
+            "a facts block taller than the panel clipped: {issues:?}"
+        );
+        let shown = screen
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::FactValue)
+            .count();
+        assert!(
+            shown < entries.len(),
+            "every fact was laid out on a panel that cannot hold them"
+        );
+        assert!(shown > 0, "no facts were laid out at all");
     }
 
     #[test]

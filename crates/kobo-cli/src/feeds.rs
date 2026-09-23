@@ -7,7 +7,7 @@
 //! that would be refused on a panel is refused here, where there is room to
 //! say why.
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
 
 const USAGE: &str = "usage: kobo feeds check FILE\n\
@@ -108,32 +108,7 @@ fn read(path: &Path) -> Result<(Vec<u8>, kobo_opml::Import), String> {
 }
 
 fn publish(destination: &Path, bytes: &[u8]) -> Result<(), String> {
-    let name = destination
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or("Invalid shelf filename")?;
-    let partial = destination.with_file_name(format!(".{name}.writing"));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&partial)
-        .map_err(|error| {
-            format!("Prepare subscription list (existing shelf unchanged): {error}")
-        })?;
-    let result = file
-        .write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| {
-            drop(file);
-            fs::rename(&partial, destination)
-        });
-    if let Err(error) = result {
-        let _ = fs::remove_file(&partial);
-        return Err(format!(
-            "Could not publish subscription list; previous file unchanged: {error}"
-        ));
-    }
-    Ok(())
+    crate::publish::atomically(destination, bytes, "subscription list")
 }
 
 fn summary(import: &kobo_opml::Import) -> String {

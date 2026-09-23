@@ -1,0 +1,26 @@
+{
+ "base": "origin/beta",
+ "head_audited": "874ba0ee",
+ "changed_source_files": 35,
+ "third_party_packages_without_declared_license": [],
+ "required_notice_files_missing": [],
+ "local_reference_markers": [],
+ "note": "file:// test-release URLs are intentionally allowed; they are generated test inputs, not developer-local source references",
+ "refresh_77d56062": {
+  "audited_by": "execution owner, independent re-run at integrated head",
+  "head_audited": "77d56062",
+  "changed_source_files_rs_py_mjs_toml": 51,
+  "delta_since_874ba0ee": "16 files from CLI-22..38 evidence/board/source commits; full range re-scanned",
+  "third_party_packages_total": 360,
+  "third_party_packages_external": 266,
+  "third_party_packages_without_declared_license": [],
+  "required_notice_files_missing": [],
+  "notice_files": "LICENSE, THIRD-PARTY.md, licenses/ (Rust-deps generated notice, Flashcards Anki/device notices, font/resvg/shakmaty/Tabler licenses)",
+  "local_reference_markers": [],
+  "allowed_test_inputs": [
+   "crates/kobo-cli/src/report.rs privacy-redaction test uses /home/owner/private/beach.png as dummy owner path with sha256=abc; asserts paths are hidden by default",
+   "file:// test-release URLs (per original audit)"
+  ],
+  "method": "cargo metadata --format-version 1 --locked (online); git diff origin/beta...HEAD marker scan over rs/py/mjs/toml/sh"
+ }
+}
