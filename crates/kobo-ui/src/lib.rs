@@ -9012,8 +9012,13 @@ fn layout_node(
                 } else {
                     ControlState::Disabled
                 };
-                let outlined = *shape == TileShape::Card
-                    || (*shape == TileShape::Square && !legacy_typography());
+                // Only the card carries an outline. A tile outline is drawn in
+                // ink at the button weight, not in grey at the rule weight, so
+                // on a grid it is a box around every cell rather than the
+                // hairline it reads as in isolation. The launcher is a grid of
+                // square tiles, and the box says nothing the position of the
+                // tile does not already say.
+                let outlined = *shape == TileShape::Card;
                 let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
                     id: *id,
