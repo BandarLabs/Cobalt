@@ -37,7 +37,7 @@ use crate::frame::{FramePlanner, FrameRegion, FrameTransition, PanelWaveform};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
-use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
+use kobo_hal::reader::{Reader, ReaderError, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::soc_watchdog::SocWatchdog;
 use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
@@ -871,6 +871,26 @@ pub fn present(
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     wifi_trace.checkpoint(WifiTraceEvent::NickelStartRequested);
+    // Started only if nothing else has started one. A reader that is already
+    // running came up while this session still owned the panel, and starting
+    // another beside it leaves two readers drawing on one screen. Neither can
+    // then be singled out to stop, so the next launch refuses too and only a
+    // reboot separates them. A reboot now is the same outcome, taken before
+    // the second reader rather than after it.
+    if let Some(running) = reader_already_back() {
+        trace(&format!(
+            "{running} before this session handed back; requesting a clean reboot instead of starting another"
+        ));
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; {running}, so a clean reboot was requested rather than a second reader"
+            )
+        });
+    }
     let restarted = match reader.start(START_GRACE) {
         Ok(pid) => pid,
         Err(error) => {
@@ -1383,6 +1403,23 @@ fn ask_consent(
     decision
 }
 
+/// Describes a stock reader that is already running, if there is one.
+///
+/// A failure to read the process table is not treated as a reader: starting
+/// one reports its own failure and takes the reboot path from there.
+fn reader_already_back() -> Option<String> {
+    match Reader::find() {
+        Ok(found) => Some(format!(
+            "the reader was already running as pid {}",
+            found.pid()
+        )),
+        Err(ReaderError::Ambiguous(pids)) => {
+            Some(format!("several readers were already running: {pids:?}"))
+        }
+        Err(_) => None,
+    }
+}
+
 fn restore_screen(
     display: &DisplaySession,
     backup: &RegionSnapshot,
@@ -1882,7 +1919,7 @@ fn host_applications(
                 && auto_update_battery_permits()
             {
                 if let Some(plan) = pending_updates.take() {
-                    apply_auto_update(plan, &mut apps, front);
+                    while_beating(watchdog, || apply_auto_update(plan, &mut apps, front));
                 }
             }
             // An application that was offered Back and drew nothing has had
@@ -2578,7 +2615,9 @@ fn host_applications(
                                             kobo_protocol::DeviceResult::Denied(
                                                 kobo_protocol::DenyReason::Unsupported,
                                             ),
-                                            kobo_hal::bluetooth::Bluetooth::scan,
+                                            |bluetooth| {
+                                                while_beating(watchdog, || bluetooth.scan())
+                                            },
                                         )
                                     }
                                     kobo_protocol::DeviceRequest::PairBluetooth { address } => {
@@ -2768,8 +2807,13 @@ fn host_applications(
                                     // asking, and nothing else is served
                                     // while the installation is replaced,
                                     // which is exactly the quiet wanted.
+                                    // The heartbeat is not quiet, though: a
+                                    // release takes longer to fetch and
+                                    // unpack than the watchdog waits.
                                     kobo_protocol::DeviceRequest::Update { url, sha256 } => {
-                                        match crate::update::apply(url, sha256) {
+                                        match while_beating(watchdog, || {
+                                            crate::update::apply(url, sha256)
+                                        }) {
                                             Ok(()) => kobo_protocol::DeviceResult::Done,
                                             Err(error) => {
                                                 trace(&format!("update refused: {error}"));
@@ -2794,7 +2838,9 @@ fn host_applications(
                                     kobo_protocol::DeviceRequest::RefreshAppCatalog => {
                                         let root = Path::new(COBALT_ROOT);
                                         let channel = crate::autoupdate::preferences(root).channel;
-                                        let result = crate::app_store::refresh(root, channel);
+                                        let result = while_beating(watchdog, || {
+                                            crate::app_store::refresh(root, channel)
+                                        });
                                         if result.is_ok() {
                                             store_channel = channel;
                                         }
@@ -2802,8 +2848,9 @@ fn host_applications(
                                     }
                                     kobo_protocol::DeviceRequest::InstallApp { id } => {
                                         let root = Path::new(COBALT_ROOT);
-                                        let result =
-                                            crate::app_store::install(root, id, store_channel);
+                                        let result = while_beating(watchdog, || {
+                                            crate::app_store::install(root, id, store_channel)
+                                        });
                                         if result.is_ok() {
                                             stop_named_application(&mut apps, id);
                                         }
@@ -2824,7 +2871,11 @@ fn host_applications(
                                         crate::app_link::begin(Path::new(COBALT_ROOT)),
                                     ),
                                     kobo_protocol::DeviceRequest::PollAppLink => {
-                                        let result = crate::app_link::poll(Path::new(COBALT_ROOT));
+                                        // A poll can carry a queued install,
+                                        // which downloads a whole package.
+                                        let result = while_beating(watchdog, || {
+                                            crate::app_link::poll(Path::new(COBALT_ROOT))
+                                        });
                                         if let Ok(kobo_protocol::DeviceResult::RemoteInstall(
                                             outcome,
                                         )) = &result
@@ -4175,12 +4226,31 @@ fn greet(
     Ok((stream, name, hello.version))
 }
 
+/// Runs `work` with the heartbeat kept up by a thread, for a request that
+/// legitimately blocks the session loop.
+///
+/// A platform update fetches twenty-odd megabytes, digests them on a single
+/// core and writes the expanded tree to the book partition, and a batch of
+/// background app updates does the same once per app. Either outlasts the
+/// sixty seconds the watchdog allows. When the heartbeat stopped, the watchdog
+/// concluded the runtime had died and started the reader while this session
+/// still owned the panel, so both drew on it, and the session's own teardown
+/// then started a second reader on top of the first. Each of these requests is
+/// bounded by its own network timeouts, so a thread vouching for it cannot
+/// hide a session that is truly stuck for long.
+fn while_beating<T>(watchdog: &Arc<Watchdog>, work: impl FnOnce() -> T) -> T {
+    let _beating = KeepBeating::start(watchdog);
+    work()
+}
+
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
 /// session loop is not running.
 ///
-/// Only used during teardown. Using it for the session itself would defeat the
-/// point: a heartbeat coming from a thread says the process exists, while a
-/// heartbeat coming from the loop says the runtime is still doing its job.
+/// Used during teardown, and around the few requests that block the loop on
+/// purpose for longer than the watchdog waits. Using it for the session as a
+/// whole would defeat the point: a heartbeat coming from a thread says the
+/// process exists, while a heartbeat coming from the loop says the runtime is
+/// still doing its job.
 struct KeepBeating {
     running: Arc<AtomicBool>,
 }
