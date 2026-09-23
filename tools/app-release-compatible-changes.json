@@ -401,12 +401,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes. Tile drawing has since moved with it: square tiles gain the outline and hairline the card shape already used and set their mark at the smaller size, a busy tile draws its ink dot on paper with a border like every other corner chip, and an unavailable square tile keeps the mark that says it refuses a tap. The runtime draws all of it from nodes published apps already emit, so their bytes, their protocol and their layouts are unchanged and no catalog app needs a new version. The per-tile node reservation rises from seven to eight to match what an outlined tile can put down, and keyboard key labels ask for two more pixels before taking a size, which measures the same on every supported panel and scale.",
+   "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes. Tile drawing has since moved with it: square tiles set their mark at the smaller size and keep the card shape's outline to the card, because a tile outline is drawn in ink at the button weight and a grid of them boxes every app on the launcher, a busy tile draws its ink dot on paper with a border like every other corner chip, and an unavailable square tile keeps the mark that says it refuses a tap. The runtime draws all of it from nodes published apps already emit, so their bytes, their protocol and their layouts are unchanged and no catalog app needs a new version. The per-tile node reservation rises from seven to eight to match what an outlined tile can put down, and keyboard key labels ask for two more pixels before taking a size, which measures the same on every supported panel and scale.",
    "files": [
     {
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
-     "compatible_blob": "64fcd23ac525f6758ec2135a8c8648b64058876c"
+     "compatible_blob": "61189ca04697040eff01c9e0d577c8e023790a06"
     }
    ]
   },

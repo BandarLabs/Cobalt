@@ -9012,8 +9012,13 @@ fn layout_node(
                 } else {
                     ControlState::Disabled
                 };
-                let outlined = *shape == TileShape::Card
-                    || (*shape == TileShape::Square && !legacy_typography());
+                // Only the card carries an outline. A tile outline is drawn in
+                // ink at the button weight, not in grey at the rule weight, so
+                // on a grid it is a box around every cell rather than the
+                // hairline it reads as in isolation. The launcher is a grid of
+                // square tiles, and the box says nothing the position of the
+                // tile does not already say.
+                let outlined = *shape == TileShape::Card;
                 let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
                     id: *id,
@@ -22527,6 +22532,42 @@ mod prose_tests {
                 .iter()
                 .any(|node| matches!(node.kind, LayoutKind::TileState(TileState::Unavailable))),
             "an unavailable square tile drew nothing to say it was unavailable"
+        );
+    }
+
+    /// Only the card shape is outlined, and the square shape is not.
+    ///
+    /// A tile outline is drawn in ink at the button weight rather than in grey
+    /// at the rule weight, so one reads as a hairline and a grid of them reads
+    /// as a box around every cell. The launcher is a grid of square tiles, and
+    /// it once shipped with a box around every app on it. A card is the other
+    /// case: they arrive a few at a time, and the outline is what separates one
+    /// card's worth of text from the next.
+    #[test]
+    fn only_a_card_is_outlined_and_a_square_tile_is_not() {
+        let outlines = |shape| {
+            Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape,
+                    tiles: vec![Tile::new(ActionId(1), "Read", Glyph::Book)],
+                }],
+            )
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
+            .count()
+        };
+        assert_eq!(
+            outlines(TileShape::Square),
+            0,
+            "a square tile drew an outline, which boxes every app on the launcher"
+        );
+        assert!(
+            outlines(TileShape::Card) > 0,
+            "a card lost the outline that separates it from the next card"
         );
     }
 
