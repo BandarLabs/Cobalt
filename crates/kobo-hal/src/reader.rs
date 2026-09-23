@@ -646,13 +646,13 @@ fn sibling(state: &Path, suffix: &str) -> PathBuf {
         .join(format!("{name}.{suffix}"))
 }
 
-/// How long the watchdog waits for a killed session to be gone before it
-/// starts the reader anyway.
+/// How long the watchdog waits for a killed session to be gone.
 ///
 /// A process killed in the middle of a write to the book partition finishes
 /// that write first. Thirty seconds covers the slowest write this runtime
-/// makes. Past that the session is not coming back, and a reader beside a
-/// wedged session is still better than no reader at all.
+/// makes. Past that the session is wedged in the kernel, and the watchdog
+/// reboots rather than start a reader beside something that may still hold
+/// the panel.
 const SESSION_EXIT_WAIT_SECONDS: u32 = 30;
 
 /// The session a watchdog belongs to, identified well enough to kill.
@@ -700,7 +700,29 @@ fn start_time(proc_root: &Path, pid: u32) -> Option<String> {
 /// and display descriptor as the process goes. It also means the update
 /// recovery `--restart-from` runs never races an update the session was still
 /// writing.
-fn session_stop(session: &Session, wait_seconds: u32) -> String {
+///
+/// A session that is still alive when the wait runs out is not joined by a
+/// reader. `when_stuck` runs instead, and it must not return: on the device it
+/// is a synced reboot, the one hand-back that is certain to leave a single
+/// owner, and in tests it is an exit code.
+///
+/// The cancel marker is read once more immediately before the kill, so a
+/// session that finished cleanly while the watchdog was waking is never killed
+/// on its way out. `stand_down` is what the rest of the script does on seeing
+/// it.
+///
+/// The identity check and the kill are two steps, not one. The gap is a few
+/// instructions of shell, and for a new process to receive the same id inside
+/// it the session would have to exit, be reaped, and the kernel's sequential
+/// allocator wrap all the way round to that number. `pidfd_send_signal`, which
+/// would close the gap, arrived in Linux 5.3, and no supported Kobo kernel is
+/// that new.
+fn session_stop(
+    session: &Session,
+    wait_seconds: u32,
+    stand_down: &str,
+    when_stuck: &str,
+) -> String {
     format!(
         "session_alive() {{\n\
          stat=$(cat '{stat}' 2>/dev/null) || return 1\n\
@@ -708,9 +730,11 @@ fn session_stop(session: &Session, wait_seconds: u32) -> String {
          [ \"$1\" != Z ] && [ \"${{20}}\" = '{started}' ]\n\
          }}\n\
          if session_alive; then\n\
+         {stand_down}\n\
          kill -9 {pid} 2>/dev/null\n\
          waited=0\n\
          while session_alive && [ \"$waited\" -lt {wait_seconds} ]; do sleep 1; waited=$((waited + 1)); done\n\
+         session_alive && {{ {when_stuck}; }}\n\
          fi\n",
         stat = session
             .proc_root
@@ -743,8 +767,18 @@ fn watchdog_script(
     check: Duration,
     session: Option<&Session>,
 ) -> String {
+    let stand_down = format!(
+        "[ -e '{cancel}' ] && {{ rm -f '{cancel}' '{beat}'; exit 0; }}",
+        cancel = cancel.display(),
+        beat = beat.display()
+    );
     let stop = session.map_or_else(String::new, |session| {
-        session_stop(session, SESSION_EXIT_WAIT_SECONDS)
+        session_stop(
+            session,
+            SESSION_EXIT_WAIT_SECONDS,
+            &stand_down,
+            "sync; reboot; exit 0",
+        )
     });
     format!(
         "#!/bin/sh\n\
@@ -1214,10 +1248,16 @@ mod tests {
         let session = fake_session("kill", child.id(), "5555", "5555");
         let status = std::process::Command::new("/bin/sh")
             .arg("-c")
-            .arg(session_stop(&session, 1))
+            .arg(session_stop(&session, 1, ":", "exit 3"))
             .status()
             .expect("run the stop");
-        assert!(status.success());
+        // The fake stat outlives the kill, so this stand-in also looks
+        // wedged, which is the path that must end the script.
+        assert_eq!(
+            status.code(),
+            Some(3),
+            "a session that still looked alive was followed by the reader"
+        );
         let ended = child.wait().expect("reap the stand-in");
         assert!(
             !ended.success(),
@@ -1236,7 +1276,7 @@ mod tests {
         let session = fake_session("reused", child.id(), "7777", "5555");
         let status = std::process::Command::new("/bin/sh")
             .arg("-c")
-            .arg(session_stop(&session, 1))
+            .arg(session_stop(&session, 1, ":", "exit 3"))
             .status()
             .expect("run the stop");
         assert!(status.success());
@@ -1274,6 +1314,49 @@ mod tests {
             kill_at < acts_at,
             "the reader must start after the session is gone"
         );
+    }
+
+    #[test]
+    fn a_session_that_finished_while_the_watchdog_woke_is_not_killed() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("a stand-in session");
+        let session = fake_session("cancelled", child.id(), "5555", "5555");
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(session_stop(&session, 1, "exit 0", "exit 3"))
+            .status()
+            .expect("run the stop");
+        assert!(status.success());
+        assert!(
+            child.try_wait().expect("check the process").is_none(),
+            "a cancelled watchdog killed the session"
+        );
+        child.kill().expect("clean up");
+        let _ignored = child.wait();
+    }
+
+    #[test]
+    fn a_session_the_kill_cannot_remove_leads_to_a_reboot_not_a_reader() {
+        let session = Session {
+            proc_root: PathBuf::from("/proc"),
+            pid: 812,
+            started: "4242".to_owned(),
+        };
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+            Some(&session),
+        );
+        let reboot_at = script
+            .find("session_alive && { sync; reboot; exit 0; }")
+            .expect("a wedged session ends in a reboot");
+        let acts_at = script.find("exec '/tmp/kobod'").expect("acts");
+        assert!(reboot_at < acts_at);
     }
 
     #[test]

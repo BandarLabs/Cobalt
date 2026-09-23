@@ -908,6 +908,25 @@ pub fn present(
             });
         }
     };
+    // Checked again now that it is up. The check above and the start are two
+    // steps, and a reader that something else started between them is only
+    // visible afterwards, as a second process beside the one just started.
+    // Two readers cannot be stopped one at a time, so the reboot is taken
+    // here rather than left for the owner to find.
+    if let Err(ReaderError::Ambiguous(pids)) = Reader::find() {
+        trace(&format!(
+            "several readers are running after the restart ({pids:?}); requesting a clean reboot"
+        ));
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; several readers were running after the restart ({pids:?}), so a clean reboot was requested"
+            )
+        });
+    }
     wifi_trace.checkpoint(WifiTraceEvent::NickelPidObserved);
     // Any daemon Cobalt started for the session was stopped by exact captured
     // identity above. A stop or capture uncertainty takes the clean-reboot
@@ -1919,7 +1938,7 @@ fn host_applications(
                 && auto_update_battery_permits()
             {
                 if let Some(plan) = pending_updates.take() {
-                    while_beating(watchdog, || apply_auto_update(plan, &mut apps, front));
+                    apply_auto_update(plan, &mut apps, front, watchdog);
                 }
             }
             // An application that was offered Back and drew nothing has had
@@ -3502,7 +3521,12 @@ fn auto_update_battery_permits() -> bool {
 /// under the reader; its turn comes with a later plan. A staged platform
 /// release takes effect the next time Cobalt starts, exactly as one installed
 /// from the settings screen does.
-fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: u64) {
+fn apply_auto_update(
+    plan: crate::autoupdate::Plan,
+    apps: &mut [Hosted],
+    front: u64,
+    watchdog: &Arc<Watchdog>,
+) {
     let root = Path::new(COBALT_ROOT);
     let chosen = crate::autoupdate::preferences(root);
     if chosen.channel != plan.channel {
@@ -3519,7 +3543,12 @@ fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: 
                 trace(&format!("{id} is on the panel, so its update waits"));
                 continue;
             }
-            match crate::app_store::install(root, &id, chosen.channel) {
+            // One bound per package rather than one for the batch: a batch
+            // grows with the Store, and a limit that has to cover all of it
+            // would cover a wedged install for just as long.
+            match while_beating(watchdog, || {
+                crate::app_store::install(root, &id, chosen.channel)
+            }) {
                 Ok(()) => {
                     stop_named_application(apps, &id);
                     trace(&format!("{id} was updated in the background"));
@@ -3532,7 +3561,9 @@ fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: 
         return;
     }
     if let Some(update) = plan.platform {
-        match crate::update::apply(&update.url, &update.sha256) {
+        match while_beating(watchdog, || {
+            crate::update::apply(&update.url, &update.sha256)
+        }) {
             Ok(()) => trace(&format!(
                 "Cobalt {} is staged and runs from the next start",
                 update.version
@@ -4226,20 +4257,30 @@ fn greet(
     Ok((stream, name, hello.version))
 }
 
+/// The longest one blocking request may keep the heartbeat up for.
+///
+/// Sized for the largest of them, a platform archive: twenty-odd megabytes at
+/// forty kilobytes a second is under ten minutes, with its digest, expansion
+/// and writes on top. The network's own timeouts bound silence, not a slow
+/// transfer, and nothing bounds a write to flash that has wedged. Past this the
+/// thread stops vouching, the heartbeat goes quiet, and the watchdog takes the
+/// session down and hands the panel back as it would for any other stall.
+const BLOCKING_WORK_LIMIT: Duration = Duration::from_secs(10 * 60);
+
 /// Runs `work` with the heartbeat kept up by a thread, for a request that
 /// legitimately blocks the session loop.
 ///
 /// A platform update fetches twenty-odd megabytes, digests them on a single
-/// core and writes the expanded tree to the book partition, and a batch of
-/// background app updates does the same once per app. Either outlasts the
+/// core and writes the expanded tree to the book partition, and each
+/// background app update does the same for a package. Either outlasts the
 /// sixty seconds the watchdog allows. When the heartbeat stopped, the watchdog
 /// concluded the runtime had died and started the reader while this session
 /// still owned the panel, so both drew on it, and the session's own teardown
-/// then started a second reader on top of the first. Each of these requests is
-/// bounded by its own network timeouts, so a thread vouching for it cannot
-/// hide a session that is truly stuck for long.
+/// then started a second reader on top of the first. The thread vouches for
+/// at most [`BLOCKING_WORK_LIMIT`], so a request that never finishes still
+/// ends in recovery rather than in a heartbeat that lies forever.
 fn while_beating<T>(watchdog: &Arc<Watchdog>, work: impl FnOnce() -> T) -> T {
-    let _beating = KeepBeating::start(watchdog);
+    let _beating = KeepBeating::for_at_most(watchdog, BLOCKING_WORK_LIMIT);
     work()
 }
 
@@ -4256,12 +4297,18 @@ struct KeepBeating {
 }
 
 impl KeepBeating {
+    /// For teardown, which has its own bounds on every step it waits for.
     fn start(watchdog: &Arc<Watchdog>) -> Self {
+        Self::for_at_most(watchdog, Duration::MAX)
+    }
+
+    fn for_at_most(watchdog: &Arc<Watchdog>, limit: Duration) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let stop = Arc::clone(&running);
         let watchdog = Arc::clone(watchdog);
+        let started = Instant::now();
         thread::spawn(move || {
-            while stop.load(AtomicOrdering::Relaxed) {
+            while stop.load(AtomicOrdering::Relaxed) && started.elapsed() < limit {
                 watchdog.beat();
                 thread::sleep(BEAT_INTERVAL);
             }
