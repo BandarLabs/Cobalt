@@ -73,20 +73,13 @@ the exact ARM release binary during publishing.
 their first compatible Cobalt release. A future protocol cannot publish until
 that Cobalt-owned policy is updated.
 `minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
-services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
-The 0.3.5 runtime deliberately accepts both protocol 11 and 12: installed
-protocol-11 apps, their state, secrets, update preferences, rollback path, and
-Nickel handoff remain usable after its OTA. Those frames retain legacy
-Atkinson metrics so their local pagination stays correct. Protocol-12 apps use
-Folio fields and typography and must declare `minimum_cobalt_version` 0.3.5;
-old runtimes may reject them. Protocol 13 is the current Lichess/Folio runtime
-and uses the same 0.3.5 Cobalt floor. The publishing check rejects a lower value.
+services used by the app. The first Cobalt release for each protocol is listed
+in `tools/protocol-minimums.json`, and the publishing check rejects a lower
+value. Newer runtimes keep accepting older protocols, so installed apps, their
+state and their secrets keep working after a Cobalt update.
 
-The initial Cobalt applications are registered too. Their `0.2.0` copies are
-bundled for a useful first boot, appear as installed in Store, and can later be
-updated, removed, or reinstalled through the same signed channel. Sudoku is
-not in the platform package, so installing it proves that Wi-Fi delivery works
-for an app absent from the reader.
+Apps bundled with Cobalt are registered too. They appear as installed in Store
+and can be updated, removed and reinstalled through the same signed channel.
 
 See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 

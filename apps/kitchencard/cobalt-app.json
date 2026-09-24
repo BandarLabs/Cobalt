@@ -3,9 +3,9 @@
   "display_name": "Kitchen Card",
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
-  "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
-  "version": "0.1.4",
-  "release_notes": "Reads servings from real Mealie recipeYield text, keeps ingredient rows single-line, shows a visible Next step button while cooking, and carries parser fixtures captured from a live Mealie account.",
+  "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
+  "version": "0.1.5",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "reader",
   "capabilities": [
     "network",

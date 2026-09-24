@@ -1,71 +1,63 @@
 # Parser
 
-Parser turns a Kobo into an offline interactive-fiction reader. It executes
-text-only Z-machine v3, v5 and v8 story files, typesets the transcript as prose,
-and moves through long sessions with ordinary page turns.
+Play interactive fiction offline on your Kobo.
 
-<img width="300" src="screenshots/parser-game.png" alt="A story transcript with typed commands and the on-screen keyboard">
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/parser-game.png" alt="A story in progress, with the keyboard open"><br>A story in progress, with the keyboard open</td>
+</tr>
+</table>
 
-## Transfer a story
+## Features
 
-Parser never downloads games or sends play data over the network. Transfer a
-story you already own over Cobalt's authenticated owner connection:
+- Plays text-only Z-machine stories in versions 3, 5 and 8 (`.z3`, `.z5`,
+  `.z8`).
+- The transcript is set as prose, with page turns by tap or page button.
+- Type commands, or tap LOOK, INVENTORY, EXAMINE, TAKE, directions, UNDO,
+  SAVE, RESTORE and AGAIN. Tap a word in the transcript to add it to your
+  command.
+- Ten save slots per story, plus an autosave after every turn. Reopening a
+  story continues where you stopped.
+- *First Light*, a short original tutorial story, is included.
+
+## Adding a story
+
+Parser never downloads games. Send a story file you own from your computer:
 
 ```sh
-kobo parser push game.z5 --device 192.168.1.23
+kobo parser inspect game.z5                       # format, title and compatibility
+kobo parser push game.z5 --device 192.168.1.23    # --replace overwrites a copy already there
 ```
 
-Open Parser and tap **Refresh library**. Invalid versions are rejected before
-transfer; Glulx is named explicitly and politely refused. Story files are kept
-in Parser's private shelf and transferred atomically, so interruption cannot
-publish a partial game.
+Then open Parser and tap **Refresh library**. Unsupported formats are refused
+before they are sent.
 
-## Playing
+## Limits
 
-- Type any command with the platform keyboard.
-- Tap common commands: LOOK, INVENTORY, EXAMINE, TAKE, compass directions,
-  UNDO, SAVE, RESTORE and AGAIN.
-- EXAMINE and TAKE leave the input line open for a noun.
-- Tap a word in the transcript to append it to the command line.
-- Turn pages at either side of the transcript or with physical page buttons.
-- SAVE opens ten per-story Quetzal slots.
-- Parser writes a separate Quetzal autosave after every accepted turn and on
-  suspend, background and exit. Reopening a story silently restores it.
+- No graphics, sound or version 6 stories.
+- Glulx, TADS and Ink are not supported.
+- Timed input is treated as ordinary turns.
+- The standard Z-machine test suites have not been run on a Kobo yet, so treat
+  compatibility as a preview.
 
-Timed input in v5 is deliberately treated as ordinary turn-based input.
-Graphics, sound, v6, Glulx, TADS and Ink are not supported.
+## Permissions
 
-## Interpreter and test status
+None. Parser runs offline.
 
-The interpreter in `src/zvm/` is original AGPL-3.0-only code following
-[Z-Machine Standards 1.1][standard]. It implements instruction decoding,
-routine frames, variables and stacks, objects/properties, dictionaries and
-tokenisation, Z-strings/abbreviations, arithmetic/branches, deterministic
-randomness, text/keyboard I/O, status lines, undo, and Quetzal IFZS
-save/restore for v3, v5 and v8.
+## Development
 
-Generated legal fixtures exercise deterministic startup and output on all
-three supported versions, format refusal, UTF-8-safe transcript pagination,
-word taps, Clara layout diagnostics, and Quetzal round trips.
+```sh
+cargo test -p kobo-parser
+python3 scripts/check-apps-sim.py parser
+```
 
-The upstream **czech** and **praxix** suites and attended full-game runs have
-not yet been executed on Kobo hardware. They are not bundled because this
-repository has not completed the per-work redistribution audit. Until those
-runs are recorded, Parser should be treated as an implementation preview
-rather than a claim of full Standards conformance.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
 
-## Game and license ledger
+## Credits
 
-| Work | Bundled | License |
-| --- | --- | --- |
-| Generated interpreter fixtures | Tests only | AGPL-3.0-only |
-| First Light tutorial story | Yes, seeds onto an empty shelf | AGPL-3.0-only (original) |
-| Advent 350 | No | Not audited for this distribution |
-| Modern v8 story | No | Not selected or audited |
-| Infocom commercial stories (including Zork) | **Never** | Proprietary; readers must sideload copies they are entitled to use |
-
-No third-party story is distributed. `encrusted` (MIT) was consulted only as
-the request's named reference implementation; no source was copied and no
-runtime dependency was added.
-
-[standard]: https://inform-fiction.org/zmachine/standards/z1point1/index.html
+The interpreter in `src/zvm/` is original AGPL-3.0-only code written to the
+[Z-Machine Standard 1.1](https://inform-fiction.org/zmachine/standards/z1point1/index.html).
+*First Light*, the bundled tutorial story, is also original and AGPL-3.0-only.
+No third-party stories are included. Commercial Infocom stories, including
+Zork, are never bundled.

@@ -2,11 +2,11 @@
   "id": "parlor",
   "display_name": "Parlor",
   "short_label": "Parlor",
-  "summary": "Play touch-first Reversi together on one Kobo.",
-  "page_description": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
+  "summary": "Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.",
+  "page_description": "Four classic board games for two players passing one Kobo, or against the computer at three levels. Every move is saved.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.5",
-  "release_notes": "Say so when progress could not be saved, and keep trying on the next move.",
+  "version": "0.1.6",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "circle",
   "capabilities": []
 }

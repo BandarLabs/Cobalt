@@ -1,94 +1,76 @@
 # Sync
 
-Sync is unofficial and is not affiliated with or endorsed by the Syncthing
-Foundation. Syncthing's licence grants no rights in its name or logo.
+Sync folders between your computer and your Kobo with Syncthing, on a
+battery-friendly schedule.
 
-Sync is the Settings surface for Cobalt's runtime-owned Syncthing service. It
-persists the on/off state and cadence, reads runtime-written transfer status,
-and shows the fixed receive-only `vault`, `frame`, and `books` folders plus
-send-only `out`.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/syncthing-folders.png" alt="The four sync folders"><br>The four sync folders</td>
+<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-first-complete.png" alt="The first sync, with what it imported"><br>The first sync, with what it imported</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-running.png" alt="A sync in progress"><br>A sync in progress</td>
+<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-conflict.png" alt="A conflict, retried on the next sync"><br>A conflict, retried on the next sync</td>
+</tr>
+</table>
 
-![Sync folders on the Clara BW simulator](screenshots/syncthing-folders.png)
+## Features
 
-The status screen shows the whole picture at a glance: transfer state, bytes
-remaining, peers online, the last successful window, the next scheduled
-window, and - when the engine gives up on a file for now - a distinct
-conflict state that retries on the next window. Completed windows import
-staged packages onto the application shelves (`sync/vault` becomes Vault's
-synced shelf, `sync/frame` becomes the Frame album; deletions never
-propagate) and the screen lists what each import brought in. The first
-completed sync is called out once.
+- Four fixed folders. `vault`, `frame` and `books` come to the Kobo, and `out`
+  goes to the computer.
+- Sync manually, hourly, every four hours or daily. Pause stops scheduled
+  syncs.
+- The status screen shows transfer state, bytes left, peers online, the last
+  successful sync and the next one.
+- Files in `vault` open in [Vault](../vault/) and files in `frame` appear as a
+  [Frame](../frame/) album. Deletions are not carried over, and each sync
+  lists what it imported.
+- Conflicts are shown separately and retried on the next sync.
 
-`kobod --syncthing window 300` starts a bounded owner-attended window;
-`tail` limits opportunistic windows to 90 seconds, `scheduled` honours the
-stored cadence, and `status` reports the latest runtime status.
+## Setup
 
-![First sync complete, with last success, next window and the Vault import](../../docs/quality/evidence/syncthing/sync-first-complete.png)
+1. Install Syncthing on your computer with its package manager.
+2. Wake the Kobo on Wi-Fi.
+3. Link one directory to one Kobo folder:
 
-![A running window with bytes remaining and peers online](../../docs/quality/evidence/syncthing/sync-running.png)
+   ```sh
+   kobo sync setup ~/Documents/notes --folder vault --device 192.168.1.2
+   kobo sync run
+   kobo sync status
+   kobo sync stop
+   ```
 
-![Conflicts are distinct and name the retry path](../../docs/quality/evidence/syncthing/sync-conflict.png)
+`kobo sync` runs its own Syncthing identity under `~/.config/kobo/syncthing`
+and never changes another Syncthing installation. The directory for `out`
+must be empty the first time. Setup refuses symlinked or overlapping folders.
 
-The supervisor
-generates configuration in `/var/lib/cobalt/syncthing`, makes a daemon-only
-API key from `/dev/urandom`, and only permits its REST listener on loopback.
-It accepts neither arbitrary folder paths nor a key supplied by an app. A
-clean REST shutdown is attempted before a last-resort kill.
+## How it runs on the reader
 
-The unmodified ARMv7 Syncthing binary and a persistent scheduled-wake launcher
-are still required on an actual Kobo platform image. Until the binary arrives
-through the platform-update channel, the app surfaces the install remedy.
+The Syncthing engine is not in the platform package. The reader downloads it
+the first time Sync is turned on and checks it against a digest built into
+Cobalt before running it. Its API listens on the reader only, and apps cannot
+add folders or supply keys.
 
-## Pair one host directory
+`build-armv7.sh` rebuilds the engine from the pinned Syncthing v2.0.9 source
+and checks the result against the same digest. It downloads nothing. The same
+rebuild runs in `.github/workflows/syncthing-engine.yml`.
 
-The host CLI creates a separate Syncthing identity and home at
-`~/.config/kobo/syncthing`; it never edits another Syncthing installation.
-Install Syncthing with the computer's package manager, wake the Kobo on Wi-Fi,
-then map one real directory to one fixed Kobo folder:
+## Permissions
+
+- `scheduled-wake`: wakes the reader for scheduled syncs.
+
+## Development
 
 ```sh
-kobo sync setup ~/Documents/notes --folder vault --device 192.168.1.2
-kobo sync run
-kobo sync status
-kobo sync stop
+cargo test -p kobo-syncthing
+python3 scripts/check-apps-sim.py syncthing
 ```
 
-`vault`, `frame`, and `books` are send-only on the host and receive-only on the
-Kobo. `out` is the inverse, and its host directory must be empty at first
-setup. Setup obtains both real Syncthing device IDs, adds only the chosen
-folder to the pairing, rejects symlinked or overlapping roots, and prints the
-attended Kobo window command. `run` starts only the dedicated peer in the
-background; `run --foreground --seconds 300` provides a bounded alternative.
-The API remains on `127.0.0.1:8385`, while LAN discovery, global discovery,
-and relays remain enabled for direct and remote transfers.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
 
-## ARMv7 release path
+## Credits
 
-`build-armv7.sh` is deliberately build-only: it requires a locally reviewed,
-pinned upstream checkout and a caller-provided output directory. It does not
-download or execute a release artifact. It pins Syncthing `v2.0.9` commit
-`3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f`, runs `go mod verify`, and refuses
-an output that differs from the repository-pinned SHA-256.
-
-The engine is not part of the platform package. It was 27.9 MB of a 31.0 MB
-release, which every reader downloaded on every update whether or not they use
-Sync, so it is published once under the `syncthing-v2.0.9` tag and `kobod`
-fetches it the first time somebody turns Sync on. Running this script proves
-those published bytes can be rebuilt from the pinned source; the same rebuild
-runs on demand in `.github/workflows/syncthing-engine.yml`.
-
-`kobod` compares the fetched engine to the same digest compiled into the
-runtime; it refuses a symlink, group/world-writable, non-root-owned, or
-mismatched engine before spawning it, whether the bytes arrived over the
-network or in an older platform package.
-
-Choosing hourly, four-hourly, or daily in the app requests Cobalt's bounded
-scheduled-wake facility; manual mode and Pause cancel it. A scheduled launcher
-must run `kobod --syncthing scheduled`, which checks the persisted setting
-again immediately before opening a five-minute maximum window.
-
-## Third-party attribution
-
-[Syncthing](https://github.com/syncthing/syncthing) is MPL-2.0. The shipped
-binary's exact upstream version and commit must be recorded in the platform's
-`THIRD-PARTY.md` when the platform package selects it.
+[Syncthing](https://github.com/syncthing/syncthing) is licensed under MPL-2.0.
+Sync is unofficial and not affiliated with or endorsed by the Syncthing
+Foundation. See [THIRD-PARTY.md](THIRD-PARTY.md).

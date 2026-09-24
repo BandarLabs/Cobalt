@@ -1,129 +1,86 @@
 # Panels
 
-Panels is an unofficial client and is not affiliated with or endorsed by the
-Komga project.
+Read CBZ comics from your computer or your [Komga](https://komga.org/)
+library.
 
-Panels reads local CBZ comics and catalogs from your own Komga library. Comic
-archive inspection, page decoding and reading controls are shared Cobalt
-components. ZIP decoding uses the pinned MIT-licensed `zip` crate with default
-features disabled. There is no RAR decoder or CBR dependency. CBR and PDF comics
-are outside the current supported formats; obtain a CBZ copy of a CBR comic.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/library.png" alt="The shelf, with covers and saved pages"><br>The shelf, with covers and saved pages</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reader.png" alt="Reading a page"><br>Reading a page</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/import-guide.png" alt="The USB import guide"><br>The USB import guide</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/download-recovery.png" alt="A finished download, ready to add offline"><br>A finished download, ready to add offline</td>
+</tr>
+</table>
 
-## Add and read a local comic
+## Features
 
-Choose **Try a sample comic** to read the bundled four-page *A small garden*
-offline. Its artwork and text are original to Cobalt, and its import follows the
-same confirmation and receipt flow as any other CBZ.
+- Fit, zoom, pan, thumbnails, page jump, rotation, two-page spreads and
+  right-to-left reading.
+- A shelf of up to 64 comics with covers and your saved page, such as
+  **Saved page 2 of 4**.
+- Browse and search a Komga library, and download comics up to 32 MiB.
+- Interrupted downloads can be continued or removed from **Download**.
+- **Try a sample comic** opens *A small garden*, a four-page comic made for
+  Cobalt.
 
-To add your own file, choose **Add comic** for the USB guide. Connect the reader
-by USB, open its drive on your computer, and copy your CBZ as `volume.cbz` under
-`.adds/cobalt/data/panels` (show hidden folders and create `panels` if needed).
-Eject the drive safely, unplug the cable, reopen Panels and choose **Add comic**. Check its title, format and size, then choose **Add to library**. Panels
-keeps a content-addressed copy and verifies its bytes before saving a receipt
-and the comic list. **Available on this reader** appears only after both saves
-succeed. Choose **Open** to read, or return to the shelf to read later.
+## Adding a comic from your computer
 
-A repeated import reuses an intact copy. Replacing the incoming `volume.cbz`
-does not replace previous content-addressed imports. The shelf supports up to
-64 comics, with measured pages and stable selection at each interface size.
-Unreadable, corrupt and newer-version comic lists remain distinct from an
-empty shelf. Failed saves offer a retry and retain the pending data.
+```sh
+kobo panels inspect COMIC.cbz                  # check the file
+kobo panels push COMIC.cbz --device IP         # send it to the reader
+```
 
-Reading controls include fit, zoom, pan, thumbnails, page jump, rotation,
-spreads and right-to-left reading. Position changes wait for a storage
-acknowledgement; a failed save remains visible until a retry succeeds. New
-position records use bounded content-derived keys, with legacy positions read
-when available. The library accepts the previous tab-separated format through
-an acknowledged migration.
+Then open Panels and choose **Add comic**. `kobo panels preview COMIC.cbz
+--out DIRECTORY` shows its pages on the computer first.
 
-## Connect your Komga library
+### Over USB, without the command
 
-Choose **Browse Komga**, add your HTTPS server address, then open **Account
-details** and enter your username and password. Cobalt stores the account in
-Panels' private runtime namespace, bound to that server and its base path.
-A reverse-proxy path is supported, for example `https://books.example/komga`.
-The connection check requests `/opds/v1.2/catalog` beneath that address and opens
-the library only after a valid OPDS response. Login pages and generic server
-errors are refused. An address save failure offers a retry; reopening restores
-the last acknowledged address. Changing servers requires entering account
-details for the new server.
+1. Choose **Add comic** for the guide.
+2. Connect the reader by USB and copy your comic to
+   `.adds/cobalt/data/panels/volume.cbz`. The folder is hidden, and you may
+   need to create `panels`.
+3. Eject the drive, unplug the cable and reopen Panels.
+4. Choose **Add comic**, check the title and size, then **Add to library**.
 
-Browsing paginates each server response at the active interface size, including
-its navigation and next/previous links. Search filters the current response while
-preserving each original title action. Back restores the previous local page and
-search; cancelled or late requests cannot replace that restored view. Catalog
-history is bounded to 16 entries. Cover art and CBZ downloads up to 32 MiB are
-supported.
+Panels keeps its own verified copy, so you can copy the next comic to
+`volume.cbz` without losing the last one. **Available on this reader** appears
+once the copy is saved.
 
-## Your shelf
+## Connecting Komga
 
-Each comic shows a cover preview and its acknowledged reading position, such as
-**Saved page 2 of 4**. Seeing the final page does not label the comic finished.
-An absent position says **Not started**; unreadable or newer state says
-**Position unavailable**. Failed reading saves keep the last acknowledged page
-in the shelf summary while retaining the unsaved position for retry.
+1. Choose **Browse Komga** and enter your server's HTTPS address. Paths such
+   as `https://books.example/komga` work.
+2. Open **Account details** and enter your username and password.
 
-Covers are generated when a comic is imported or opened. They are small,
-evictable cached images, separate from your comic files and reading positions.
-The shelf reads only visible covers and small position records; opening it does
-not read every CBZ. If a cover is missing or its cache cannot be read, a book
-icon keeps the same space. Reopening the comic rebuilds its cover. Cached covers
-are bounded to 160 × 240 pixels, with at most 32 held for display. Long shelf
-titles use two measured lines; opening a comic retains its full title.
+Panels checks the address before saving it. Your account is stored by the
+runtime for that server only. Changing servers means entering your details
+again.
 
-## Continue an interrupted download
+## Limits
 
-Open **Download** from the shelf to continue or remove a paused download.
-Panels checks its saved bytes before using them. When continuing, it first
-compares the saved part with your server, then downloads the remaining pages.
-If the server's comic has changed, remove the paused download and start again.
-Your previously saved comics stay on the shelf.
+- CBZ only. CBR and PDF comics are not supported, so convert CBR files to CBZ
+  first.
+- Continuing a download re-checks the part already saved, which uses some
+  extra data.
 
-Once a complete download is saved, **Add to shelf** works offline. The same
-verified copy, receipt and comic-list saves used for USB imports must finish
-before **Available on this reader** appears. A failed save offers Retry; it
-keeps the recovery copy. Repeating a download of an unchanged comic reuses its
-verified copy. A different file at the same server URL gets a separate copy.
+## Permissions
 
-Downloads keep one acknowledged checkpoint while writing the next. Restarting
-uses the last acknowledged checkpoint, which may be behind the last progress
-shown before interruption. Removal waits for outstanding storage replies and
-removes only the download's recovery files. An unreadable, older-format or
-newer-format recovery record is preserved until you explicitly remove it;
-older paused downloads must be downloaded again.
+- `network`: browses and downloads from your Komga server.
 
-Resuming checks the existing prefix again because the current network API does
-not expose a server version token. This uses additional network data. Archive
-checks still apply before import. The automated checks use original fixture
-bytes and real SDK/storage paths; live Komga transfer and physical-reader
-validation remain part of acceptance.
-
-## Screenshots
-
-These are actual Clara BW simulator captures at the largest interface size,
-using Cobalt's original sample comic. They show ideal rendered output, not
-measured e-ink appearance. Capture provenance is in [screenshots](screenshots/README.md).
-
-| Shelf | Reader |
-| --- | --- |
-| ![The original sample comic available on the reader](screenshots/library.png) | ![The first page of A small garden](screenshots/reader.png) |
-
-| USB guide | Download recovery |
-| --- | --- |
-| ![Folder step of the USB import guide](screenshots/import-guide.png) | ![Completed download can be added to the shelf offline](screenshots/download-recovery.png) |
-
+## Development
 
 ```sh
 cargo test -p kobo-panels
-kobo dev
+python3 scripts/check-apps-sim.py panels
 ```
 
-The sample can be rebuilt with `python3 scripts/quality/make-panels-sample.py`.
-It uses original drawing geometry and the repository's existing licensed font.
-The source, PNG pages and CBZ use the repository license; no external artwork
-or comic text is embedded.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-comics-sim.py` checks importing, reading and save recovery. `scripts/quality/make-panels-sample.py` rebuilds the sample comic.
 
-Run `kobo dev` from this app directory. The repository's
-`scripts/quality/check-comics-sim.py` uses original geometric fixtures in private
-simulator storage and checks imports, reading, save failure, retry and restart.
-Physical Clara BW validation follows the combined three-PR acceptance run.
+## Credits
+
+Panels is unofficial and not affiliated with or endorsed by the Komga project.
+CBZ files are read with the `zip` crate (MIT). The sample comic's art and text
+are original.

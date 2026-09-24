@@ -1,32 +1,55 @@
 # Kitchen Card
 
-![Tonight's recipe card on a Kobo Clara BW panel](screenshots/tonight.png)
+A read-only [Mealie](https://mealie.io/) companion for cooking one step at a
+time.
 
-Kitchen Card is an unofficial, read-only Mealie companion. Pick tonight's
-recipe, then cook one large instruction at a time; the left and right page
-zones move through steps and the Ingredients tab stays one tap away. The
-selected card and servings survive offline use.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/tonight.png" alt="Tonight's recipe card"><br>Tonight's recipe card</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/cooking.png" alt="Cooking, one step at a time"><br>Cooking, one step at a time</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/ingredients.png" alt="Ingredients, one tap away"><br>Ingredients, one tap away</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/browse.png" alt="Every synced recipe, available offline"><br>Every synced recipe, available offline</td>
+</tr>
+</table>
 
-Set the Mealie LAN endpoint and its long-lived API token outside the app:
+## Features
+
+- Pick tonight's recipe and cook one large instruction at a time.
+- Tap the left or right side of the screen to move between steps. The
+  Ingredients tab is always one tap away.
+- The chosen recipe and servings stay available offline.
+- Read-only. Kitchen Card does not edit recipes, meal plans or shopping lists.
+
+## Setup
+
+1. In Mealie, create a long-lived API token.
+2. Save the token to a private file and install it on the reader under the
+   secret name `mealie`:
+
+   ```sh
+   kobo secret set mealie --from TOKEN_FILE --device IP
+   ```
+
+The runtime attaches the token to requests itself, so the app never sees it.
+
+## Permissions
+
+- `network`: reads recipes from your Mealie server.
+- `keep-awake`: keeps the screen on while you cook.
+
+## Development
 
 ```sh
-kobo secret set mealie
+cargo test -p kobo-kitchencard
+python3 scripts/check-apps-sim.py kitchencard
 ```
 
-The app asks the runtime to attach that token as an `Authorization` header, so
-it is never in app-visible state. Mealie is AGPL-3.0. This app is unofficial
-and does not edit recipes, meal plans, or shopping lists.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
 
-`drive.kobo` opens a recipe, starts cooking, and captures the product screen.
+## Credits
 
-## On the device
-
-Synced against a live Mealie server with real recipes.
-
-<table><tr>
-<td><img width="300" src="screenshots/tonight.png" alt="Tonight's card for a synced recipe, with servings, step and ingredient counts"><br>Tonight's card for a synced recipe</td>
-<td><img width="300" src="screenshots/cooking.png" alt="Cooking view showing one large instruction and the Next step button"><br>Cooking, one large step at a time</td>
-</tr><tr>
-<td><img width="300" src="screenshots/ingredients.png" alt="Ingredients tab listing real ingredient lines with check-off circles"><br>Ingredients, one tap away</td>
-<td><img width="300" src="screenshots/browse.png" alt="Browse view listing every synced recipe with servings and step counts"><br>Every synced recipe, browsable offline</td>
-</tr></table>
+Kitchen Card is an unofficial client and is not affiliated with Mealie.
+Mealie is licensed under AGPL-3.0. See [THIRD-PARTY.md](THIRD-PARTY.md).

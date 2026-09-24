@@ -12,7 +12,7 @@ Publish a release in dependency order:
 4. `kobo-sdk`
 
 For each layer, run `cargo publish --dry-run -p <crate>` and publish it before
-checking the next layer. Cargo deliberately resolves registry dependencies when
+checking the next layer. Cargo resolves registry dependencies when
 packaging, so `kobo-sdk` cannot complete its dry run until the preceding crates
 exist in the registry at the same version.
 
@@ -63,8 +63,7 @@ The long-lived `beta` branch is the only source for beta publishing:
   release.
 
 Promotion is never automatic. Merge the tested beta commit to main first so
-the main workspace version matches the artifact being promoted. GitHub Pages
-continues to publish `main:/docs`; after that merge, `docs/install.sh` becomes
-the canonical stable discovery URL at
-`https://bandarlabs.github.io/Cobalt/install.sh`. Beta does not publish a
-public host bootstrap; owners opt into beta later through Cobalt Settings.
+the main workspace version matches the artifact being promoted.
+`.github/workflows/pages.yml` then builds the site from `docs/` on main and
+serves `docs/install.sh` at `https://bandarlabs.github.io/Cobalt/install.sh`.
+Beta has no public install script. Owners switch to Beta in Cobalt Settings.
