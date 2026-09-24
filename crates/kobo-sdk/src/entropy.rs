@@ -1,6 +1,6 @@
 //! Random choices for games and original fixtures. Never silently substitutes
 //! time or a fixed seed when the operating system cannot provide entropy.
-use std::io::{self, Read};
+use std::io;
 
 pub trait Entropy {
     /// # Errors
@@ -25,20 +25,22 @@ pub trait Entropy {
         ))
     }
 }
-/// Opens the operating system source once; failure is returned to the app.
+/// Probes the operating system source once; failure is returned to the app.
 #[derive(Debug)]
-pub struct SystemEntropy(std::fs::File);
+pub struct SystemEntropy(());
 impl SystemEntropy {
     /// # Errors
     /// Returns an error when the operating system entropy source is unavailable.
     pub fn open() -> io::Result<Self> {
-        std::fs::File::open("/dev/urandom").map(Self)
+        let mut probe = [0; 8];
+        kobo_abi::entropy::random_bytes(&mut probe)?;
+        Ok(Self(()))
     }
 }
 impl Entropy for SystemEntropy {
     fn next_u64(&mut self) -> io::Result<u64> {
         let mut bytes = [0; 8];
-        self.0.read_exact(&mut bytes)?;
+        kobo_abi::entropy::random_bytes(&mut bytes)?;
         Ok(u64::from_le_bytes(bytes))
     }
 }

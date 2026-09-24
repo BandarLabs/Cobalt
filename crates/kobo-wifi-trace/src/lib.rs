@@ -8,7 +8,10 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -16,6 +19,50 @@ use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 pub const TRACE_VERSION: u32 = 1;
+
+/// Inode identity. Windows stable `std` exposes no file-index API (the one
+/// that exists is unstable), so the identity is 0 there. These identities
+/// only ever join a record to its earlier self, so a shared 0 degrades to
+/// re-reading the file, never to mistaking one file for another.
+#[cfg(unix)]
+fn metadata_inode(metadata: &fs::Metadata) -> u64 {
+    metadata.ino()
+}
+
+#[cfg(windows)]
+fn metadata_inode(_metadata: &fs::Metadata) -> u64 {
+    0
+}
+
+/// Modification time as Unix seconds and nanoseconds. Windows reports 100-ns
+/// ticks since 1601; the shift to the Unix epoch is exact.
+#[cfg(unix)]
+fn metadata_mtime(metadata: &fs::Metadata) -> (i64, i64) {
+    (metadata.mtime(), metadata.mtime_nsec())
+}
+
+#[cfg(windows)]
+fn metadata_mtime(metadata: &fs::Metadata) -> (i64, i64) {
+    let ticks = metadata.last_write_time();
+    (
+        (ticks / 10_000_000) as i64 - 11_644_473_600,
+        ((ticks % 10_000_000) * 100) as i64,
+    )
+}
+
+/// Windows `std` metadata exposes no socket file type, so socket entries are
+/// not identified there and fall out of the record set entirely. The device
+/// this tool diagnoses runs Linux; the Windows build exists so the host CLI
+/// compiles with the summariser it shares.
+#[cfg(unix)]
+fn metadata_is_socket(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_socket()
+}
+
+#[cfg(windows)]
+fn metadata_is_socket(_metadata: &fs::Metadata) -> bool {
+    false
+}
 pub const ENABLE_ENV: &str = "KOBO_WIFI_HANDOFF_TRACE";
 pub const ENABLE_PHRASE: &str = "OWNER_ATTENDED_N365_WIFI_HANDOFF_TRACE";
 pub const ACTIVE_PROBES_ENV: &str = "KOBO_WIFI_HANDOFF_ACTIVE_PROBES";
@@ -248,7 +295,7 @@ struct PrivacyKey([u8; 32]);
 impl PrivacyKey {
     fn generate() -> io::Result<Self> {
         let mut bytes = [0_u8; 32];
-        File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        kobo_abi::entropy::random_bytes(&mut bytes)?;
         Ok(Self(bytes))
     }
 
@@ -1308,7 +1355,7 @@ fn count_role(processes: &[ProcessRecord], role: &str) -> usize {
 fn socket_identity(path: &Path) -> String {
     fs::symlink_metadata(path).map_or_else(
         |_| "absent".to_owned(),
-        |metadata| format!("inode:{}", metadata.ino()),
+        |metadata| format!("inode:{}", metadata_inode(&metadata)),
     )
 }
 
@@ -1400,7 +1447,7 @@ fn file_record(
     content_identities: &mut HashMap<(PathBuf, u64, u64, i64, i64), String>,
 ) -> Option<FileRecord> {
     let metadata = fs::symlink_metadata(path).ok()?;
-    let kind = if metadata.file_type().is_socket() {
+    let kind = if metadata_is_socket(&metadata) {
         "socket"
     } else if metadata.is_file() {
         "file"
@@ -1408,12 +1455,13 @@ fn file_record(
         return None;
     };
     let content_identity = if metadata.is_file() && metadata.len() <= 1024 * 1024 {
+        let (mtime, mtime_nsec) = metadata_mtime(&metadata);
         let key = (
             path.to_path_buf(),
-            metadata.ino(),
+            metadata_inode(&metadata),
             metadata.len(),
-            metadata.mtime(),
-            metadata.mtime_nsec(),
+            mtime,
+            mtime_nsec,
         );
         content_identities.get(&key).cloned().or_else(|| {
             let identity = read_bounded(path, 1024 * 1024)
@@ -1425,13 +1473,14 @@ fn file_record(
     } else {
         None
     };
+    let (mtime, mtime_nsec) = metadata_mtime(&metadata);
     Some(FileRecord {
         path_identity: privacy.identity(b"dhcp-file-path", path.as_os_str().as_encoded_bytes()),
         kind,
-        inode: metadata.ino(),
+        inode: metadata_inode(&metadata),
         size: metadata.len(),
-        mtime: metadata.mtime(),
-        mtime_nsec: metadata.mtime_nsec(),
+        mtime,
+        mtime_nsec,
         content_identity,
     })
 }

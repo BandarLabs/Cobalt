@@ -6,10 +6,12 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+use kobo_protocol::channel;
 
 static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
 
@@ -66,16 +68,23 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
 
 use std::process::ExitCode;
 
+// The daemon's subsystems serve the device-write entry points, which a
+// Windows host build does not compile. Keep the dead-code lint live on unix
+// and silence the noise in the Windows CI job's build.
+#[cfg_attr(not(unix), allow(dead_code))]
 mod app_link;
 mod app_store;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
 mod frame;
 mod syncthing;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod update;
 
 fn main() -> ExitCode {
@@ -637,12 +646,15 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = channel::Listener::bind(socket_path)?;
+    // The Unix socket needs owner-only mode bits; the Windows address file
+    // inherits the user profile ACL (see kobo_protocol::channel).
+    #[cfg(unix)]
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
     let _socket_guard = SocketGuard(socket_path.to_owned());
     println!("simulation socket ready: {}", socket_path.display());
 
-    let (mut stream, _) = listener.accept()?;
+    let mut stream = listener.accept()?;
     let hello = kobo_protocol::read_from(&mut stream)?;
     let Message::Hello { name } = hello.message else {
         return Err("first application message must be Hello".into());
@@ -741,7 +753,7 @@ fn apply_preview_orientation<E>(
     reason = "one arm per message type; splitting the dispatch hides it"
 )]
 fn serve_application(
-    stream: &mut UnixStream,
+    stream: &mut channel::Stream,
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
@@ -988,7 +1000,7 @@ fn serve_application(
 /// write to the same socket and two frames interleaved on a stream protocol is
 /// a stream that can never be read again.
 fn write_shared(
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     frame: &Frame,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
@@ -999,7 +1011,7 @@ fn write_shared(
 /// Hands every finished task to the application, from its own thread.
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     peer_version: u8,
 ) {
     loop {
@@ -1150,9 +1162,14 @@ fn validate_simulation_paths(socket: &Path, frame: &Path) -> Result<(), Box<dyn 
     {
         return Err("simulation directory must be a kobo-sim-* directory under temp".into());
     }
-    let mode = fs::metadata(&parent)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        return Err("simulation directory must not be accessible by group or others".into());
+    // Mode-bit privacy is a Unix check; on Windows the directory inherits
+    // the user profile ACL, which is the same account boundary.
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(&parent)?.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err("simulation directory must not be accessible by group or others".into());
+        }
     }
     if frame.exists() {
         return Err(format!("frame already exists: {}", frame.display()).into());
@@ -1313,8 +1330,10 @@ mod tests {
         let left = kobo_ui::ensure_way_back(bare, &chrome, "Cobalt");
         assert!(left.top_bar.is_none());
     }
+    #[cfg(unix)]
     use super::validate_simulation_paths;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// Killing the daemon outright brought the reader back on hardware and
@@ -1374,6 +1393,9 @@ mod tests {
         assert!(!root.exists());
     }
 
+    // Mode-bit privacy checks are Unix-only; Windows validates paths
+    // without them.
+    #[cfg(unix)]
     #[test]
     fn simulation_paths_require_private_temp_directory() {
         let root = std::env::temp_dir().join(format!("kobo-sim-test-{}", std::process::id()));
