@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Install Stacks on Kobo | Cobalt</title>
+<title>Stacks: your paper library on Kobo | Cobalt</title>
 <meta name="description" content="Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/zotero-reader/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Install Stacks on Kobo | Cobalt">
+<meta property="og:title" content="Stacks: your paper library on Kobo | Cobalt">
 <meta property="og:description" content="Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/zotero-reader/">
 <meta property="og:site_name" content="Cobalt">
@@ -17,11 +17,11 @@
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="Reading a paper with structured layout and Zotero metadata on a Kobo">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Install Stacks on Kobo | Cobalt">
+<meta name="twitter:title" content="Stacks: your paper library on Kobo | Cobalt">
 <meta name="twitter:description" content="Browse your Zotero collections, read metadata and indexed paper text, and keep papers available offline. Stacks is an unofficial client and is not affiliated with or endorsed by Zotero or the Corporation for Digital Scholarship. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/zotero-reader.png">
 <meta name="twitter:image:alt" content="Reading a paper with structured layout and Zotero metadata on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-z/134rGGOA7pti6QdSWfdZYA7yIYV5gHfTxfHtK2kaI='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-w7HGLhDFuwo7bUT7yBJpJTs572SK0JjhxAvnC+0iXB0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -38,7 +38,7 @@
         "caption": "Reading a paper with structured layout and Zotero metadata on a Kobo"
       },
       "applicationSuite": "Cobalt",
-      "applicationCategory": "SoftwareApplication",
+      "applicationCategory": "ReferenceApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
       "softwareVersion": "1.0.7",
       "isAccessibleForFree": true,
@@ -47,7 +47,8 @@
         "price": "0",
         "priceCurrency": "USD"
       },
-      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/zotero-reader/"
+      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/zotero-reader/",
+      "sameAs": "https://github.com/BandarLabs/Cobalt/tree/main/apps/zotero-reader"
     },
     {
       "@type": "BreadcrumbList",
@@ -103,6 +104,7 @@
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
+      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/zotero-reader">Source code on GitHub</a></p>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/zotero-reader.png" width="1072" height="1448" alt="Reading a paper with structured layout and Zotero metadata on a Kobo">
@@ -126,9 +128,9 @@
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">
-      <p class="eyebrow">Do not have Cobalt yet?</p>
-      <h2>Install Cobalt directly from your browser</h2>
-      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi from the Cobalt Apps Catalog, with no cable.</p>
+      <p class="eyebrow">New to Cobalt?</p>
+      <h2>Install Cobalt from your browser</h2>
+      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
       <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
     </div>
     <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
@@ -136,7 +138,7 @@
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong> and tap the globe in the top bar. Choose <strong>Link browser</strong>, then scan the QR code or enter the pairing code and verification key it shows.</p>
+    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
@@ -152,7 +154,7 @@
   </section>
   <section class="panel" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>
-    <p>Cobalt verifies the signed catalog and app package before changing the installed copy.</p>
+    <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
       <button type="button" id="install">Install Stacks</button>
       <button type="button" id="forget" class="secondary">Forget this Kobo</button>

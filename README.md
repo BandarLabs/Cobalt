@@ -30,23 +30,11 @@ new app can appear in Store without reinstalling or updating Cobalt.
 </p>
 
 > [!IMPORTANT]
-> The **Kobo Clara BW N365 (device code 391)**, **Kobo Elipsa 2E N605 (device
-> code 389)**, **Kobo Clara HD N249 (device code 376)**, **Kobo Libra 2 N418
-> (device code 388)**, **Kobo Clara Colour N367 (device code 393)**,
-> **Kobo Libra Colour N428 (device code 390)**, and **Kobo Libra H2O N873
-> (device code 384)** are
-> fully hardware-tested on the firmware and kernel versions in the
-> support matrix. The 2025 **Kobo Clara BW P365 (device code 395)** hardware
-> refresh is also supported: its measured panel, touch, firmware, and kernel
-> facts match the attended-tested N365 Clara BW.
->
-> Cobalt runs on other Kobos as well. A device or a firmware branch that is not
-> in the matrix is not refused: Cobalt shows what has not been tested about it
-> and asks whether to continue, once. It is untested rather than unsupported,
-> and the difference is worth reading in the
-> [device support matrix](docs/DEVICES.md#device-support-matrix) before
-> installing.
-> It is an independent project and is not affiliated with Rakuten Kobo.
+> Tested on the Kobo Clara BW (N365 and the 2025 P365), Clara Colour, Clara HD,
+> Elipsa 2E, Libra 2, Libra Colour and Libra H2O, at the firmware listed in the
+> [device support matrix](docs/DEVICES.md#device-support-matrix). Other Kobos
+> can run it too: Cobalt lists what has not been tested and asks once before it
+> starts. Cobalt is not affiliated with Rakuten Kobo.
 
 > [!TIP]
 > **Own an untested Kobo? Help get it into the matrix.** No coding is required.
@@ -86,9 +74,9 @@ comparison.
 
 ## Apps
 
-Every screenshot below is a real capture from a Kobo Clara BW. Store manages
-the installable applications; Settings and Terminal remain protected system
-utilities.
+Screenshots are taken on a Kobo Clara BW or in its simulator. Install and
+remove apps from Store. Settings and Terminal are part of Cobalt and cannot be
+removed.
 
 <table>
 <tr>
@@ -129,8 +117,7 @@ utilities.
 
 ### Every app in the Store
 
-Every application published to the Cobalt App Store, generated from the same
-manifests the app pages come from by `tools/generate-app-pages.mjs`.
+Generated from each app's manifest by `tools/generate-app-pages.mjs`.
 
 <!-- store-apps:start -->
 <table>
@@ -152,7 +139,7 @@ manifests the app pages come from by `tools/generate-app-pages.mjs`.
 <tr>
 <td width="33%" valign="top"><a href="apps/fanshelf/README.md"><img width="230" src="docs/media/site/apps/fanshelf.png" alt="A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."></a><br><b><a href="apps/fanshelf/README.md">Fanshelf</a></b><br>Save public AO3 works to a shelf made for offline reading.</td>
 <td width="33%" valign="top"><a href="apps/rss/README.md"><img width="230" src="docs/media/site/apps/feeds.png" alt="Subscribed feeds and articles in the Feeds app on a Kobo"></a><br><b><a href="apps/rss/README.md">Feeds</a></b><br>Follow feeds, search saved articles and read offline with images.</td>
-<td width="33%" valign="top"><a href="apps/fieldbook/README.md"><img width="230" src="docs/media/site/apps/fieldbook.png" alt="Fieldbook outing screen tallying an American Robin from a pushed field pack."></a><br><b><a href="apps/fieldbook/README.md">Fieldbook</a></b><br>Log bird sightings anywhere and build your life list.</td>
+<td width="33%" valign="top"><a href="apps/fieldbook/README.md"><img width="230" src="docs/media/site/apps/fieldbook.png" alt="Fieldbook tallying an American Robin during an outing."></a><br><b><a href="apps/fieldbook/README.md">Fieldbook</a></b><br>Log bird sightings anywhere and build your life list.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/flashcards/README.md"><img width="230" src="docs/media/site/apps/flashcards.png" alt="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."></a><br><b><a href="apps/flashcards/README.md">Flashcards</a></b><br>Review flashcards anywhere, even without Wi-Fi.</td>
@@ -181,11 +168,11 @@ manifests the app pages come from by `tools/generate-app-pages.mjs`.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/needles/README.md"><img width="230" src="docs/media/site/apps/needles.png" alt="Needles pattern screen with row and repeat counters and a large +1 row button."></a><br><b><a href="apps/needles/README.md">Needles</a></b><br>Count rows, browse Ravelry collections, and read your synced patterns offline.</td>
-<td width="33%" valign="top"><a href="apps/nonograms/README.md"><img width="230" src="docs/media/site/apps/nonograms.png" alt="Actual Nonograms simulator capture showing a selected square and its matching row and column clues."></a><br><b><a href="apps/nonograms/README.md">Nonograms</a></b><br>Solve 18 original picture puzzles with attached clues, saved undo and larger grids.</td>
-<td width="33%" valign="top"><a href="apps/panels/README.md"><img width="230" src="docs/media/site/apps/panels.png" alt="Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4."></a><br><b><a href="apps/panels/README.md">Panels</a></b><br>Read comics added from your computer or Komga library.</td>
+<td width="33%" valign="top"><a href="apps/nonograms/README.md"><img width="230" src="docs/media/site/apps/nonograms.png" alt="A Nonograms puzzle with the selected square and its row and column clues highlighted."></a><br><b><a href="apps/nonograms/README.md">Nonograms</a></b><br>Solve 18 original picture puzzles with attached clues, saved undo and larger grids.</td>
+<td width="33%" valign="top"><a href="apps/panels/README.md"><img width="230" src="docs/media/site/apps/panels.png" alt="The Panels comic shelf with a cover and saved progress, page 2 of 4."></a><br><b><a href="apps/panels/README.md">Panels</a></b><br>Read comics added from your computer or Komga library.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><a href="apps/paperterm/README.md"><img width="230" src="docs/media/site/apps/paperterm.png" alt="Paperterm sharing a real laptop terminal in portrait, with its keyboard open on a Clara BW simulator."></a><br><b><a href="apps/paperterm/README.md">Paperterm</a></b><br>Pair with a computer to mirror a terminal session on e-ink.</td>
+<td width="33%" valign="top"><a href="apps/paperterm/README.md"><img width="230" src="docs/media/site/apps/paperterm.png" alt="Paperterm showing a laptop terminal session in portrait, with the keyboard open."></a><br><b><a href="apps/paperterm/README.md">Paperterm</a></b><br>Pair with a computer to mirror a terminal session on e-ink.</td>
 <td width="33%" valign="top"><a href="apps/parlor/README.md"><img width="230" src="docs/media/site/apps/parlor.png" alt="Reversi opening board showing four legal moves and touch controls."></a><br><b><a href="apps/parlor/README.md">Parlor</a></b><br>Play touch-first Reversi together on one Kobo.</td>
 <td width="33%" valign="top"><a href="apps/parser/README.md"><img width="230" src="docs/media/site/apps/parser.png" alt="Parser's book-like transcript after taking a brass lamp and entering the garden."></a><br><b><a href="apps/parser/README.md">Parser</a></b><br>Play an original interactive story without Wi-Fi.</td>
 </tr>
@@ -196,12 +183,12 @@ manifests the app pages come from by `tools/generate-app-pages.mjs`.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/readlater/README.md"><img width="230" src="docs/media/site/apps/readlater.png" alt="Read Later setup screen showing Wallabag credential instructions."></a><br><b><a href="apps/readlater/README.md">Read Later</a></b><br>Read your Wallabag articles anywhere.</td>
-<td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick showing several coding-agent sessions and their pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
 <td width="33%" valign="top"><a href="apps/zotero-reader/README.md"><img width="230" src="docs/media/site/apps/zotero-reader.png" alt="Reading a paper with structured layout and Zotero metadata on a Kobo"></a><br><b><a href="apps/zotero-reader/README.md">Stacks</a></b><br>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/sudoku/README.md"><img width="230" src="docs/media/site/apps/sudoku.png" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"></a><br><b><a href="apps/sudoku/README.md">Sudoku</a></b><br>Play 36 original Sudoku puzzles with pencil notes, undo and saved games.</td>
-<td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders showing receive-only vault, frame, books, and send-only out."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Choose folders and a battery-friendly sync schedule.</td>
+<td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders: vault, frame and books receive, out sends."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Choose folders and a battery-friendly sync schedule.</td>
 <td width="33%" valign="top"><a href="apps/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="apps/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
 </tr>
 <tr>
@@ -226,21 +213,16 @@ On macOS or Linux, install the stable release:
 curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh
 ```
 
-This canonical discovery URL is published by GitHub Pages from stable
-`main:/docs`; it becomes available with the first stable promotion containing
-the installer. It trusts GitHub Pages HTTPS for the bootstrap script itself.
-After it starts, every downloaded executable and device package is covered by
-the signed release manifest and SHA-256 checks. For pre-execution verification
-of `install.sh`, use the recommended
+Or use the [browser installer](https://bandarlabs.github.io/Cobalt/install/)
+in Chrome, Edge or Opera.
+
+The script runs on macOS (Intel and Apple Silicon) and Linux (x86_64 and
+arm64). Everything it downloads is checked against the signed release manifest.
+To verify `install.sh` itself before running it, follow the
 [signed-bootstrap procedure](docs/INSTALL.md#high-assurance-signed-bootstrap).
 
-The installer supports macOS Intel and Apple Silicon, and Linux x86_64 and
-arm64. It installs the stable Kobo platform only. The platform Beta channel is
-enabled exclusively in Cobalt Settings after first launch, or through the
-developer/source workflow. Settings shows the installed version and current
-channel, confirms channel changes explicitly, and verifies signed Beta
-platform metadata. Returning to Stable needs no USB connection and preserves
-installed apps, state, and secrets.
+It installs the stable channel. Switch the reader to Beta, and back, in Cobalt
+Settings. Switching keeps your apps, their data and their secrets.
 
 Update the installed host command independently:
 
@@ -270,11 +252,9 @@ Each package contains one ARM executable and a signed canonical manifest. The
 runtime verifies the catalog, package, installed manifest, and binary before
 launch.
 
-Store is the only app-management surface. The applications bundled with the
-first `0.2.0` platform install appear as installed, can be removed and
-reinstalled in the same session, and can be updated in place without creating
-a second launcher entry. Platform utilities such as Settings and Terminal are
-shown as installed system apps and cannot be removed.
+Store is where apps are installed, updated and removed, including the ones
+bundled with Cobalt. Settings and Terminal are system apps and cannot be
+removed.
 
 Open **Install links** in Store to link a phone or computer without an
 account. The **Install** button on any
@@ -282,13 +262,10 @@ account. The **Install** button on any
 encrypted request to that Kobo. If the reader is offline, reconnect it and
 open Store within 72 hours to continue.
 
-Apps are published automatically when an app PR is merged into `main`.
-Publishing an app does **not** require changing the Cobalt version or creating
-a platform release.
-
-Sudoku remains Store-only and is intentionally absent from the USB platform
-package, so installing it verifies delivery of an app that was not already on
-the reader.
+An app merged into `beta` is published to the Beta catalog, and reaches the
+Stable catalog when that commit is promoted. See
+[docs/RELEASE-TRAIN.md](docs/RELEASE-TRAIN.md). Publishing an app does not need
+a Cobalt platform release.
 
 ## Save an app export to your computer
 
@@ -302,12 +279,13 @@ kobo export --app APP --device reader.local --out "$HOME/Downloads"
 Replace `APP` with that app's ID. The command checks the complete file before
 saving, preserves the reader's original, and gives conflicting local names a
 numbered suffix. Retry the same command after a connection or storage failure.
-App adoption is still in progress. See the [export guide](docs/quality/sdk-export-and-copy.md)
-for supported formats and simulator use.
+Not every app offers an export yet. See the
+[export guide](docs/quality/sdk-export-and-copy.md) for formats.
 
 ## Build an app
 
 ```sh
+git clone https://github.com/BandarLabs/Cobalt && cd Cobalt
 cargo install --path crates/kobo-cli
 kobo new my-app
 cd my-app
@@ -358,11 +336,11 @@ App contributions are regular pull requests:
    photos to the pull request.
 6. Include one clean panel screenshot for the app README and generated website
    install page.
-7. Open a pull request.
+7. Open a pull request against `beta`.
 
-After the PR is reviewed and merged, the `Publish apps` workflow builds every
-registered app for ARM, signs the packages and catalog, and updates the fixed
-Store channel. App versions are independent from the Cobalt platform version.
+After the PR is merged, `Publish apps` builds the app for ARM, signs the
+package and catalog, and publishes it to the Beta catalog. App versions are
+independent of the Cobalt version.
 
 See [docs/CONTRIBUTING_APPS.md](docs/CONTRIBUTING_APPS.md) for metadata,
 capabilities, testing, and release details.
@@ -390,7 +368,7 @@ cargo fmt --all --check
 cargo run -p kobo-cli -- run --sim --app sudoku
 ```
 
-Additional guides:
+Additional guides, with the full list in [docs/](docs/README.md):
 
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
@@ -402,17 +380,13 @@ Additional guides:
 
 ## Safety and support
 
-Cobalt does not replace Kobo's boot chain. Device support is explicitly gated
-by hardware and firmware identity, and a reboot returns to the stock reader.
-The first installation still modifies files on the user storage partition and
-is provided without warranty.
+Cobalt does not replace Kobo's boot chain, and a restart returns to the stock
+reader. Installing it adds files to the reader's user storage. It is provided
+without warranty.
 
-Normal panel-write entry points require one of the exact hardware and firmware
-combinations in the
-[device support matrix](docs/DEVICES.md#device-support-matrix). Do not treat a
-read-only profile match as permission to install: normal use requires the
-profile's owner-attended display, touch, exit, and recovery evidence to be
-complete.
+Tested models and firmware are listed in the
+[device support matrix](docs/DEVICES.md#device-support-matrix). On anything
+else, Cobalt lists what has not been tested and asks before it starts.
 
 ## License
 
