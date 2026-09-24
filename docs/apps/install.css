@@ -119,6 +119,7 @@ h1 {
   text-decoration: none;
 }
 .cta:hover { background: var(--blue-dark); border-color: var(--blue-dark); }
+.app-copy .source { margin: 16px 0 0; font-size: 15px; }
 
 /* The strip scrolls rather than wraps so a long gallery cannot push the
    install panels off the first screen, on a phone least of all. */
@@ -144,6 +145,11 @@ h1 {
   max-width: none;
   border: 1px solid var(--rule);
   background: #fff;
+}
+.gallery figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .whats-new {

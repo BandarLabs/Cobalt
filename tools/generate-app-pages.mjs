@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupPanel } from "./app-page-setup.mjs";
@@ -138,6 +138,58 @@ const categoryFor = app => {
   }
   return category;
 };
+// schema.org's application types, so search engines file each page under a
+// kind of software rather than the generic SoftwareApplication.
+const schemaCategories = {
+  Audio: "MultimediaApplication",
+  Developer: "DeveloperApplication",
+  Devices: "UtilitiesApplication",
+  Games: "GameApplication",
+  Productivity: "UtilitiesApplication",
+  Reading: "ReferenceApplication",
+  Reference: "ReferenceApplication"
+};
+const schemaCategoryFor = app =>
+  categories[app.id] ? schemaCategories[categoryFor(app)] : "UtilitiesApplication";
+// Every listed app keeps its README beside its source, under apps/ or examples/.
+const sourceDirFor = id =>
+  ["apps", "examples"].find(dir => existsSync(resolve(root, dir, id, "README.md")));
+// A page title is what a search result shows, so it names the app and what it
+// is for. Apps whose name does not say what they do carry a short phrase that
+// does; the rest are named plainly.
+const titlePhrases = {
+  arxiv: "research preprints on Kobo",
+  "calibre-web": "read your calibre-web books on Kobo",
+  deck: "a computer remote on Kobo",
+  grimoire: "tabletop RPG reference on Kobo",
+  inkling: "a daily word puzzle on Kobo",
+  needles: "a knitting row counter on Kobo",
+  parlor: "Reversi for two on Kobo",
+  parser: "a text adventure on Kobo",
+  post: "letters from Hermes on Kobo",
+  "rss-miniflux": "a Miniflux reader for Kobo",
+  syncthing: "Syncthing folder sync on Kobo",
+  birds: "BirdNET-Go sightings on Kobo",
+  fanshelf: "AO3 works offline on Kobo",
+  fieldbook: "a bird sighting log on Kobo",
+  frame: "a photo frame on Kobo",
+  gutenbird: "OPDS library books on Kobo",
+  homepanel: "Home Assistant controls on Kobo",
+  kitchencard: "Mealie recipes on Kobo",
+  musicstand: "sheet music on Kobo",
+  panels: "comics on Kobo",
+  paperterm: "a computer terminal on Kobo",
+  readlater: "Wallabag articles on Kobo",
+  sidekick: "answer coding-agent prompts on Kobo",
+  vault: "your notes on Kobo",
+  "zotero-reader": "your paper library on Kobo"
+};
+const pageTitle = app => {
+  const phrase = titlePhrases[app.id];
+  return phrase
+    ? `${app.display_name}: ${phrase} | Cobalt`
+    : `${app.display_name} for Kobo e-readers | Cobalt`;
+};
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];
   return screenshot || [
@@ -176,8 +228,7 @@ const jsonLd = value => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c"
 
 // A listing with one thumbnail tells a visitor nothing about what the app is
 // like to use. Any app that published extra captures under its own media
-// directory gets them as a gallery; the file names are already descriptive
-// enough to carry the alt text.
+// directory gets them as a gallery.
 const galleryShots = id => {
   try {
     return readdirSync(resolve(root, "docs/media/site/apps", id))
@@ -187,19 +238,40 @@ const galleryShots = id => {
     return [];
   }
 };
-const shotCaption = file =>
-  file
+const shotCaption = file => {
+  const words = file
     .replace(/\.png$/, "")
+    .replace(/^\d+[-_]/, "")
     .replaceAll("-", " ")
     .replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+// Gallery images load lazily, so without their size the page jumps as each
+// one arrives. The width and height sit at fixed offsets in a PNG header.
+const pngSize = path => {
+  const header = readFileSync(path).subarray(0, 24);
+  return [header.readUInt32BE(16), header.readUInt32BE(20)];
+};
+// A file name is a fallback caption. An app can say what each screen shows,
+// and which screens lead, in captions.json beside the images.
+const galleryCaptions = id => {
+  const path = resolve(root, "docs/media/site/apps", id, "captions.json");
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+};
 const gallery = (app, name) => {
   const shots = galleryShots(app.id);
   if (shots.length < 2) return "";
+  const captions = galleryCaptions(app.id);
+  // Captioned screens lead, in the order captions.json lists them.
+  const order = Object.keys(captions);
+  const rank = file => (order.includes(file) ? order.indexOf(file) : order.length);
+  shots.sort((a, b) => rank(a) - rank(b));
   const figures = shots
-    .map(
-      file =>
-        `      <figure><img src="../../media/site/apps/${app.id}/${file}" loading="lazy" alt="${name} on a Kobo Clara BW: ${escape(shotCaption(file))}"></figure>`
-    )
+    .map(file => {
+      const [width, height] = pngSize(resolve(root, "docs/media/site/apps", app.id, file));
+      const caption = escape(captions[file] ?? shotCaption(file));
+      return `      <figure><img src="../../media/site/apps/${app.id}/${file}" width="${width}" height="${height}" loading="lazy" alt="${name}: ${caption}"><figcaption>${caption}</figcaption></figure>`;
+    })
     .join("\n");
   return `
   <section class="gallery" aria-label="${name} screenshots">
@@ -207,6 +279,12 @@ const gallery = (app, name) => {
 ${figures}
     </div>
   </section>`;
+};
+const sourceLink = app => {
+  const dir = sourceDirFor(app.id);
+  return dir
+    ? `\n      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/${dir}/${app.id}">Source code and full guide on GitHub</a></p>`
+    : "";
 };
 const whatsNew = app =>
   app.release_notes
@@ -248,12 +326,15 @@ const appSchema = (app, canonical, screenshot, screenshotAlt) => ({
         caption: screenshotAlt
       },
       applicationSuite: "Cobalt",
-      applicationCategory: "SoftwareApplication",
+      applicationCategory: schemaCategoryFor(app),
       operatingSystem: "Cobalt on supported Kobo e-readers",
       ...(app.version ? { softwareVersion: app.version } : {}),
       isAccessibleForFree: true,
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-      installUrl: canonical
+      installUrl: canonical,
+      ...(sourceDirFor(app.id)
+        ? { sameAs: `https://github.com/BandarLabs/Cobalt/tree/main/${sourceDirFor(app.id)}/${app.id}` }
+        : {})
     },
     {
       "@type": "BreadcrumbList",
@@ -300,12 +381,12 @@ for (const app of catalog.apps) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Install ${name} on Kobo | Cobalt</title>
+<title>${escape(pageTitle(app))}</title>
 <meta name="description" content="${description}">
 <link rel="canonical" href="${canonical}">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Install ${name} on Kobo | Cobalt">
+<meta property="og:title" content="${escape(pageTitle(app))}">
 <meta property="og:description" content="${description}">
 <meta property="og:url" content="${canonical}">
 <meta property="og:site_name" content="Cobalt">
@@ -314,7 +395,7 @@ for (const app of catalog.apps) {
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="${escape(screenshotAlt)}">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Install ${name} on Kobo | Cobalt">
+<meta name="twitter:title" content="${escape(pageTitle(app))}">
 <meta name="twitter:description" content="${description}">
 <meta name="twitter:image" content="${image}">
 <meta name="twitter:image:alt" content="${escape(screenshotAlt)}">
@@ -348,7 +429,7 @@ for (const app of catalog.apps) {
         <div><dt>Permissions</dt><dd>${capabilities}</dd></div>
         <div><dt>Requires</dt><dd>Cobalt ${escape(app.minimum_cobalt_version)}</dd></div>
       </dl>
-      <a class="cta" href="#setup-panel">Install on your Kobo</a>
+      <a class="cta" href="#setup-panel">Install on your Kobo</a>${sourceLink(app)}
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
@@ -429,12 +510,12 @@ for (const app of systemApps) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${name} for Kobo | Cobalt</title>
+<title>${escape(pageTitle(app))}</title>
 <meta name="description" content="${description}">
 <link rel="canonical" href="${canonical}">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="${name} for Kobo | Cobalt">
+<meta property="og:title" content="${escape(pageTitle(app))}">
 <meta property="og:description" content="${description}">
 <meta property="og:url" content="${canonical}">
 <meta property="og:site_name" content="Cobalt">
@@ -443,7 +524,7 @@ for (const app of systemApps) {
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="${escape(screenshotAlt)}">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="${name} for Kobo | Cobalt">
+<meta name="twitter:title" content="${escape(pageTitle(app))}">
 <meta name="twitter:description" content="${description}">
 <meta name="twitter:image" content="${image}">
 <meta name="twitter:image:alt" content="${escape(screenshotAlt)}">
