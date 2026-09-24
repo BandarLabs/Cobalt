@@ -1,4 +1,4 @@
-# Elipsa 2E portrait rotation acceptance — issue #89
+# Elipsa 2E portrait rotation acceptance, issue #89
 
 Tested on 2026-09-07 with source commit `633f1f8b97368492594dfbaee8a821977036b602`
 (beta base `cf7eb33`). Later evidence-only commits do not change the tested code.

@@ -1,55 +1,63 @@
 # Parlor
 
-Parlor is a four-game, offline board-game shelf for Kobo:
+Four classic board games for two players on one Kobo, or against the reader.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/table.png" alt="The game table"><br>The game table</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reversi-rotated.png" alt="Reversi, with the board turned for White"><br>Reversi, with the board turned for White</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="A draughts opening"><br>A draughts opening</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/morris.png" alt="Nine Men's Morris"><br>Nine Men's Morris</td>
+</tr>
+</table>
+
+## Games
 
 - **Reversi**
-- **Draughts**, with Anglo-American 8×8 play; the implemented International
-  10×10 rules remain disabled until the 81-cell reader board limit is lifted
-- **Nine Men's Morris**
-- **Kalah 6,4**
+- **Draughts**: Anglo-American 8×8 rules, with forced captures and capture
+  chains.
+- **Nine Men's Morris**: placing, mills, protected pieces, moving and flying
+  with three pieces.
+- **Kalah 6,4**: sowing, captures, extra turns and endgame collection.
 
-![The game table: Reversi, Draughts, Nine Men's Morris and Kalah 6,4](screenshots/table.png)
+## Features
 
-![A draughts opening on the shaded board, captures forced](screenshots/draughts.png)
+- Pass-and-play turns the board 180° for the player to move. A fixed
+  orientation is available for side-by-side play.
+- Solo play against three computer levels: Casual, Club and Strong. The same
+  position and level always produce the same move.
+- Legal destinations are marked with hollow rings.
+- Every move is saved, and reopening offers to resume the exact position.
+- In pass-and-play, undo needs the other player's confirmation.
 
-![The Nine Men's Morris board with its twenty-four points](screenshots/morris.png)
+## Rules references
 
-![A Reversi game after Black's move, board turned for White](screenshots/reversi-rotated.png)
+- Reversi: [World Othello Federation](https://www.worldothello.org/about/about-othello/othello-rules/official-rules/english)
+- Draughts: [World Checkers/Draughts Federation](https://www.wcdf.net/rules/rules_of_checkers_english.pdf)
+- Nine Men's Morris: [Board Game Arena](https://en.boardgamearena.com/doc/GamehelpnineMensMorris)
+- Kalah: [Mancala World](https://mancala.fandom.com/wiki/Kalah)
 
-Pass-and-play is the primary mode. The board turns 180° for the active player,
-with an optional fixed orientation for side-by-side play. Solo games offer
-Casual, Club, and Strong deterministic alpha-beta opponents. Every move
-autosaves, reopening offers to resume the exact position, and pass-and-play
-undo requires confirmation from the other player.
+International 10×10 draughts is implemented in the engine
+([FMJD rules](https://www.fmjd.org/docs/Annex_1.pdf)) but stays disabled until
+the reader's board size limit of 81 cells is raised.
 
-The shared search core uses fixed limits so play remains responsive: Casual is
-depth 1 / 500 nodes, Club is depth 3 / 5,000 nodes, and Strong is depth 5 /
-30,000 nodes. Legal moves are ordered deterministically, so identical
-positions and settings produce identical choices.
+## Permissions
 
-Move entry uses hollow legal-destination marks. Draughts enforces mandatory
-captures, continued capture chains, the Anglo-American forward-capturing man,
-and, in the engine, the International flying king and maximum-capture rule.
-During an International sequence, captured pieces remain on the board as
-blockers and cannot be captured again; they are removed together when the
-sequence ends. Morris covers
-placement, mills, protected-piece removal, adjacent movement, and flying with
-three pieces. Kalah covers counter-clockwise sowing, skipped opposing stores,
-captures, extra turns, and endgame collection.
+None. Parlor runs offline.
 
-Rules references:
+## Development
 
-- Reversi: World Othello Federation, *Rules of Othello*
-  (<https://www.worldothello.org/about/about-othello/othello-rules/official-rules/english>)
-- Anglo-American draughts: World Checkers/Draughts Federation, *Official Rules*
-  (<https://www.wcdf.net/rules/rules_of_checkers_english.pdf>)
-- International draughts: FMJD, *Official Rules of International Draughts*
-  (<https://www.fmjd.org/docs/Annex_1.pdf>)
-- Nine Men's Morris: Board Game Arena rules
-  (<https://en.boardgamearena.com/doc/GamehelpnineMensMorris>)
-- Kalah: Mancala World, *Kalah*
-  (<https://mancala.fandom.com/wiki/Kalah>)
+```sh
+cargo test -p kobo-parlor
+python3 scripts/check-apps-sim.py parlor
+```
 
-The engines and AI are original Rust code. The third-party engine ledger is
-empty. “Othello” is a Megahouse/Mattel trademark; Parlor always calls the game
-Reversi.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+The game engines and computer players are original code. "Othello" is a
+trademark of MegaHouse and Mattel, so Parlor calls the game Reversi.

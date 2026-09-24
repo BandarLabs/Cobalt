@@ -3,9 +3,9 @@
   "display_name": "Fanshelf",
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
-  "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
-  "version": "0.3.2",
-  "release_notes": "EPUB download and reading verified end to end against a local archive fixture.",
+  "page_description": "Add AO3 works to a shelf, download them as EPUB and read them offline on your Kobo. Check works in progress for new chapters and follow tags. Fanshelf is unofficial and not affiliated with the Organization for Transformative Works.",
+  "version": "0.3.3",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "book",
   "capabilities": [
     "network"

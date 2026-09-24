@@ -1,189 +1,42 @@
 # Gutenbird
 
-An OPDS client, on the device.
+Browse free book libraries and read their books on your Kobo.
 
-Project Gutenberg, Standard Ebooks, Open Library, the OPDS conformance
-catalogs -- and any other library that speaks the Open Publication
-Distribution System, added by its address. Search, browse, and read a book
-without leaving the application.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="A shelf of covers from a library"><br>A shelf of covers from a library</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/book.png" alt="A book, ready to read"><br>A book, ready to read</td>
+</tr>
+</table>
 
-| The shelf | A book |
-| --- | --- |
-| ![Six real covers in a three by two grid, with "1 of 6" beneath](screenshots/shelf.png) | ![A cover beside the title and author, a Read button, and a paged summary](screenshots/book.png) |
+## Features
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`. Those are
-real covers, fetched over the reader's own radio and decoded on the device.*
+- Works with Project Gutenberg, Standard Ebooks, Open Library and any other
+  OPDS catalog you add by its address.
+- Search and browse catalogs, with covers.
+- Downloads EPUB when available, with progress on screen, and falls back to
+  plain text. **Choose download** picks the format when a book offers several.
+- Books open in the shared reader, with text size, front light, bookmarks and
+  highlights.
+- OPDS 1.2 and 2.0 catalogs look and behave the same.
 
-## Why OPDS rather than one website's API
+See [docs/OPDS.md](../../docs/OPDS.md) for how the OPDS client handles real
+catalogs.
 
-This used to read Gutendex, a JSON front end to Project Gutenberg's own
-metadata -- one service, run by one person, answering in a shape nobody else
-answers in. OPDS is the shape the rest of the open web answers in: Project
-Gutenberg publishes one, and so do Standard Ebooks, Open Library, every
-Calibre server and every library running Library Simplified. Speaking OPDS
-turns this from an application that reads Gutenberg into an application that
-reads libraries, of which Gutenberg is one. See `docs/OPDS.md` for what that
-took and what the real catalogs turned out to actually do.
+## Permissions
 
-## Why an EPUB is worth the wait
+- `network`: reads catalogs and downloads books.
+- `frontlight-control`: adjusts the front light while reading.
 
-This used to stream Gutenberg's plain text, because a zip archive cannot be
-read until its last byte has arrived and the text could be shown from the
-first one. `kobo-doc` can read an EPUB now, and an EPUB carries its own
-italics, headings and table of contents -- everything the plain text path
-threw away in exchange for a first page a few seconds sooner. So an EPUB is
-preferred whenever a catalog offers one: fetched in pieces into a shelf blob
-with real progress on screen, parsed once whole, and only then handed to the
-reader. Plain text remains the fallback. When a catalog offers more than one readable
-download, **Choose download** lets you select the format before reading.
-
-## Why the interface never says which version of OPDS answered
-
-There are two incompatible wire formats in the world at once, Atom for 1.2 and
-JSON for 2.0, and a reader adding a catalog should never have to know which
-one it speaks. `kobo_opds` reads both into one model, and nothing on this
-panel is allowed to ask which parser produced it: no badge, no screen that
-exists for one version and not the other. The parity tests in
-`crates/kobo-opds` and in this application's own test suite exist to keep it
-that way.
-
-## Why the reading screen is not built here
-
-Type size, front light, bookmarks and marked passages are not Gutenbird's to
-invent. Every
-application that shows a book wants the same ones, and a reader who learns them
-in one should find them in the next. They live in `kobo-read`.
-
-## Running it
+## Development
 
 ```sh
-kobo run --sim --app gutenbird          # in the browser simulator
-kobo deploy --device <ip>               # onto a reader over Wi-Fi
+cargo test -p kobo-gutenbird
+kobo run --sim --app gutenbird      # in the browser simulator
+python3 scripts/check-apps-sim.py gutenbird
+kobo deploy --device <ip>       # onto a reader over Wi-Fi
 ```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
-
-
-### Book descriptions
-
-When a catalog embeds a labeled metadata record in its description field,
-Gutenbird shows the synopsis under **About** rather than repeating the title,
-author and download counters. Edition notices, such as missing illustrations,
-remain in their own **Edition** section. Summary provenance is retained, and
-ordinary descriptions are unchanged.
-
-![Book description and edition notice](../../docs/quality/evidence/gutenbird-summary/detail-1.png)
-
-
-The detail header shows the language and the format selected for **Read**,
-using the same acquisition choice as the downloader. Common language codes
-are expanded; regional/script tags are retained beside the name, and unknown
-codes are shown unchanged.
-
-**Choose download** lists the available EPUB and plain-text links, with sample
-labels, catalog-provided titles and sizes where supplied. Selecting a link
-returns to the book details; **Read** uses that download's offline copy and
-saved position. Switching formats does not overwrite the other copy. Downloads
-that exceed the device limit, require purchase or are unavailable are excluded.
-A catalog response containing multiple editions opens a shelf of choices,
-even when all titles match. Image-edition notices appear as **No images** or
-**With images**; other editions use the catalog's download title or an edition
-number. The full notice remains in the book details. An oversized download is
-refused before fetching, with guidance to choose another download or edition.
-
-![Image edition choices from the saved Gutenberg entry fixture](../../docs/quality/evidence/gutenbird-editions/edition-choices.png)
-
-![Download choices rendered from an original fixture with runtime fonts](../../docs/quality/evidence/gutenbird-formats/download-choices.png)
-
-
-Entries with the same title remain separate when their language, authors,
-publisher or edition date differ. A missing language is not assumed to match
-a known language. This keeps distinct catalog choices available rather than
-silently opening the first matching title.
-
-
-When same-title entries differ, shelf captions lead with the language,
-publisher or edition date that distinguishes them. Missing metadata is stated
-rather than guessed. Ordinary titles keep their author/source caption.
-
-![Language choices in an original shelf fixture](../../docs/quality/evidence/gutenbird-editions/language-choices.png)
-
-
-## Missing cover artwork
-
-The shelf uses a title-and-author cover when artwork is missing, too small,
-invalid, or still unavailable after the bounded retry limit. Catalog tiles can
-use a shared cover from a multi-edition entry without choosing an edition for
-the reader; differing covers keep the neutral book icon until an edition is
-opened.
-
-![Lettered cover after a failed download, rendered from an original fixture](../../docs/quality/evidence/gutenbird-covers/failed-cover.png)
-
-
-## Reading position
-
-Reading positions belong to the selected download URL. Saving updates both the
-stored position and the position held for reopening during the same session.
-A delayed storage response for a different book or format is ignored, so it
-cannot move the book currently being read.
-
-
-## Offline reopening
-
-After visiting a catalog page, Gutenbird saves a local copy when the response
-fits the 256 KiB store limit. If that page cannot be fetched later, the saved
-copy keeps its books and navigation accessible. A fresh successful response
-always wins over a delayed saved copy. Downloaded books open from the local
-shelf at their saved position, including after restarting Cobalt offline.
-Unvisited pages and books that have not been downloaded still need a connection.
-
-The simulator check uses an original EPUB and a private local HTTPS fixture:
-
-```sh
-python3 scripts/quality/check-gutenbird-offline-sim.py --output /tmp/gutenbird-offline
-```
-
-It downloads, turns two pages, stops the process, restarts with networking
-disabled and compares the reopened text with the saved page. Default and 170%
-text-scale runs passed; physical-reader acceptance remains separate.
-
-![Reading after an offline simulator restart](../../docs/quality/evidence/gutenbird-offline/default/03-offline-reopened.png)
-
-
-## Add a public catalog
-
-Open **Catalogs**, tap **Add a catalog**, then enter the library's HTTPS catalog
-address. Choose **Use address**, then **Check connection**. Gutenbird saves the
-address only after the response is a valid OPDS catalog, then opens the checked
-content without fetching it again. A website page, failed check or cancelled
-check does not add a catalog. Adding an address already listed opens the existing
-catalog rather than making a duplicate. Public catalog setup does not ask for
-account details.
-
-![Shared catalog connection check in the simulator](../../docs/quality/evidence/gutenbird-setup/default/00-ready-to-check.png)
-
-Run the setup, download and offline-reopen fixture journey with:
-
-```sh
-python3 scripts/quality/check-gutenbird-offline-sim.py --setup --output /tmp/gutenbird-setup
-```
-
-The screenshots use a private local HTTPS fixture, including the illustrated
-catalog address; they do not document a live service URL.
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

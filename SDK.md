@@ -48,12 +48,12 @@ fn main() {
 
 ## 0. Your own application, end to end
 
-Before anything else: Cobalt is hardware-tested on the exact Clara BW, Clara
-Colour, Elipsa 2E, Clara HD, Libra 2, Libra Colour, and Libra H2O identities in
-the [device support matrix](docs/DEVICES.md#device-support-matrix). It is
-AGPL-3.0 licensed and comes with no warranty. Every device write is gated on an
-exact hardware match; do not install it on an unlisted identity or firmware.
-To help support another model, start with
+Cobalt is tested on the Clara BW, Clara Colour, Elipsa 2E, Clara HD, Libra 2,
+Libra Colour and Libra H2O at the firmware in the
+[device support matrix](docs/DEVICES.md#device-support-matrix). Other models
+run after the owner accepts a notice listing what is untested, and developer
+write tools require an exact match. Cobalt is AGPL-3.0 licensed and comes with
+no warranty. To help support another model, start with
 [Porting to another Kobo](docs/PORTING.md).
 
 Six steps from nothing to a tile on the reader's launcher.
@@ -185,7 +185,7 @@ context.set_screen(ScreenBuilder::new("results").heading("Results").build());
 
 ### Portrait and landscape
 
-Portrait is the compatibility default. An application that genuinely benefits
+Portrait is the compatibility default. An application that benefits
 from a wide viewport may request landscape for its current app session:
 
 ```rust
@@ -434,14 +434,14 @@ glyph is one byte, so the set can hold 256 and no more, which is why it
 is curated.
 
 Three places take one: `rows` and `tiles`, where the icon leads a title, and
-`controls`, where it replaces one. There is deliberately no way to put a glyph
+`controls`, where it replaces one. There is no way to put a glyph
 on `button`. A full-width button already has room to say what it does.
 
 A `controls` button draws the picture and nothing else. Setting both is the
 worst of the two, because an icon that has to be checked against a word
 underneath it is slower to read than either on its own.
 
-That is a high bar, so reach for `controls` only when the picture is genuinely
+That is a high bar, so reach for `controls` only when the picture is
 universal. Play, pause and skip are drawn the same way on every device anyone
 has used. "Create another" has no such picture, and a shape invented for it is
 a shape nobody can read.
@@ -459,7 +459,7 @@ line above it, which was going to change anyway.
 
 ### How a screen is composed
 
-The vocabulary above is deliberately small, and a small vocabulary only reads
+The vocabulary above is small, and a small vocabulary only reads
 as a product if it is spent the same way every time. These are the rules the
 nine shipped applications follow. Some of them the renderer now enforces as
 diagnostics; the rest are here because a screen that breaks them looks wrong
@@ -629,7 +629,7 @@ tapped out of a book landed at home instead of the shelf, and reopening the
 application showed the book again, because its retained screen had never
 changed.
 
-Confirmations are deliberately whole screens, not floating desktop windows:
+Confirmations are whole screens, not floating desktop windows:
 
 ```rust
 ScreenBuilder::new("delete-note")
@@ -962,7 +962,7 @@ logs, or crash dump, and it cannot be sent anywhere the application did not
 name: the request is not replayed across a redirect.
 
 `Failure::of(error)` turns a task failure into a state, a sentence and an
-honest answer about whether a Retry control would help. For a missing
+clear answer about whether a Retry control would help. For a missing
 credential, `Failure::naming(secret)` says which one: an application running
 against three providers that only says "install a key" leaves whoever is
 holding the reader to guess which of the three.
@@ -1042,10 +1042,8 @@ HTTP success alone does not verify a library. Cancelled or superseded check
 responses are ignored by the shared flow.
 
 Gutenbird uses this flow and validates the response as OPDS before saving the
-address. Its simulator journey exercises address entry, the connection check,
+address. Its simulator check covers address entry, the connection check,
 a single catalog fetch, download and an offline restart.
-
-![Public provider check in Gutenbird](docs/quality/evidence/gutenbird-setup/default/00-ready-to-check.png)
 
 ### Owner trust roots
 
@@ -1073,7 +1071,7 @@ command is rarely needed by hand: `kobo setup` carries everything in
 ## 6. Typing, where it is unavoidable
 
 Tapping beats typing on this panel, so a screen asks a question with `choose`
-wherever it can. When words are genuinely required, the keyboard is a composite
+wherever it can. When words are required, the keyboard is a composite
 rather than a node: rows of ordinary tappable cells and a small state machine.
 
 ```rust
@@ -1139,10 +1137,7 @@ transfer can be retried. See the [export integration guide](docs/quality/sdk-exp
 and [working SDK example](crates/kobo-sim/examples/export.rs) for callback routing,
 retry and save-barrier handling.
 
-<img src="docs/quality/evidence/exports/text-ready.png" width="320" alt="SDK export fixture showing Garden notes ready for its computer after acknowledged storage">
-
-*Actual Clara BW simulator capture of the SDK export fixture; this is not a
-physical-device transfer or a claim that every app already offers export.*
+Not every app offers export yet.
 
 ### Shared comic reading
 
@@ -1279,7 +1274,7 @@ things:
 
 - **`NotDeclared`**. The application did not ask for the capability.
 - **`WithheldForBattery`**. Policy will not spend the charge right now.
-- **`Unsupported`**. This build genuinely cannot do it.
+- **`Unsupported`**. This build cannot do it.
 
 A build performs only what it has a proven backend for. The device backend
 uses the firmware's running `wpa_supplicant` and Bluetooth service; it does not
@@ -1400,7 +1395,7 @@ root of a single-application session is drawn with no back control at all, so
 tapping a book is a one way door. With it the application receives
 `ActionId::BACK` and answers with the list it came from.
 
-The author is the hero's byline and is stated exactly once. It is deliberately
+The author is the hero's byline and is stated exactly once. It is
 not repeated as a fact row two lines below.
 
 ---
@@ -1741,7 +1736,6 @@ At the smallest legal square, up to three-character board marks can step down th
 
 Board viewports shade and outline the selected square’s matching row and column clue targets. Panning retains absolute row/column identities; the complete clue remains available through its existing inspection action. Nonograms provides an app-level example with attached clues and persistent undo.
 
-
 ### Numbered crossword grids (beta)
 
 `ScreenBuilder::crossword_board(columns, cells)` takes `(action_name, letter,
@@ -1819,7 +1813,6 @@ until retry. `save` returns false for a busy snapshot, an oversized candidate or
 a retained candidate awaiting retry; do not report it as saved. An app should
 serialize refreshes with active saves. Releasing an idle snapshot from memory
 does not remove its files. Disk retention and cleanup remain the app's policy.
-
 
 ### Chess boards
 

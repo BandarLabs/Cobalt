@@ -1,21 +1,43 @@
 # Pub Quiz
 
-![The pass-around players screen with four renamable players](screenshots/players.png)
+Trivia rounds for one player, or for a group passing one Kobo around.
 
-![Renaming a player on the on-screen keyboard](screenshots/keyboard.png)
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/players.png" alt="Four players in pass-around mode"><br>Four players in pass-around mode</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/keyboard.png" alt="Renaming a player"><br>Renaming a player</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/renamed.png" alt="The player list after renaming"><br>The player list after renaming</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/question.png" alt="A question naming whose turn it is"><br>A question naming whose turn it is</td>
+</tr>
+</table>
 
-![The player list after renaming the first player](screenshots/renamed.png)
+## Features
 
-![A pass-around question naming whose turn it is](screenshots/question.png)
+- Question packs download while online and play offline.
+- Solo rounds of ten questions.
+- Pass-around mode rotates named players and shows a hand-over screen between
+  locking an answer and revealing it, so the next player cannot see it.
+- Streaks and pack counts are kept on the reader.
+- Up to ten packs are cached. The oldest is removed first.
 
-Pub Quiz syncs Open Trivia DB packs while online and plays them offline. Solo
-rounds are ten questions. Pass-around mode rotates named players and puts an
-interstitial between answer lock and reveal, so the next player cannot peek.
-The app keeps streaks and pack counts in its store and caps the cache at ten
-packs, pruning oldest packs first.
+## Permissions
 
-Questions come from [Open Trivia DB](https://opentdb.com/) under
-CC-BY-SA 4.0. Cached question packs are redistributed content and remain under
-CC-BY-SA 4.0; an attribution and license file are carried with app data.
+- `network`: downloads question packs from Open Trivia DB.
 
-`drive.kobo` starts pass-around mode and captures a real simulator panel.
+## Development
+
+```sh
+cargo test -p kobo-pubquiz
+python3 scripts/check-apps-sim.py pubquiz
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+Questions come from [Open Trivia DB](https://opentdb.com/) under CC BY-SA 4.0.
+Cached packs stay under that licence, and an attribution and licence file is
+stored with them. See [QUESTION-DATA-LICENSE.md](QUESTION-DATA-LICENSE.md).

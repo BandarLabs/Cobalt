@@ -1,79 +1,155 @@
 # Installing Cobalt
 
-The full owner-facing walkthrough for getting Cobalt onto a supported Kobo over
-USB, what to do if a step does not go as described, and how to take it back
-off. Part of [Cobalt](../README.md).
+How to install Cobalt on a Kobo, fix common problems, update it and remove it.
 
-The procedure below is fully hardware-tested on the **Kobo Clara BW N365
-(device code 391), firmware 4.45.23697**, the **Kobo Elipsa 2E N605 (device
-code 389), firmware 4.38.23697**, the **Kobo Clara HD N249 (device code
-376), firmware 4.38.23684 or 4.38.23697**, the **Kobo Libra 2 N418 (device
-code 388), firmware 4.38.23697**, the **Kobo Clara Colour N367 (device code
-393), firmware 4.45.23697**, the **Kobo Libra Colour N428 (device code
-390), firmware 4.45.23697 or 4.46.23836**, and the **Kobo Libra H2O N873
-(device code 384), firmware 4.38.23697**. Support remains tied to the exact
-firmware, kernel, framebuffer, touch, and identity combination in the
-[device support matrix](DEVICES.md#device-support-matrix).
-
-Display and synthetic-touch writes require an exact match of framebuffer
-identity, geometry, device code, serial model prefix, firmware version, and
-kernel release. A different reader or firmware is refused rather than guessed
-at.
+Cobalt is tested on the models and firmware in the
+[device support matrix](DEVICES.md#device-support-matrix). On another model or
+firmware, Cobalt shows what has not been tested and asks before it starts.
+Kobo firmware 5.x is not supported.
 
 ## What you need
 
-- A charged reader whose entry in the
-  [device support matrix](DEVICES.md#device-support-matrix) is fully tested.
-  The reader's own installer is gated on battery level and fails silently, so
-  charge it first.
-- A **USB cable** that carries data. Charge-only cables are common and they
-  look identical; if the reader charges but never offers to connect, suspect
-  the cable before anything else.
-- An internet connection, `curl` or `wget`, `tar`, and OpenSSH `ssh-keygen`.
-  These are included with current macOS and mainstream Linux distributions.
+- A charged Kobo. The Kobo's own installer does nothing if the battery is low,
+  and it does not say so.
+- A USB cable that carries data. Charge-only cables look the same. If the Kobo
+  charges but never offers to connect, try another cable.
+- For the terminal install: macOS or Linux with `curl` or `wget`, `tar` and
+  `ssh-keygen`. These come with macOS and most Linux distributions.
 
-No Rust toolchain, Git checkout, or ARM cross-compiler is needed for the
-prebuilt installer.
+You do not need Rust or a copy of the source code.
 
-## 1. Install the host command
+## Option 1: install from the browser
 
-Stable is the default:
+Open the [browser installer](https://bandarlabs.github.io/Cobalt/install/) in
+Chrome, Edge or Opera, plug in your Kobo and follow the steps. It writes
+Cobalt and NickelMenu to the Kobo and can add apps at the same time. Then
+continue from [Restart the reader](#3-restart-the-reader).
+
+## Option 2: install from a terminal
+
+### 1. Install the `kobo` command
 
 ```sh
 curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh
 ```
 
-This canonical stable discovery path is served by GitHub Pages from
-`main:/docs` after stable promotion. It fixes discovery and avoids depending on
-a particular stable release asset name; it does not solve self-verification.
-The one-line route trusts GitHub Pages HTTPS for the bootstrap because a script
-cannot verify itself before the shell executes it. Once running, the small
-Pages bootstrap verifies the signed release manifest and the full release
-installer before executing it. The release installer then verifies every host
-and device artifact.
+This installs the stable release. The script checks everything it downloads
+against the signed release manifest. It cannot check itself before your shell
+runs it, so it relies on GitHub's HTTPS for that first step. To verify it
+first, use the [signed bootstrap](#signed-bootstrap) instead.
 
-To install an exact immutable release, add `--version X.Y.Z`. For CI, use
-`--non-interactive --yes`; add `--no-setup` when no physical reader is
-attached. The public bootstrap and prebuilt `kobo setup` install the stable
-platform only. Enable **Beta updates** exclusively in Cobalt Settings after a
-normal stable installation, or use the source workflow for development.
-Settings shows the installed version and channel, requires a separate
-confirmation before changing it, persists the choice, and verifies the signed
-platform manifest. Returning to Stable changes future platform and Store
-checks without USB, downgrading, or deleting apps, state, or secrets.
+Options:
 
-### High-assurance signed bootstrap
+- `--version X.Y.Z` installs a specific release.
+- `--non-interactive --yes` runs without prompts, for CI.
+- `--no-setup` installs the command without looking for a Kobo. Run
+  `kobo setup` later.
 
-The recommended route when GitHub HTTPS alone is not sufficient verifies
-`install.sh` before execution. Choose an exact immutable release, download the
-manifest, SSHSIG, and script as data, verify the manifest with the pinned
-release key below, then verify the script against the signed `bootstrap`
-entry. Obtain this signer line from a separately trusted copy of this guide or
-repository; its SHA-256 fingerprint is
-`SHA256:ufJnWeLeZxeWlrY7KXb1MadhxMHYZdHSmk21Nmovgbo`.
+### 2. Connect the Kobo
+
+1. Plug the Kobo into your computer.
+2. **Tap Connect on the Kobo's screen.** Until you do, it only charges and the
+   installer cannot find it.
+3. Wait for a drive called **KOBOeReader** to appear. This is the Kobo's book
+   storage, and the only place Cobalt writes to.
+
+The installer shows the model, firmware and what it will change, and asks
+before writing. It does not show the full serial number. It will not continue
+with more than one Kobo connected.
+
+To see what would happen without writing anything, run `kobo setup --dry-run`.
+
+The installer writes the new version beside the old one and checks every file
+before switching over. If it is interrupted, the next run finishes or rolls
+back cleanly. Your apps, their data, your secrets and any other NickelMenu
+entries are kept.
+
+On WSL, eject the drive from Windows when setup asks.
+
+## 3. Restart the reader
+
+Hold the power button until the Kobo turns off, then turn it on again. The
+menu entry is loaded at startup, so this step is needed.
+
+**Then leave it alone for a minute.** NickelMenu turns itself off if the reader
+restarts again straight away, as a guard against boot loops. Waiting a minute
+lets it confirm a clean start.
+
+## 4. Open Cobalt
+
+Open the menu at the **bottom right** of the Kobo home screen and choose
+**Cobalt**. The launcher opens with the built-in apps.
+
+To leave Cobalt, choose **Kobo reader** in the launcher. Restarting the Kobo
+also always returns to the stock reader.
+
+## Installing apps
+
+Open **Store** in the launcher. It shows the last catalog it downloaded, then
+checks for updates over Wi-Fi. Apps install, update and uninstall one at a
+time, and appear in the launcher straight away.
+
+To install from the website, open **Install links** in Store and scan the QR
+code, or enter the pairing code and verification key in your browser. After
+that, the **Install** button on any
+[app page](https://bandarlabs.github.io/Cobalt/#apps) sends the app to your
+Kobo over Wi-Fi. If the Kobo is offline, connect it and open Store within 72
+hours.
+
+If a catalog refresh fails, the last catalog stays usable. If an install
+fails, the previous version stays in place.
+
+## If something goes wrong
+
+- **Setup cannot find the Kobo.** Look at the Kobo's screen and tap
+  **Connect**, or try another cable.
+- **No Cobalt entry after the first restart.** The Kobo's installer skips its
+  work when the battery is low. Charge the Kobo and restart it again. Cobalt
+  is already on the device.
+- **No Cobalt entry after a Kobo firmware update.** Firmware updates remove
+  NickelMenu. Run `kobo setup --menu` to add it back. Your menu entries are
+  kept.
+- **The Cobalt entry appeared, then disappeared.** NickelMenu turned itself
+  off after an unexpected restart. You can confirm this: its file is renamed to
+  `libnm.so.failsafe`. Run `kobo setup` again, restart, and leave the Kobo on
+  its home screen for a minute.
+- **Setup refused to continue.** It prints the reason, such as an unrecognised
+  drive, a menu entry used by another mod, or a file that did not read back
+  correctly.
+- **The screen looks wrong or stays blank.** Hold the power button to restart.
+  You are back in the stock reader with nothing to undo.
+- **Software update says "the address or credentials are invalid" on 0.3.1.**
+  This was reported on an Elipsa 2E running 0.3.1, and the cause was not
+  established. Installing the current release manually resolved it. The
+  simplest manual install is the USB install above. See [issue #154](https://github.com/BandarLabs/Cobalt/issues/154).
+
+## Updating
+
+- **Cobalt**: use **Settings → Software update** on the Kobo. Settings also
+  switches between Stable and Beta, keeping your apps and data.
+- **Apps**: use **Store**.
+- **The `kobo` command**: run `kobo update`, or `kobo update --channel beta`
+  for the beta command. This never changes the Kobo.
+
+Rerunning the install script also updates the `kobo` command, and is safe at
+the same version.
+
+Kobos installed by an early release, whose menu entry starts
+`.adds/cobalt/start.sh`, must be reinstalled over USB once before Settings can
+update them.
+
+If an interrupted install leaves `~/.local/share/kobo/install.lock`, make sure
+no installer is running, then delete that directory and try again.
+
+## Signed bootstrap
+
+For higher assurance, verify `install.sh` against the signed release manifest
+before running it. Get the signer line below from a copy of this guide you
+already trust, not from the release you are checking. Its SHA-256 fingerprint
+is `SHA256:ufJnWeLeZxeWlrY7KXb1MadhxMHYZdHSmk21Nmovgbo`.
 
 ```sh
-version=0.3.5
+version=0.3.22   # the release to install
 tag=v$version
 base=https://github.com/BandarLabs/Cobalt/releases/download/$tag
 dir=cobalt-installer-$version
@@ -102,170 +178,7 @@ test "$actual" = "$2"
 sh ./install.sh --version "$version"
 ```
 
-Keep the pinned signer line from this repository or another out-of-band trusted
-copy, not from the release being checked.
-
-## 2. Connect and confirm the reader
-
-This is the step people get stuck on, so in full:
-
-1. Plug the reader into your computer.
-2. **The reader asks. Answer it.** A prompt appears on the reader's own screen
-   offering to connect to the computer. Tap **Connect**. Until you do, the
-   reader charges and nothing is mounted, and setup will report that it cannot
-   find a volume.
-3. Wait for a volume named **`KOBOeReader`** to appear on your computer. That
-   volume is the reader's book partition, and it is the only thing Cobalt
-   writes to.
-
-The installer waits for the volume, resolves its friendly model and support
-status through Cobalt's device profiles, then shows the model, device code,
-profile, firmware, mount point, release version/channel, and intended changes.
-It does not print the full serial. The write requires an explicit default-no
-confirmation. Unsupported or changed devices, unsupported firmware, and
-multiple mounted readers are refused.
-
-Setup writes the complete verified managed payload into `.adds/cobalt.next`
-and reads every file back byte for byte before activation. It temporarily
-holds the known mutable owner folders, retires the complete old payload as
-`.adds/cobalt.prev`, activates the complete new directory, and restores owner
-data. A failed swap rolls back; an interrupted rollback is recovered on the
-next run without mixing managed versions. Installed apps, app state, secrets,
-owner data, and unrelated NickelMenu entries are preserved. Under WSL setup
-instructs Windows eject and does not claim WSL ejected the reader.
-
-Setup also installs `.adds/cobalt-launch.sh` outside the renamed version trees
-and migrates the exact legacy Cobalt entry in either `.adds/nm/cobalt` or the
-shared `.adds/nm/menu`, without rewriting unrelated menu text. The bootstrap
-launches only a complete version and can recover when an interrupted swap
-temporarily leaves no active `cobalt` directory.
-
-The binaries are statically linked, so nothing has to be installed on the
-reader to support them.
-
-Not sure? Run `kobo setup --dry-run`. If installation was deferred with
-`--no-setup`, run `kobo setup`; the installed command automatically reuses its
-signed prebuilt package.
-
-## 4. Restart the reader
-
-Hold the power button until it powers off, then turn it back on. This is the
-one step that has to happen on the device, and it is needed because the menu
-entry is loaded at startup.
-
-**Then leave it alone for a minute.** NickelMenu moves its own plugin aside
-before it hooks anything and only puts it back once it has started cleanly, so
-a reader restarted again immediately comes up with the menu entry gone. This is
-its failsafe working as designed, and it is the reason the entry cannot leave
-you with an unbootable reader.
-
-## 5. Open Cobalt
-
-On this firmware the entry is in the menu at the **bottom right** of the home
-screen. (NickelMenu puts its items in the top-left menu on old firmware and in
-the bottom-right one from 4.23.15505 onward, and all five tested profiles are well
-past that.) Tap it and choose **Cobalt**.
-
-The launcher appears with Cobalt's built-in applications. Store-only
-applications are deliberately absent until they are installed over Wi-Fi.
-
-To leave, use **Return to Kobo reader** at the bottom of the launcher. The
-stock reader comes back. So does a reboot, always, from anywhere.
-
-## Installing apps after setup
-
-Open **App Store** in the launcher. It immediately shows the last verified
-catalog saved on the reader, then checks Cobalt's fixed app release channel
-over Wi-Fi.
-Each app can be installed, updated or removed independently. Installed apps
-appear in the launcher without rebooting.
-
-For app links shared on the web, open **Install links** in App Store and scan
-the QR code, or enter its pairing code and verification key in the browser.
-This links the browser without an account. Future app-page installs use Wi-Fi
-and do not need the USB cable. If the Kobo is offline, reconnect it and open
-App Store within 72 hours to continue.
-
-For the `0.2.0` release, **Sudoku** is the end-to-end Store test: it is not in
-the USB package. Seeing it in Store, installing it, and then seeing it appear
-in the launcher proves that catalog refresh, package verification, installation
-and launcher rediscovery all worked.
-
-The Store never replaces Cobalt itself. Full platform updates remain in
-**Settings**, use a separate request and preserve installed apps and the
-verified catalog. If refresh fails, the last verified catalog remains usable;
-if an install fails, the previous installed copy remains in place.
-
-## If something goes wrong
-
-- **Setup says it cannot find a reader.** The reader is plugged in but not
-  connected. Look at the reader's screen and tap **Connect**, or try a
-  different cable.
-- **There is no Cobalt entry after the restart, the first time.** The menu
-  entry is the one piece that arrives through the reader's own installer, and
-  that installer is gated on battery level and fails silently. Charge the
-  reader properly and restart it again. Cobalt itself is already on the device
-  either way.
-- **There is no Cobalt entry, and a firmware update happened since NickelMenu
-  was installed.** A firmware update removes the plugin but leaves its files
-  on the book partition, so setup believes NickelMenu is still there and
-  stages nothing. Setup says so when it notices the dates disagree. Run
-  `kobo setup --menu` to stage NickelMenu again; that keeps every menu entry
-  already on the reader.
-- **The Cobalt entry was there and then vanished.** That is NickelMenu's
-  failsafe, which reads any unexpected restart of the reader software as a
-  crash and disables itself rather than risk a boot loop. You can confirm it:
-  the plugin is left beside itself as `libnm.so.failsafe`. Run
-  `kobo setup` again and restart, and this time let the reader sit on its home
-  screen for a minute before touching it.
-- **Setup refused to do something.** Read what it printed. It refuses rather
-  than guesses, and it names the reason: an unrecognised volume, a menu slot
-  another mod is already using, or a file that did not read back byte for byte.
-- **The screen looks wrong, or nothing draws.** Cobalt declines to write to a
-  panel it does not recognise exactly. Hold the power button to reboot, and you
-  are back in the stock reader with nothing to undo.
-
-## Deploying over Wi-Fi instead
-
-If you are developing rather than reading, `kobo setup --enable-ssh` turns on
-the firmware's own SSH server so that `kobo deploy` can install without a
-reboot. That is a developer path with its own trade-offs, and it is described
-under [Connecting a device](DEVICES.md#connecting-a-device).
-
-## Updating or building from source
-
-Rerun the stable installer command to update. The host binary and verified
-release directory are replaced atomically; an interrupted download is never
-activated. Running it again at the same version is safe. Beta platform updates
-remain inside Cobalt Settings and do not require USB after bootstrap setup.
-Readers installed by a pre-bootstrap release whose NickelMenu entry launches
-`.adds/cobalt/start.sh` must run current USB setup once. A new OTA deliberately
-fails closed on those old updaters before they rename the active installation;
-it does not attempt an unsafe in-place first migration.
-
-After the first installation, update only the host command with:
-
-```sh
-kobo update
-kobo update --channel beta
-```
-
-Stable is the default. Host Beta requires the explicit selector and changes
-only the installed `kobo` executable; it never scans, mounts, ejects, or writes
-an attached reader. Returning from a Beta host CLI to the latest Stable CLI is
-`kobo update`. An already-current command reports that result without replacing
-the binary. The stable setup package and its signed metadata remain
-byte-for-byte unchanged, so `kobo setup` never turns into a Beta USB
-installation. Each host release keeps `kobo` and its next updater together in
-an immutable directory; one atomic selector changes the live pair while the
-public command link stays fixed.
-
-The installer lock fails closed. If an interrupted process leaves
-`~/.local/share/kobo/install.lock`, first verify that no installer is still
-running, then remove that exact directory manually and rerun. The script never
-guesses that a lock is stale or races another process to reclaim it.
-
-Developers can keep the original source-build path:
+## Building from source
 
 ```sh
 rustup toolchain install stable
@@ -278,29 +191,28 @@ rustup target add armv7-unknown-linux-musleabihf
 cargo run -p kobo-cli -- setup --source
 ```
 
-`--source` builds the device package before writing. The direct-folder writer,
-profile checks, confirmation, preservation rules, and byte-for-byte readback
-are the same as the prebuilt path.
+`--source` builds the package before writing. Everything else works the same
+as the prebuilt install.
 
-## Removing it
+For development, `kobo setup --enable-ssh` turns on the Kobo's SSH server so
+`kobo deploy` can install over Wi-Fi without a restart. See
+[Connecting a device](DEVICES.md#connecting-a-device).
 
-Cobalt never writes to the root filesystem, bootloader, kernel, partition table
-or a startup script. Use the safe undo:
+## Uninstalling
+
+Cobalt never changes the Kobo's system files, bootloader, kernel or
+partitions. To remove it:
 
 ```sh
 kobo setup --undo
 ```
 
-It removes the managed `cobalt`, `cobalt.next`, and `cobalt.prev` trees,
-`.adds/cobalt-launch.sh`, and the exact Cobalt entry in `.adds/nm/cobalt` or a
-shared `.adds/nm/menu`. Before deleting a tree, it moves any `secrets`, `trust`,
-`state`, `data`, `apps`, or `store` folder into a free
-`.adds/cobalt.recovery.N` directory. Existing `.adds/cobalt.unusable[.N]`
-quarantines are also left for inspection and reported. Back up or inspect those
-locations before deleting them manually. If you used `--enable-ssh`, `--undo`
-also switches the SSH server back off.
+This removes Cobalt, its launcher script and its menu entry. Before deleting
+anything, it moves your `secrets`, `trust`, `state`, `data`, `apps` and
+`store` folders to `.adds/cobalt.recovery.N` on the Kobo, and it reports any
+`.adds/cobalt.unusable` folders. Check those before deleting them. If you used
+`--enable-ssh`, SSH is turned off again.
 
-To remove the host command, read `~/.local/share/kobo/install-state`, remove
-only the `binary` path named there and `~/.local/share/kobo`, then remove the
-clearly delimited `Cobalt kobo installer` block from the shell startup file the
-installer reported. Do not delete another `kobo` command at a different path.
+To remove the `kobo` command, delete the `binary` path listed in
+`~/.local/share/kobo/install-state`, then `~/.local/share/kobo`, then the
+`Cobalt kobo installer` block the installer added to your shell startup file.

@@ -1,80 +1,38 @@
 # Todo
 
-A list of things to do, which is where a platform's state model shows.
+A simple to-do list that stays on your Kobo.
 
-It exercises the four things an application on this device actually has to get
-right.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/list.png" alt="The list, with finished items"><br>The list, with finished items</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/compose.png" alt="Adding an item"><br>Adding an item</td>
+</tr>
+</table>
 
-| The list | Adding an item |
-| --- | --- |
-| ![The list, with two items and the Add button](screenshots/list.png) | ![The keyboard, raised for exactly one field](screenshots/compose.png) |
+## Features
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+- Add items, tap to tick them off, and clear finished items. Clearing can be
+  undone until the next change.
+- Add `#tags` to items and filter by them with the chips above the list.
+- **Edit** opens the full list. Tap an item to rename it, move it, give it a
+  due date or remove it. Dates read as "due tomorrow" or "3 days late".
+- **Save a copy** sends the list to a paired computer as plain text.
+- Every change is saved immediately, so closing the cover or a flat battery
+  loses nothing. Only the tapped row redraws.
 
-## What it demonstrates
+## Permissions
 
-- **State that outlives the process.** The list is written through
-  `kobo_sdk::AppStore`, so closing the application and opening it again shows
-  the same list. Nothing here knows where that is stored, and there is no path
-  it could name.
-- **Actions that change one thing.** Tapping a row completes it. Only that row
-  changes, so the runtime repaints that row rather than the screen, which on
-  this panel is the difference between a flicker and a flash.
-- **A state, drawn as the renderer sees fit.** A finished item is struck
-  through and muted. The application never asks for a line through text; it
-  says the item is done and the renderer decides what that looks like.
-- **Typing, only where it is unavoidable.** Adding an item needs words, so the
-  keyboard is raised for exactly that and put away again afterwards.
+None.
 
-## What it does
-
-Write something down, tick it off, and clear the finished ones away when they
-get in the way. Clearing can be undone once, until the next change: the
-alternative is asking "are you sure" before a button that is pressed once a
-week, which trains everybody to answer without reading it.
-
-Anything with a `#tag` in it can be narrowed to with the chips above the list.
-The tags are the ones the owner typed; nothing here invents a category.
-
-Changing the list is a different job from working through it, so it has its own
-screen. Edit opens the list as it is kept rather than grouped by what is
-finished, and tapping an item there opens that item: rename it, move it, give
-it a date, or take it off. A date is said against today ("due tomorrow", "3
-days late") because a list of things to do is read against today and nothing
-else.
-
-Save a copy offers the whole list to a paired computer as plain text, through
-the same export the rest of the system uses. The original stays on the reader.
-
-## Why the list is saved on every change
-
-There is no save button and no "are you sure". E Ink devices are closed by
-shutting a cover and are forgotten until the battery is flat, so any design
-that relies on a clean exit loses data. Each write is atomic, so the worst a
-power loss can cost is the change that was in flight.
-
-## Running it
+## Development
 
 ```sh
-kobo run --sim --app todo               # in the browser simulator
-kobo deploy --device <ip>               # onto a reader over Wi-Fi
+cargo test -p kobo-todo
+kobo run --sim --app todo      # in the browser simulator
+python3 scripts/check-apps-sim.py todo
+kobo deploy --device <ip>       # onto a reader over Wi-Fi
 ```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).
