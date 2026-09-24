@@ -1,52 +1,70 @@
 # Birds
 
-Birds is unofficial and is not affiliated with or endorsed by the BirdNET-Go or
-Fugleramme projects.
-
-An offline Kobo viewer for the birds [BirdNET-Go](https://github.com/tphakala/birdnet-go) hears on your computer's microphone, drawn as [Fugleramme](https://github.com/arnegiacomo/fugleramme)'s labelled plates. The reader has no microphone and never runs the model.
+Show the birds [BirdNET-Go](https://github.com/tphakala/birdnet-go) hears on
+your computer, drawn as [Fugleramme](https://github.com/arnegiacomo/fugleramme)'s
+labelled plates.
 
 <p>
   <a href="../../docs/media/apps/birds/birds-on-a-clara-bw.mp4">
-    <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.gif" height="420" alt="A Kobo Clara BW on a wooden table showing twelve labelled bird plates filling the whole screen, with no application bar across the top">
+    <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.gif" height="420" alt="A Kobo Clara BW showing twelve labelled bird plates filling the screen">
   </a>
-  <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.jpg" height="420" alt="The same reader held still, its screen filled edge to edge with a collage of twelve birds named in Latin beneath each plate">
+  <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.jpg" height="420" alt="A Kobo Clara BW with a collage of twelve birds, each named beneath its plate">
 </p>
 
-A Clara BW showing twelve species heard that afternoon. [The clip](../../docs/media/apps/birds/birds-on-a-clara-bw.mp4) has sound; the GIF beside it cannot.
+A Clara BW showing twelve species heard in one afternoon. [The video](../../docs/media/apps/birds/birds-on-a-clara-bw.mp4)
+has sound.
+
+## How it works
+
+Your computer listens and classifies. The Kobo only displays the result. It
+has no microphone and never runs the model.
+
+1. BirdNET-Go listens to your computer's microphone and identifies birds.
+2. Fugleramme draws the recent detections as a collage.
+3. The `kobo birds` companion sends each new collage to the reader.
+
+On the reader, the collage fills the screen. Touch the top edge to show the
+title bar. Colour Kobos show the collage in colour. If the computer or network
+goes away, the last collage stays on screen, and one older than a day is
+marked as stale.
 
 ## Requirements
 
 | | |
 | --- | --- |
 | A computer with a microphone | macOS on Apple Silicon, or Linux on x86-64 or arm64 |
-| [BirdNET-Go](https://github.com/tphakala/birdnet-go/releases) | owns the microphone and the classifier |
-| [Fugleramme](https://github.com/arnegiacomo/fugleramme) | polls BirdNET-Go and renders the collage |
-| A Kobo running Cobalt | with SSH enabled: `kobo setup --enable-ssh` |
+| [BirdNET-Go](https://github.com/tphakala/birdnet-go/releases) | Listens and identifies birds |
+| [Fugleramme](https://github.com/arnegiacomo/fugleramme) | Draws the collage |
+| A Kobo running Cobalt | With SSH enabled: `kobo setup --enable-ssh` |
 
-Upstream publishes no Intel Mac build of BirdNET-Go. Windows is out of scope; the host CLI relies on Unix process and filesystem behaviour.
+BirdNET-Go has no Intel Mac build. Windows is not supported.
 
-Install in the order below. Each stage is silent until the one before it answers.
+## Setup
 
-## 1. BirdNET-Go
+Install in this order. Each step depends on the one before.
 
-Each archive carries two shared libraries beside the binary, and the binary will not start until the dynamic linker finds them.
+### 1. BirdNET-Go
+
+Each release archive includes two shared libraries that the binary needs:
 
 ```sh
 tar xzf birdnet-go-darwin-arm64-*.tar.gz
 DYLD_LIBRARY_PATH="$PWD" ./birdnet-go serve      # LD_LIBRARY_PATH on Linux
 ```
 
-Then, before going further:
+Then, in `~/.config/birdnet-go/config.yaml` (created on first run):
 
-- **Move the web port to 8090** in `~/.config/birdnet-go/config.yaml`, written on first run wherever it was started from. BirdNET-Go and Fugleramme both default to 8080.
-- **Set your location** in the same file. Without it the range filter admits every species on earth.
-- **Grant microphone permission** when macOS asks. Until you do it analyses silence and says nothing about it.
+- Set the web port to **8090**. BirdNET-Go and Fugleramme both default to
+  8080.
+- Set your location, so only local species are reported.
 
-`curl http://127.0.0.1:8090/api/v2/health` answers `healthy` once it is up, and the log names every sound it classifies.
+Allow microphone access when macOS asks. `curl http://127.0.0.1:8090/api/v2/health`
+returns `healthy` once it is running.
 
-## 2. Fugleramme
+### 2. Fugleramme
 
-A Python project. Its `install.sh` and `run.sh` build a Raspberry Pi appliance through systemd and do not apply here; run the service directly and let it find no panel.
+Fugleramme's `install.sh` and `run.sh` are for a Raspberry Pi. On a computer,
+run it directly:
 
 ```sh
 uv sync
@@ -54,15 +72,17 @@ uv run fugleramme-check --detector http://127.0.0.1:8090
 uv run fugleramme-frame --detector http://127.0.0.1:8090 --host 127.0.0.1 --port 8080
 ```
 
-`fugleramme-check` separates "BirdNET-Go is not reachable" from "no bird has been heard yet". The frame logs `Inky library unavailable; running web-only`, which is what you want on a computer.
+The message `Inky library unavailable; running web-only` is expected.
 
-**Set `rotation` to 90** in `detector/data/settings.json`, or from `/admin`. Fugleramme takes its page shape from the panel it drives, and headless it composes for a landscape one; a Kobo is portrait, and the reader would show you the middle of a wide collage with the outer birds cropped.
+Set `rotation` to **90** in `detector/data/settings.json`, or from `/admin`.
+Without it the collage is landscape and the reader crops the outer birds.
 
-Once `curl http://127.0.0.1:8080/state` returns a token, that address is the `--source` below.
+When `curl http://127.0.0.1:8080/state` returns a token, that address is your
+`--source` below.
 
-## 3. Birds
+### 3. Birds
 
-Install Birds from the Store on the reader, then start the companion on the computer:
+Install Birds from the Store on the reader, then start the companion:
 
 ```sh
 kobo birds listen --source http://garden-computer.local:8080 --device 192.168.1.42
@@ -70,35 +90,47 @@ kobo birds status
 kobo birds stop
 ```
 
-No bird has to have been heard for this to work. With an empty detection window Fugleramme still renders and the companion still publishes, so the whole path can be proved indoors.
+This works before any bird has been heard, so you can test the whole chain
+indoors.
 
-## How it works
+## Limits
 
-Fugleramme exposes `/state` and `/collage.png`. The companion polls `/state` and pushes a new snapshot only when the token changes, over Cobalt's owner-attended SSH route. Each publication writes the collage to a content-addressed file first and commits `current.json` last as the pointer, so the reader sees either the old complete snapshot or the new one; an interrupted publish never overwrites the image the old snapshot still names.
+Fugleramme does not publish recent detections in a machine-readable form, so
+the automatic companion leaves the detection list empty. A snapshot sent by
+hand with `kobo birds push SNAPSHOT.json IMAGE.png` can include one.
 
-On the reader, the collage fills the screen with no bar over it; touch the top edge to bring the bar back. The names are part of Fugleramme's rendered plate. Colour Kobos keep and paint the source RGB; greyscale models decode luminance only.
+## Permissions
 
-If the host, microphone or network disappears, the last complete page remains. A snapshot older than a day is marked stale. Refresh reopens local files and does not turn on Wi-Fi.
+None. Birds reads the collages sent to the reader and does not use the
+network.
 
-Fugleramme does not expose recent detections as machine-readable JSON, so the automatic bridge leaves that list empty. A hand-prepared `kobo birds push SNAPSHOT.json IMAGE.png` may include it.
+## Development
 
-<img width="300" src="screenshots/birds.png" alt="A labelled collage of public-domain bird plates filling the Birds app on a Kobo">
-<img width="300" src="screenshots/birds-colour.png" alt="The same bird collage rendered in RGB for a Kobo Clara Colour">
+```sh
+cargo test -p kobo-birds
+python3 scripts/check-apps-sim.py birds
+```
 
-## Licensing
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
 
-Birds bundles no Fugleramme source, artwork or fonts, and no BirdNET-Go binary or model. It is an API client and transfer tool.
+## Credits
 
-- Fugleramme's code is MIT; the notice is in `licenses/FUGLERAMME-MIT.txt` for downstream work that copies it.
-- Fugleramme's classic artwork is CC BY-SA 4.0 and is not bundled. Anyone redistributing it must carry its per-image manifest and attribution.
-- The photographs and clip at the top show that artwork on a screen, so those three files carry CC BY-SA 4.0 with attribution to Fugleramme. `THIRD-PARTY.md` says which plates and where their sources are listed.
-- The fixture collage and screenshots are public-domain 19th-century plates from Wikimedia Commons. `THIRD-PARTY.md` lists every source; `scripts/fixtures/birds/build-collage.py` rebuilds them.
-- BirdNET-Go and the BirdNET model are CC BY-NC-SA 4.0, non-commercial, and are not part of Cobalt.
+Birds exists because of [Fugleramme](https://github.com/arnegiacomo/fugleramme)
+by Arne Giacomo Munthe-Kaas, whose artwork-first e-ink design it follows.
 
-Birds exists because of [Fugleramme](https://github.com/arnegiacomo/fugleramme) by Arne Giacomo Munthe-Kaas, whose artwork-first e-ink design it follows. See `THIRD-PARTY.md` and `licenses/`.
+- Birds bundles no Fugleramme code, artwork or fonts, and no BirdNET-Go binary
+  or model.
+- Fugleramme's code is MIT, with the notice in
+  [licenses/FUGLERAMME-MIT.txt](licenses/FUGLERAMME-MIT.txt). Its artwork is
+  CC BY-SA 4.0. The photo and video above show that artwork, so they carry the
+  same licence.
+- The screenshots use public-domain 19th-century plates from Wikimedia
+  Commons, rebuilt by `scripts/fixtures/birds/build-collage.py`.
+- BirdNET-Go and the BirdNET model are CC BY-NC-SA 4.0 and are not part of
+  Cobalt.
 
-## Validation
+See [THIRD-PARTY.md](THIRD-PARTY.md) for every source.
 
-[`docs/quality/birds-e2e.md`](../../docs/quality/birds-e2e.md) records the model-to-screen chain as a host and simulator run, which is all it claims. Text-scale screenshots are under `screenshots/`.
-
-The pictures above are a Clara BW: a live microphone reached BirdNET-Go, Fugleramme drew the plate, the companion carried it over and the reader painted it. A full acceptance run against physical hardware, driven and recorded the way the report records the simulated one, has not been done.
+Birds is unofficial and not affiliated with or endorsed by the BirdNET-Go or
+Fugleramme projects.

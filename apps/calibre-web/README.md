@@ -1,63 +1,67 @@
 # Library
 
-Browse your library's OPDS catalog, download books and keep reading offline.
+Browse an OPDS book catalog, such as calibre-web, and read downloaded books
+offline.
 
-Library is an unofficial OPDS client. It is not affiliated with or endorsed by
-the calibre-web or calibre projects, and it works with any OPDS server.
-The app follows the server's sections, authors, shelves and book links. Back
-returns to the previous catalog page and keeps its place.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/catalog.png" alt="Catalog sections"><br>Catalog sections</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/private-catalog.png" alt="A private library"><br>A private library</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading a downloaded book"><br>Reading a downloaded book</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/repair.png" alt="Replacing a damaged download"><br>Replacing a damaged download</td>
+</tr>
+</table>
 
-## Connect a library
+## Features
 
-Choose **Add library** and enter its HTTPS OPDS address. A bare server address
-opens `/opds`; an explicit path is used as entered, including reverse-proxy paths.
-Choose **Sign in** for a private library or **Use public library** otherwise.
+- Works with any OPDS server, including calibre-web and `calibre serve`.
+- Browse the server's sections, authors and shelves. **Back** returns to the
+  previous page at the same position.
+- Download EPUB and plain-text books and read them offline, with page
+  navigation, text size, bookmarks and saved position.
+- **Downloaded books** opens without contacting the server.
+- Downloads can be cancelled and restarted. Every file is checked before it
+  opens, and a damaged file offers **Download again**.
+- Up to 64 books of up to 16 MB each.
 
-Sign in asks for your username and password separately. The runtime stores the
-account with the selected HTTPS server; the app never reads it back. Account use
-is limited to GET requests on that server. Changing servers requires signing in
-again. Existing installations that used `kobo secret set calibre` should sign in
-on the reader to enable authenticated subpages and book downloads: the legacy
-unbound credential remains limited to the catalog root.
+## Setup
 
-Use a trusted HTTPS certificate. For a private certificate authority, install
-its trust root with `kobo trust set calibre --device <address>`. For `calibre serve`,
-use Basic authentication; Digest and the calibre-web Kobo-sync endpoint are not
-supported.
+1. Choose **Add library** and enter the HTTPS address of the OPDS catalog. A
+   bare server address opens `/opds`. A full path is used as entered.
+2. Choose **Sign in** for a private library, or **Use public library**.
 
-Library setup is saved after a successful catalog check. If that write fails,
-**Retry saving setup** preserves the checked address. Unreadable settings remain
-untouched and offer **Retry loading settings**. Downloaded books remain available.
+Your username and password are stored by the runtime for that server only,
+used only to read from it, and never shown to the app. Changing servers means
+signing in again.
 
-## Read offline
+For a private certificate authority, install its root with
+`kobo trust set calibre --device <address>`. For `calibre serve`, use Basic
+authentication.
 
-Open a book's details and choose **Download**. EPUB and plain-text books use the
-shared BookView reader, with page navigation, text size, bookmarks and retained
-reading position. **Downloaded books** opens without fetching the server.
+If you set up an earlier version with `kobo secret set calibre`, sign in again
+on the reader. The old credential only reaches the catalog's first page.
 
-Files are limited to 16 MB and the local library to 64 books. Downloads can be
-cancelled and restarted. The library adds a file only after its shelf write is
-acknowledged; the full SHA-256 digest verifies local content before opening.
-Identical content reuses the local file. A damaged file offers **Download again**,
-keeping its existing library entry until the replacement is saved.
+## Limits
 
-Library and reading-position writes are serialized and acknowledged. Failed
-writes offer **Retry saving**; corrupt or future library records are preserved.
+Digest authentication and calibre-web's Kobo sync endpoint are not supported.
 
-![Catalog sections](screenshots/catalog.png)
-![A private library's sections](screenshots/private-catalog.png)
-![Offline reading](screenshots/reading.png)
-![Recovering a damaged download](screenshots/repair.png)
+## Permissions
 
-## Validation
+- `network`: reads the catalog and downloads books.
 
-The original OPDS/EPUB fixtures are in `fixtures/`. Build `kobo-cli`, then run:
+## Development
 
 ```sh
-python3 scripts/quality/check-calibre-sim.py --output /tmp/calibre-check
+cargo test -p kobo-calibre-web
+python3 scripts/check-apps-sim.py calibre-web
 ```
 
-The route uses an isolated, locally trusted HTTPS server and private simulator
-storage. It checks navigation, download, forced restart, offline reading, failed
-saves, repair, on-screen setup and authenticated requests. It does not contact
-an owner's server. Hardware acceptance is scheduled separately.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-calibre-sim.py --output /tmp/calibre-check` runs a longer check against a local HTTPS test server using the catalog in `fixtures/`.
+
+## Credits
+
+Library is unofficial and not affiliated with or endorsed by the calibre-web
+or calibre projects.
