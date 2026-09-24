@@ -148,7 +148,7 @@ the single NickelMenu line the packaged `README.txt` gives you.
 
 **A stock device cannot launch either of those, and this is the prerequisite
 rather than a footnote.** Running `start.sh` needs a shell, and the NickelMenu
-line needs NickelMenu; Cobalt deliberately installs neither, because writing to
+line needs NickelMenu; Cobalt installs neither, because writing to
 the root filesystem is the one thing the packaging promises never to do.
 
 `kobo setup` is the answer, and it needs nothing on the device beforehand:
@@ -223,7 +223,7 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 password at all** and still does not give you `kobo deploy`.
 
 > [!NOTE]
-> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself — which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
+> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself, which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
 
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
@@ -284,7 +284,7 @@ it has, it writes NickelMenu's own uninstall flag, unless another mod still has
 a configuration file beside ours, in which case the plugin stays and only the
 Cobalt entry goes, because it is shared.
 
-The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has
+The entry starts Cobalt **on demand**, and not at boot. `kobod` has
 one mode and it is to stop `nickel` and take the panel, so starting it at boot
 would leave a device with no stock reader on it, and would spend the safety net
 every risky thing in this project leans on, which is that restarting always
@@ -425,7 +425,7 @@ with buffered writes, so the last several seconds -- exactly the seconds that
 matter -- are never on the card when the device comes back.
 
 So `crates/kobod/src/blackbox.rs` writes to the book partition and calls
-`fsync` after every single line. That is deliberately expensive, and it is the
+`fsync` after every single line. That is expensive, and it is the
 only way to learn *when* the device died and *what it was doing* at the time.
 
 | | |

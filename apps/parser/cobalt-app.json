@@ -3,9 +3,9 @@
   "display_name": "Parser",
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
-  "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.9",
-  "release_notes": "Save and restore slots stay on the panel at the largest text size.",
+  "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
+  "version": "0.1.10",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "book",
   "capabilities": []
 }

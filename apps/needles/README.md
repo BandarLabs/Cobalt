@@ -1,56 +1,79 @@
 # Needles
 
-Needles is an unofficial companion for your Ravelry library. It reads only
-your account through Ravelry's official API: Library, Queue, and Favorites.
-Install the HTTP Basic credential under its exact runtime name with
-`kobo secret set ravelry --device <address>`. The secret is named in runtime
-tasks, constrained to those official read-only endpoints, and never available
-to the application or its logs.
+Row counters and your Ravelry library, with patterns you own readable offline.
 
-Each section has its own durable row and repeat counter. The large `+1 row`
-control autosaves on every tap; `Undo -1 row` reverses the most recent count
-without underflowing. Following a project keeps the reader awake in stand
-mode, and all counters, Ravelry metadata, and transferred text remain usable
-offline after sleep or reboot.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/project.png" alt="A section's row counter"><br>A section's row counter</td>
+<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/needles-companion-side-by-side/02-cli-driven-reader.png" alt="Reading a pattern sent from the computer"><br>Reading a pattern sent from the computer</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/needles-companion-section/02-cli-selected-section.png" alt="A pattern opened at its section"><br>A pattern opened at its section</td>
+</tr>
+</table>
 
-<img width="300" src="screenshots/project.png" alt="A project section's row counter with the large +1 row control and undo">
+## Features
 
-## Preparing a pattern you own
+- A separate row and repeat counter for each section of a project.
+- **+1 row** saves on every tap. **Undo -1 row** reverses the last count.
+- Following a project keeps the screen on.
+- Browse your Ravelry Library, Queue and Favorites.
+- Counters, Ravelry details and patterns stay available offline.
 
-Needles uses the shared `kobo-bookview`/`kobo-doc` reading pipeline for
-reflowable Markdown and plain text. On the host, `kobo needles` turns a
-pattern you own into that Markdown and puts it on Needles' private shelf:
+## Setup
+
+Install your Ravelry credential on the reader:
 
 ```sh
-kobo needles preview PATTERN.pdf                       # outline, charts, first lines
-kobo needles prepare PATTERN.pdf --out PATTERN.md      # keep the Markdown for review
-kobo needles push PATTERN.pdf --device <address>       # straight to the reader
-kobo needles push PATTERN.md --sim                     # or into the simulator
+kobo secret set ravelry --device <address>
 ```
 
-PDFs go through Poppler's `pdftotext` (a separately installed, GPL-licensed
-tool); `kobo needles setup` installs it with the platform package manager. A
-scanned, encrypted, or malformed PDF is refused with an explanation, and a
-page that holds only a chart or a photo is named in the report, never
-silently dropped.
+Needles can only use it for Ravelry's read-only Library, Queue and Favorites
+endpoints, and never sees it.
 
-Charts travel as PNGs beside the pattern file: a pattern that refers to
-`chart-lace.png` picks up that file on push, and the reader draws it inline.
-Chart/SVG conversion out of the PDF itself is not available in v1; export
-charts as PNGs and keep them next to the pattern. The host-side ownership
-and atomic-transfer shape follows Music Stand's score-transfer pipeline;
-MuPDF remains credited there as its AGPL-3.0 chart renderer, but Needles
-does not bundle or invoke it.
+## Adding a pattern you own
 
-Ravelry project-note postback is deliberately unavailable in v1: the exact
-write field and endpoint are not verified here, so Needles never pretends to
-have updated ravelry.com. Use Ravelry on the web to edit project notes.
+`kobo needles` converts a pattern to Markdown and sends it to the reader:
 
-“Ravelry” is used nominatively. This app is not affiliated with Ravelry.
-Respect Ravelry's API terms and attribution requirements; Needles only reads
-metadata from the signed-in owner's account and does not redistribute patterns.
+```sh
+kobo needles preview PATTERN.pdf                     # outline, charts and first lines
+kobo needles prepare PATTERN.pdf --out PATTERN.md    # keep the Markdown to review
+kobo needles push PATTERN.pdf --device <address>     # send it to the reader
+kobo needles push PATTERN.md --sim                   # or to the simulator
+```
+
+PDFs are converted with Poppler's `pdftotext`, which `kobo needles setup`
+installs. Scanned, encrypted or damaged PDFs are refused with a reason, and
+pages that hold only a chart or photo are listed in the report.
+
+Charts travel as PNG files next to the pattern. A pattern that refers to
+`chart-lace.png` picks up that file and shows it inline.
+
+## Limits
+
+- Charts are not extracted from PDFs. Export them as PNG files and keep them
+  next to the pattern.
+- Project notes cannot be written back to Ravelry. Edit them on ravelry.com.
+
+## Permissions
+
+- `network`: reads your Ravelry library.
+- `keep-awake`: keeps the screen on while you follow a project.
+
+## Development
 
 ```sh
 cargo test -p kobo-needles
-kobo run --sim --app needles
+python3 scripts/check-apps-sim.py needles
 ```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+Needles is not affiliated with Ravelry. It reads metadata from your own
+account only and does not redistribute patterns.
+
+PDF conversion uses Poppler's `pdftotext`, a separately installed tool licensed
+under the GPL. Needles runs it on your computer and does not bundle it.

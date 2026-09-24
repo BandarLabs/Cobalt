@@ -3,9 +3,9 @@
   "display_name": "Birds",
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer.",
-  "page_description": "A quiet offline viewer for bird collages detected and rendered on your own computer.",
-  "version": "0.1.3",
-  "release_notes": "The reading menu no longer says \"Updated just now ago\" for a fresh snapshot.",
+  "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
+  "version": "0.1.4",
+  "release_notes": "Clearer description and setup steps in the Store. No change to how the app works.",
   "glyph": "app",
   "capabilities": [],
   "setup": {
@@ -15,7 +15,7 @@
         "command": "See apps/birds/README.md"
       },
       {
-        "text": "Start the companion through the existing owner-attended SSH path.",
+        "text": "Enable SSH with kobo setup --enable-ssh, then start the companion on the computer.",
         "command": "kobo birds listen --source http://<host>:8080 --device <reader>"
       }
     ]

@@ -2,11 +2,11 @@
   "id": "crossword",
   "display_name": "Crossword",
   "short_label": "Crossword",
-  "summary": "Solve a compact touch-first crossword with clue navigation.",
-  "page_description": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
+  "summary": "Four offline mini crosswords with clue navigation and saved progress.",
+  "page_description": "Solve four original mini crosswords offline. Tap a square or a clue, type an answer, and check or reveal letters when you want help. Each puzzle keeps its progress and undo history.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.6",
-  "release_notes": "The README shows entering an answer against its clue; no changes to play.",
+  "version": "0.1.7",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "grid",
   "capabilities": []
 }

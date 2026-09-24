@@ -84,7 +84,7 @@ Summarize a USB-retrieved file without printing owner data:
 The summary lists generation-tuple transitions and the first divergence after
 the current reconnect gate was accepted. Keep the original JSONL file: an
 unexpected reboot may leave a valid final synced line followed by one
-interrupted line, which the parser deliberately ignores.
+interrupted line, which the parser ignores.
 
 ## Trace lifetime and contents
 
