@@ -302,14 +302,9 @@ const sourceLink = app => {
 // its next version and its own note takes over. null hides the section.
 const releaseNoteOverrides = {
   "backgammon@0.1.8": null,
-  "crossword@0.1.6": null,
-  "fanshelf@0.3.2": "Download EPUBs and read them offline.",
   "grimoire@0.1.3": null,
-  "kitchencard@0.1.4": "Reads servings from Mealie recipes, keeps each ingredient on one line, and shows a Next step button while cooking.",
-  "lichess@1.0.13": null,
   "morse@1.0.14": null,
   "paperterm@0.1.9": null,
-  "post@0.2.2": null,
   "sudoku@1.0.14": null
 };
 const releaseNote = app => {

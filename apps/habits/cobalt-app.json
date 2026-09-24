@@ -3,9 +3,9 @@
   "display_name": "Habits",
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
-  "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-  "version": "0.1.6",
-  "release_notes": "Settings can import a text backup from the shelf. Replace removes the habits on this reader. Merge keeps them and adds days from the backup when the name matches.",
+  "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
+  "version": "0.1.7",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "check",
   "capabilities": []
 }

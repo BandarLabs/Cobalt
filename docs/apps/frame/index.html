@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frame: a photo frame on Kobo | Cobalt</title>
-<meta name="description" content="Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/frame/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Frame: a photo frame on Kobo | Cobalt">
-<meta property="og:description" content="Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/frame/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/frame.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="A full-area monochrome photograph in Frame on a Kobo Clara BW.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Frame: a photo frame on Kobo | Cobalt">
-<meta name="twitter:description" content="Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/frame.png">
 <meta name="twitter:image:alt" content="A full-area monochrome photograph in Frame on a Kobo Clara BW.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-oBeyfVgTu5bG40eGA0S+jBbCcwbKr+5dMyouUlBROp8='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-L//Qqo+wnVouQGsuBHxtq/PkRkiHCP28oM0NR6kzybM='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Frame",
-      "description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
+      "description": "Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/frame/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.2.1",
+      "softwareVersion": "1.2.2",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -97,9 +97,9 @@
     <div class="app-copy">
       <p class="eyebrow">Devices</p>
       <h1>Frame</h1>
-      <p class="summary">Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.</p>
+      <p class="summary">Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.2.1</dd></div>
+        <div><dt>Version</dt><dd>1.2.2</dd></div>
         <div><dt>Permissions</dt><dd>keep-awake, scheduled-wake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -117,18 +117,18 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 1.2.1</h2>
-    <p>Photos with a transfer digest are checked in the background, so an album does not stay Not yet checked until each photograph is opened.</p>
+    <h2>New in 1.2.2</h2>
+    <p>Clearer description and setup steps in the Store. No change to how the app works.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Enable Cobalt's owner-attended SSH path and install this computer's public key.
+      <li>Enable SSH on the Kobo and install this computer's key.
         <code class="setup-command">kobo setup --enable-ssh</code></li>
-      <li>Create Frame's private shelf through the established SSH connection.
+      <li>Create Frame's photo folder on the Kobo.
         <code class="setup-command">kobo frame init --device &lt;address&gt;</code></li>
-      <li>Prepare and atomically push a photo or folder from this computer.
+      <li>Send a photo or a folder of photos from this computer.
         <code class="setup-command">kobo frame push ~/Pictures/family --device &lt;address&gt;</code></li>
     </ol>
   </section>

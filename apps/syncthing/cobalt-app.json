@@ -2,10 +2,10 @@
   "id": "syncthing",
   "display_name": "Sync",
   "short_label": "Sync",
-  "summary": "Choose folders and a battery-friendly sync schedule.",
-  "page_description": "Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.",
-  "version": "0.3.0",
-  "release_notes": "Shows the full transfer picture - peers online, bytes left, last success, the next window and conflicts - plus what each completed window imported into Vault and Frame, with a step-by-step pairing guide.",
+  "summary": "Sync folders between your computer and Kobo with Syncthing, on a schedule.",
+  "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.",
+  "version": "0.3.1",
+  "release_notes": "Clearer description and setup steps in the Store. No change to how the app works.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"

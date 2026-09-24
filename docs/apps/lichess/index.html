@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lichess for Kobo e-readers | Cobalt</title>
-<meta name="description" content="An unofficial touch-first Lichess client for Kobo. Play live games with responsive time-control presets, accept or send challenges, solve puzzles, or play offline against the computer. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/lichess/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Lichess for Kobo e-readers | Cobalt">
-<meta property="og:description" content="An unofficial touch-first Lichess client for Kobo. Play live games with responsive time-control presets, accept or send challenges, solve puzzles, or play offline against the computer. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/lichess/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/lichess.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Lichess on Kobo with Account/Games and Puzzles tiles plus rapid and classical time controls.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Lichess for Kobo e-readers | Cobalt">
-<meta name="twitter:description" content="An unofficial touch-first Lichess client for Kobo. Play live games with responsive time-control presets, accept or send challenges, solve puzzles, or play offline against the computer. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/lichess.png">
 <meta name="twitter:image:alt" content="Lichess on Kobo with Account/Games and Puzzles tiles plus rapid and classical time controls.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-zNx7/csX7DrdHmQ5t7LkpZgkTuzqmYaHP3n8yqcQsI0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-8z98kSHpSKFyjlufzlL0e8ULHrmPPF+LMMIuX7rSo5w='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Lichess",
-      "description": "An unofficial touch-first Lichess client for Kobo. Play live games with responsive time-control presets, accept or send challenges, solve puzzles, or play offline against the computer.",
+      "description": "An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/lichess/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "GameApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.13",
+      "softwareVersion": "1.0.14",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -97,9 +97,9 @@
     <div class="app-copy">
       <p class="eyebrow">Games</p>
       <h1>Lichess</h1>
-      <p class="summary">An unofficial touch-first Lichess client for Kobo. Play live games with responsive time-control presets, accept or send challenges, solve puzzles, or play offline against the computer.</p>
+      <p class="summary">An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.13</dd></div>
+        <div><dt>Version</dt><dd>1.0.14</dd></div>
         <div><dt>Permissions</dt><dd>network, hold-wifi, keep-awake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -118,6 +118,10 @@
       <figure><img src="../../media/site/apps/lichess/candidate.png" width="1072" height="1448" loading="lazy" alt="Lichess: A rated rapid game found and ready to open"><figcaption>A rated rapid game found and ready to open</figcaption></figure>
     </div>
   </section>
+  <section class="whats-new">
+    <h2>New in 1.0.14</h2>
+    <p>Setup steps now name the Cobalt version this app needs. No change to play.</p>
+  </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
@@ -125,8 +129,7 @@
       <li>Create a Lichess Personal Access Token granting only board:play. <a href="https://lichess.org/account/oauth/token/create?scopes[]=board:play&amp;description=Cobalt">Create a Lichess API token</a></li>
       <li>Save the token in a private local file, then install it under the exact secret name lichess.
         <code class="setup-command">kobo secret set lichess --from &lt;token-file&gt; --device &lt;address&gt;</code></li>
-      <li>Use Cobalt 0.3.5 or newer. This app uses the responsive Folio interface in protocol 12.</li>
-      <li>Official Lichess Board API. Rapid and Classical seeks.</li>
+      <li>Use Cobalt 0.3.18 or newer.</li>
     </ol>
   </section>
   <section class="panel get-cobalt" id="setup-panel">

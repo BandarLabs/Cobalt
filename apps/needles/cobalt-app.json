@@ -3,9 +3,9 @@
   "display_name": "Needles",
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
-  "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
-  "version": "0.1.5",
-  "release_notes": "Count several projects at once, each with its own sections, let an imported pattern bring its own section names, and read its charts.",
+  "page_description": "Count rows for each section of a project, browse your Ravelry library, and read patterns you own offline.",
+  "version": "0.1.6",
+  "release_notes": "Clearer description in the Store. No change to how the app works.",
   "glyph": "bookmark",
   "capabilities": [
     "network",
