@@ -25,7 +25,17 @@ library.
 - **Try a sample comic** opens *A small garden*, a four-page comic made for
   Cobalt.
 
-## Adding a comic over USB
+## Adding a comic from your computer
+
+```sh
+kobo panels inspect COMIC.cbz                  # check the file
+kobo panels push COMIC.cbz --device IP         # send it to the reader
+```
+
+Then open Panels and choose **Add comic**. `kobo panels preview COMIC.cbz
+--out DIRECTORY` shows its pages on the computer first.
+
+### Over USB, without the command
 
 1. Choose **Add comic** for the guide.
 2. Connect the reader by USB and copy your comic to

@@ -25,7 +25,8 @@ Play interactive fiction offline on your Kobo.
 Parser never downloads games. Send a story file you own from your computer:
 
 ```sh
-kobo parser push game.z5 --device 192.168.1.23
+kobo parser inspect game.z5                       # format, title and compatibility
+kobo parser push game.z5 --device 192.168.1.23    # --replace overwrites a copy already there
 ```
 
 Then open Parser and tap **Refresh library**. Unsupported formats are refused
@@ -55,7 +56,8 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 ## Credits
 
-The interpreter in `src/zvm/` is original code written to the
+The interpreter in `src/zvm/` is original AGPL-3.0-only code written to the
 [Z-Machine Standard 1.1](https://inform-fiction.org/zmachine/standards/z1point1/index.html).
+*First Light*, the bundled tutorial story, is also original and AGPL-3.0-only.
 No third-party stories are included. Commercial Infocom stories, including
 Zork, are never bundled.

@@ -25,11 +25,11 @@ time.
 ## Setup
 
 1. In Mealie, create a long-lived API token.
-2. Install it on the reader under the secret name `mealie`, with your Mealie
-   server's address:
+2. Save the token to a private file and install it on the reader under the
+   secret name `mealie`:
 
    ```sh
-   kobo secret set mealie
+   kobo secret set mealie --from TOKEN_FILE --device IP
    ```
 
 The runtime attaches the token to requests itself, so the app never sees it.

@@ -33,10 +33,15 @@ Field packs are regional species lists prepared on a computer and sent to the
 reader:
 
 ```sh
-kobo fieldbook push      # send a field pack
-kobo fieldbook photos    # add licensed species photos to a pack
-kobo fieldbook export    # fetch the checklist CSV
+kobo fieldbook inspect PACK.json                     # check a pack
+kobo fieldbook photos PACK.json --out PACK_DIR       # add licensed species photos
+kobo fieldbook push PACK.json --device IP            # send a pack to the reader
+kobo fieldbook ls --device IP                        # list packs on the reader
+kobo fieldbook export --device IP --out FILE.csv     # fetch the checklist CSV
 ```
+
+Use `--sim` instead of `--device IP` to work with the simulator. Pack files
+are limited to 512 KiB.
 
 Packs are stored on the reader, so logging works without a connection. A pack
 that fails to import is listed with the reason.

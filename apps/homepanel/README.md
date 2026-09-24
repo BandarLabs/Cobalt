@@ -36,12 +36,13 @@ Home Assistant controls on a Kobo, for a desk or a wall.
 
 1. Enter your Home Assistant address in the app. It must use HTTPS: Nabu
    Casa, a reverse proxy with a real certificate, or a private certificate
-   authority installed with `kobo trust set homeassistant --device <ip>`.
+   authority whose root you install with
+   `kobo trust set homeassistant --from ROOT.pem --device <ip>`.
 2. In Home Assistant, create a long-lived access token and install it on the
    reader:
 
    ```sh
-   kobo secret set homeassistant --device <ip>
+   kobo secret set homeassistant --from TOKEN_FILE --device <ip>
    ```
 
 The token never appears in a URL, request body, log or the app's storage.

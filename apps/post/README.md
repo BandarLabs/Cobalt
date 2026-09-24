@@ -66,4 +66,6 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 ## Credits
 
-Hermes Agent is MIT-licensed by Nous Research. Post is an independent app.
+Hermes Agent is MIT-licensed by Nous Research. Post is an independent Cobalt
+app, licensed AGPL-3.0-only, and uses the Hermes name only to say what it
+works with.

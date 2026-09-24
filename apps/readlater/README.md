@@ -27,18 +27,26 @@ Save links with Wallabag's own browser or phone tools, then sync them here.
 
 ## Setup
 
-Sign in from your computer:
+1. On your Wallabag server, create an API client (on wallabag.it: **Settings →
+   API clients**) and save its client secret to a private file.
+2. Sign in from your computer. The password is read from
+   `KOBO_WALLABAG_PASSWORD`, or from `--password-env VAR` or
+   `--password-file PATH`, and never appears on the command line.
 
-```sh
-kobo readlater login
-```
+   ```sh
+   kobo readlater login --server https://wallabag.example \
+     --client-id ID --client-secret-file SECRET_FILE \
+     --username you@example.com --device IP
+   ```
 
 This completes Wallabag's sign-in and sends the session to the reader, which
 renews it on its own. The token can only be sent to your Wallabag server, and
-no password or client secret is stored on the reader.
+no password or client secret is stored on the reader. Run it again only if you
+revoke access.
 
-Alternatively, install a bearer token with `kobo secret set wallabag` and enter
-your HTTPS server address in Settings.
+Alternatively, install a bearer token with
+`kobo secret set wallabag --from TOKEN_FILE --device IP` and enter your HTTPS
+server address in Settings.
 
 ## Permissions
 

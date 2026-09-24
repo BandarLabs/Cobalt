@@ -34,13 +34,26 @@ kobo vault init --device 192.168.1.42
 kobo vault push ~/Notes --device 192.168.1.42
 ```
 
-Use `--sim` instead of `--device` to send notes to the simulator.
+Use `--sim` instead of `--device` to send notes to the simulator. Other
+commands:
 
-Folders placed in the reader's sync folder, for example by [Sync](../syncthing/),
-are added with `kobo vault ingest DIR`. They appear alongside pushed notes,
-labelled with their source.
+```sh
+kobo vault plan ~/Notes --device IP       # what a push would change
+kobo vault preview NOTE.md                # how one note will read
+kobo vault ls --device IP                 # notes on the reader
+kobo vault rm ID --device IP              # remove one note
+```
 
-Pushing is one way. The next push or ingest replaces that set of notes.
+`--exclude TEXT` skips matching files, and can be repeated.
+
+Your computer's folder is the source. A push mirrors it: notes removed from
+the folder leave the reader, and a renamed note keeps its place. Edits made on
+the reader are not sent back.
+
+Notes delivered by [Sync](../syncthing/) are added with
+`kobo vault ingest SYNCED_DIR --device IP`. They appear alongside pushed notes,
+labelled with their source, and pushes and ingests never overwrite each
+other.
 
 ## Permissions
 

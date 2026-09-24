@@ -38,13 +38,16 @@ closing the app.
 Turn a photo into a puzzle from your computer:
 
 ```sh
-kobo nonograms push IMAGE --size N --device READER
+kobo nonograms preview IMAGE --out DIRECTORY
+kobo nonograms push IMAGE --name NAME --size N --device IP
+kobo nonograms push first.jpg --name Harbour --size 15 \
+  --add second.jpg --name Garden --size 20 --device IP
 ```
 
-On the reader, choose the same size in **Photos**, then **Import**. Sizes from
-5×5 to 25×25 are supported. Sending several photos at once writes an
-`imported.txt` list, and each photo arrives as a named puzzle. Re-importing an
-unchanged photo keeps its progress.
+`preview` shows the puzzle a photo would make before you send it. Sizes run
+from 5 to 25. Each push replaces the set of imported puzzles with the photos
+it names, so include every photo you want to keep. Re-importing an unchanged
+photo keeps its progress. On the reader, open **Photos**, then **Import**.
 
 A photo is accepted only if it makes a puzzle with exactly one solution. The
 difficulty shown (Easy, Medium or Hard) reflects how many solving passes it

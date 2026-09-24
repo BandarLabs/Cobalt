@@ -34,6 +34,18 @@ Follow websites and read their articles offline.
 - Refreshing keeps the current articles until new ones arrive. If saving fails,
   **Retry saving** saves the refresh without downloading it again.
 
+## Sending subscriptions from your computer
+
+```sh
+kobo feeds check subscriptions.opml                # check an OPML file
+kobo feeds push subscriptions.opml --device IP     # send it to the reader
+```
+
+Then open Feeds and choose **Import OPML**. Files up to 256 KB are accepted.
+Use `--sim` instead of `--device IP` for the simulator.
+
+## Notes
+
 Feeds shows what a feed provides. If a feed carries only summaries, that is
 what you get. For a Miniflux account, use [Digest](../../apps/rss-miniflux/).
 

@@ -97,7 +97,7 @@ indoors.
 
 Fugleramme does not publish recent detections in a machine-readable form, so
 the automatic companion leaves the detection list empty. A snapshot sent by
-hand with `kobo birds push SNAPSHOT.json IMAGE.png` can include one.
+hand with `kobo birds push SNAPSHOT.json IMAGE.png --device IP` can include one.
 
 ## Permissions
 

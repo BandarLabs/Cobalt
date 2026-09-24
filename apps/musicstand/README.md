@@ -31,8 +31,13 @@ Scores are prepared on your computer and sent over USB or SSH:
 
 ```sh
 kobo musicstand init --device IP
+kobo musicstand plan score.pdf --device IP   # what a push would send
 kobo musicstand push score.pdf --device IP
+kobo musicstand ls --device IP
+kobo musicstand rm ID --device IP
 ```
+
+Use `--sim` instead of `--device IP` for the simulator.
 
 PDFs are rendered page by page with `pdftoppm`. Folders of PNG or JPEG images
 are sent as they are. Only send scores you have the right to use.

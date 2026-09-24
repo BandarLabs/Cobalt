@@ -74,3 +74,6 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Needles is not affiliated with Ravelry. It reads metadata from your own
 account only and does not redistribute patterns.
+
+PDF conversion uses Poppler's `pdftotext`, a separately installed tool licensed
+under the GPL. Needles runs it on your computer and does not bundle it.

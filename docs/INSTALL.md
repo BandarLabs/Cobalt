@@ -119,8 +119,9 @@ fails, the previous version stays in place.
 - **The screen looks wrong or stays blank.** Hold the power button to restart.
   You are back in the stock reader with nothing to undo.
 - **Software update says "the address or credentials are invalid" on 0.3.1.**
-  The 0.3.1 updater cannot install current releases. Reinstall once over USB
-  with the steps above. See [issue #154](https://github.com/BandarLabs/Cobalt/issues/154).
+  This was reported on an Elipsa 2E running 0.3.1, and the cause was not
+  established. Installing the current release manually resolved it. The
+  simplest manual install is the USB install above. See [issue #154](https://github.com/BandarLabs/Cobalt/issues/154).
 
 ## Updating
 

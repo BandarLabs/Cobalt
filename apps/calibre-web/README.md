@@ -37,7 +37,7 @@ used only to read from it, and never shown to the app. Changing servers means
 signing in again.
 
 For a private certificate authority, install its root with
-`kobo trust set calibre --device <address>`. For `calibre serve`, use Basic
+`kobo trust set calibre --from ROOT.pem --device <address>`. For `calibre serve`, use Basic
 authentication.
 
 If you set up an earlier version with `kobo secret set calibre`, sign in again
