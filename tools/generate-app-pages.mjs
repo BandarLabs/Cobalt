@@ -151,9 +151,9 @@ const schemaCategories = {
 };
 const schemaCategoryFor = app =>
   categories[app.id] ? schemaCategories[categoryFor(app)] : "UtilitiesApplication";
-// Every listed app keeps its README beside its source, under apps/ or examples/.
+// Every listed app, system apps included, is a package under apps/ or examples/.
 const sourceDirFor = id =>
-  ["apps", "examples"].find(dir => existsSync(resolve(root, dir, id, "README.md")));
+  ["apps", "examples"].find(dir => existsSync(resolve(root, dir, id, "Cargo.toml")));
 // A page title is what a search result shows, so it names the app and what it
 // is for. Apps whose name does not say what they do carry a short phrase that
 // does; the rest are named plainly.
@@ -283,7 +283,7 @@ ${figures}
 const sourceLink = app => {
   const dir = sourceDirFor(app.id);
   return dir
-    ? `\n      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/${dir}/${app.id}">Source code and full guide on GitHub</a></p>`
+    ? `\n      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/${dir}/${app.id}">Source code on GitHub</a></p>`
     : "";
 };
 const whatsNew = app =>
@@ -553,7 +553,7 @@ for (const app of systemApps) {
       <p class="eyebrow">Cobalt system app</p>
       <h1>${name}</h1>
       <p class="summary">${summary}</p>
-      <div class="meta"><span>Included with Cobalt</span></div>
+      <div class="meta"><span>Included with Cobalt</span></div>${sourceLink(app)}
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
