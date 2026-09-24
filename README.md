@@ -139,7 +139,7 @@ Generated from each app's manifest by `tools/generate-app-pages.mjs`.
 <tr>
 <td width="33%" valign="top"><a href="apps/fanshelf/README.md"><img width="230" src="docs/media/site/apps/fanshelf.png" alt="A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."></a><br><b><a href="apps/fanshelf/README.md">Fanshelf</a></b><br>Save public AO3 works to a shelf made for offline reading.</td>
 <td width="33%" valign="top"><a href="apps/rss/README.md"><img width="230" src="docs/media/site/apps/feeds.png" alt="Subscribed feeds and articles in the Feeds app on a Kobo"></a><br><b><a href="apps/rss/README.md">Feeds</a></b><br>Follow feeds, search saved articles and read offline with images.</td>
-<td width="33%" valign="top"><a href="apps/fieldbook/README.md"><img width="230" src="docs/media/site/apps/fieldbook.png" alt="Fieldbook outing screen tallying an American Robin from a pushed field pack."></a><br><b><a href="apps/fieldbook/README.md">Fieldbook</a></b><br>Log bird sightings anywhere and build your life list.</td>
+<td width="33%" valign="top"><a href="apps/fieldbook/README.md"><img width="230" src="docs/media/site/apps/fieldbook.png" alt="Fieldbook tallying an American Robin during an outing."></a><br><b><a href="apps/fieldbook/README.md">Fieldbook</a></b><br>Log bird sightings anywhere and build your life list.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/flashcards/README.md"><img width="230" src="docs/media/site/apps/flashcards.png" alt="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."></a><br><b><a href="apps/flashcards/README.md">Flashcards</a></b><br>Review flashcards anywhere, even without Wi-Fi.</td>
@@ -168,11 +168,11 @@ Generated from each app's manifest by `tools/generate-app-pages.mjs`.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/needles/README.md"><img width="230" src="docs/media/site/apps/needles.png" alt="Needles pattern screen with row and repeat counters and a large +1 row button."></a><br><b><a href="apps/needles/README.md">Needles</a></b><br>Count rows, browse Ravelry collections, and read your synced patterns offline.</td>
-<td width="33%" valign="top"><a href="apps/nonograms/README.md"><img width="230" src="docs/media/site/apps/nonograms.png" alt="Actual Nonograms simulator capture showing a selected square and its matching row and column clues."></a><br><b><a href="apps/nonograms/README.md">Nonograms</a></b><br>Solve 18 original picture puzzles with attached clues, saved undo and larger grids.</td>
-<td width="33%" valign="top"><a href="apps/panels/README.md"><img width="230" src="docs/media/site/apps/panels.png" alt="Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4."></a><br><b><a href="apps/panels/README.md">Panels</a></b><br>Read comics added from your computer or Komga library.</td>
+<td width="33%" valign="top"><a href="apps/nonograms/README.md"><img width="230" src="docs/media/site/apps/nonograms.png" alt="A Nonograms puzzle with the selected square and its row and column clues highlighted."></a><br><b><a href="apps/nonograms/README.md">Nonograms</a></b><br>Solve 18 original picture puzzles with attached clues, saved undo and larger grids.</td>
+<td width="33%" valign="top"><a href="apps/panels/README.md"><img width="230" src="docs/media/site/apps/panels.png" alt="The Panels comic shelf with a cover and saved progress, page 2 of 4."></a><br><b><a href="apps/panels/README.md">Panels</a></b><br>Read comics added from your computer or Komga library.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><a href="apps/paperterm/README.md"><img width="230" src="docs/media/site/apps/paperterm.png" alt="Paperterm sharing a real laptop terminal in portrait, with its keyboard open on a Clara BW simulator."></a><br><b><a href="apps/paperterm/README.md">Paperterm</a></b><br>Pair with a computer to mirror a terminal session on e-ink.</td>
+<td width="33%" valign="top"><a href="apps/paperterm/README.md"><img width="230" src="docs/media/site/apps/paperterm.png" alt="Paperterm showing a laptop terminal session in portrait, with the keyboard open."></a><br><b><a href="apps/paperterm/README.md">Paperterm</a></b><br>Pair with a computer to mirror a terminal session on e-ink.</td>
 <td width="33%" valign="top"><a href="apps/parlor/README.md"><img width="230" src="docs/media/site/apps/parlor.png" alt="Reversi opening board showing four legal moves and touch controls."></a><br><b><a href="apps/parlor/README.md">Parlor</a></b><br>Play touch-first Reversi together on one Kobo.</td>
 <td width="33%" valign="top"><a href="apps/parser/README.md"><img width="230" src="docs/media/site/apps/parser.png" alt="Parser's book-like transcript after taking a brass lamp and entering the garden."></a><br><b><a href="apps/parser/README.md">Parser</a></b><br>Play an original interactive story without Wi-Fi.</td>
 </tr>
@@ -183,12 +183,12 @@ Generated from each app's manifest by `tools/generate-app-pages.mjs`.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/readlater/README.md"><img width="230" src="docs/media/site/apps/readlater.png" alt="Read Later setup screen showing Wallabag credential instructions."></a><br><b><a href="apps/readlater/README.md">Read Later</a></b><br>Read your Wallabag articles anywhere.</td>
-<td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick showing several coding-agent sessions and their pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
 <td width="33%" valign="top"><a href="apps/zotero-reader/README.md"><img width="230" src="docs/media/site/apps/zotero-reader.png" alt="Reading a paper with structured layout and Zotero metadata on a Kobo"></a><br><b><a href="apps/zotero-reader/README.md">Stacks</a></b><br>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/sudoku/README.md"><img width="230" src="docs/media/site/apps/sudoku.png" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"></a><br><b><a href="apps/sudoku/README.md">Sudoku</a></b><br>Play 36 original Sudoku puzzles with pencil notes, undo and saved games.</td>
-<td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders showing receive-only vault, frame, books, and send-only out."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Choose folders and a battery-friendly sync schedule.</td>
+<td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders: vault, frame and books receive, out sends."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Choose folders and a battery-friendly sync schedule.</td>
 <td width="33%" valign="top"><a href="apps/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="apps/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
 </tr>
 <tr>
@@ -368,7 +368,7 @@ cargo fmt --all --check
 cargo run -p kobo-cli -- run --sim --app sudoku
 ```
 
-Additional guides:
+Additional guides, with the full list in [docs/](docs/README.md):
 
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)

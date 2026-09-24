@@ -147,6 +147,9 @@ h1 {
   background: #fff;
 }
 .gallery figcaption {
+  /* Wraps to the image's width instead of widening the figure. */
+  width: 0;
+  min-width: 100%;
   margin-top: 8px;
   color: var(--muted);
   font-size: 14px;

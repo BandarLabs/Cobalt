@@ -21,12 +21,12 @@ const systemApps = [
   {
     id: "terminal",
     display_name: "Terminal",
-    summary: "A panel-native shell with keys that send input immediately."
+    summary: "A shell with an on-screen keyboard."
   },
   {
     id: "settings",
     display_name: "Settings",
-    summary: "Connectivity, hardware and platform updates, kept separate from Store."
+    summary: "Wi-Fi, device information and Cobalt updates."
   }
 ];
 const screenshots = {
@@ -40,7 +40,7 @@ const screenshots = {
   crossword: ["crossword.png", "Crossword grid on a Kobo with the first answer filled in and numbered cells."],
   deck: ["deck.png", "Deck paired with a computer, showing Test, Format and Deploy command pads."],
   fanshelf: ["fanshelf.png", "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."],
-  fieldbook: ["fieldbook.png", "Fieldbook outing screen tallying an American Robin from a pushed field pack."],
+  fieldbook: ["fieldbook.png", "Fieldbook tallying an American Robin during an outing."],
   flashcards: ["flashcards.png", "A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."],
   frame: ["frame.png", "A full-area monochrome photograph in Frame on a Kobo Clara BW."],
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
@@ -58,9 +58,9 @@ const screenshots = {
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
   musicstand: ["musicstand.png", "Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."],
   needles: ["needles.png", "Needles pattern screen with row and repeat counters and a large +1 row button."],
-  nonograms: ["nonograms.png", "Actual Nonograms simulator capture showing a selected square and its matching row and column clues."],
-  panels: ["panels.png", "Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4."],
-  paperterm: ["paperterm.png", "Paperterm sharing a real laptop terminal in portrait, with its keyboard open on a Clara BW simulator."],
+  nonograms: ["nonograms.png", "A Nonograms puzzle with the selected square and its row and column clues highlighted."],
+  panels: ["panels.png", "The Panels comic shelf with a cover and saved progress, page 2 of 4."],
+  paperterm: ["paperterm.png", "Paperterm showing a laptop terminal session in portrait, with the keyboard open."],
   parlor: ["parlor.png", "Reversi opening board showing four legal moves and touch controls."],
   parser: ["parser.png", "Parser's book-like transcript after taking a brass lamp and entering the garden."],
   post: ["post.png", "Post inbox showing completed Hermes letters, newest first."],
@@ -69,10 +69,10 @@ const screenshots = {
   rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
   "rss-miniflux": ["rss-miniflux.png", "A Miniflux article open on a Kobo with text-size and front-light controls."],
   settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
-  sidekick: ["sidekick.png", "Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."],
+  sidekick: ["sidekick.png", "Sidekick showing several coding-agent sessions and their pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
   sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"],
-  syncthing: ["syncthing.png", "Sync folders showing receive-only vault, frame, books, and send-only out."],
+  syncthing: ["syncthing.png", "Sync folders: vault, frame and books receive, out sends."],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
   todo: ["todo.png", "A to-do list with completed items on a Kobo"],
@@ -232,7 +232,7 @@ const jsonLd = value => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c"
 const galleryShots = id => {
   try {
     return readdirSync(resolve(root, "docs/media/site/apps", id))
-      .filter(file => file.endsWith(".png"))
+      .filter(file => /\.(png|jpg)$/.test(file))
       .sort();
   } catch {
     return [];
@@ -240,17 +240,27 @@ const galleryShots = id => {
 };
 const shotCaption = file => {
   const words = file
-    .replace(/\.png$/, "")
+    .replace(/\.(png|jpg)$/, "")
     .replace(/^\d+[-_]/, "")
     .replaceAll("-", " ")
     .replaceAll("_", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 };
 // Gallery images load lazily, so without their size the page jumps as each
-// one arrives. The width and height sit at fixed offsets in a PNG header.
-const pngSize = path => {
-  const header = readFileSync(path).subarray(0, 24);
-  return [header.readUInt32BE(16), header.readUInt32BE(20)];
+// one arrives. A PNG keeps its size at a fixed offset; a JPEG keeps it in the
+// first start-of-frame segment, which is found by walking the segments.
+const imageSize = path => {
+  const bytes = readFileSync(path);
+  if (path.endsWith(".png")) return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
+  let offset = 2;
+  while (offset + 9 < bytes.length) {
+    const marker = bytes[offset + 1];
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      return [bytes.readUInt16BE(offset + 7), bytes.readUInt16BE(offset + 5)];
+    }
+    offset += 2 + bytes.readUInt16BE(offset + 2);
+  }
+  throw new Error(`${path} has no JPEG frame header`);
 };
 // A file name is a fallback caption. An app can say what each screen shows,
 // and which screens lead, in captions.json beside the images.
@@ -268,7 +278,7 @@ const gallery = (app, name) => {
   shots.sort((a, b) => rank(a) - rank(b));
   const figures = shots
     .map(file => {
-      const [width, height] = pngSize(resolve(root, "docs/media/site/apps", app.id, file));
+      const [width, height] = imageSize(resolve(root, "docs/media/site/apps", app.id, file));
       const caption = escape(captions[file] ?? shotCaption(file));
       return `      <figure><img src="../../media/site/apps/${app.id}/${file}" width="${width}" height="${height}" loading="lazy" alt="${name}: ${caption}"><figcaption>${caption}</figcaption></figure>`;
     })
@@ -286,14 +296,36 @@ const sourceLink = app => {
     ? `\n      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/${dir}/${app.id}">Source code on GitHub</a></p>`
     : "";
 };
-const whatsNew = app =>
-  app.release_notes
+// Some release notes describe repository work, such as a README or a test
+// fixture, rather than anything a reader would notice. They are rewritten or
+// hidden here, keyed by version, so each override lapses when that app ships
+// its next version and its own note takes over. null hides the section.
+const releaseNoteOverrides = {
+  "backgammon@0.1.8": null,
+  "crossword@0.1.6": null,
+  "fanshelf@0.3.2": "Download EPUBs and read them offline.",
+  "grimoire@0.1.3": null,
+  "kitchencard@0.1.4": "Reads servings from Mealie recipes, keeps each ingredient on one line, and shows a Next step button while cooking.",
+  "lichess@1.0.13": null,
+  "morse@1.0.14": null,
+  "paperterm@0.1.9": null,
+  "post@0.2.2": null,
+  "sudoku@1.0.14": null
+};
+const releaseNote = app => {
+  const key = `${app.id}@${app.version}`;
+  return key in releaseNoteOverrides ? releaseNoteOverrides[key] : app.release_notes;
+};
+const whatsNew = app => {
+  const note = releaseNote(app);
+  return note
     ? `
   <section class="whats-new">
     <h2>New in ${escape(app.version)}</h2>
-    <p>${escape(app.release_notes)}</p>
+    <p>${escape(note)}</p>
   </section>`
     : "";
+};
 const scriptHash = value => createHash("sha256").update(value).digest("base64");
 const pageDescription = app => {
   if (app.page_description === undefined) return app.summary;
@@ -437,9 +469,9 @@ for (const app of catalog.apps) {
   </div>${gallery(app, name)}${whatsNew(app)}${prerequisites}
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">
-      <p class="eyebrow">Do not have Cobalt yet?</p>
-      <h2>Install Cobalt directly from your browser</h2>
-      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi from the Cobalt Apps Catalog, with no cable.</p>
+      <p class="eyebrow">New to Cobalt?</p>
+      <h2>Install Cobalt from your browser</h2>
+      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
       <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
     </div>
     <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
@@ -447,7 +479,7 @@ for (const app of catalog.apps) {
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong> and tap the globe in the top bar. Choose <strong>Link browser</strong>, then scan the QR code or enter the pairing code and verification key it shows.</p>
+    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
@@ -463,7 +495,7 @@ for (const app of catalog.apps) {
   </section>
   <section class="panel" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>
-    <p>Cobalt verifies the signed catalog and app package before changing the installed copy.</p>
+    <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
       <button type="button" id="install">Install ${name}</button>
       <button type="button" id="forget" class="secondary">Forget this Kobo</button>
@@ -560,9 +592,9 @@ for (const app of systemApps) {
     </figure>
   </div>
   <section class="panel setup">
-    <p class="eyebrow">No separate install needed</p>
-    <h2>Available after Cobalt setup</h2>
-    <p>${name} is part of the Cobalt platform and is installed automatically with Cobalt. It does not need a separate App Store download.</p>
+    <p class="eyebrow">Included with Cobalt</p>
+    <h2>No separate install</h2>
+    <p>${name} is installed with Cobalt.</p>
     <a class="button-link" href="../../#install">Set up Cobalt</a>
   </section>
   <aside class="community">
