@@ -4259,13 +4259,16 @@ fn greet(
 
 /// The longest one blocking request may keep the heartbeat up for.
 ///
-/// Sized for the largest of them, a platform archive: twenty-odd megabytes at
-/// forty kilobytes a second is under ten minutes, with its digest, expansion
-/// and writes on top. The network's own timeouts bound silence, not a slow
-/// transfer, and nothing bounds a write to flash that has wedged. Past this the
-/// thread stops vouching, the heartbeat goes quiet, and the watchdog takes the
-/// session down and hands the panel back as it would for any other stall.
-const BLOCKING_WORK_LIMIT: Duration = Duration::from_secs(10 * 60);
+/// Sized for the largest of them, a platform archive. Twenty-odd megabytes at
+/// forty kilobytes a second is already over nine minutes before its digest,
+/// expansion and writes, so a ten minute bound failed every update on a slow
+/// connection, and each retry failed the same way. Thirty minutes covers that
+/// with room to spare while still ending a request that has wedged. The
+/// network's own timeouts bound silence, not a slow transfer, and nothing
+/// bounds a write to flash that has wedged. Past this the thread stops
+/// vouching, the heartbeat goes quiet, and the watchdog takes the session down
+/// and hands the panel back as it would for any other stall.
+const BLOCKING_WORK_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 /// Runs `work` with the heartbeat kept up by a thread, for a request that
 /// legitimately blocks the session loop.

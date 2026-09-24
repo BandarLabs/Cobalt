@@ -655,6 +655,18 @@ fn sibling(state: &Path, suffix: &str) -> PathBuf {
 /// the panel.
 const SESSION_EXIT_WAIT_SECONDS: u32 = 30;
 
+/// What the watchdog does when a killed session will not go.
+///
+/// The reboot tool is named by path, in the same order the runtime's own clean
+/// reboot tries them, because the script inherits whatever `PATH` launched the
+/// session and a bare `reboot` that is not on it would leave the panel frozen
+/// with no reader and no reboot. The bare name is kept as the last resort.
+const REBOOT_WHEN_STUCK: &str = "sync; \
+for tool in /sbin/reboot /bin/reboot /usr/sbin/reboot; do \
+[ -x \"$tool\" ] && \"$tool\" && exit 0; \
+done; \
+reboot; exit 0";
+
 /// The session a watchdog belongs to, identified well enough to kill.
 ///
 /// A process id alone is not an identity: the session may have exited and its
@@ -777,7 +789,7 @@ fn watchdog_script(
             session,
             SESSION_EXIT_WAIT_SECONDS,
             &stand_down,
-            "sync; reboot; exit 0",
+            REBOOT_WHEN_STUCK,
         )
     });
     format!(
@@ -837,7 +849,7 @@ fn read_environment(proc_root: &Path, pid: i32) -> io::Result<BTreeMap<OsString,
 mod tests {
     use super::{
         newly_started_pids, read_argv, read_environment, session_stop, sibling, start_time,
-        watchdog_script, Reader, ReaderError, Session, READER_EXECUTABLE,
+        watchdog_script, Reader, ReaderError, Session, READER_EXECUTABLE, REBOOT_WHEN_STUCK,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1353,10 +1365,41 @@ mod tests {
             Some(&session),
         );
         let reboot_at = script
-            .find("session_alive && { sync; reboot; exit 0; }")
+            .find(&format!("session_alive && {{ {REBOOT_WHEN_STUCK}; }}"))
             .expect("a wedged session ends in a reboot");
         let acts_at = script.find("exec '/tmp/kobod'").expect("acts");
         assert!(reboot_at < acts_at);
+    }
+
+    /// The whole script, stop and reboot included, has to be valid shell. A
+    /// quoting slip in the reboot fallback would only surface on a reader
+    /// whose session had already wedged.
+    #[test]
+    fn the_watchdog_script_with_a_session_is_valid_shell() {
+        let session = Session {
+            proc_root: PathBuf::from("/proc"),
+            pid: 812,
+            started: "4242".to_owned(),
+        };
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+            Some(&session),
+        );
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-n")
+            .arg("-c")
+            .arg(&script)
+            .status()
+            .expect("run sh -n");
+        assert!(
+            status.success(),
+            "the watchdog script does not parse:\n{script}"
+        );
+        assert!(script.contains("/sbin/reboot"));
     }
 
     #[test]
