@@ -17,6 +17,9 @@ use kobo_protocol::{
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+/// The certificate digest the simulator's pretend RADIUS server presents.
+pub const SIMULATED_RADIUS_SHA256: [u8; 32] = [0x5e; 32];
+
 /// Which hardware this build is actually allowed to operate.
 ///
 /// A capability that is not in this set is refused as unsupported, even when
@@ -292,6 +295,35 @@ impl DeviceServices {
                     self.wifi_enabled = true;
                     self.connected_ssid = Some(ssid);
                     self.wifi_state()
+                }
+            }
+            DeviceRequest::ProbeEnterpriseWifi { .. } => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    // A fixed, obviously-simulated certificate so the trust
+                    // screen can be exercised without a RADIUS server.
+                    DeviceResult::WifiCertificate {
+                        subject: "/CN=radius.simulator.invalid".to_owned(),
+                        sha256: SIMULATED_RADIUS_SHA256,
+                    }
+                }
+            }
+            DeviceRequest::JoinEnterpriseWifi {
+                ssid,
+                server_sha256,
+                ..
+            } => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else if server_sha256 == SIMULATED_RADIUS_SHA256 {
+                    self.wifi_enabled = true;
+                    self.connected_ssid = Some(ssid);
+                    self.wifi_state()
+                } else {
+                    // Mirrors the device: a pin that does not match the
+                    // server fails authentication rather than connecting.
+                    DeviceResult::Failed(DeviceError::Authentication)
                 }
             }
             DeviceRequest::DisconnectWifi => {
@@ -692,6 +724,8 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::SetWifi { .. }
         | DeviceRequest::ScanWifi
         | DeviceRequest::JoinWifi { .. }
+        | DeviceRequest::ProbeEnterpriseWifi { .. }
+        | DeviceRequest::JoinEnterpriseWifi { .. }
         | DeviceRequest::DisconnectWifi => Capability::WifiControl,
         DeviceRequest::ReadAudio
         | DeviceRequest::LoadAudio { .. }

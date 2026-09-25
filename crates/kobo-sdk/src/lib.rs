@@ -25,6 +25,7 @@ pub use kobo_protocol::{
     MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
     MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
+pub use kobo_protocol::{valid_wifi_identity, valid_wifi_secret};
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
@@ -2435,6 +2436,54 @@ impl Device<'_> {
             return false;
         }
         self.request(DeviceRequest::JoinWifi { ssid, password });
+        true
+    }
+
+    /// Asks an enterprise (802.1X, e.g. eduroam) network for its server
+    /// certificate. No password is sent. The answer arrives as
+    /// [`DeviceResult::WifiCertificate`], for the owner to trust or refuse.
+    /// Returns `false` without queueing a malformed request.
+    pub fn probe_enterprise_wifi(
+        &mut self,
+        ssid: impl Into<String>,
+        identity: impl Into<String>,
+    ) -> bool {
+        let ssid = ssid.into();
+        let identity = identity.into();
+        if ssid.is_empty() || ssid.len() > 32 || !kobo_protocol::valid_wifi_identity(&identity) {
+            return false;
+        }
+        self.request(DeviceRequest::ProbeEnterpriseWifi { ssid, identity });
+        true
+    }
+
+    /// Joins an enterprise network with PEAP/MSCHAPv2, trusting only the
+    /// server certificate whose SHA-256 is `server_sha256`, normally the one
+    /// [`Self::probe_enterprise_wifi`] reported and the owner accepted.
+    /// Returns `false` without queueing malformed credentials.
+    pub fn join_enterprise_wifi(
+        &mut self,
+        ssid: impl Into<String>,
+        identity: impl Into<String>,
+        password: impl Into<String>,
+        server_sha256: [u8; 32],
+    ) -> bool {
+        let ssid = ssid.into();
+        let identity = identity.into();
+        let password = password.into();
+        if ssid.is_empty()
+            || ssid.len() > 32
+            || !kobo_protocol::valid_wifi_identity(&identity)
+            || !kobo_protocol::valid_wifi_secret(&password)
+        {
+            return false;
+        }
+        self.request(DeviceRequest::JoinEnterpriseWifi {
+            ssid,
+            identity,
+            password,
+            server_sha256,
+        });
         true
     }
 

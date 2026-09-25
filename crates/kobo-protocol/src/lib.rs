@@ -79,6 +79,16 @@ pub const PICTURE_BLEED_VERSION: u8 = 15;
 pub const AUTO_HIDDEN_TOP_BAR_VERSION: u8 = 15;
 
 pub const VERSION: u8 = 15;
+/// Enterprise (802.1X) Wi-Fi join and server-certificate probe. Additive:
+/// new request and result tags only, so an application that never sends
+/// them decodes exactly what it did before.
+pub const ENTERPRISE_WIFI_VERSION: u8 = 15;
+/// The longest enterprise identity (`user@realm`) the runtime accepts.
+pub const MAX_WIFI_IDENTITY: usize = 96;
+/// The longest enterprise password the runtime accepts.
+pub const MAX_WIFI_SECRET: usize = 128;
+/// The longest certificate subject a probe reports.
+pub const MAX_CERT_SUBJECT: usize = 256;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -1223,6 +1233,19 @@ pub enum DeviceRequest {
     JoinWifi { ssid: String, password: String },
     /// Leave the current Wi-Fi network without powering the radio off.
     DisconnectWifi,
+    /// Ask an enterprise (802.1X, e.g. eduroam) network for its RADIUS
+    /// server certificate without sending any password. Answers with
+    /// [`DeviceResult::WifiCertificate`] so the owner can decide whether to
+    /// trust it.
+    ProbeEnterpriseWifi { ssid: String, identity: String },
+    /// Join an enterprise network with PEAP/MSCHAPv2, trusting only the
+    /// server certificate whose SHA-256 the owner already accepted.
+    JoinEnterpriseWifi {
+        ssid: String,
+        identity: String,
+        password: String,
+        server_sha256: [u8; 32],
+    },
     /// Report the active audio source and transport state.
     ReadAudio,
     /// Prepare a shelf file or HTTPS stream for playback.
@@ -1551,6 +1574,10 @@ pub enum DeviceResult {
         /// which is why the runtime reports it instead of keeping it private.
         restart_on_exit: bool,
     },
+    /// The server certificate an enterprise network presented to a probe.
+    /// `sha256` is the digest of the DER certificate, the value a pinned
+    /// join must be given.
+    WifiCertificate { subject: String, sha256: [u8; 32] },
     /// Wi-Fi controller state and the bounded set currently known.
     Wifi {
         available: bool,
@@ -2839,6 +2866,36 @@ fn encode_device_request(
             push_radio_string(output, password)?;
         }
         DeviceRequest::DisconnectWifi => output.push(21),
+        DeviceRequest::ProbeEnterpriseWifi { ssid, identity } => {
+            if version < ENTERPRISE_WIFI_VERSION
+                || !valid_wifi_ssid(ssid)
+                || !valid_wifi_identity(identity)
+            {
+                return Err(ProtocolError::InvalidValue("enterprise Wi-Fi probe"));
+            }
+            output.push(52);
+            push_radio_string(output, ssid)?;
+            push_string(output, identity)?;
+        }
+        DeviceRequest::JoinEnterpriseWifi {
+            ssid,
+            identity,
+            password,
+            server_sha256,
+        } => {
+            if version < ENTERPRISE_WIFI_VERSION
+                || !valid_wifi_ssid(ssid)
+                || !valid_wifi_identity(identity)
+                || !valid_wifi_secret(password)
+            {
+                return Err(ProtocolError::InvalidValue("enterprise Wi-Fi credentials"));
+            }
+            output.push(53);
+            push_radio_string(output, ssid)?;
+            push_string(output, identity)?;
+            push_string(output, password)?;
+            output.extend_from_slice(server_sha256);
+        }
         DeviceRequest::ReadAudio => output.push(22),
         DeviceRequest::LoadAudio { source } => {
             output.push(23);
@@ -3125,6 +3182,37 @@ fn radio_string(reader: &mut Reader<'_>) -> Result<String, ProtocolError> {
     }
 }
 
+fn valid_wifi_ssid(ssid: &str) -> bool {
+    !ssid.is_empty() && ssid.len() <= 32
+}
+
+/// An 802.1X identity: bounded, printable, and free of the quote and
+/// backslash that `wpa_cli` would otherwise have to escape.
+#[must_use]
+pub fn valid_wifi_identity(identity: &str) -> bool {
+    !identity.is_empty()
+        && identity.len() <= MAX_WIFI_IDENTITY
+        && identity
+            .chars()
+            .all(|character| !character.is_control() && !matches!(character, '"' | '\\'))
+}
+
+/// An 802.1X password: non-empty, bounded and free of control characters.
+#[must_use]
+pub fn valid_wifi_secret(password: &str) -> bool {
+    !password.is_empty()
+        && password.len() <= MAX_WIFI_SECRET
+        && password.chars().all(|character| !character.is_control())
+}
+
+fn read_digest(reader: &mut Reader<'_>) -> Result<[u8; 32], ProtocolError> {
+    let mut digest = [0_u8; 32];
+    for byte in &mut digest {
+        *byte = reader.u8()?;
+    }
+    Ok(digest)
+}
+
 fn wifi_ssid(reader: &mut Reader<'_>) -> Result<String, ProtocolError> {
     let ssid = radio_string(reader)?;
     if ssid.is_empty() || ssid.len() > 32 {
@@ -3343,6 +3431,28 @@ fn decode_device_request(
             Ok(DeviceRequest::CheckSecrets { names })
         }
         48 => Ok(DeviceRequest::ListLibrary),
+        52 if version >= ENTERPRISE_WIFI_VERSION => {
+            let ssid = wifi_ssid(reader)?;
+            let identity = reader.string()?;
+            if !valid_wifi_identity(&identity) {
+                return Err(ProtocolError::InvalidValue("enterprise Wi-Fi probe"));
+            }
+            Ok(DeviceRequest::ProbeEnterpriseWifi { ssid, identity })
+        }
+        53 if version >= ENTERPRISE_WIFI_VERSION => {
+            let ssid = wifi_ssid(reader)?;
+            let identity = reader.string()?;
+            let password = reader.string()?;
+            if !valid_wifi_identity(&identity) || !valid_wifi_secret(&password) {
+                return Err(ProtocolError::InvalidValue("enterprise Wi-Fi credentials"));
+            }
+            Ok(DeviceRequest::JoinEnterpriseWifi {
+                ssid,
+                identity,
+                password,
+                server_sha256: read_digest(reader)?,
+            })
+        }
         49 => {
             let id = reader.string()?;
             if !valid_library_id(&id) {
@@ -3537,6 +3647,17 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
+        DeviceResult::WifiCertificate { subject, sha256 } => {
+            if subject.is_empty()
+                || subject.len() > MAX_CERT_SUBJECT
+                || subject.chars().any(char::is_control)
+            {
+                return Err(ProtocolError::InvalidValue("certificate subject"));
+            }
+            output.push(22);
+            push_string(output, subject)?;
+            output.extend_from_slice(sha256);
+        }
         DeviceResult::Library { entries, truncated } => {
             if entries.len() > MAX_LIBRARY_ENTRIES {
                 return Err(ProtocolError::InvalidValue("library listing"));
@@ -3792,6 +3913,19 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         }
         19 => decode_library_result(reader),
         20 => decode_library_document(reader),
+        22 => {
+            let subject = reader.string()?;
+            if subject.is_empty()
+                || subject.len() > MAX_CERT_SUBJECT
+                || subject.chars().any(char::is_control)
+            {
+                return Err(ProtocolError::InvalidValue("certificate subject"));
+            }
+            Ok(DeviceResult::WifiCertificate {
+                subject,
+                sha256: read_digest(reader)?,
+            })
+        }
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
 }
@@ -7589,6 +7723,16 @@ mod tests {
                 password: "readmore".to_owned(),
             },
             DeviceRequest::DisconnectWifi,
+            DeviceRequest::ProbeEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
+            },
+            DeviceRequest::JoinEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
+                password: "correct horse battery staple".to_owned(),
+                server_sha256: [0xab; 32],
+            },
             DeviceRequest::ReadAudio,
             DeviceRequest::LoadAudio {
                 source: AudioSource::Shelf("audiobook.mp3z".to_owned()),
@@ -7657,6 +7801,49 @@ mod tests {
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
+    }
+
+    #[test]
+    fn enterprise_wifi_is_refused_below_its_version() {
+        // A protocol-14 application must neither send nor be sent the new
+        // tags; the encoder refuses rather than emitting bytes an older
+        // decoder would reject mid-stream.
+        let frame = Frame {
+            version: SUSPEND_VERSION,
+            request_id: 1,
+            message: Message::DeviceRequest(DeviceRequest::ProbeEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "a@b.ac.uk".to_owned(),
+            }),
+        };
+        assert!(encode(&frame).is_err());
+    }
+
+    #[test]
+    fn enterprise_wifi_credentials_are_bounded_and_unquotable() {
+        let join = |identity: &str, password: &str| {
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::DeviceRequest(DeviceRequest::JoinEnterpriseWifi {
+                    ssid: "eduroam".to_owned(),
+                    identity: identity.to_owned(),
+                    password: password.to_owned(),
+                    server_sha256: [1; 32],
+                }),
+            })
+        };
+        assert!(join("s1@example.ac.uk", "pw").is_ok());
+        // Short passwords are fine for 802.1X; the WPA-PSK 8..63 rule does
+        // not apply.
+        assert!(join("s1@example.ac.uk", "a").is_ok());
+        assert!(join("", "pw").is_err());
+        assert!(join("s1@example.ac.uk", "").is_err());
+        assert!(join("s1\"@example.ac.uk", "pw").is_err());
+        assert!(join("s1\\@example.ac.uk", "pw").is_err());
+        assert!(join("s1@example.ac.uk", "line\nbreak").is_err());
+        assert!(join(&"a".repeat(MAX_WIFI_IDENTITY + 1), "pw").is_err());
+        assert!(join("s1@example.ac.uk", &"a".repeat(MAX_WIFI_SECRET + 1)).is_err());
     }
 
     #[test]
@@ -7736,6 +7923,10 @@ mod tests {
                     secured: true,
                     connected: true,
                 }],
+            },
+            DeviceResult::WifiCertificate {
+                subject: "/CN=radius.example.ac.uk".to_owned(),
+                sha256: [0x5a; 32],
             },
             DeviceResult::Audio {
                 available: true,
