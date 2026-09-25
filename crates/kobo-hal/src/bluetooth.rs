@@ -678,10 +678,15 @@ fn parse_managed_devices(output: &str) -> Vec<BluetoothDevice> {
     if let Some(device) = current {
         push_managed(&mut parsed, device);
     }
+    // Connected first, then paired, then by signal: the devices the reader
+    // already uses must survive the cap however crowded the room is.
     parsed.sort_by(|left, right| {
         right
-            .1
-            .cmp(&left.1)
+            .0
+            .connected
+            .cmp(&left.0.connected)
+            .then_with(|| right.0.paired.cmp(&left.0.paired))
+            .then_with(|| right.1.cmp(&left.1))
             .then_with(|| left.0.name.cmp(&right.0.name))
     });
     parsed.truncate(MAX_RADIO_DEVICES);
@@ -695,14 +700,24 @@ fn push_managed(parsed: &mut Vec<(BluetoothDevice, i16)>, mut device: ManagedDev
     if !valid_address(&device.address) {
         return;
     }
-    let name = if device.alias.is_empty() {
-        if device.name.is_empty() {
-            device.address.clone()
-        } else {
-            device.name
-        }
+    let named = if device.alias.is_empty() || is_address_alias(&device.alias, &device.address) {
+        device.name
     } else {
         device.alias
+    };
+    // A device that is neither paired nor connected and broadcasts no name
+    // is somebody's phone, watch or tracker advertising under a rotating
+    // private address. There is nothing to recognise it by and nothing the
+    // reader would pair with, and a busy room holds dozens: on the Clara
+    // Colour a single scan found 44 devices, four of them named, and the
+    // anonymous ones pushed every named device past the list cap.
+    if named.is_empty() && !device.paired && !device.connected {
+        return;
+    }
+    let name = if named.is_empty() {
+        device.address.clone()
+    } else {
+        named
     };
     parsed.push((
         BluetoothDevice {
@@ -712,8 +727,25 @@ fn push_managed(parsed: &mut Vec<(BluetoothDevice, i16)>, mut device: ManagedDev
             paired: device.paired,
             connected: device.connected,
         },
-        device.rssi,
+        plausible_rssi(device.rssi),
     ));
+}
+
+/// Signal strength in dBm is never positive. The `MediaTek` stack reports
+/// values such as 81 or 119 for some devices, which sorted as the strongest
+/// signals in the room; anything above zero is treated as unknown.
+fn plausible_rssi(rssi: i16) -> i16 {
+    if rssi > 0 {
+        i16::MIN
+    } else {
+        rssi
+    }
+}
+
+/// `BlueZ` reports the address itself, with dashes, as the alias of a device
+/// whose name it has not learned. That is not a name.
+fn is_address_alias(alias: &str, address: &str) -> bool {
+    alias.replace('-', ":").eq_ignore_ascii_case(address)
 }
 
 /// The string inside a `variant`, however deeply `dbus-send` indented it.
@@ -932,6 +964,79 @@ mod tests {
     fn missing_markers_are_not_a_service() {
         let root = root("mtk-missing");
         assert!(!mtk_service_installed(&[&root.join("nope")]));
+    }
+
+    fn managed(address: &str, name: &str, rssi: &str, paired: bool) -> String {
+        let path = address.replace(':', "_");
+        format!(
+            "object path \"/org/bluez/hci0/dev_{path}\"\n\
+             string \"Address\"\n\
+             variant string \"{address}\"\n\
+             string \"Alias\"\n\
+             variant string \"\"\n\
+             string \"Name\"\n\
+             variant string \"{name}\"\n\
+             string \"Paired\"\n\
+             variant boolean {paired}\n\
+             string \"RSSI\"\n\
+             variant int16 {rssi}\n"
+        )
+    }
+
+    /// The Clara Colour scan that showed only MAC addresses: dozens of
+    /// anonymous private-address advertisers with implausible positive RSSI,
+    /// and a few named devices with real, weaker readings.
+    #[test]
+    fn named_devices_survive_a_room_full_of_anonymous_advertisers() {
+        let mut output = String::new();
+        for index in 0..40_u8 {
+            output.push_str(&managed(
+                &format!("4{}:00:00:00:00:{index:02X}", index % 10),
+                "",
+                "81",
+                false,
+            ));
+        }
+        output.push_str(&managed(
+            "80:8A:BD:7C:B9:B2",
+            "[TV] Samsung QHB Series",
+            "-79",
+            false,
+        ));
+        output.push_str(&managed(
+            "51:5B:00:1F:75:1B",
+            "EarFun Clip BLE",
+            "21",
+            false,
+        ));
+        output.push_str(&managed("00:11:22:33:44:55", "", "-60", true));
+        let devices = parse_managed_devices(&output);
+        let names = devices
+            .iter()
+            .map(|device| device.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(devices.len(), 3, "{names:?}");
+        // Paired first even without a name, then the real signal ahead of
+        // the implausible one.
+        assert_eq!(
+            names,
+            [
+                "00:11:22:33:44:55",
+                "[TV] Samsung QHB Series",
+                "EarFun Clip BLE"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_alias_that_is_only_the_address_is_not_a_name() {
+        assert!(super::is_address_alias(
+            "AA-BB-CC-DD-EE-FF",
+            "AA:BB:CC:DD:EE:FF"
+        ));
+        assert!(!super::is_address_alias("Headphones", "AA:BB:CC:DD:EE:FF"));
+        assert_eq!(super::plausible_rssi(81), i16::MIN);
+        assert_eq!(super::plausible_rssi(-40), -40);
     }
 
     #[test]
