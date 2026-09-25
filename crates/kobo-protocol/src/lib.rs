@@ -3188,6 +3188,7 @@ fn valid_wifi_ssid(ssid: &str) -> bool {
 
 /// An 802.1X identity: bounded, printable, and free of the quote and
 /// backslash that `wpa_cli` would otherwise have to escape.
+#[must_use]
 pub fn valid_wifi_identity(identity: &str) -> bool {
     !identity.is_empty()
         && identity.len() <= MAX_WIFI_IDENTITY
@@ -3197,6 +3198,7 @@ pub fn valid_wifi_identity(identity: &str) -> bool {
 }
 
 /// An 802.1X password: non-empty, bounded and free of control characters.
+#[must_use]
 pub fn valid_wifi_secret(password: &str) -> bool {
     !password.is_empty()
         && password.len() <= MAX_WIFI_SECRET

@@ -1343,6 +1343,10 @@ impl KoboApp for Settings {
         self.show(context);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one explicit dispatch table for every screen"
+    )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         match self.view {
             View::WifiPassword => return self.password_action(context, action),
@@ -1447,6 +1451,10 @@ impl KoboApp for Settings {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one explicit dispatch table for every screen"
+    )]
     fn on_device_result(
         &mut self,
         context: &mut Context,

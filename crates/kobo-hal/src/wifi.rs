@@ -258,7 +258,9 @@ impl Wifi {
         let ca_cert = format!("hash://server/sha256/{}", hex(server_sha256));
         let mut commands =
             enterprise_commands(network, ssid, identity, Some(password), ca_cert.as_str());
-        commands.push_str(&format!("select_network {network}\nsave_config\nquit\n"));
+        commands.push_str("select_network ");
+        commands.push_str(&network.to_string());
+        commands.push_str("\nsave_config\nquit\n");
         match self.script(&commands) {
             Ok(_) => self.state(),
             Err(error) => {
@@ -472,6 +474,7 @@ fn enterprise_commands(
     password: Option<&str>,
     ca_cert: &str,
 ) -> String {
+    use std::fmt::Write as _;
     let mut commands = format!(
         "set_network {network} ssid {}\n\
          set_network {network} scan_ssid 1\n\
@@ -486,12 +489,13 @@ fn enterprise_commands(
         hex(anonymous_identity(identity).as_bytes()),
     );
     if let Some(password) = password {
-        commands.push_str(&format!(
-            "set_network {network} password {}\n",
+        let _ = writeln!(
+            commands,
+            "set_network {network} password {}",
             hex(password.as_bytes())
-        ));
+        );
     }
-    commands.push_str(&format!("enable_network {network}\n"));
+    let _ = writeln!(commands, "enable_network {network}");
     commands
 }
 
