@@ -2641,6 +2641,33 @@ fn host_applications(
                                             |wifi| wifi.join(ssid, password),
                                         )
                                     }
+                                    kobo_protocol::DeviceRequest::ProbeEnterpriseWifi {
+                                        ssid,
+                                        identity,
+                                    } => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        |wifi| wifi.probe_enterprise(ssid, identity),
+                                    ),
+                                    kobo_protocol::DeviceRequest::JoinEnterpriseWifi {
+                                        ssid,
+                                        identity,
+                                        password,
+                                        server_sha256,
+                                    } => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        |wifi| {
+                                            wifi.join_enterprise(
+                                                ssid,
+                                                identity,
+                                                password,
+                                                server_sha256,
+                                            )
+                                        },
+                                    ),
                                     kobo_protocol::DeviceRequest::DisconnectWifi => {
                                         wifi.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(

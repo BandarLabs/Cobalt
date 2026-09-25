@@ -24,6 +24,8 @@ const BETA_UPDATES: &str = "beta-updates";
 const CONFIRM_CHANNEL: &str = "confirm-channel";
 const CANCEL_CHANNEL: &str = "cancel-channel";
 const RESCAN: &str = "rescan";
+const TRUST: &str = "trust-server";
+const DISTRUST: &str = "distrust-server";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
 const PAGE_SIZE: usize = 4;
@@ -80,7 +82,12 @@ enum View {
     Home,
     Bluetooth,
     Wifi,
+    /// The username step of an enterprise (eduroam) join.
+    WifiUsername,
     WifiPassword,
+    /// The server certificate an enterprise network presented, for the owner
+    /// to trust before any password is sent.
+    WifiTrust,
     Battery,
     About,
     Update,
@@ -201,6 +208,8 @@ impl Topic {
             | DeviceRequest::SetWifi { .. }
             | DeviceRequest::ScanWifi
             | DeviceRequest::JoinWifi { .. }
+            | DeviceRequest::ProbeEnterpriseWifi { .. }
+            | DeviceRequest::JoinEnterpriseWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
             DeviceRequest::ReadIdentity => Some(Self::About),
@@ -243,6 +252,15 @@ struct Settings {
     scanning: bool,
     selected_ssid: Option<String>,
     password: Keyboard,
+    /// Set while the selected network signs in with a username (802.1X)
+    /// rather than a shared key.
+    enterprise: bool,
+    username: Keyboard,
+    /// Held only between typing it and the owner deciding whether to trust
+    /// the server; cleared on every way off the trust screen.
+    enterprise_password: Option<String>,
+    /// What the network's server presented: subject and SHA-256.
+    certificate: Option<(String, [u8; 32])>,
     battery: Option<BatteryDetail>,
     identity: Option<DeviceIdentity>,
     update: UpdateFlow,
@@ -264,7 +282,9 @@ impl Settings {
             View::Home => self.home(),
             View::Bluetooth => self.bluetooth(),
             View::Wifi => self.wifi(),
+            View::WifiUsername => self.wifi_username(),
             View::WifiPassword => self.wifi_password(),
+            View::WifiTrust => self.wifi_trust(),
             View::Battery => self.battery(),
             View::About => self.about(),
             View::Update => self.update(),
@@ -726,10 +746,64 @@ impl Settings {
         screen.build()
     }
 
+    fn wifi_username(&self) -> Screen {
+        let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            trouble
+        } else if self.username.text().is_empty() {
+            "Type your username, including the part after @ (for example, you@ed.ac.uk).".to_owned()
+        } else {
+            format!("Username: {}", self.username.text())
+        };
+        ScreenBuilder::new("settings-wifi-username")
+            .top_bar("Join Wi-Fi")
+            .owns_back(true)
+            .heading(self.selected_ssid.as_deref().unwrap_or("Network"))
+            .text(guidance)
+            .keyboard(&self.username, "Next")
+            .build()
+    }
+
+    /// Shows the server certificate and asks whether to trust it. Nothing
+    /// secret has left the reader yet: the probe sent only the anonymous
+    /// outer identity.
+    fn wifi_trust(&self) -> Screen {
+        let screen = ScreenBuilder::new("settings-wifi-trust")
+            .top_bar("Check the network")
+            .owns_back(true)
+            .heading(self.selected_ssid.as_deref().unwrap_or("Network"));
+        if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            return screen
+                .text(trouble)
+                .button(DISTRUST, "Back to networks")
+                .build();
+        }
+        let Some((subject, sha256)) = &self.certificate else {
+            return screen
+                .text("Asking the network for its certificate. No password has been sent.")
+                .button(DISTRUST, "Cancel")
+                .build();
+        };
+        screen
+            .facts([
+                ("Server", common_name(subject).to_owned()),
+                ("SHA-256", fingerprint(sha256)),
+            ])
+            .text(
+                "Only trust this if it matches what your institution publishes, or what \
+                 your phone trusted for this network. After this, the reader will only \
+                 send your password to this exact server.",
+            )
+            .primary_button(TRUST, "Trust and join")
+            .button(DISTRUST, "Don't trust")
+            .build()
+    }
+
     fn wifi_password(&self) -> Screen {
         let count = self.password.text().chars().count();
         let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
             trouble
+        } else if count == 0 && self.enterprise {
+            "Type your password. It is sent only after you check the server.".to_owned()
         } else if count == 0 {
             "Type the network password.".to_owned()
         } else {
@@ -1085,7 +1159,9 @@ impl Settings {
             View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
             View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
             View::Home
+            | View::WifiUsername
             | View::WifiPassword
+            | View::WifiTrust
             | View::Battery
             | View::About
             | View::Update
@@ -1122,8 +1198,15 @@ impl Settings {
             context.device().disconnect_wifi();
             return;
         }
-        if network.secured {
+        if network.secured && is_enterprise_ssid(&network.ssid) {
             self.selected_ssid = Some(network.ssid);
+            self.enterprise = true;
+            self.forget_enterprise_secrets();
+            self.view = View::WifiUsername;
+            self.show(context);
+        } else if network.secured {
+            self.selected_ssid = Some(network.ssid);
+            self.enterprise = false;
             self.password.clear();
             self.view = View::WifiPassword;
             self.show(context);
@@ -1136,13 +1219,19 @@ impl Settings {
     /// screen are submitting a password or going back.
     fn password_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
-            self.view = View::Wifi;
+            self.view = if self.enterprise {
+                View::WifiUsername
+            } else {
+                View::Wifi
+            };
             self.password.clear();
             self.show(context);
             return;
         }
         if let Some(pressed) = self.password.press(action) {
-            if pressed == Pressed::Submitted {
+            if pressed == Pressed::Submitted && self.enterprise {
+                self.submit_enterprise_password(context);
+            } else if pressed == Pressed::Submitted {
                 if (8..=63).contains(&self.password.text().len()) {
                     let password = self.password.take();
                     if let Some(ssid) = self.selected_ssid.take() {
@@ -1163,6 +1252,82 @@ impl Settings {
         }
     }
 
+    /// The password is kept, not sent: the next request asks the network for
+    /// its certificate, and only a trusted certificate lets it go anywhere.
+    fn submit_enterprise_password(&mut self, context: &mut Context) {
+        if !kobo_sdk::valid_wifi_secret(self.password.text()) {
+            self.trouble = Some((Topic::Wifi, "Type your password.".to_owned()));
+            return;
+        }
+        let password = self.password.take();
+        let identity = self.username.text().to_owned();
+        let Some(ssid) = self.selected_ssid.clone() else {
+            return;
+        };
+        self.settled(Topic::Wifi);
+        self.certificate = None;
+        if context.device().probe_enterprise_wifi(ssid, identity) {
+            self.enterprise_password = Some(password);
+            self.view = View::WifiTrust;
+        } else {
+            self.trouble = Some((Topic::Wifi, "That username cannot be used.".to_owned()));
+        }
+    }
+
+    fn username_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK {
+            self.view = View::Wifi;
+            self.forget_enterprise_secrets();
+            self.show(context);
+            return;
+        }
+        if let Some(pressed) = self.username.press(action) {
+            if pressed == Pressed::Submitted {
+                if kobo_sdk::valid_wifi_identity(self.username.text()) {
+                    self.settled(Topic::Wifi);
+                    self.password.clear();
+                    self.view = View::WifiPassword;
+                } else {
+                    self.trouble = Some((
+                        Topic::Wifi,
+                        "Type your username, for example you@ed.ac.uk.".to_owned(),
+                    ));
+                }
+            } else {
+                self.settled(Topic::Wifi);
+            }
+            self.show(context);
+        }
+    }
+
+    fn trust_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == action_id(TRUST) {
+            if let (Some(ssid), Some((_, sha256)), Some(password)) = (
+                self.selected_ssid.clone(),
+                self.certificate.take(),
+                self.enterprise_password.take(),
+            ) {
+                let identity = self.username.text().to_owned();
+                context
+                    .device()
+                    .join_enterprise_wifi(ssid, identity, password, sha256);
+            }
+        } else if action != ActionId::BACK && action != action_id(DISTRUST) {
+            return;
+        }
+        self.settled(Topic::Wifi);
+        self.forget_enterprise_secrets();
+        self.view = View::Wifi;
+        self.show(context);
+    }
+
+    fn forget_enterprise_secrets(&mut self) {
+        self.enterprise_password = None;
+        self.certificate = None;
+        self.password.clear();
+        self.username.clear();
+    }
+
     fn took_update_channel(&mut self, request: &DeviceRequest, channel: UpdateChannel) {
         self.update_channel = Some(channel);
         if matches!(request, DeviceRequest::SetUpdateChannel { .. }) {
@@ -1179,9 +1344,11 @@ impl KoboApp for Settings {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if self.view == View::WifiPassword {
-            self.password_action(context, action);
-            return;
+        match self.view {
+            View::WifiPassword => return self.password_action(context, action),
+            View::WifiUsername => return self.username_action(context, action),
+            View::WifiTrust => return self.trust_action(context, action),
+            _ => {}
         }
         if self.update_channel_action(context, action) {
             return;
@@ -1231,7 +1398,9 @@ impl KoboApp for Settings {
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
                 View::Home
+                | View::WifiUsername
                 | View::WifiPassword
+                | View::WifiTrust
                 | View::Battery
                 | View::About
                 | View::Update
@@ -1251,7 +1420,12 @@ impl KoboApp for Settings {
                 }
                 View::Battery => context.device().read_battery_detail(),
                 View::About => context.device().read_identity(),
-                View::Home | View::WifiPassword | View::Update | View::UpdateChannelConfirm => {}
+                View::Home
+                | View::WifiUsername
+                | View::WifiPassword
+                | View::WifiTrust
+                | View::Update
+                | View::UpdateChannelConfirm => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -1316,6 +1490,12 @@ impl KoboApp for Settings {
                 }
                 self.settled(Topic::Wifi);
             }
+            DeviceResult::WifiCertificate { subject, sha256 } => {
+                if self.view == View::WifiTrust {
+                    self.certificate = Some((subject, sha256));
+                    self.settled(Topic::Wifi);
+                }
+            }
             DeviceResult::BatteryDetail(detail) => {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
@@ -1362,6 +1542,8 @@ impl KoboApp for Settings {
                 | DeviceRequest::SetWifi { .. }
                 | DeviceRequest::ScanWifi
                 | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::ProbeEnterpriseWifi { .. }
+                | DeviceRequest::JoinEnterpriseWifi { .. }
                 | DeviceRequest::DisconnectWifi => context.device().read_wifi(),
                 DeviceRequest::Update { .. } => {
                     if let UpdateFlow::Installing { version } = self.update.clone() {
@@ -1656,6 +1838,40 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Networks that sign in with a username and password (802.1X) rather than
+/// one shared key. eduroam and govroam are named the same everywhere.
+fn is_enterprise_ssid(ssid: &str) -> bool {
+    ["eduroam", "govroam"]
+        .iter()
+        .any(|name| ssid.eq_ignore_ascii_case(name))
+}
+
+/// The certificate's `CN`, which is the name people recognise, or the whole
+/// subject when there is none.
+fn common_name(subject: &str) -> &str {
+    subject
+        .rsplit('/')
+        .find_map(|part| part.strip_prefix("CN="))
+        .filter(|name| !name.is_empty())
+        .unwrap_or(subject)
+}
+
+/// The digest as eight colon-free groups of eight, short enough to compare
+/// by eye against what another device shows.
+fn fingerprint(sha256: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    sha256
+        .chunks(4)
+        .map(|group| {
+            group.iter().fold(String::new(), |mut text, byte| {
+                let _ = write!(text, "{byte:02X}");
+                text
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -1986,6 +2202,181 @@ mod tests {
             .wifi()
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(RESCAN)).is_none());
+    }
+
+    fn eduroam_on_the_list() -> Settings {
+        Settings {
+            view: View::Wifi,
+            wifi_state: RadioState::On,
+            networks: vec![
+                WifiNetwork {
+                    ssid: "eduroam".to_owned(),
+                    signal_dbm: -50,
+                    secured: true,
+                    connected: false,
+                },
+                WifiNetwork {
+                    ssid: "Home".to_owned(),
+                    signal_dbm: -60,
+                    secured: true,
+                    connected: false,
+                },
+            ],
+            ..Settings::default()
+        }
+    }
+
+    fn sent(commands: &[kobo_sdk::Command]) -> Vec<DeviceRequest> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Device(request) => Some(request.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Walks eduroam from the list to a pinned join, checking at each step
+    /// that the password has not gone anywhere before the server is trusted.
+    #[test]
+    fn eduroam_asks_for_a_username_and_sends_the_password_only_after_trust() {
+        use kobo_sdk::keyboard::Keyboard;
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(eduroam_on_the_list());
+        runner.action(action_id(NETWORK_ACTIONS[0]));
+        assert_eq!(runner.app().view, View::WifiUsername);
+
+        runner.app_mut().username = Keyboard::with_text("s1234567@ed.ac.uk");
+        runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app().view, View::WifiPassword);
+
+        runner.app_mut().password = Keyboard::with_text("hunter2");
+        let probe = sent(&runner.action(action_id("kb.enter")));
+        assert_eq!(runner.app().view, View::WifiTrust);
+        assert!(
+            probe.contains(&DeviceRequest::ProbeEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@ed.ac.uk".to_owned(),
+            }),
+            "{probe:?}"
+        );
+        assert!(
+            !format!("{probe:?}").contains("hunter2"),
+            "sent before trust"
+        );
+
+        let waiting = text_of(&runner.app().wifi_trust());
+        assert!(waiting.contains("No password has been sent"), "{waiting}");
+
+        let mut context = runner.context();
+        kobo_sdk::KoboApp::on_device_result(
+            runner.app_mut(),
+            &mut context,
+            DeviceRequest::ProbeEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@ed.ac.uk".to_owned(),
+            },
+            DeviceResult::WifiCertificate {
+                subject: "/C=GB/O=University/CN=radius.ed.ac.uk".to_owned(),
+                sha256: [0x5e; 32],
+            },
+        );
+        let trust = format!("{:?}", runner.app().wifi_trust());
+        assert!(trust.contains("radius.ed.ac.uk"), "{trust}");
+        assert!(trust.contains("5E5E5E5E"), "{trust}");
+
+        let join = sent(&runner.action(action_id(super::TRUST)));
+        assert!(
+            join.contains(&DeviceRequest::JoinEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@ed.ac.uk".to_owned(),
+                password: "hunter2".to_owned(),
+                server_sha256: [0x5e; 32],
+            }),
+            "{join:?}"
+        );
+        let app = runner.app();
+        assert_eq!(app.view, View::Wifi);
+        assert!(app.enterprise_password.is_none());
+        assert!(app.username.text().is_empty());
+        assert!(app.certificate.is_none());
+    }
+
+    #[test]
+    fn refusing_the_server_sends_nothing_and_forgets_the_password() {
+        use kobo_sdk::keyboard::Keyboard;
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings {
+            view: View::WifiTrust,
+            selected_ssid: Some("eduroam".to_owned()),
+            enterprise: true,
+            username: Keyboard::with_text("s1@ed.ac.uk"),
+            enterprise_password: Some("hunter2".to_owned()),
+            certificate: Some(("/CN=evil".to_owned(), [1; 32])),
+            ..Settings::default()
+        });
+        let commands = sent(&runner.action(action_id(super::DISTRUST)));
+        assert!(
+            !commands
+                .iter()
+                .any(|request| matches!(request, DeviceRequest::JoinEnterpriseWifi { .. })),
+            "{commands:?}"
+        );
+        assert!(runner.app().enterprise_password.is_none());
+        assert_eq!(runner.app().view, View::Wifi);
+    }
+
+    #[test]
+    fn a_home_network_still_asks_for_one_shared_password() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(eduroam_on_the_list());
+        runner.action(action_id(NETWORK_ACTIONS[1]));
+        assert_eq!(runner.app().view, View::WifiPassword);
+        assert!(!runner.app().enterprise);
+    }
+
+    #[test]
+    fn the_enterprise_screens_fit_the_panel() {
+        use kobo_sdk::keyboard::Keyboard;
+        let trust = Settings {
+            view: View::WifiTrust,
+            selected_ssid: Some("eduroam".to_owned()),
+            certificate: Some((
+                "/C=GB/ST=Midlothian/L=Edinburgh/O=The University of Edinburgh/CN=a-rather-long-radius-server-name.is.ed.ac.uk".to_owned(),
+                [0xab; 32],
+            )),
+            ..Settings::default()
+        };
+        for screen in [
+            trust.wifi_trust(),
+            Settings {
+                view: View::WifiTrust,
+                ..Settings::default()
+            }
+            .wifi_trust(),
+            Settings {
+                view: View::WifiUsername,
+                selected_ssid: Some("eduroam".to_owned()),
+                username: Keyboard::with_text("s1234567@ed.ac.uk"),
+                ..Settings::default()
+            }
+            .wifi_username(),
+        ] {
+            let issues = screen.validate(&CLARA_BW_METRICS);
+            assert!(issues.is_empty(), "{issues:?}");
+        }
+    }
+
+    #[test]
+    fn certificates_are_shown_by_name_and_grouped_digest() {
+        assert_eq!(
+            super::common_name("/C=GB/O=Uni/CN=radius.ed.ac.uk"),
+            "radius.ed.ac.uk"
+        );
+        assert_eq!(super::common_name("/O=No name"), "/O=No name");
+        assert_eq!(super::fingerprint(&[0xab; 32]), ["ABABABAB"; 8].join(" "));
+        assert!(super::is_enterprise_ssid("Eduroam"));
+        assert!(!super::is_enterprise_ssid("eduroam-guest"));
     }
 
     fn text_of(screen: &kobo_sdk::Screen) -> String {
