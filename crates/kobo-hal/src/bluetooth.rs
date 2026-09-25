@@ -80,14 +80,44 @@ enum Backend {
     Bluetoothctl(PathBuf),
 }
 
-/// Chooses a backend when [`adapter_present`] can prove one exists under
-/// `sys_root`, and never otherwise -- taking the root as a parameter, rather
-/// than hardcoding `/sys/class/bluetooth`, so a test can gate this on an
-/// empty directory and confirm no backend is chosen even when the marker
-/// files and tool binaries below it are found, the same as a Libra H2O
-/// running the exact firmware image a real Bluetooth-equipped device ships.
-fn select_backend(sys_root: &Path) -> Option<Backend> {
-    if !adapter_present(sys_root) {
+/// Whether the `MediaTek` Bluetooth service is really installed, as opposed to
+/// left behind as firmware-image scaffolding.
+///
+/// On Clara BW/Colour the vendor service owns controller bring-up, so
+/// `/sys/class/bluetooth/hci0` (often the whole class directory) only exists
+/// once that service has powered the radio -- which this runtime deliberately
+/// never does on its own. [`adapter_present`] therefore cannot be the proof
+/// for this backend: it reads "not brought up yet" as "no radio" (#217).
+///
+/// The Libra H2O case the adapter gate was written for is still refused here:
+/// its MTK marker paths are zero-byte stubs, whereas a real D-Bus activation
+/// file or daemon binary always has content. Only a regular, non-empty file
+/// counts.
+fn mtk_service_installed(markers: &[&Path]) -> bool {
+    markers
+        .iter()
+        .any(|marker| std::fs::metadata(marker).is_ok_and(|meta| meta.is_file() && meta.len() > 0))
+}
+
+/// Chooses a backend when one can be proven, and never otherwise.
+///
+/// Two independent proofs are accepted:
+///
+/// * the kernel has registered `hci0` under `sys_root` ([`adapter_present`]),
+///   which is what the `BlueZ` and `bluetoothctl` backends need; or
+/// * the `MediaTek` service is genuinely installed ([`mtk_service_installed`]),
+///   in which case the MTK D-Bus backend is chosen even while the radio is
+///   off. An unstarted service is then reported as a disabled radio by
+///   [`Bluetooth::state`] (via `bus_running`), and enabling goes through the
+///   vendor's own `BluedroidManager1.On`, which brings `hci0` up itself.
+///
+/// Both roots are parameters rather than hardcoded so tests can reproduce the
+/// Libra H2O (stub markers, no adapter) and the Clara (real service, no
+/// adapter yet) without a device.
+fn select_backend(sys_root: &Path, mtk_markers: &[&Path]) -> Option<Backend> {
+    let adapter = adapter_present(sys_root);
+    let mtk_real = mtk_service_installed(mtk_markers);
+    if !adapter && !mtk_real {
         return None;
     }
     let dbus = DBUS_TOOLS
@@ -95,12 +125,20 @@ fn select_backend(sys_root: &Path) -> Option<Backend> {
         .map(Path::new)
         .find(|path| path.is_file());
     if let Some(tool) = dbus {
-        let mtk = MTK_MARKERS.iter().any(|marker| Path::new(marker).exists());
+        // With a registered adapter, keep the previous behaviour of trusting
+        // any marker to pick the MTK bus; without one, only a real service
+        // got us this far.
+        let mtk = mtk_real || mtk_markers.iter().any(|marker| marker.exists());
         return Some(Backend::Dbus {
             tool: tool.to_path_buf(),
             bus: if mtk { MTK_BUS } else { BLUEZ_BUS },
             mtk,
         });
+    }
+    if !adapter {
+        // The MTK service is only reachable over D-Bus; bluetoothctl needs a
+        // registered controller.
+        return None;
     }
     BLUETOOTHCTL_TOOLS
         .into_iter()
@@ -118,19 +156,22 @@ pub struct Bluetooth {
 impl Bluetooth {
     /// Opens a firmware Bluetooth control surface when one can be proven.
     ///
-    /// Every backend below also requires [`adapter_present`]. The marker
+    /// Every backend requires either [`adapter_present`] or, for the MTK
+    /// backend only, [`mtk_service_installed`]. The marker
     /// files and tool binaries alone are not proof: a Libra H2O (which has no
     /// Bluetooth radio at all) was found carrying two of the four MTK marker
     /// paths as zero-byte stub files with epoch timestamps -- almost
     /// certainly generic firmware-image scaffolding rather than a real
     /// service -- which made this open the MTK D-Bus backend and then fail
     /// every request against a destination nothing was ever listening on.
-    /// `/sys/class/bluetooth` carrying at least one adapter is the one signal
-    /// here that is not a name or a path a build process gets to leave behind
-    /// by accident: it is the kernel's own record that a controller attached.
+    /// Those stubs are zero bytes, so a non-empty service file or daemon is
+    /// accepted as proof for the MTK backend; for every other backend,
+    /// `/sys/class/bluetooth/hci0` remains the kernel's own record that a
+    /// controller attached.
     #[must_use]
     pub fn open() -> Option<Self> {
-        select_backend(Path::new("/sys/class/bluetooth")).map(|backend| Self {
+        let markers = MTK_MARKERS.map(Path::new);
+        select_backend(Path::new("/sys/class/bluetooth"), &markers).map(|backend| Self {
             backend,
             scanning: Arc::new(AtomicBool::new(false)),
         })
@@ -794,8 +835,8 @@ fn clip(value: &str, bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property,
-        select_backend,
+        adapter_present, classify, device_path, mtk_service_installed, parse_ctl_devices,
+        parse_managed_devices, property, select_backend,
     };
     use kobo_protocol::BluetoothDeviceKind;
     use std::fs;
@@ -847,7 +888,50 @@ mod tests {
         // `adapter_present`'s own tests green while restoring the Libra H2O
         // failure this backend selection is meant to prevent.
         let root = root("gate-empty");
-        assert!(select_backend(&root).is_none());
+        assert!(select_backend(&root, &[]).is_none());
+    }
+
+    #[test]
+    fn zero_byte_mtk_stubs_are_not_a_service() {
+        // Libra H2O: marker paths exist as empty scaffolding files, no radio.
+        let root = root("h2o-stubs");
+        let stub = root.join("com.kobo.mtk.bluedroid.service");
+        let other = root.join("mtkbtd");
+        fs::write(&stub, b"").expect("a stub marker");
+        fs::write(&other, b"").expect("a stub marker");
+        assert!(!mtk_service_installed(&[&stub, &other]));
+        let sys = root.join("sys-class-bluetooth");
+        assert!(select_backend(&sys, &[&stub, &other]).is_none());
+    }
+
+    #[test]
+    fn a_real_mtk_service_is_proof_without_hci0() {
+        // Clara BW/Colour (#217): the vendor service is installed but has not
+        // brought the controller up, so /sys/class/bluetooth is missing or
+        // empty. The MTK backend must still be eligible.
+        let root = root("clara-mtk");
+        let service = root.join("com.kobo.mtk.bluedroid.service");
+        fs::write(
+            &service,
+            b"[D-BUS Service]\nName=com.kobo.mtk.bluedroid\nExec=/usr/local/Kobo/mtkbtd-launcher.sh\n",
+        )
+        .expect("a real service file");
+        assert!(mtk_service_installed(&[&service]));
+        assert!(!adapter_present(&root.join("no-sys-class-bluetooth")));
+    }
+
+    #[test]
+    fn a_directory_is_not_a_service_file() {
+        let root = root("mtk-dir");
+        let dir = root.join("mtkbtd");
+        fs::create_dir_all(dir.join("x")).expect("a directory");
+        assert!(!mtk_service_installed(&[&dir]));
+    }
+
+    #[test]
+    fn missing_markers_are_not_a_service() {
+        let root = root("mtk-missing");
+        assert!(!mtk_service_installed(&[&root.join("nope")]));
     }
 
     #[test]
