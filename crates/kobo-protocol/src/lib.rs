@@ -7725,11 +7725,11 @@ mod tests {
             DeviceRequest::DisconnectWifi,
             DeviceRequest::ProbeEnterpriseWifi {
                 ssid: "eduroam".to_owned(),
-                identity: "s1234567@ed.ac.uk".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
             },
             DeviceRequest::JoinEnterpriseWifi {
                 ssid: "eduroam".to_owned(),
-                identity: "s1234567@ed.ac.uk".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
                 password: "correct horse battery staple".to_owned(),
                 server_sha256: [0xab; 32],
             },
@@ -7833,17 +7833,17 @@ mod tests {
                 }),
             })
         };
-        assert!(join("s1@ed.ac.uk", "pw").is_ok());
+        assert!(join("s1@example.ac.uk", "pw").is_ok());
         // Short passwords are fine for 802.1X; the WPA-PSK 8..63 rule does
         // not apply.
-        assert!(join("s1@ed.ac.uk", "a").is_ok());
+        assert!(join("s1@example.ac.uk", "a").is_ok());
         assert!(join("", "pw").is_err());
-        assert!(join("s1@ed.ac.uk", "").is_err());
-        assert!(join("s1\"@ed.ac.uk", "pw").is_err());
-        assert!(join("s1\\@ed.ac.uk", "pw").is_err());
-        assert!(join("s1@ed.ac.uk", "line\nbreak").is_err());
+        assert!(join("s1@example.ac.uk", "").is_err());
+        assert!(join("s1\"@example.ac.uk", "pw").is_err());
+        assert!(join("s1\\@example.ac.uk", "pw").is_err());
+        assert!(join("s1@example.ac.uk", "line\nbreak").is_err());
         assert!(join(&"a".repeat(MAX_WIFI_IDENTITY + 1), "pw").is_err());
-        assert!(join("s1@ed.ac.uk", &"a".repeat(MAX_WIFI_SECRET + 1)).is_err());
+        assert!(join("s1@example.ac.uk", &"a".repeat(MAX_WIFI_SECRET + 1)).is_err());
     }
 
     #[test]

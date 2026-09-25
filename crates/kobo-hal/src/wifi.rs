@@ -658,12 +658,12 @@ mod tests {
     fn the_leaf_certificate_is_read_from_the_probe_event() {
         let digest = "5e".repeat(32);
         let line = format!(
-            "<3>CTRL-EVENT-EAP-PEER-CERT depth=0 subject='/C=GB/O=The University of Edinburgh/CN=radius.example.ed.ac.uk' hash={digest}"
+            "<3>CTRL-EVENT-EAP-PEER-CERT depth=0 subject='/C=GB/O=Example University/CN=radius.example.example.ac.uk' hash={digest}"
         );
         let (subject, sha256) = peer_certificate(&line).expect("a certificate");
         assert_eq!(
             subject,
-            "/C=GB/O=The University of Edinburgh/CN=radius.example.ed.ac.uk"
+            "/C=GB/O=Example University/CN=radius.example.example.ac.uk"
         );
         assert_eq!(sha256, [0x5e; 32]);
     }
@@ -703,8 +703,8 @@ mod tests {
     #[test]
     fn the_outer_identity_keeps_only_the_realm() {
         assert_eq!(
-            anonymous_identity("s1234567@ed.ac.uk"),
-            "anonymous@ed.ac.uk"
+            anonymous_identity("s1234567@example.ac.uk"),
+            "anonymous@example.ac.uk"
         );
         assert_eq!(anonymous_identity("s1234567"), "anonymous");
         assert_eq!(anonymous_identity("s1234567@"), "anonymous");
@@ -715,7 +715,7 @@ mod tests {
         let commands = enterprise_commands(
             3,
             "eduroam",
-            "s1@ed.ac.uk",
+            "s1@example.ac.uk",
             Some("pa\"ss"),
             "hash://server/sha256/00",
         );
@@ -727,7 +727,7 @@ mod tests {
         );
         assert!(commands.contains(&format!(
             "set_network 3 anonymous_identity {}",
-            hex(b"anonymous@ed.ac.uk")
+            hex(b"anonymous@example.ac.uk")
         )));
         assert!(commands.contains("set_network 3 eap PEAP"));
         assert!(commands.contains("set_network 3 phase2 \"auth=MSCHAPV2\""));
@@ -741,19 +741,23 @@ mod tests {
 
     #[test]
     fn a_probe_configures_no_password() {
-        let commands = enterprise_commands(0, "eduroam", "s1@ed.ac.uk", None, "probe://");
+        let commands = enterprise_commands(0, "eduroam", "s1@example.ac.uk", None, "probe://");
         assert!(!commands.contains("password"));
         assert!(commands.contains("ca_cert \"probe://\""));
     }
 
     #[test]
     fn enterprise_input_is_validated_before_any_command() {
-        assert!(valid_enterprise("eduroam", "s1@ed.ac.uk", Some("x")));
-        assert!(valid_enterprise("eduroam", "s1@ed.ac.uk", None));
-        assert!(!valid_enterprise("", "s1@ed.ac.uk", None));
+        assert!(valid_enterprise("eduroam", "s1@example.ac.uk", Some("x")));
+        assert!(valid_enterprise("eduroam", "s1@example.ac.uk", None));
+        assert!(!valid_enterprise("", "s1@example.ac.uk", None));
         assert!(!valid_enterprise("eduroam", "", None));
-        assert!(!valid_enterprise("eduroam", "s1@ed.ac.uk", Some("")));
-        assert!(!valid_enterprise("eduroam", "s1@ed.ac.uk", Some("a\nb")));
+        assert!(!valid_enterprise("eduroam", "s1@example.ac.uk", Some("")));
+        assert!(!valid_enterprise(
+            "eduroam",
+            "s1@example.ac.uk",
+            Some("a\nb")
+        ));
     }
 
     #[test]

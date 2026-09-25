@@ -750,7 +750,7 @@ impl Settings {
         let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
             trouble
         } else if self.username.text().is_empty() {
-            "Type your username, including the part after @ (for example, you@ed.ac.uk).".to_owned()
+            "Type your username exactly as your institution gives it.".to_owned()
         } else {
             format!("Username: {}", self.username.text())
         };
@@ -1290,7 +1290,7 @@ impl Settings {
                 } else {
                     self.trouble = Some((
                         Topic::Wifi,
-                        "Type your username, for example you@ed.ac.uk.".to_owned(),
+                        "Type your username exactly as your institution gives it.".to_owned(),
                     ));
                 }
             } else {
@@ -2254,7 +2254,7 @@ mod tests {
         runner.action(action_id(NETWORK_ACTIONS[0]));
         assert_eq!(runner.app().view, View::WifiUsername);
 
-        runner.app_mut().username = Keyboard::with_text("s1234567@ed.ac.uk");
+        runner.app_mut().username = Keyboard::with_text("s1234567@example.ac.uk");
         runner.action(action_id("kb.enter"));
         assert_eq!(runner.app().view, View::WifiPassword);
 
@@ -2264,7 +2264,7 @@ mod tests {
         assert!(
             probe.contains(&DeviceRequest::ProbeEnterpriseWifi {
                 ssid: "eduroam".to_owned(),
-                identity: "s1234567@ed.ac.uk".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
             }),
             "{probe:?}"
         );
@@ -2282,22 +2282,22 @@ mod tests {
             &mut context,
             DeviceRequest::ProbeEnterpriseWifi {
                 ssid: "eduroam".to_owned(),
-                identity: "s1234567@ed.ac.uk".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
             },
             DeviceResult::WifiCertificate {
-                subject: "/C=GB/O=University/CN=radius.ed.ac.uk".to_owned(),
+                subject: "/C=GB/O=University/CN=radius.example.ac.uk".to_owned(),
                 sha256: [0x5e; 32],
             },
         );
         let trust = format!("{:?}", runner.app().wifi_trust());
-        assert!(trust.contains("radius.ed.ac.uk"), "{trust}");
+        assert!(trust.contains("radius.example.ac.uk"), "{trust}");
         assert!(trust.contains("5E5E5E5E"), "{trust}");
 
         let join = sent(&runner.action(action_id(super::TRUST)));
         assert!(
             join.contains(&DeviceRequest::JoinEnterpriseWifi {
                 ssid: "eduroam".to_owned(),
-                identity: "s1234567@ed.ac.uk".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
                 password: "hunter2".to_owned(),
                 server_sha256: [0x5e; 32],
             }),
@@ -2318,7 +2318,7 @@ mod tests {
             view: View::WifiTrust,
             selected_ssid: Some("eduroam".to_owned()),
             enterprise: true,
-            username: Keyboard::with_text("s1@ed.ac.uk"),
+            username: Keyboard::with_text("s1@example.ac.uk"),
             enterprise_password: Some("hunter2".to_owned()),
             certificate: Some(("/CN=evil".to_owned(), [1; 32])),
             ..Settings::default()
@@ -2350,7 +2350,8 @@ mod tests {
             view: View::WifiTrust,
             selected_ssid: Some("eduroam".to_owned()),
             certificate: Some((
-                "/C=GB/ST=Midlothian/L=Edinburgh/O=The University of Edinburgh/CN=a-rather-long-radius-server-name.is.ed.ac.uk".to_owned(),
+                "/C=GB/O=Example University/CN=a-rather-long-radius-server-name.is.example.ac.uk"
+                    .to_owned(),
                 [0xab; 32],
             )),
             ..Settings::default()
@@ -2365,7 +2366,7 @@ mod tests {
             Settings {
                 view: View::WifiUsername,
                 selected_ssid: Some("eduroam".to_owned()),
-                username: Keyboard::with_text("s1234567@ed.ac.uk"),
+                username: Keyboard::with_text("s1234567@example.ac.uk"),
                 ..Settings::default()
             }
             .wifi_username(),
@@ -2378,8 +2379,8 @@ mod tests {
     #[test]
     fn certificates_are_shown_by_name_and_grouped_digest() {
         assert_eq!(
-            super::common_name("/C=GB/O=Uni/CN=radius.ed.ac.uk"),
-            "radius.ed.ac.uk"
+            super::common_name("/C=GB/O=Uni/CN=radius.example.ac.uk"),
+            "radius.example.ac.uk"
         );
         assert_eq!(super::common_name("/O=No name"), "/O=No name");
         assert_eq!(super::fingerprint(&[0xab; 32]), ["ABABABAB"; 8].join(" "));
