@@ -359,6 +359,12 @@ reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
 before Nickel returns, then waits for Nickel's association and default route
 to remain healthy for ten seconds.
 
+On the N605 Elipsa 2E, hand-back also stops the captured firmware
+supplicant before Nickel starts its replacement. This uses the existing
+bounded cleanup; it does not initialize the radio or change saved networks.
+[PR #164](https://github.com/BandarLabs/Cobalt/pull/164) records the earlier
+device tests and their limits. Those tests have not been repeated on this beta.
+
 That immediate gate is not evidence that the handoff stays healthy minutes
 later. For the N365 investigation, the owner-attended
 [`KOBO_WIFI_HANDOFF_TRACE`](WIFI_HANDOFF_TRACE.md) mode records the process and
