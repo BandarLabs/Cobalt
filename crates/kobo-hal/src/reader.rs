@@ -592,7 +592,8 @@ impl Watchdog {
         let _ignored = fs::remove_file(&cancel);
         let script = state.join("watchdog.sh");
         let executable = std::env::current_exe()?;
-        let body = watchdog_script(&beat, &cancel, &executable, state, check);
+        let session = Session::current(Path::new("/proc"));
+        let body = watchdog_script(&beat, &cancel, &executable, state, check, session.as_ref());
         fs::write(&script, body)?;
         let armed = Self {
             cancel,
@@ -645,6 +646,118 @@ fn sibling(state: &Path, suffix: &str) -> PathBuf {
         .join(format!("{name}.{suffix}"))
 }
 
+/// How long the watchdog waits for a killed session to be gone.
+///
+/// A process killed in the middle of a write to the book partition finishes
+/// that write first. Thirty seconds covers the slowest write this runtime
+/// makes. Past that the session is wedged in the kernel, and the watchdog
+/// reboots rather than start a reader beside something that may still hold
+/// the panel.
+const SESSION_EXIT_WAIT_SECONDS: u32 = 30;
+
+/// What the watchdog does when a killed session will not go.
+///
+/// The reboot tool is named by path, in the same order the runtime's own clean
+/// reboot tries them, because the script inherits whatever `PATH` launched the
+/// session and a bare `reboot` that is not on it would leave the panel frozen
+/// with no reader and no reboot. The bare name is kept as the last resort.
+const REBOOT_WHEN_STUCK: &str = "sync; \
+for tool in /sbin/reboot /bin/reboot /usr/sbin/reboot; do \
+[ -x \"$tool\" ] && \"$tool\" && exit 0; \
+done; \
+reboot; exit 0";
+
+/// The session a watchdog belongs to, identified well enough to kill.
+///
+/// A process id alone is not an identity: the session may have exited and its
+/// id been handed to something else by the time the watchdog acts. The start
+/// time, in clock ticks since boot, is fixed for the life of a process and is
+/// not reused with the id, so the pair names exactly one process.
+struct Session {
+    proc_root: PathBuf,
+    pid: u32,
+    started: String,
+}
+
+impl Session {
+    /// The calling process, or nothing where `/proc` cannot say when it
+    /// started. Without an identity the watchdog kills nothing, which is how
+    /// every watchdog behaved before it learned to.
+    fn current(proc_root: &Path) -> Option<Self> {
+        let pid = std::process::id();
+        Some(Self {
+            proc_root: proc_root.to_owned(),
+            pid,
+            started: start_time(proc_root, pid)?,
+        })
+    }
+}
+
+/// Field 22 of `/proc/<pid>/stat`, counted after the command name so that a
+/// name containing spaces cannot shift it.
+fn start_time(proc_root: &Path, pid: u32) -> Option<String> {
+    let stat = fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).ok()?;
+    let (_, rest) = stat.rsplit_once(") ")?;
+    rest.split_whitespace().nth(19).map(str::to_owned)
+}
+
+/// The part of the watchdog that stops the session before the reader starts.
+///
+/// A session whose heartbeat has stopped may still be alive and still hold the
+/// panel, because the loop that beats can be blocked while the process is not
+/// dead. Starting the reader beside it put two owners on one screen: both drew,
+/// and the session's own teardown later started a second reader on top of the
+/// first, which only a reboot separated. Killing the session first leaves the
+/// reader alone on the panel, and the kernel drops the session's touch grab
+/// and display descriptor as the process goes. It also means the update
+/// recovery `--restart-from` runs never races an update the session was still
+/// writing.
+///
+/// A session that is still alive when the wait runs out is not joined by a
+/// reader. `when_stuck` runs instead, and it must not return: on the device it
+/// is a synced reboot, the one hand-back that is certain to leave a single
+/// owner, and in tests it is an exit code.
+///
+/// The cancel marker is read once more immediately before the kill, so a
+/// session that finished cleanly while the watchdog was waking is never killed
+/// on its way out. `stand_down` is what the rest of the script does on seeing
+/// it.
+///
+/// The identity check and the kill are two steps, not one. The gap is a few
+/// instructions of shell, and for a new process to receive the same id inside
+/// it the session would have to exit, be reaped, and the kernel's sequential
+/// allocator wrap all the way round to that number. `pidfd_send_signal`, which
+/// would close the gap, arrived in Linux 5.3, and no supported Kobo kernel is
+/// that new.
+fn session_stop(
+    session: &Session,
+    wait_seconds: u32,
+    stand_down: &str,
+    when_stuck: &str,
+) -> String {
+    format!(
+        "session_alive() {{\n\
+         stat=$(cat '{stat}' 2>/dev/null) || return 1\n\
+         set -- ${{stat##*\") \"}}\n\
+         [ \"$1\" != Z ] && [ \"${{20}}\" = '{started}' ]\n\
+         }}\n\
+         if session_alive; then\n\
+         {stand_down}\n\
+         kill -9 {pid} 2>/dev/null\n\
+         waited=0\n\
+         while session_alive && [ \"$waited\" -lt {wait_seconds} ]; do sleep 1; waited=$((waited + 1)); done\n\
+         session_alive && {{ {when_stuck}; }}\n\
+         fi\n",
+        stat = session
+            .proc_root
+            .join(session.pid.to_string())
+            .join("stat")
+            .display(),
+        started = session.started,
+        pid = session.pid,
+    )
+}
+
 /// The watchdog's whole program, as text, so it can be read and tested.
 ///
 /// Two consecutive reads of the same counter mean nothing moved in a whole
@@ -664,7 +777,21 @@ fn watchdog_script(
     executable: &Path,
     state: &Path,
     check: Duration,
+    session: Option<&Session>,
 ) -> String {
+    let stand_down = format!(
+        "[ -e '{cancel}' ] && {{ rm -f '{cancel}' '{beat}'; exit 0; }}",
+        cancel = cancel.display(),
+        beat = beat.display()
+    );
+    let stop = session.map_or_else(String::new, |session| {
+        session_stop(
+            session,
+            SESSION_EXIT_WAIT_SECONDS,
+            &stand_down,
+            REBOOT_WHEN_STUCK,
+        )
+    });
     format!(
         "#!/bin/sh\n\
          while :; do\n\
@@ -675,6 +802,7 @@ fn watchdog_script(
          [ \"$before\" = \"$after\" ] && break\n\
          done\n\
          [ -e '{cancel}' ] && {{ rm -f '{cancel}' '{beat}'; exit 0; }}\n\
+         {stop}\
          exec '{executable}' --restart-from '{state}'\n",
         beat = beat.display(),
         seconds = check.as_secs().max(1),
@@ -720,8 +848,8 @@ fn read_environment(proc_root: &Path, pid: i32) -> io::Result<BTreeMap<OsString,
 #[cfg(test)]
 mod tests {
     use super::{
-        newly_started_pids, read_argv, read_environment, sibling, watchdog_script, Reader,
-        ReaderError, READER_EXECUTABLE,
+        newly_started_pids, read_argv, read_environment, session_stop, sibling, start_time,
+        watchdog_script, Reader, ReaderError, Session, READER_EXECUTABLE, REBOOT_WHEN_STUCK,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1012,6 +1140,7 @@ mod tests {
             Path::new("/tmp/kobod"),
             Path::new("/tmp/s"),
             Duration::from_secs(60),
+            None,
         );
         assert!(script.contains("before=$(cat '/tmp/s.beat'"));
         assert!(script.contains("after=$(cat '/tmp/s.beat'"));
@@ -1030,6 +1159,7 @@ mod tests {
             Path::new("/tmp/kobod"),
             Path::new("/tmp/s"),
             Duration::from_secs(60),
+            None,
         );
         let guard = "[ -e '/tmp/s.cancel' ]";
         let checks = script.matches(guard).count();
@@ -1050,6 +1180,7 @@ mod tests {
             Path::new("/tmp/kobod"),
             Path::new("/tmp/s"),
             Duration::from_secs(60),
+            None,
         );
         assert_eq!(
             script
@@ -1074,7 +1205,213 @@ mod tests {
             Path::new("/tmp/kobod"),
             Path::new("/tmp/s"),
             Duration::from_millis(1),
+            None,
         );
         assert!(script.contains("sleep 1"));
+    }
+
+    /// A stat line for a fake `/proc`, with `started` as field 22 and a
+    /// command name that contains a space, the case naive splitting gets wrong.
+    fn fake_stat(pid: u32, started: &str) -> String {
+        let mut fields = vec!["S".to_owned()];
+        fields.extend((4..22).map(|field| field.to_string()));
+        fields.push(started.to_owned());
+        fields.extend((23..30).map(|field| field.to_string()));
+        format!("{pid} (kobo d) {}\n", fields.join(" "))
+    }
+
+    fn fake_session(label: &str, pid: u32, stat_started: &str, known_started: &str) -> Session {
+        let root = std::env::temp_dir().join(format!(
+            "kobo-watchdog-session-{}-{label}",
+            std::process::id()
+        ));
+        let _ignored = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(pid.to_string())).expect("create fake proc entry");
+        fs::write(
+            root.join(pid.to_string()).join("stat"),
+            fake_stat(pid, stat_started),
+        )
+        .expect("write fake stat");
+        Session {
+            proc_root: root,
+            pid,
+            started: known_started.to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_start_time_is_counted_after_the_command_name() {
+        let session = fake_session("parse", 4321, "987654", "987654");
+        assert_eq!(
+            start_time(&session.proc_root, 4321).as_deref(),
+            Some("987654"),
+            "a space in the command name must not shift field 22"
+        );
+    }
+
+    /// Run for real rather than read as text, because the whole point is what
+    /// busybox-style `sh` does with the stat line and the kill.
+    #[test]
+    fn a_stalled_session_that_is_still_alive_is_killed_before_the_reader_starts() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("a stand-in session");
+        let session = fake_session("kill", child.id(), "5555", "5555");
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(session_stop(&session, 1, ":", "exit 3"))
+            .status()
+            .expect("run the stop");
+        // The fake stat outlives the kill, so this stand-in also looks
+        // wedged, which is the path that must end the script.
+        assert_eq!(
+            status.code(),
+            Some(3),
+            "a session that still looked alive was followed by the reader"
+        );
+        let ended = child.wait().expect("reap the stand-in");
+        assert!(
+            !ended.success(),
+            "the session was left running beside the reader"
+        );
+    }
+
+    #[test]
+    fn a_process_that_merely_reused_the_session_id_is_left_alone() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("an unrelated process");
+        // Same id, different start time: the session is gone and this is
+        // something else that was handed its number.
+        let session = fake_session("reused", child.id(), "7777", "5555");
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(session_stop(&session, 1, ":", "exit 3"))
+            .status()
+            .expect("run the stop");
+        assert!(status.success());
+        assert!(
+            child.try_wait().expect("check the process").is_none(),
+            "an unrelated process was killed"
+        );
+        child.kill().expect("clean up");
+        let _ignored = child.wait();
+    }
+
+    #[test]
+    fn the_watchdog_stops_the_session_after_its_last_cancel_check_and_before_acting() {
+        let session = Session {
+            proc_root: PathBuf::from("/proc"),
+            pid: 812,
+            started: "4242".to_owned(),
+        };
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+            Some(&session),
+        );
+        let kill_at = script.find("kill -9 812").expect("the session is killed");
+        let acts_at = script.find("exec '/tmp/kobod'").expect("acts");
+        let last_check = script.rfind("[ -e '/tmp/s.cancel' ]").expect("checks");
+        assert!(
+            last_check < kill_at,
+            "a cancelled watchdog must never kill a session that finished cleanly"
+        );
+        assert!(
+            kill_at < acts_at,
+            "the reader must start after the session is gone"
+        );
+    }
+
+    #[test]
+    fn a_session_that_finished_while_the_watchdog_woke_is_not_killed() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("a stand-in session");
+        let session = fake_session("cancelled", child.id(), "5555", "5555");
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(session_stop(&session, 1, "exit 0", "exit 3"))
+            .status()
+            .expect("run the stop");
+        assert!(status.success());
+        assert!(
+            child.try_wait().expect("check the process").is_none(),
+            "a cancelled watchdog killed the session"
+        );
+        child.kill().expect("clean up");
+        let _ignored = child.wait();
+    }
+
+    #[test]
+    fn a_session_the_kill_cannot_remove_leads_to_a_reboot_not_a_reader() {
+        let session = Session {
+            proc_root: PathBuf::from("/proc"),
+            pid: 812,
+            started: "4242".to_owned(),
+        };
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+            Some(&session),
+        );
+        let reboot_at = script
+            .find(&format!("session_alive && {{ {REBOOT_WHEN_STUCK}; }}"))
+            .expect("a wedged session ends in a reboot");
+        let acts_at = script.find("exec '/tmp/kobod'").expect("acts");
+        assert!(reboot_at < acts_at);
+    }
+
+    /// The whole script, stop and reboot included, has to be valid shell. A
+    /// quoting slip in the reboot fallback would only surface on a reader
+    /// whose session had already wedged.
+    #[test]
+    fn the_watchdog_script_with_a_session_is_valid_shell() {
+        let session = Session {
+            proc_root: PathBuf::from("/proc"),
+            pid: 812,
+            started: "4242".to_owned(),
+        };
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+            Some(&session),
+        );
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-n")
+            .arg("-c")
+            .arg(&script)
+            .status()
+            .expect("run sh -n");
+        assert!(
+            status.success(),
+            "the watchdog script does not parse:\n{script}"
+        );
+        assert!(script.contains("/sbin/reboot"));
+    }
+
+    #[test]
+    fn a_watchdog_without_a_session_identity_kills_nothing() {
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+            None,
+        );
+        assert!(!script.contains("kill"));
     }
 }
