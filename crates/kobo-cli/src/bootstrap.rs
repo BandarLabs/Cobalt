@@ -3,10 +3,25 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::OnceLock;
 
 pub const RELATIVE_PATH: &str = ".adds/cobalt-launch.sh";
 pub const DEVICE_PATH: &str = "/mnt/onboard/.adds/cobalt-launch.sh";
-pub(crate) const CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
+const CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
+
+/// The launch script the device receives, always with LF line endings. The
+/// embedded asset inherits the host checkout's endings: a Windows checkout
+/// with `core.autocrlf` rewrites it to CRLF, and the reader's `/bin/sh`
+/// refuses CR bytes, so every write and comparison goes through this form.
+pub(crate) fn content() -> &'static str {
+    static NORMALIZED: OnceLock<String> = OnceLock::new();
+    NORMALIZED.get_or_init(|| normalize(CONTENT))
+}
+
+fn normalize(text: &str) -> String {
+    text.replace('\r', "")
+}
+
 const NICKELMENU_CONFIGS: [&str; 2] = [".adds/nm/cobalt", ".adds/nm/menu"];
 const OLD_DEVICE_PATH: &str = "/mnt/onboard/.adds/cobalt/start.sh";
 
@@ -22,7 +37,7 @@ pub fn install(volume: &Path) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "the launch entrypoint has no parent directory".to_owned())?;
     fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
-    atomic_write(&destination, CONTENT.as_bytes(), None, true)?;
+    atomic_write(&destination, content().as_bytes(), None, true)?;
     verify(&destination)?;
     migrate_nickelmenu(volume)
 }
@@ -34,7 +49,7 @@ fn verify(path: &Path) -> Result<(), String> {
         return Err(format!("{} is not a regular file", path.display()));
     }
     let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    if bytes != CONTENT.as_bytes() {
+    if bytes != content().as_bytes() {
         return Err(format!("{} did not verify after writing", path.display()));
     }
     #[cfg(unix)]
@@ -294,14 +309,8 @@ fn set_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> std::io::Result<()> {
-    fs::File::open(path)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> std::io::Result<()> {
-    Ok(())
+    kobo_protocol::durability::sync_directory(path)
 }
 
 #[cfg(test)]
@@ -316,6 +325,16 @@ mod tests {
         let _ignored = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("scratch root");
         root
+    }
+
+    #[test]
+    fn strips_cr_from_a_crlf_checkout() {
+        assert_eq!(
+            super::normalize("#!/bin/sh\r\nset -eu\r\n"),
+            "#!/bin/sh\nset -eu\n"
+        );
+        assert_eq!(super::normalize("already\nlf\n"), "already\nlf\n");
+        assert!(!super::content().contains('\r'));
     }
 
     #[test]
@@ -346,7 +365,7 @@ mod tests {
         let path = root.join(super::RELATIVE_PATH);
         assert_eq!(
             fs::read_to_string(&path).expect("bootstrap"),
-            super::CONTENT
+            super::content()
         );
         #[cfg(unix)]
         assert_ne!(
@@ -374,7 +393,7 @@ mod tests {
     fn undo_removes_bootstrap_and_only_exact_cobalt_menu_lines() {
         let root = scratch("remove");
         fs::create_dir_all(root.join(".adds/nm")).expect("NickelMenu folder");
-        fs::write(root.join(super::RELATIVE_PATH), super::CONTENT).expect("bootstrap");
+        fs::write(root.join(super::RELATIVE_PATH), super::content()).expect("bootstrap");
         fs::write(
             root.join(".adds/nm/menu"),
             "before\r\nmenu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh\r\nmenu_item :main :Other :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh\r\nafter\r\n",

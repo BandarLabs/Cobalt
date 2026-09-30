@@ -2,7 +2,10 @@
 use kobo_sdk::exports::{Offer, MAX_OFFER_BYTES, OFFER_KEY};
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -65,7 +68,12 @@ fn bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
     }
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     let opened = file.metadata().map_err(|error| error.to_string())?;
-    if before.dev() != opened.dev() || before.ino() != opened.ino() {
+    // The guard catches the file being swapped between the check and the
+    // open. Windows std offers no stable file index, so size plus
+    // modification time stand in there; a same-size rewrite within one
+    // timestamp tick is not detected on Windows.
+    let same = same_file(&before, &opened);
+    if !same {
         return Err("The export file changed. Try again.".into());
     }
     let mut bytes = Vec::new();
@@ -183,7 +191,12 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
         std::process::id(),
         offer.digest
     ));
-    let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&temporary)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)
         .map_err(|_| "A previous transfer may still be running. Choose another receiving folder or remove its unfinished .part file after checking it.")?;
     let result = (|| {
         file.write_all(bytes)
@@ -200,13 +213,17 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
             let target = folder.join(format!("{base}{suffix}.{}", offer.format.extension()));
             match fs::hard_link(&temporary, &target) {
                 Ok(()) => {
-                    fs::File::open(&folder).and_then(|folder| folder.sync_all()).map_err(|error| format!("The copy was written but its save could not be confirmed: {error}"))?;
+                    kobo_protocol::durability::sync_directory(&folder).map_err(|error| format!("The copy was written but its save could not be confirmed: {error}"))?;
                     return Ok(target);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if bounded_file(&target, offer.bytes).is_ok_and(|bytes| offer.matches(&bytes)) {
-                        fs::File::open(&target).and_then(|file| file.sync_all())
-                            .and_then(|()| fs::File::open(&folder)?.sync_all())
+                        // FlushFileBuffers answers ERROR_ACCESS_DENIED on a
+                        // read-only handle, so confirming the existing copy
+                        // asks for write access even though nothing is written.
+                        fs::OpenOptions::new().read(true).write(true).open(&target)
+                            .and_then(|file| file.sync_all())
+                            .and_then(|()| kobo_protocol::durability::sync_directory(&folder))
                             .map_err(|error| format!("The copy is present, but its save could not be confirmed: {error}"))?;
                         return Ok(target);
                     }
@@ -219,6 +236,18 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
     drop(file);
     let _cleanup = fs::remove_file(&temporary);
     result
+}
+
+#[cfg(unix)]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.dev() == opened.dev() && before.ino() == opened.ino()
+}
+
+/// See the call site: Windows substitutes size and modification time for the
+/// device/inode pair, a weaker same-file guard.
+#[cfg(not(unix))]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.len() == opened.len() && before.modified().ok() == opened.modified().ok()
 }
 
 #[cfg(test)]
@@ -273,8 +302,11 @@ mod tests {
         let _ignored = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("original"), b"owner data").unwrap();
-        std::os::unix::fs::symlink(root.join("original"), root.join("link")).unwrap();
-        assert!(bounded_file(&root.join("link"), 100).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("original"), root.join("link")).unwrap();
+            assert!(bounded_file(&root.join("link"), 100).is_err());
+        }
         assert!(bounded_file(&root.join("original"), 3).is_err());
         fs::remove_dir_all(root).unwrap();
     }

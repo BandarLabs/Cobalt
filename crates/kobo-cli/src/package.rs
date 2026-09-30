@@ -101,7 +101,8 @@ pub fn check(members: &[Member]) -> Result<(), String> {
             ));
         }
         if launch_bootstrap
-            && (!member.program || member.bytes.as_slice() != crate::bootstrap::CONTENT.as_bytes())
+            && (!member.program
+                || member.bytes.as_slice() != crate::bootstrap::content().as_bytes())
         {
             return Err(
                 "the standalone launch bootstrap must be the reviewed executable".to_owned(),
@@ -491,6 +492,7 @@ pub fn is_launch_bootstrap(member: &Member) -> bool {
     member.path == LAUNCH_BOOTSTRAP
 }
 
+#[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)
@@ -500,12 +502,19 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
     fs::set_permissions(path, permissions).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// Windows has no mode bits; packaged files keep the directory's default
+/// ACLs, which match the account boundary mode bits express on Unix.
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{
-        check, header, list, tar, write_install_tree, write_volume_layout, Member, BLOCK,
-        INSTALL_ROOT,
-    };
+    #[cfg(unix)]
+    use super::write_volume_layout;
+    use super::{check, header, list, tar, write_install_tree, Member, BLOCK, INSTALL_ROOT};
+    #[cfg(unix)]
     use std::process::Command;
 
     fn member(name: &str, bytes: &[u8]) -> Member {
@@ -562,7 +571,7 @@ mod tests {
     fn only_the_reviewed_bootstrap_is_allowed_beside_the_install_root() {
         let reviewed = Member {
             path: super::LAUNCH_BOOTSTRAP.to_owned(),
-            bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+            bytes: crate::bootstrap::content().as_bytes().to_vec(),
             program: true,
         };
         check(std::slice::from_ref(&reviewed)).expect("reviewed bootstrap");
@@ -666,6 +675,8 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(&root);
     }
 
+    // The documented launch executes the packaged POSIX bootstrap script.
+    #[cfg(unix)]
     #[test]
     fn volume_folder_contains_and_launches_the_complete_documented_layout() {
         #[cfg(unix)]
@@ -679,7 +690,7 @@ mod tests {
         let members = vec![
             Member {
                 path: super::LAUNCH_BOOTSTRAP.to_owned(),
-                bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                bytes: crate::bootstrap::content().as_bytes().to_vec(),
                 program: true,
             },
             member(
@@ -701,7 +712,7 @@ mod tests {
         let bootstrap = root.join(".adds/cobalt-launch.sh");
         assert_eq!(
             std::fs::read(&bootstrap).expect("bootstrap bytes"),
-            crate::bootstrap::CONTENT.as_bytes()
+            crate::bootstrap::content().as_bytes()
         );
         #[cfg(unix)]
         assert_eq!(

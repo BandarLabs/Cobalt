@@ -15,6 +15,7 @@
 #[cfg(feature = "device-write")]
 use crate::blackbox::trace;
 use kobo_protocol::DeviceError;
+use std::sync::OnceLock;
 
 /// Where the trace goes when there is no device to write one on.
 ///
@@ -325,7 +326,8 @@ fn unpack_with_bootstrap(
             return Err(DeviceError::InvalidInput);
         }
         if standalone_bootstrap {
-            if launch_bootstrap || &tar[offset + BLOCK..end] != LAUNCH_BOOTSTRAP_CONTENT.as_bytes()
+            if launch_bootstrap
+                || &tar[offset + BLOCK..end] != launch_bootstrap_content().as_bytes()
             {
                 return Err(DeviceError::InvalidInput);
             }
@@ -398,6 +400,15 @@ const JOURNAL_TEMPORARY: &str = ".cobalt-update-transaction.new";
 const LAUNCH_BOOTSTRAP: &str = "cobalt-launch.sh";
 const LAUNCH_BOOTSTRAP_TEMPORARY: &str = "cobalt-launch.sh.new";
 const LAUNCH_BOOTSTRAP_CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
+
+/// The launch bootstrap the device receives, always with LF line endings.
+/// The embedded asset inherits the host checkout's endings: a Windows
+/// checkout with `core.autocrlf` rewrites it to CRLF, and the reader's
+/// `/bin/sh` refuses CR bytes.
+fn launch_bootstrap_content() -> &'static str {
+    static NORMALIZED: OnceLock<String> = OnceLock::new();
+    NORMALIZED.get_or_init(|| LAUNCH_BOOTSTRAP_CONTENT.replace('\r', ""))
+}
 const LAUNCH_BOOTSTRAP_ARCHIVE_PATH: &str = "mnt/onboard/.adds/cobalt-launch.sh";
 const NICKELMENU_CONFIGS: [&str; 2] = ["nm/cobalt", "nm/menu"];
 const OLD_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt/start.sh";
@@ -685,7 +696,7 @@ fn ensure_launch_bootstrap(adds: &Path) -> Result<(), DeviceError> {
         adds,
         LAUNCH_BOOTSTRAP,
         LAUNCH_BOOTSTRAP_TEMPORARY,
-        LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+        launch_bootstrap_content().as_bytes(),
         0o755,
     )?;
 
@@ -772,7 +783,7 @@ fn atomic_file(
         set_file_mode(&temporary, mode)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(parent)?.sync_all()
+        kobo_protocol::durability::sync_directory(parent)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -847,9 +858,7 @@ fn clear_journal(
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_tree(path: &Path) -> Result<(), DeviceError> {
@@ -858,9 +867,7 @@ fn sync_tree(path: &Path) -> Result<(), DeviceError> {
         return Err(DeviceError::Backend);
     }
     if metadata.is_file() {
-        return fs::File::open(path)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| DeviceError::Backend);
+        return kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend);
     }
     for entry in fs::read_dir(path).map_err(|_| DeviceError::Backend)? {
         sync_tree(&entry.map_err(|_| DeviceError::Backend)?.path())?;
@@ -960,11 +967,14 @@ fn read_octal(field: &[u8]) -> Result<u64, DeviceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_launch_bootstrap, install, recover_interrupted_update, swap_with_fault,
-        TransactionFailure, TransactionStep, JOURNAL, OWNER_FOLDERS, PREFIX,
+        ensure_launch_bootstrap, install, recover_interrupted_update, JOURNAL, OWNER_FOLDERS,
+        PREFIX,
     };
+    #[cfg(unix)]
+    use super::{swap_with_fault, TransactionFailure, TransactionStep};
     use kobo_protocol::DeviceError;
     use std::fs;
+    #[cfg(unix)]
     use std::process::Command;
 
     /// A tar member for the archives these tests publish.
@@ -1002,11 +1012,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_launch_bootstrap_has_lf_endings() {
+        assert!(!super::launch_bootstrap_content().contains('\r'));
+    }
+
     fn launch_bootstrap() -> Member<'static> {
         Member {
             path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
             kind: b'0',
-            payload: super::LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+            payload: super::launch_bootstrap_content().as_bytes(),
             mode: 0o755,
         }
     }
@@ -1135,6 +1150,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(&adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn incomplete_launch_chain_is_rejected_before_owner_transaction() {
         let cases = [
@@ -1255,7 +1271,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(adds.join("cobalt-launch.sh")).expect("launcher"),
-            super::LAUNCH_BOOTSTRAP_CONTENT
+            super::launch_bootstrap_content()
         );
         fs::remove_dir_all(adds).expect("cleanup");
     }
@@ -1387,7 +1403,7 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(adds.join("cobalt-launch.sh")).expect("bootstrap"),
-            super::LAUNCH_BOOTSTRAP_CONTENT
+            super::launch_bootstrap_content()
         );
         let config = fs::read_to_string(adds.join("nm/cobalt")).expect("migrated entry");
         assert!(config.contains(super::STABLE_LAUNCH_PATH), "{config}");
@@ -1465,6 +1481,11 @@ mod tests {
         Ok(())
     }
 
+    /// Runs the launch chain for real. The chain being exercised is the
+    /// device's sh script trio (start.sh -> kobod -> kobo-launcher), so the
+    /// tests built on it are Unix-only; on Windows the candidate selection
+    /// and recovery logic above the scripts is what runs.
+    #[cfg(unix)]
     fn assert_launchable(adds: &std::path::Path) {
         let launched = adds.join("launched-release");
         let status = Command::new("/bin/sh")
@@ -1484,6 +1505,7 @@ mod tests {
         fs::remove_file(launched).expect("remove launch marker");
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_quarantines_unusable_current_and_promotes_exact_candidate() {
         let adds = scratch("quarantine-current");
@@ -1508,6 +1530,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_finishes_promotion_after_crash_following_quarantine() {
         let adds = scratch("quarantine-interruption");
@@ -1530,6 +1553,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_ignores_incomplete_candidate_and_selects_complete_one() {
         let adds = scratch("incomplete-candidate");
@@ -1548,6 +1572,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_fails_closed_without_a_complete_candidate() {
         let adds = scratch("no-candidate");
@@ -1571,6 +1596,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn old_quarantines_never_block_candidate_and_current_owner_data_is_restored() {
         let adds = scratch("bounded-quarantine");
@@ -1636,6 +1662,7 @@ mod tests {
         assert!(!adds.join(JOURNAL).exists(), "journal was not cleared");
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_bootstrap_launches_and_startup_recovers_every_forward_boundary() {
         let trace_root = transaction_fixture("forward-trace");
@@ -1679,6 +1706,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_bootstrap_launches_and_startup_recovers_every_rollback_boundary() {
         let trace_root = transaction_fixture("rollback-trace");

@@ -4,10 +4,21 @@ use kobo_app_store::{
     ManifestInput,
 };
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 
 const SEED: [u8; 32] = [71; 32]; // Public, reproducible test material only.
+
+/// Creates a fresh directory that only the owner may enter. Windows has no
+/// mode bits; the user profile ACL is the boundary there.
+fn create_private(path: &Path) -> std::io::Result<()> {
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path)
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
@@ -17,9 +28,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new(&args[2]);
     let key = derive_public_key(&SEED)?.to_hex();
     if args[1] == "init" {
-        fs::DirBuilder::new().mode(0o700).create(root)?;
+        create_private(root)?;
         for name in ["installed", "transport"] {
-            fs::DirBuilder::new().mode(0o700).create(root.join(name))?;
+            create_private(&root.join(name))?;
         }
         fs::write(root.join("format"), b"cobalt.simulator-app-store.v1\n")?;
         fs::write(root.join("key.hex"), &key)?;
@@ -73,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kobod::app_store::BETA_CATALOG_SIGNATURE_URL,
         sign(&catalog, &SEED)?.to_hex().as_bytes(),
     )?;
-    fs::File::open(root.join("transport"))?.sync_all()?;
+    kobo_protocol::durability::sync_directory(&root.join("transport"))?;
     println!(
         "Local signed Store fixture {} at {}",
         args[3],

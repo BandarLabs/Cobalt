@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 
@@ -39,8 +40,10 @@ fn parent(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
+/// The shared implementation lives in `kobo_protocol::durability` so the CLI's
+/// own flush sites cannot drift into a quieter platform arm.
 pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
-    fs::File::open(path)?.sync_all()
+    kobo_protocol::durability::sync_directory(path)
 }
 
 pub(crate) fn ensure_directory(path: &Path) -> io::Result<()> {
@@ -67,7 +70,13 @@ fn ensure_directory_with(
     if parent != path {
         ensure_directory_with(parent, sync)?;
     }
-    match fs::DirBuilder::new().mode(0o700).create(path) {
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut builder = fs::DirBuilder::new();
+    // Windows has no Unix mode bits; a directory under the user profile is
+    // already restricted to the owning account by its ACL.
+    #[cfg(unix)]
+    builder.mode(0o700);
+    match builder.create(path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => {}
         Err(error) => return Err(error),
@@ -84,7 +93,13 @@ fn publish_with(
     destination: &Path,
     sync: &mut impl FnMut(&Path) -> io::Result<()>,
 ) -> io::Result<()> {
-    fs::File::open(partial)?.sync_all()?;
+    // FlushFileBuffers answers ERROR_ACCESS_DENIED on a read-only handle, so
+    // the final flush asks for write access even though nothing is written.
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(partial)?
+        .sync_all()?;
     fs::rename(partial, destination)?;
     sync(parent(destination))
 }
@@ -129,7 +144,14 @@ mod tests {
                 std::process::id(),
                 std::thread::current().id()
             ));
-            fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+            #[allow(unused_mut)] // only the Unix arm sets a mode
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt as _;
+                builder.mode(0o700);
+            }
+            builder.create(&root).unwrap();
             Self(root)
         }
     }

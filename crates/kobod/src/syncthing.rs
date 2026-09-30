@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -234,6 +235,8 @@ fn window_is_due(settings: &Settings, reason: &str) -> bool {
 fn initialize(home: &Path) -> Result<(), String> {
     verify_engine(Path::new(ENGINE))?;
     fs::create_dir_all(home).map_err(|error| format!("create Sync state: {error}"))?;
+    // Windows has no mode bits; the user profile ACL scopes the directory.
+    #[cfg(unix)]
     fs::set_permissions(home, fs::Permissions::from_mode(0o700))
         .map_err(|error| format!("protect Sync state: {error}"))?;
     if !home.join("cert.pem").is_file() || !home.join("key.pem").is_file() {
@@ -265,11 +268,8 @@ fn prepare(home: &Path) -> Result<(), String> {
     }
     let key_path = home.join("api-key");
     if !key_path.exists() {
-        let mut entropy =
-            File::open("/dev/urandom").map_err(|error| format!("open entropy: {error}"))?;
         let mut bytes = [0_u8; 32];
-        entropy
-            .read_exact(&mut bytes)
+        kobo_abi::entropy::random_bytes(&mut bytes)
             .map_err(|error| format!("read entropy: {error}"))?;
         let mut key = String::with_capacity(bytes.len() * 2);
         for byte in bytes {
@@ -418,10 +418,14 @@ fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value.as_bytes())
@@ -474,11 +478,12 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
     // never leaves a partial file at a path the next run would take for an
     // installed engine and hand to `verify_engine` as a checksum failure.
     let partial = engine.with_extension("part");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o755)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o755);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("create Sync engine: {error}"))?;
     file.write_all(&bytes)
@@ -496,12 +501,16 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
 fn verify_engine(engine: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(engine)
         .map_err(|_| "Sync engine is not installed. Check Wi-Fi and try again.".to_owned())?;
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.mode() & 0o111 == 0
-        || metadata.mode() & 0o022 != 0
-        || metadata.uid() != 0
-    {
+    // Ownership and permission hardening are Unix checks (root-owned, not
+    // group/world-writable, executable). std exposes neither owner nor mode
+    // on Windows, where the daemon does not run outside development; the
+    // digest pin below is the integrity check that still applies everywhere.
+    #[cfg(unix)]
+    let unsafe_metadata =
+        metadata.mode() & 0o111 == 0 || metadata.mode() & 0o022 != 0 || metadata.uid() != 0;
+    #[cfg(windows)]
+    let unsafe_metadata = false;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || unsafe_metadata {
         return Err(
             "Sync engine is unsafe or corrupt. Install the platform update again.".to_owned(),
         );
@@ -954,17 +963,23 @@ fn record_ingest(
     atomic_write(&path, &lines.join("\n"), 0o600)
 }
 
-fn atomic_bytes(path: &Path, value: &[u8], mode: u32) -> Result<(), String> {
+fn atomic_bytes(
+    path: &Path,
+    value: &[u8],
+    #[cfg_attr(not(unix), allow(unused))] mode: u32,
+) -> Result<(), String> {
     let temporary = path.with_extension("new");
     match fs::remove_file(&temporary) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value)

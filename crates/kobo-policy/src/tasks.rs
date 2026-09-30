@@ -2404,6 +2404,8 @@ mod tests {
         }
     }
 
+    // Symlink fixtures need Unix semantics.
+    #[cfg(unix)]
     #[test]
     fn app_secret_lookup_refuses_symlinked_namespaces_and_values() {
         use std::os::unix::fs::symlink;

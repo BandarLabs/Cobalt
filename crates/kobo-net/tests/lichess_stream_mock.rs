@@ -376,7 +376,12 @@ fn long_lived_seek_cancels_promptly_and_is_sent_exactly_once() {
             &worker_cancel,
         )
     });
-    thread::sleep(Duration::from_millis(100));
+    // Cancel once the seek is actually on the wire: a fixed delay races
+    // connection and TLS setup, which takes longer than that on Windows.
+    let sent = Instant::now() + Duration::from_secs(5);
+    while requests.load(Ordering::SeqCst) == 0 && Instant::now() < sent {
+        thread::sleep(Duration::from_millis(10));
+    }
     cancel.store(true, Ordering::SeqCst);
     assert_eq!(
         worker.join().expect("seek worker"),

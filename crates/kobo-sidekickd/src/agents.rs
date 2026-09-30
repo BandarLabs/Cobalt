@@ -328,16 +328,17 @@ fn publish_config(
     previous: Option<&str>,
 ) -> Result<String, String> {
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
     let partial = path.with_extension("json.writing");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&partial)
-        .map_err(|error| {
-            format!("Cannot prepare configuration; previous file unchanged: {error}")
-        })?;
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&partial).map_err(|error| {
+        format!("Cannot prepare configuration; previous file unchanged: {error}")
+    })?;
     let result = (|| {
         file.write_all(text.as_bytes())
             .and_then(|()| file.sync_all())
@@ -361,6 +362,7 @@ fn publish_config(
 
 fn backup_config(path: &std::path::Path, previous: &str) -> Result<PathBuf, String> {
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
     for index in 0..1000 {
         let extension = if index == 0 {
@@ -369,12 +371,12 @@ fn backup_config(path: &std::path::Path, previous: &str) -> Result<PathBuf, Stri
             format!("json.bak.{index}")
         };
         let backup = path.with_extension(extension);
-        let mut file = match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&backup)
-        {
+        #[allow(unused_mut)] // Windows has no mode bits to set.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = match options.open(&backup) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(format!("Cannot create configuration backup: {error}")),

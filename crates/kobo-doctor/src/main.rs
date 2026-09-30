@@ -397,10 +397,8 @@ fn read_whole_panel(
         && u64::from(geometry.stride) == row_bytes as u64
         && geometry.memory_length >= total as u64
     {
-        use std::os::unix::fs::FileExt as _;
         let mut pixels = vec![0_u8; total];
-        file.read_exact_at(&mut pixels, 0)
-            .map_err(|error| format!("{error}"))?;
+        read_exact_at(file, &mut pixels, 0).map_err(|error| format!("{error}"))?;
         return Ok(pixels);
     }
     read_region(file, geometry, whole)
@@ -515,6 +513,32 @@ fn observe(
     )
     .map_err(|error| error.to_string())?;
     println!("touch observation complete: {reported} event(s)");
+    Ok(())
+}
+
+/// Positional read: `FileExt` on Unix, the `seek_read` equivalent on Windows.
+/// Doctor is a device tool, so the Windows arm exists to keep the workspace
+/// compiling there; it is never exercised on a real panel.
+#[cfg(unix)]
+fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt as _;
+    file.read_exact_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt as _;
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let read = file.seek_read(&mut buffer[filled..], offset + filled as u64)?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "positional framebuffer read ended early",
+            ));
+        }
+        filled += read;
+    }
     Ok(())
 }
 

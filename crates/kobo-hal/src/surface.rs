@@ -11,7 +11,55 @@ use crate::refresh::Rect;
 use kobo_profile::{Bitfield, DeviceProfile};
 use std::fs::File;
 use std::io;
-use std::os::unix::fs::FileExt;
+#[cfg(unix)]
+use std::os::unix::fs::FileExt as _;
+
+/// Positional reads. `read_exact_at` is Unix-only in `std`; the Windows
+/// `seek_read` answers the same question through the same cursor-less handle.
+#[cfg(unix)]
+fn read_exact_at(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<()> {
+    file.read_exact_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt as _;
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let read = file.seek_read(&mut buffer[filled..], offset + filled as u64)?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "positional framebuffer read ended early",
+            ));
+        }
+        filled += read;
+    }
+    Ok(())
+}
+
+/// Positional writes, behind the same reasoning as [`read_exact_at`].
+#[cfg(all(unix, feature = "device-write"))]
+fn write_all_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<()> {
+    file.write_all_at(buffer, offset)
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn write_all_at(file: &File, buffer: &[u8], offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt as _;
+    let mut written = 0;
+    while written < buffer.len() {
+        let done = file.seek_write(&buffer[written..], offset + written as u64)?;
+        if done == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "positional framebuffer write accepted no bytes",
+            ));
+        }
+        written += done;
+    }
+    Ok(())
+}
 
 /// Bytes per pixel required by every supported Kobo surface.
 pub const SUPPORTED_BYTES_PER_PIXEL: usize = 4;
@@ -394,7 +442,7 @@ pub fn read_region(
         let slice = pixels
             .get_mut(start..end)
             .ok_or(SurfaceError::RegionOutsideMemory)?;
-        framebuffer.read_exact_at(slice, offset)?;
+        read_exact_at(framebuffer, slice, offset)?;
     }
     Ok(RegionSnapshot { placement, pixels })
 }
@@ -419,7 +467,7 @@ pub fn write_region(
         return Err(SurfaceError::RegionMismatch);
     }
     if placement.is_contiguous() {
-        framebuffer.write_all_at(&snapshot.pixels, placement.first_row_offset)?;
+        write_all_at(framebuffer, &snapshot.pixels, placement.first_row_offset)?;
         return Ok(());
     }
     for row in 0..placement.region.height {
@@ -432,7 +480,7 @@ pub fn write_region(
             .pixels
             .get(start..end)
             .ok_or(SurfaceError::RegionOutsideMemory)?;
-        framebuffer.write_all_at(slice, offset)?;
+        write_all_at(framebuffer, slice, offset)?;
     }
     Ok(())
 }

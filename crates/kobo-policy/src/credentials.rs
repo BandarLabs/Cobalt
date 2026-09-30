@@ -9,6 +9,7 @@ use kobo_net::{has_origin, parse};
 use kobo_protocol::{Credential, CredentialUse, SecretHeader};
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[path = "miniflux_credentials.rs"]
@@ -173,16 +174,21 @@ fn write_private_record(
         fs::remove_file(&temporary).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     }
     let result: std::io::Result<()> = (|| {
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        // Unix mode bits keep the record owner-only. Windows has no mode bits;
+        // a file under the user profile is restricted to the owning account by
+        // its ACL instead, which is the same privacy outcome by the platform's
+        // own mechanism.
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&temporary)?;
+        #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(directory)?.sync_all()
+        crate::persistence::sync_directory(directory)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -194,24 +200,27 @@ fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::DirBuilder::new()
-                .mode(0o700)
+            #[allow(unused_mut)] // Windows has no mode bits to set.
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            builder.mode(0o700);
+            builder
                 .create(path)
                 .map_err(|_| kobo_protocol::DeviceError::Backend)?;
         }
         Ok(_) | Err(_) => return Err(kobo_protocol::DeviceError::Backend),
     }
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .map_err(|_| kobo_protocol::DeviceError::Backend)?;
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    // The directory flushes go through the persistence boundary, whose Windows
+    // half opens directories with FILE_FLAG_BACKUP_SEMANTICS.
+    crate::persistence::sync_directory(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        crate::persistence::sync_directory(parent)
             .map_err(|_| kobo_protocol::DeviceError::Backend)?;
     }
     Ok(())
@@ -829,6 +838,8 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(root);
     }
 
+    // Symlink fixtures need Unix semantics.
+    #[cfg(unix)]
     #[test]
     fn app_identity_and_symlink_boundaries_fail_closed() {
         use std::os::unix::fs::symlink;

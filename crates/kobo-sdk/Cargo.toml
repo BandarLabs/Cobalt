@@ -29,6 +29,7 @@ text = ["dep:kobo-text"]
 runtime-settings = []
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-json = { version = "0.3.2", path = "../kobo-json" }
 kobo-state = { path = "../kobo-state" }
 kobo-net = { version = "0.3.2", path = "../kobo-net" }

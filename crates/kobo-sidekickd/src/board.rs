@@ -7,8 +7,6 @@
 //! [`Board::answer`] joins the two. One mutex, two condvars, no channels:
 //! the state is small enough to look at whole.
 
-use std::fs::File;
-use std::io::Read;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -279,10 +277,8 @@ impl Default for Board {
 /// landing on the wrong question.
 fn random_start() -> u32 {
     let mut bytes = [0_u8; 4];
-    if let Ok(mut urandom) = File::open("/dev/urandom") {
-        if urandom.read_exact(&mut bytes).is_ok() {
-            return u32::from_le_bytes(bytes);
-        }
+    if kobo_abi::entropy::random_bytes(&mut bytes).is_ok() {
+        return u32::from_le_bytes(bytes);
     }
     // No urandom to be had: the clock's nanoseconds still miss any earlier
     // run that answered even one question a whole second before this.

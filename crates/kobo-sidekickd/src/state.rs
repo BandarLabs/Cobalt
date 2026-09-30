@@ -313,11 +313,9 @@ fn lan_address() -> Option<String> {
 /// no zero against o, no one against l.
 fn pairing_code() -> Result<String, String> {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-    use std::io::Read;
     let mut noise = [0_u8; 6];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut noise))
-        .map_err(|error| format!("read /dev/urandom: {error}"))?;
+    kobo_abi::entropy::random_bytes(&mut noise)
+        .map_err(|error| format!("read system randomness: {error}"))?;
     let mut code = String::new();
     for byte in noise {
         code.push(char::from(ALPHABET[usize::from(byte) % ALPHABET.len()]));
