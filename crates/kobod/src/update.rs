@@ -15,6 +15,7 @@
 #[cfg(feature = "device-write")]
 use crate::blackbox::trace;
 use kobo_protocol::DeviceError;
+use std::sync::OnceLock;
 
 /// Where the trace goes when there is no device to write one on.
 ///
@@ -325,7 +326,8 @@ fn unpack_with_bootstrap(
             return Err(DeviceError::InvalidInput);
         }
         if standalone_bootstrap {
-            if launch_bootstrap || &tar[offset + BLOCK..end] != LAUNCH_BOOTSTRAP_CONTENT.as_bytes()
+            if launch_bootstrap
+                || &tar[offset + BLOCK..end] != launch_bootstrap_content().as_bytes()
             {
                 return Err(DeviceError::InvalidInput);
             }
@@ -398,6 +400,15 @@ const JOURNAL_TEMPORARY: &str = ".cobalt-update-transaction.new";
 const LAUNCH_BOOTSTRAP: &str = "cobalt-launch.sh";
 const LAUNCH_BOOTSTRAP_TEMPORARY: &str = "cobalt-launch.sh.new";
 const LAUNCH_BOOTSTRAP_CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
+
+/// The launch bootstrap the device receives, always with LF line endings.
+/// The embedded asset inherits the host checkout's endings: a Windows
+/// checkout with `core.autocrlf` rewrites it to CRLF, and the reader's
+/// `/bin/sh` refuses CR bytes.
+fn launch_bootstrap_content() -> &'static str {
+    static NORMALIZED: OnceLock<String> = OnceLock::new();
+    NORMALIZED.get_or_init(|| LAUNCH_BOOTSTRAP_CONTENT.replace('\r', ""))
+}
 const LAUNCH_BOOTSTRAP_ARCHIVE_PATH: &str = "mnt/onboard/.adds/cobalt-launch.sh";
 const NICKELMENU_CONFIGS: [&str; 2] = ["nm/cobalt", "nm/menu"];
 const OLD_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt/start.sh";
@@ -685,7 +696,7 @@ fn ensure_launch_bootstrap(adds: &Path) -> Result<(), DeviceError> {
         adds,
         LAUNCH_BOOTSTRAP,
         LAUNCH_BOOTSTRAP_TEMPORARY,
-        LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+        launch_bootstrap_content().as_bytes(),
         0o755,
     )?;
 
@@ -1001,11 +1012,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_launch_bootstrap_has_lf_endings() {
+        assert!(!super::launch_bootstrap_content().contains('\r'));
+    }
+
     fn launch_bootstrap() -> Member<'static> {
         Member {
             path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
             kind: b'0',
-            payload: super::LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+            payload: super::launch_bootstrap_content().as_bytes(),
             mode: 0o755,
         }
     }
@@ -1255,7 +1271,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(adds.join("cobalt-launch.sh")).expect("launcher"),
-            super::LAUNCH_BOOTSTRAP_CONTENT
+            super::launch_bootstrap_content()
         );
         fs::remove_dir_all(adds).expect("cleanup");
     }
@@ -1387,7 +1403,7 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(adds.join("cobalt-launch.sh")).expect("bootstrap"),
-            super::LAUNCH_BOOTSTRAP_CONTENT
+            super::launch_bootstrap_content()
         );
         let config = fs::read_to_string(adds.join("nm/cobalt")).expect("migrated entry");
         assert!(config.contains(super::STABLE_LAUNCH_PATH), "{config}");

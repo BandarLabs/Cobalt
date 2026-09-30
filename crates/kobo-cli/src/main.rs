@@ -4547,7 +4547,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     // independently installed copy before its rename transaction.
     let mut members = vec![package::Member {
         path: package::LAUNCH_BOOTSTRAP.to_owned(),
-        bytes: bootstrap::CONTENT.as_bytes().to_vec(),
+        bytes: bootstrap::content().as_bytes().to_vec(),
         program: true,
     }];
     for (name, features) in INSTALLED_PACKAGES {
@@ -5780,7 +5780,7 @@ fn members_outside_install_root(
                 && entry.path == package::LAUNCH_BOOTSTRAP
                 && entry.kind == b'0'
                 && entry.mode == 0o755
-                && entry.size == bootstrap::CONTENT.len();
+                && entry.size == bootstrap::content().len();
             !(path.starts_with(root) || root.starts_with(path) || reviewed_bootstrap)
         })
         .map(|(_, entry)| entry.path.clone())
@@ -5797,7 +5797,7 @@ fn validated_release_archive(
     if first.path != package::LAUNCH_BOOTSTRAP
         || first.kind != b'0'
         || first.mode != 0o755
-        || first.size != bootstrap::CONTENT.len()
+        || first.size != bootstrap::content().len()
     {
         return Err(
             "standalone launch bootstrap must be the first regular 0755 archive member".to_owned(),
@@ -5817,7 +5817,7 @@ fn validated_release_archive(
         .ok_or("release archive has no standalone launch bootstrap")?;
     if !package::is_launch_bootstrap(bootstrap_member)
         || !bootstrap_member.program
-        || bootstrap_member.bytes != bootstrap::CONTENT.as_bytes()
+        || bootstrap_member.bytes != bootstrap::content().as_bytes()
     {
         return Err("standalone launch bootstrap differs from the reviewed executable".to_owned());
     }
@@ -8819,7 +8819,7 @@ mod tests {
         let members = vec![
             package::Member {
                 path: package::LAUNCH_BOOTSTRAP.to_owned(),
-                bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
+                bytes: super::bootstrap::content().as_bytes().to_vec(),
                 program: true,
             },
             super::text_member("start.sh", super::START_SCRIPT, true),
@@ -8834,7 +8834,7 @@ mod tests {
 
     #[test]
     fn high_level_readback_requires_exact_first_unique_bootstrap() {
-        let reviewed = super::bootstrap::CONTENT.as_bytes().to_vec();
+        let reviewed = super::bootstrap::content().as_bytes().to_vec();
         let version = (
             format!("{}/VERSION", package::INSTALL_ROOT),
             b"0.1.0\n".to_vec(),
@@ -8912,7 +8912,7 @@ mod tests {
         let members = vec![
             package::Member {
                 path: package::LAUNCH_BOOTSTRAP.to_owned(),
-                bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
+                bytes: super::bootstrap::content().as_bytes().to_vec(),
                 program: true,
             },
             super::text_member("VERSION", "0.1.0\n", false),
@@ -9975,7 +9975,7 @@ mod tests {
             let members = vec![
                 crate::package::Member {
                     path: crate::package::LAUNCH_BOOTSTRAP.to_owned(),
-                    bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                    bytes: crate::bootstrap::content().as_bytes().to_vec(),
                     program: true,
                 },
                 crate::package::Member {
@@ -10026,7 +10026,7 @@ mod tests {
                 &[
                     (
                         crate::package::LAUNCH_BOOTSTRAP.to_owned(),
-                        crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                        crate::bootstrap::content().as_bytes().to_vec(),
                         0o700,
                     ),
                     (
