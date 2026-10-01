@@ -163,3 +163,61 @@ fn library_page_turns_clamp_and_preserve_the_active_story() {
         .rect_of_action(action_id("story-0"))
         .is_some());
 }
+
+#[test]
+fn every_restore_slot_and_checkpoint_is_reachable_in_both_poses() {
+    for (width, height) in [(1072, 1448), (1448, 1072)] {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                width,
+                height,
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = AppRunner::with_metrics(Parser::default(), metrics);
+            let mut context = runner.context();
+            let mut parser = ready_story();
+            parser
+                .saves
+                .push(save_name(parser.machine.as_ref().unwrap().info(), "game"));
+            parser.command(&mut context, "restore");
+            let pages = parser.slot_pages(&context);
+            assert_eq!(
+                pages.iter().flatten().copied().collect::<Vec<_>>(),
+                (0..11).collect::<Vec<_>>()
+            );
+            let rows = parser.slot_rows();
+            for (page, indices) in pages.iter().enumerate() {
+                assert_eq!(parser.slots_page, page);
+                let screen = parser.slots_screen_for(&context);
+                let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                assert!(
+                    screen.diagnostics(&metrics, &chrome).issues.is_empty(),
+                    "{metrics:?} page {page}"
+                );
+                let layout = screen.layout_with(&metrics, &chrome);
+                for &index in indices {
+                    let action = action_id(&rows[index].0);
+                    let rect = layout.rect_of_action(action).expect("slot visible");
+                    assert_eq!(
+                        layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                        Some(action)
+                    );
+                }
+                if page + 1 < pages.len() {
+                    parser.on_action(&mut context, action_id("slots-page-next"));
+                }
+            }
+            parser.on_page_turn(&mut context, true);
+            assert_eq!(parser.slots_page, pages.len() - 1);
+            while parser.slots_page > 0 {
+                parser.on_action(&mut context, action_id("slots-page-back"));
+            }
+            parser.on_page_turn(&mut context, false);
+            assert_eq!(parser.slots_page, 0);
+            parser.on_action(&mut context, ActionId::BACK);
+            assert_eq!(parser.view, View::Play);
+            assert!(!parser.machine.as_ref().unwrap().awaiting_restore());
+        }
+    }
+}

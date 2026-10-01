@@ -13,11 +13,6 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 use zvm::{Machine, RunState, StoryInfo};
 
-// Three rows to a page rather than four: with the story's own checkpoint
-// listed and a message on the panel, four rows crowded the guidance line off
-// the largest text scale, and the renderer refused the screen.
-const SLOT_PAGE_ROWS: usize = 3;
-
 const STORY_PREFIX: &str = "story-";
 /// Shelf name of the bundled tutorial story.
 const TUTORIAL_BLOB: &str = "story-first-light.z3";
@@ -124,7 +119,7 @@ impl Parser {
         context.set_screen(match self.view {
             View::Library => self.library_screen(context),
             View::Play => self.play_screen(),
-            View::Slots => self.slots_screen(),
+            View::Slots => self.slots_screen_for(context),
         });
     }
 
@@ -256,11 +251,7 @@ impl Parser {
         builder.build()
     }
 
-    fn slots_screen(&self) -> Screen {
-        let title = match self.slot_action {
-            SlotAction::Save => "Save game",
-            SlotAction::Restore => "Restore game",
-        };
+    fn slot_rows(&self) -> Vec<(String, String, String, Glyph)> {
         let slot_rows = (1..=10).map(|slot| {
             let occupied = self.machine.as_ref().is_some_and(|machine| {
                 self.saves
@@ -286,7 +277,7 @@ impl Parser {
         } else {
             None
         };
-        let all_rows: Vec<_> = checkpoint
+        checkpoint
             .into_iter()
             .map(|_| {
                 (
@@ -297,15 +288,14 @@ impl Parser {
                 )
             })
             .chain(slot_rows)
-            .collect();
-        let page_count = all_rows.len().div_ceil(SLOT_PAGE_ROWS);
-        let page = self.slots_page.min(page_count - 1);
-        let first = page * SLOT_PAGE_ROWS;
-        let last = (first + SLOT_PAGE_ROWS).min(all_rows.len());
-        let rows: Vec<_> = all_rows[first..last].to_vec();
-        // One line up top says what a slot is before anybody has to guess:
-        // a position of this story kept on this reader, with the story
-        // itself resuming where it was left whether a slot was used or not.
+            .collect()
+    }
+
+    fn slots_prefix(&self) -> ScreenBuilder {
+        let title = match self.slot_action {
+            SlotAction::Save => "Save game",
+            SlotAction::Restore => "Restore game",
+        };
         let guidance = match self.slot_action {
             SlotAction::Save => {
                 "Keep this position in a slot. The story also resumes where you left off."
@@ -317,18 +307,46 @@ impl Parser {
         let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
             .owns_back(true)
-            .text(guidance)
-            .rows(rows);
-        if page_count > 1 {
+            .text(guidance);
+        if let Some(message) = &self.message {
+            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        }
+        builder
+    }
+
+    fn slot_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.slot_rows();
+        let labels: Vec<_> = rows
+            .iter()
+            .map(|row| (row.1.as_str(), row.2.as_str()))
+            .collect();
+        context.paginate_rows_under(
+            &labels,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &self.slots_prefix().build(),
+        )
+    }
+
+    #[cfg(test)]
+    fn slots_screen(&self) -> Screen {
+        self.slots_screen_for(&Context::default())
+    }
+
+    fn slots_screen_for(&self, context: &Context) -> Screen {
+        let rows = self.slot_rows();
+        let pages = self.slot_pages(context);
+        let page = self.slots_page.min(pages.len().saturating_sub(1));
+        let mut builder = self
+            .slots_prefix()
+            .rows(pages[page].iter().map(|&index| rows[index].clone()));
+        if pages.len() > 1 {
             builder = builder
                 .page_turns("slots-page-back", "slots-page-next")
                 .page_position(
                     u16::try_from(page + 1).unwrap_or(u16::MAX),
-                    u16::try_from(page_count).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
                 );
-        }
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
         builder.build()
     }
@@ -656,6 +674,12 @@ impl KoboApp for Parser {
             context.shelf().list();
             return;
         }
+        if self.view == View::Slots
+            && (action == action_id("slots-page-back") || action == action_id("slots-page-next"))
+        {
+            self.on_page_turn(context, action == action_id("slots-page-next"));
+            return;
+        }
         if self.view == View::Library
             && (action == action_id("library-previous") || action == action_id("library-next"))
         {
@@ -813,7 +837,7 @@ impl KoboApp for Parser {
             return;
         }
         if self.view == View::Slots {
-            let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
+            let page_count = self.slot_pages(context).len();
             self.slots_page = if forward {
                 (self.slots_page + 1).min(page_count - 1)
             } else {
@@ -1383,16 +1407,17 @@ mod tests {
         };
         parser.slot_action = SlotAction::Restore;
         parser.message = Some("The story asked to restore a game - pick a slot.".to_owned());
-        let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
         for scale in TextScale::STEPS {
             let scaled = DisplayMetrics {
                 text_scale: scale,
                 ..CLARA_BW_METRICS
             };
-            for page in 0..page_count {
+            let runner = kobo_sdk::AppRunner::with_metrics(Parser::default(), scaled);
+            let context = runner.context();
+            for page in 0..parser.slot_pages(&context).len() {
                 parser.slots_page = page;
                 let diagnostics = parser
-                    .slots_screen()
+                    .slots_screen_for(&context)
                     .diagnostics(&scaled, &Chrome::default());
                 assert!(
                     diagnostics.issues.is_empty(),
