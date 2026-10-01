@@ -462,6 +462,15 @@ enum View {
     Archive,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ExportStatus {
+    #[default]
+    Idle,
+    Writing,
+    Saved,
+    Failed,
+}
+
 struct Game {
     today: String,
     date: String,
@@ -471,7 +480,7 @@ struct Game {
     archive_guesses: Vec<String>,
     keyboard: Keyboard,
     notice: String,
-    export_note: Option<String>,
+    export_status: ExportStatus,
     hard: bool,
     typing: bool,
     view: View,
@@ -497,7 +506,7 @@ impl Game {
             archive_guesses: Vec::new(),
             keyboard: Keyboard::new(),
             notice: "Six guesses. Shapes, not color, carry the state.".into(),
-            export_note: None,
+            export_status: ExportStatus::Idle,
             hard: false,
             typing: false,
             view: View::Board,
@@ -839,11 +848,28 @@ impl Game {
                 builder = builder.text(format!("Solved in {} of 6: {}", index + 1, count));
             }
         }
-        builder
-            .text(format!("Today is {}.", full_date(&self.today)))
-            .button("export", "Export results")
-            .bottom_action("close-stats", "Play")
-            .build()
+        builder = builder.text(format!("Today is {}.", full_date(&self.today)));
+        builder = match self.export_status {
+            ExportStatus::Idle => builder,
+            ExportStatus::Writing => builder.secondary("Writing results…"),
+            ExportStatus::Saved => builder.secondary(format!("Saved as {EXPORT}.")),
+            ExportStatus::Failed => {
+                builder.secondary("Results could not be saved. Check storage and try again.")
+            }
+        };
+        builder = if self.export_status == ExportStatus::Writing {
+            builder.disabled_button("export", "Exporting results")
+        } else {
+            builder.button(
+                "export",
+                if self.export_status == ExportStatus::Failed {
+                    "Try export again"
+                } else {
+                    "Export results"
+                },
+            )
+        };
+        builder.bottom_action("close-stats", "Play").build()
     }
 
     fn archive_screen(&self) -> Screen {
@@ -882,6 +908,7 @@ impl Game {
     fn typing_screen(&self) -> Screen {
         ScreenBuilder::new("inkling")
             .top_bar(if self.archive { "Archive" } else { "Inkling" })
+            .owns_back(true)
             .typed(&self.keyboard, "Type five letters")
             .text(self.knowledge())
             .keyboard(&self.keyboard, "Guess")
@@ -931,15 +958,27 @@ impl KoboApp for Game {
                 }
                 self.load = LoadState::Ready;
             }
-            StoreResult::Saved { key } if key == EXPORT => {
-                self.export_note = Some(format!("Results written to {EXPORT}."));
-            }
             StoreResult::Denied(_) => {
                 self.load = LoadState::Ready;
                 self.notice = "Progress could not be saved. Check available storage.".into();
             }
             _ => return,
         }
+        c.set_screen(self.screen());
+    }
+    fn on_save(&mut self, c: &mut Context, key: &str, result: StoreResult) {
+        if key != EXPORT {
+            self.on_store(c, result);
+            return;
+        }
+        if self.export_status != ExportStatus::Writing {
+            return;
+        }
+        self.export_status = match result {
+            StoreResult::Saved { .. } => ExportStatus::Saved,
+            StoreResult::Denied(_) => ExportStatus::Failed,
+            _ => return,
+        };
         c.set_screen(self.screen());
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
@@ -957,13 +996,12 @@ impl KoboApp for Game {
             }
             View::Stats => {
                 if a == action_id("close-stats") || a == ActionId::BACK {
-                    self.export_note = None;
                     self.view = View::Board;
                     changed = true;
-                } else if a == action_id("export") {
+                } else if a == action_id("export") && self.export_status != ExportStatus::Writing {
                     let text = self.export_text();
                     c.store().save(EXPORT, text.into_bytes());
-                    self.export_note = Some("Writing results.".into());
+                    self.export_status = ExportStatus::Writing;
                     changed = true;
                 }
             }
@@ -990,7 +1028,7 @@ impl KoboApp for Game {
                             save = !self.archive;
                             self.typing = false;
                         }
-                    } else if a == action_id("cancel") {
+                    } else if a == action_id("cancel") || a == ActionId::BACK {
                         self.typing = false;
                         changed = true;
                     }
@@ -1356,6 +1394,119 @@ mod help_layout_tests {
                         .rect_of_action(action_id("close-help"))
                         .is_some());
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Command, StoreError};
+    use kobo_ui::{Chrome, TextScale, CLARA_BW_METRICS};
+
+    fn ready() -> AppRunner<Game> {
+        let mut runner = AppRunner::new(Game::for_day("2026-09-01"));
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner
+    }
+
+    fn saves(commands: &[Command]) -> usize {
+        commands
+            .iter()
+            .filter(|command| {
+                matches!(command, Command::Store(kobo_sdk::StoreRequest::Save { .. }))
+            })
+            .count()
+    }
+
+    #[test]
+    fn typing_back_preserves_the_draft_without_consuming_a_guess() {
+        let mut runner = ready();
+        assert!(!runner.app().screen().owns_back);
+        runner.action(action_id("enter"));
+        runner.app_mut().keyboard = Keyboard::with_text("cra");
+        assert!(runner.app().screen().owns_back);
+        runner.action(ActionId::BACK);
+        assert!(!runner.app().typing);
+        assert_eq!(runner.app().keyboard.text(), "cra");
+        assert!(runner.app().daily.is_empty());
+        assert!(!runner.app().screen().owns_back);
+        runner.action(action_id("enter"));
+        assert_eq!(runner.app().keyboard.text(), "cra");
+        runner.action(action_id("cancel"));
+        assert!(!runner.app().typing);
+        assert!(runner.app().daily.is_empty());
+    }
+
+    #[test]
+    fn export_acknowledgements_are_visible_and_only_one_write_is_pending() {
+        let mut runner = ready();
+        runner.action(action_id("stats"));
+        assert_eq!(saves(&runner.action(action_id("export"))), 1);
+        assert_eq!(runner.app().export_status, ExportStatus::Writing);
+        assert_eq!(saves(&runner.action(action_id("export"))), 0);
+        assert!(format!("{:?}", runner.app().screen()).contains("Writing results"));
+        runner.action(ActionId::BACK);
+        runner.action(action_id("stats"));
+        assert_eq!(saves(&runner.action(action_id("export"))), 0);
+        runner.store_result(StoreResult::Denied(StoreError::TooFull));
+        assert_eq!(runner.app().export_status, ExportStatus::Failed);
+        assert!(format!("{:?}", runner.app().screen()).contains("Results could not be saved"));
+        assert_eq!(saves(&runner.action(action_id("export"))), 1);
+        runner.store_result(StoreResult::Saved { key: EXPORT.into() });
+        assert_eq!(runner.app().export_status, ExportStatus::Saved);
+        assert!(format!("{:?}", runner.app().screen()).contains("Saved as export-result.txt"));
+    }
+
+    #[test]
+    fn an_unrelated_game_save_cannot_settle_the_export() {
+        let mut runner = ready();
+        runner.action(action_id("hard"));
+        runner.action(action_id("stats"));
+        runner.action(action_id("export"));
+        runner.store_result(StoreResult::Denied(StoreError::TooFull));
+        assert_eq!(runner.app().export_status, ExportStatus::Writing);
+        runner.store_result(StoreResult::Saved { key: EXPORT.into() });
+        assert_eq!(runner.app().export_status, ExportStatus::Saved);
+    }
+
+    #[test]
+    fn full_statistics_and_export_feedback_fit_every_clara_text_size() {
+        for text_scale in TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+            let app = runner.app_mut();
+            app.view = View::Stats;
+            app.played = 600;
+            app.wins = 600;
+            app.dist = [100; 6];
+            for state in [
+                ExportStatus::Idle,
+                ExportStatus::Writing,
+                ExportStatus::Saved,
+                ExportStatus::Failed,
+            ] {
+                runner.app_mut().export_status = state;
+                let screen = runner.app().screen();
+                let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?} {state:?}: {:?}",
+                    diagnostics.issues
+                );
+                assert!(screen
+                    .layout_with(&metrics, &chrome)
+                    .rect_of_action(action_id("close-stats"))
+                    .is_some());
             }
         }
     }
