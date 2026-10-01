@@ -1199,7 +1199,6 @@ version = "0.3.24"
 name = "kobo-kitchencard"
 version = "0.1.6"
 dependencies = [
- "kobo-image",
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",

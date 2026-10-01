@@ -16,7 +16,7 @@ runtime Back from Ingredients returns to that step. Other supporting screens now
 claim Back so the runtime can deliver their existing return handlers.
 
 ```sh
-COBALT_REVIEW_OUT=/tmp/kitchen-review cargo test -p kobo-kitchencard capture_review_pages_when_requested
+COBALT_REVIEW_OUT=/tmp/kitchen-review python3 apps/kitchencard/screenshots/review/capture.py
 ```
 
 Tests cover every row at all nine text sizes, error notices, repeated page turns,
@@ -24,3 +24,8 @@ last-page selection, ingredient checks, cooking detours, Back and fresh starts.
 
 Interactive simulation is blocked here by Unix socket bind EPERM. No network,
 physical-device or full simulator validation is claimed.
+
+The opt-in capture script copies the app source and the workspace lockfile into a
+temporary Cargo package. PNG encoding adds a dependency only to that temporary
+package, preserving the app’s reviewed release dependency graph. The normal app
+regression suite retains every behavior and layout assertion.
