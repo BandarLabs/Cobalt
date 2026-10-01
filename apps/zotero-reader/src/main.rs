@@ -861,13 +861,10 @@ impl ReadingList {
         screen = if let Some(trouble) = &self.trouble {
             screen.banner(BannerLevel::Attention, trouble.clone())
         } else {
-            screen.text("Enter the numeric user ID shown beside your Zotero API key.")
+            screen.secondary("Enter the numeric user ID shown beside your Zotero API key.")
         };
         screen
-            .secondary(
-                "Install a dedicated read-only key from your computer with \
-                 `kobo secret set zotero --device <address>`.",
-            )
+            .secondary("Read-only: kobo secret set zotero --device <address>")
             .field(
                 "zotero-user-id",
                 self.keyboard.text(),
@@ -2088,44 +2085,50 @@ mod tests {
 
     #[test]
     fn setup_instructions_and_invalid_id_recovery_fit_every_text_size() {
-        for metrics in text_size_metrics() {
-            let text_scale = metrics.text_scale;
-            let _runner = AppRunner::with_metrics(ReadingList::default(), metrics);
-            for trouble in [
-                None,
-                Some(
-                    "The Zotero user ID must contain only digits and is not your username."
-                        .to_owned(),
-                ),
-            ] {
-                let app = ReadingList {
-                    trouble,
-                    ..ReadingList::default()
-                };
-                let screen = app.setup_screen();
-                let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
-                assert!(
-                    diagnostics.issues.is_empty(),
-                    "{text_scale:?}: {:?}",
-                    diagnostics.issues
-                );
-                assert!(diagnostics
-                    .layout
-                    .rect_of_action(action_id("kb.enter"))
-                    .is_some());
-                let text = diagnostics
-                    .layout
-                    .nodes
-                    .iter()
-                    .flat_map(|node| &node.text_lines)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                assert!(text.contains("read-only"));
-                assert!(
-                    text.contains("<address>"),
-                    "the installation command must not be clipped"
-                );
+        // Elipsa font DPI is exercised in a separate native profile process.
+        for (width, height) in [(1072, 1448), (1448, 1072), (1264, 1680), (1680, 1264)] {
+            for mut metrics in text_size_metrics() {
+                metrics.width = width;
+                metrics.height = height;
+                let text_scale = metrics.text_scale;
+                let _runner = AppRunner::with_metrics(ReadingList::default(), metrics);
+                for trouble in [
+                    None,
+                    Some(
+                        "The Zotero user ID must contain only digits and is not your username."
+                            .to_owned(),
+                    ),
+                ] {
+                    let app = ReadingList {
+                        trouble,
+                        ..ReadingList::default()
+                    };
+                    let screen = app.setup_screen();
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(diagnostics
+                        .layout
+                        .rect_of_action(action_id("kb.enter"))
+                        .is_some());
+                    let text = diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .flat_map(|node| &node.text_lines)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    assert!(text.to_ascii_lowercase().contains("read-only"));
+                    assert!(
+                        text.contains("<address>"),
+                        "the installation command must not be clipped"
+                    );
+                }
             }
         }
     }
