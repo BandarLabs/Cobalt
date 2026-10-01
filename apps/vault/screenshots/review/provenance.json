@@ -1,0 +1,20 @@
+{
+  "capture_mode": "in-process original app screen builders, callbacks, and shared Kobo renderer; not an interactive simulator",
+  "baseline_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "baseline_source_sha256": "6a0a33d102d6395f4d95ed645ae43d930995874af90cd393899451408f1811fe",
+  "display": "CLARA_BW_METRICS, 1072x1448, default text size",
+  "chrome": "synthetic status strip and runtime-equivalent Back",
+  "scenarios": {
+    "failures": "12 PDF import failures; rows 0 through 11 with an actionable conversion explanation",
+    "repeated_navigation": "20 notes: 50 Next actions followed by one Previous; original remains on page 3/3 with hidden cursor 49, fixed immediately shows page 2/3"
+  },
+  "before": "original implementation plus capture-only test harness",
+  "after": "ui_review_tests::capture_review_pages_when_requested",
+  "image_sha256": {
+    "previous-before.png": "bf68596d0b0259873e3573cfea350d4cb8f3288f798399017083d3fba0cd70b2",
+    "failure-detail-after.png": "748e8e4735fa43f7e3d922538d5d3ca3022383a388ad336dc9f90ffb169fa93d",
+    "failures-before.png": "b55ac66c4ae46cd3bcd912cf1edee391a783fd2abc5c351030c1b75168db55bb",
+    "failures-last-after.png": "fd8053699f5623e6eed9da96f079b766af84f80dcd5763bfab28279e16178fe3",
+    "previous-after.png": "9ff94fcaa37f0f43b61dba813a6f1dae780f20507f9852f23dad61e0dfdd8663"
+  }
+}
