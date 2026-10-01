@@ -7,11 +7,13 @@
 //! not assumed to be `wlan0`) are both present; all operations go through that
 //! existing owner.
 
-use crate::network::{signal_dbm, wireless_link};
 use kobo_protocol::{DeviceError, DeviceResult, WifiNetwork, MAX_RADIO_DEVICES};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::time::Duration;
+
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+const SCAN_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Where the firmware might keep `wpa_cli`. The Clara BW puts it in `/bin`;
 /// the conventional places are checked too, because this list costs one
@@ -27,20 +29,20 @@ const WPA_TOOLS: [&str; 4] = [
 #[derive(Clone, Debug)]
 pub struct Wifi {
     wpa_cli: PathBuf,
+    link: String,
 }
 
 impl Wifi {
     #[must_use]
     pub fn open() -> Option<Self> {
-        if !Path::new("/sys/class/net").join(wireless_link()).exists() {
-            return None;
-        }
+        let link = discover_link(Path::new("/sys/class/net"))?;
         WPA_TOOLS
             .into_iter()
             .map(Path::new)
             .find(|path| path.is_file())
             .map(|path| Self {
                 wpa_cli: path.to_path_buf(),
+                link,
             })
     }
 
@@ -53,7 +55,7 @@ impl Wifi {
         let completed = value(&status, "wpa_state").is_some_and(|state| state == "COMPLETED");
         DeviceResult::Wifi {
             available: true,
-            enabled: interface_enabled(),
+            enabled: interface_enabled(&self.link),
             connected_ssid: completed
                 .then(|| value(&status, "ssid").unwrap_or_default().to_owned()),
             networks: Vec::new(),
@@ -88,7 +90,7 @@ impl Wifi {
     /// Returns an error when the interface cannot be raised or the existing
     /// firmware supplicant rejects one of the recovery commands.
     pub fn recover_association(&self) -> Result<(), DeviceError> {
-        if !set_interface(true) {
+        if !set_interface(&self.link, true) {
             return Err(DeviceError::Backend);
         }
         if self.associated()? {
@@ -106,7 +108,7 @@ impl Wifi {
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> DeviceResult {
         if enabled {
-            if !set_interface(true) {
+            if !set_interface(&self.link, true) {
                 return DeviceResult::Failed(DeviceError::Backend);
             }
             if let Err(error) = self.command(["reconnect"]) {
@@ -116,7 +118,7 @@ impl Wifi {
             if let Err(error) = self.command(["disconnect"]) {
                 return DeviceResult::Failed(error);
             }
-            if !set_interface(false) {
+            if !set_interface(&self.link, false) {
                 return DeviceResult::Failed(DeviceError::Backend);
             }
         }
@@ -125,18 +127,27 @@ impl Wifi {
 
     #[must_use]
     pub fn scan(&self) -> DeviceResult {
-        if let Err(error) = self.command(["scan"]) {
-            return DeviceResult::Failed(error);
+        if !interface_enabled(&self.link) {
+            return self.state();
+        }
+        if let Err(error) = self.scan_complete() {
+            return match error {
+                ScanError::Busy => DeviceResult::Denied(kobo_protocol::DenyReason::Busy),
+                ScanError::Failed(error) => DeviceResult::Failed(error),
+            };
         }
         let results = match self.command(["scan_results"]) {
             Ok(results) => results,
             Err(error) => return DeviceResult::Failed(error),
         };
-        let status = self.command(["status"]).unwrap_or_default();
-        let connected = value(&status, "ssid");
+        let status = match self.command(["status"]) {
+            Ok(status) => status,
+            Err(error) => return DeviceResult::Failed(error),
+        };
+        let connected = connected_ssid(&status);
         DeviceResult::Wifi {
             available: true,
-            enabled: interface_enabled(),
+            enabled: interface_enabled(&self.link),
             connected_ssid: connected.map(str::to_owned),
             networks: parse_scan_results(&results, connected),
         }
@@ -147,9 +158,16 @@ impl Wifi {
         if !valid_credentials(ssid, password) {
             return DeviceResult::Failed(DeviceError::InvalidInput);
         }
-        if !set_interface(true) {
+        if !set_interface(&self.link, true) {
             return DeviceResult::Failed(DeviceError::Backend);
         }
+        let previous = match self
+            .command(["list_networks"])
+            .and_then(|list| saved_networks(&list))
+        {
+            Ok(previous) => previous,
+            Err(error) => return DeviceResult::Failed(error),
+        };
         let network = match self.command(["add_network"]).and_then(|output| {
             output
                 .lines()
@@ -160,24 +178,23 @@ impl Wifi {
             Ok(network) => network,
             Err(error) => return DeviceResult::Failed(error),
         };
-        let ssid = quote(ssid);
-        let commands = if password.is_empty() {
-            format!(
-                "set_network {network} ssid {ssid}\nset_network {network} key_mgmt NONE\n\
-                 enable_network {network}\nselect_network {network}\nsave_config\nquit\n"
-            )
-        } else {
-            let password = quote(password);
-            format!(
-                "set_network {network} ssid {ssid}\nset_network {network} psk {password}\n\
-                 enable_network {network}\nselect_network {network}\nsave_config\nquit\n"
-            )
-        };
-        match self.script(&commands) {
-            Ok(_) => self.state(),
+        let id = network.to_string();
+        let (result, selected) =
+            configure_join(network, ssid, password, |command| self.script(command));
+        match result {
+            Ok(()) => self.state(),
             Err(error) => {
-                let network = network.to_string();
-                let _ = self.command(["remove_network", network.as_str()]);
+                let _ = self.command(["remove_network", &id]);
+                if selected {
+                    for (old, current) in &previous {
+                        if *current {
+                            let _ = self.command(["select_network", old]);
+                        }
+                    }
+                    for (old, _) in &previous {
+                        let _ = self.command(["enable_network", old]);
+                    }
+                }
                 DeviceResult::Failed(error)
             }
         }
@@ -191,52 +208,204 @@ impl Wifi {
         }
     }
 
-    fn command<const N: usize>(&self, arguments: [&str; N]) -> Result<String, DeviceError> {
-        let output = Command::new(&self.wpa_cli)
-            .args(["-i", wireless_link()])
-            .args(arguments)
-            .output()
-            .map_err(|_| DeviceError::Backend)?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if output.status.success() && !stdout.lines().any(|line| line.trim() == "FAIL") {
-            Ok(stdout)
-        } else if stdout.to_ascii_lowercase().contains("password") {
-            Err(DeviceError::Authentication)
+    fn require_link(&self) -> Result<(), DeviceError> {
+        if discover_link(Path::new("/sys/class/net")).as_deref() == Some(self.link.as_str()) {
+            Ok(())
         } else {
             Err(DeviceError::Backend)
         }
     }
 
-    /// Sends credentials over stdin instead of process arguments, so another
-    /// process inspecting `/proc/*/cmdline` cannot read the password.
-    fn script(&self, commands: &str) -> Result<String, DeviceError> {
-        let mut child = Command::new(&self.wpa_cli)
-            .args(["-i", wireless_link()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| DeviceError::Backend)?;
-        child
-            .stdin
-            .take()
-            .ok_or(DeviceError::Backend)?
-            .write_all(commands.as_bytes())
-            .map_err(|_| DeviceError::Backend)?;
-        let output = child.wait_with_output().map_err(|_| DeviceError::Backend)?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if output.status.success() && !stdout.lines().any(|line| line.trim() == "FAIL") {
+    fn command<const N: usize>(&self, arguments: [&str; N]) -> Result<String, DeviceError> {
+        self.require_link()?;
+        let mut command = Command::new(&self.wpa_cli);
+        command.args(["-i", self.link.as_str()]).args(arguments);
+        let stdout = super::wifi_process::run(&mut command, b"", COMMAND_TIMEOUT, None)
+            .map_err(|error| process_error(&error))?;
+        let stdout = checked_reply(stdout)?;
+        if matches!(
+            arguments.first(),
+            Some(&"status" | &"scan_results" | &"list_networks" | &"add_network")
+        ) || reply_ok(&stdout)
+        {
             Ok(stdout)
-        } else if stdout.to_ascii_lowercase().contains("invalid") {
-            Err(DeviceError::Authentication)
         } else {
             Err(DeviceError::Backend)
+        }
+    }
+
+    /// Credentials are delivered only through the bounded private input pipe.
+    fn script(&self, commands: &str) -> Result<String, DeviceError> {
+        self.require_link()?;
+        let mut command = Command::new(&self.wpa_cli);
+        command.args(["-i", self.link.as_str()]);
+        let stdout =
+            super::wifi_process::run(&mut command, commands.as_bytes(), COMMAND_TIMEOUT, None)
+                .map_err(|error| process_error(&error))?;
+        let stdout = checked_reply(stdout)?;
+        if reply_ok(&stdout) {
+            Ok(stdout)
+        } else {
+            Err(DeviceError::Backend)
+        }
+    }
+
+    fn scan_complete(&self) -> Result<(), ScanError> {
+        self.require_link().map_err(ScanError::Failed)?;
+        let mut command = Command::new(&self.wpa_cli);
+        command.args(["-i", self.link.as_str()]);
+        // Interactive wpa_cli attaches before reading commands. Keep its input
+        // open until the completion/failure event, not a fixed settling delay.
+        let output =
+            super::wifi_process::run(&mut command, b"scan\n", SCAN_TIMEOUT, Some(scan_finished))
+                .map_err(|error| ScanError::Failed(process_error(&error)))?;
+        if output
+            .lines()
+            .any(|line| line.trim().trim_start_matches("> ") == "FAIL-BUSY")
+        {
+            return Err(ScanError::Busy);
+        }
+        if output.contains("CTRL-EVENT-SCAN-FAILED") {
+            return Err(ScanError::Failed(DeviceError::Backend));
+        }
+        checked_reply(output.clone()).map_err(ScanError::Failed)?;
+        if scan_succeeded(&output) {
+            Ok(())
+        } else {
+            Err(ScanError::Failed(DeviceError::Backend))
         }
     }
 }
 
-fn interface_enabled() -> bool {
-    let link = wireless_link();
+/// Issue one mutation per acknowledged exchange; never batch past a failure.
+fn configure_join(
+    network: u32,
+    ssid: &str,
+    password: &str,
+    mut execute: impl FnMut(&str) -> Result<String, DeviceError>,
+) -> (Result<(), DeviceError>, bool) {
+    let security = if password.is_empty() {
+        "key_mgmt NONE".to_owned()
+    } else {
+        format!("psk {}", quote(password))
+    };
+    let commands = [
+        format!("set_network {network} ssid {}", quote(ssid)),
+        format!("set_network {network} {security}"),
+        format!("select_network {network}"),
+        "save_config".to_owned(),
+    ];
+    for (step, command) in commands.iter().enumerate() {
+        if let Err(error) = execute(&format!("{command}\nquit\n")) {
+            return (Err(error), step >= 2);
+        }
+    }
+    (Ok(()), true)
+}
+
+#[derive(Debug, PartialEq)]
+enum ScanError {
+    Busy,
+    Failed(DeviceError),
+}
+
+fn process_error(error: &std::io::Error) -> DeviceError {
+    if error.kind() == std::io::ErrorKind::TimedOut {
+        DeviceError::TimedOut
+    } else {
+        DeviceError::Backend
+    }
+}
+
+fn saved_networks(list: &str) -> Result<Vec<(String, bool)>, DeviceError> {
+    let mut lines = list
+        .lines()
+        .skip_while(|line| !line.starts_with("network id"));
+    if lines.next().is_none() {
+        return Err(DeviceError::Backend);
+    }
+    let mut networks = Vec::new();
+    for line in lines {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() != 4 || fields[0].parse::<u32>().is_err() {
+            return Err(DeviceError::Backend);
+        }
+        if !fields[3].contains("[DISABLED]") {
+            networks.push((fields[0].to_owned(), fields[3].contains("[CURRENT]")));
+        }
+        if networks.len() > 32 {
+            return Err(DeviceError::Backend);
+        }
+    }
+    Ok(networks)
+}
+
+fn discover_link(root: &Path) -> Option<String> {
+    let mut names = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("wireless").is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok());
+    let name = names.next()?;
+    if names.next().is_some() {
+        return None;
+    }
+    Some(name)
+}
+
+fn reply_ok(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| line.trim().trim_start_matches("> ") == "OK")
+}
+
+fn checked_reply(output: String) -> Result<String, DeviceError> {
+    if output.trim().is_empty()
+        || output.lines().any(|line| {
+            let line = line.trim().trim_start_matches("> ");
+            line.starts_with("FAIL") || line.starts_with("UNKNOWN COMMAND")
+        })
+    {
+        if output.to_ascii_lowercase().contains("password")
+            || output.to_ascii_lowercase().contains("invalid")
+        {
+            Err(DeviceError::Authentication)
+        } else {
+            Err(DeviceError::Backend)
+        }
+    } else {
+        Ok(output)
+    }
+}
+
+fn scan_succeeded(output: &str) -> bool {
+    let mut accepted = false;
+    for line in output.lines() {
+        if line.trim().trim_start_matches("> ") == "OK" {
+            accepted = true;
+        }
+        if accepted && line.contains("CTRL-EVENT-SCAN-RESULTS") {
+            return true;
+        }
+    }
+    false
+}
+
+pub(super) fn scan_finished(output: &str) -> bool {
+    scan_succeeded(output)
+        || output.contains("CTRL-EVENT-SCAN-FAILED")
+        || output
+            .lines()
+            .any(|line| line.trim().trim_start_matches("> ").starts_with("FAIL"))
+}
+
+fn connected_ssid(status: &str) -> Option<&str> {
+    (value(status, "wpa_state") == Some("COMPLETED"))
+        .then(|| value(status, "ssid"))
+        .flatten()
+}
+
+fn interface_enabled(link: &str) -> bool {
     if let Ok(flags) = std::fs::read_to_string(format!("/sys/class/net/{link}/flags")) {
         return u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16)
             .is_ok_and(|flags| flags & 1 != 0);
@@ -245,19 +414,25 @@ fn interface_enabled() -> bool {
         .is_ok_and(|state| state.trim() != "down")
 }
 
-fn set_interface(enabled: bool) -> bool {
+fn set_interface(link: &str, enabled: bool) -> bool {
+    if discover_link(Path::new("/sys/class/net")).as_deref() != Some(link) {
+        return false;
+    }
     let state = if enabled { "up" } else { "down" };
     for (tool, arguments) in [
-        ("/sbin/ip", vec!["link", "set", wireless_link(), state]),
-        ("/bin/ip", vec!["link", "set", wireless_link(), state]),
-        ("/sbin/ifconfig", vec![wireless_link(), state]),
-        ("/bin/ifconfig", vec![wireless_link(), state]),
+        ("/sbin/ip", vec!["link", "set", link, state]),
+        ("/bin/ip", vec!["link", "set", link, state]),
+        ("/sbin/ifconfig", vec![link, state]),
+        ("/bin/ifconfig", vec![link, state]),
     ] {
         if Path::new(tool).is_file()
-            && Command::new(tool)
-                .args(arguments)
-                .status()
-                .is_ok_and(|status| status.success())
+            && super::wifi_process::run(
+                Command::new(tool).args(arguments),
+                b"",
+                COMMAND_TIMEOUT,
+                None,
+            )
+            .is_ok()
         {
             return true;
         }
@@ -284,11 +459,7 @@ fn parse_scan_results(output: &str, connected: Option<&str>) -> Vec<WifiNetwork>
         if ssid.is_empty() || ssid.len() > 32 {
             continue;
         }
-        let signal_dbm = fields[2]
-            .parse::<i16>()
-            .ok()
-            .or_else(|| signal_dbm(wireless_link()).and_then(|value| i16::try_from(value).ok()))
-            .unwrap_or(-100);
+        let signal_dbm = fields[2].parse::<i16>().ok().unwrap_or(-100);
         let flags = fields[3];
         if let Some(existing) = networks
             .iter_mut()
@@ -344,6 +515,68 @@ mod tests {
     use super::{
         association_recovery_commands, parse_scan_results, quote, valid_credentials, value,
     };
+
+    #[test]
+    fn join_stops_at_each_failed_step_before_later_mutations() {
+        for failing_step in 0..4 {
+            let mut seen = Vec::new();
+            let (result, selected) = super::configure_join(7, "Home", "password", |command| {
+                seen.push(command.to_owned());
+                if seen.len() == failing_step + 1 {
+                    Err(kobo_protocol::DeviceError::Backend)
+                } else {
+                    Ok("OK".into())
+                }
+            });
+            assert!(result.is_err());
+            assert_eq!(seen.len(), failing_step + 1);
+            assert_eq!(selected, failing_step >= 2);
+            if failing_step < 3 {
+                assert!(!seen.iter().any(|s| s.contains("save_config")));
+            }
+        }
+    }
+
+    #[test]
+    fn scan_requires_acceptance_then_completion_and_rejects_busy() {
+        assert!(!super::scan_finished("OK\n"));
+        assert!(!super::scan_succeeded("CTRL-EVENT-SCAN-RESULTS\nOK\n"));
+        assert!(super::scan_succeeded("> OK\n<3>CTRL-EVENT-SCAN-RESULTS\n"));
+        assert!(super::scan_finished("FAIL-BUSY\n"));
+        assert!(super::checked_reply("FAIL-BUSY\n".into()).is_err());
+        assert!(super::scan_finished("OK\n<3>CTRL-EVENT-SCAN-FAILED\n"));
+        assert_eq!(
+            super::connected_ssid("wpa_state=SCANNING\nssid=old\n"),
+            None
+        );
+        assert_eq!(
+            super::connected_ssid("wpa_state=COMPLETED\nssid=Home\n"),
+            Some("Home")
+        );
+    }
+
+    #[test]
+    fn remembers_only_previously_enabled_networks_for_rollback() {
+        assert_eq!(super::saved_networks("network id / ssid / bssid / flags\n0\tHome\tany\t[CURRENT]\n1\tOff\tany\t[DISABLED]\n2\tCafe\tany\t\n").unwrap(), vec![("0".into(), true), ("2".into(), false)]);
+        assert!(super::saved_networks("FAIL").is_err());
+        assert!(super::saved_networks("network id\nbad row").is_err());
+    }
+
+    #[test]
+    fn link_discovery_tracks_disappearance_and_refuses_ambiguity() {
+        let root = std::env::temp_dir().join(format!("cobalt-wifi-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(super::discover_link(&root), None);
+        std::fs::create_dir_all(root.join("mlan0/wireless")).unwrap();
+        assert_eq!(super::discover_link(&root), Some("mlan0".into()));
+        std::fs::create_dir_all(root.join("wlan0/wireless")).unwrap();
+        assert_eq!(super::discover_link(&root), None);
+        std::fs::remove_dir_all(root.join("mlan0")).unwrap();
+        assert_eq!(super::discover_link(&root), Some("wlan0".into()));
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(super::discover_link(&root), None);
+    }
 
     #[test]
     fn association_recovery_matches_the_stock_network_screen_sequence() {

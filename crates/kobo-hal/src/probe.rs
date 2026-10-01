@@ -176,10 +176,90 @@ fn discover_touch_path_from(content: &str) -> Option<PathBuf> {
     })
 }
 
+/// Lists input evidence without selecting, grabbing or reading event streams.
+/// Serial/unique IDs and physical paths are deliberately excluded.
+#[must_use]
+pub fn input_inventory() -> Vec<kobo_profile::observation::InputObservation> {
+    let content = match fs::read_to_string("/proc/bus/input/devices") {
+        Ok(content) => content,
+        Err(error) => {
+            return vec![kobo_profile::observation::InputObservation {
+                name: String::new(),
+                path: "/proc/bus/input/devices".into(),
+                capabilities: Vec::new(),
+                axes: Vec::new(),
+                error: Some(format!("read inventory: {}", error.kind())),
+            }]
+        }
+    };
+    let mut devices = input_inventory_from(&content);
+    for device in &mut devices {
+        match File::open(&device.path) {
+            Ok(file) => {
+                for axis in [0, 1, input::ABS_MT_POSITION_X, input::ABS_MT_POSITION_Y] {
+                    if let Ok(range) = input::absolute_axis(&file, axis) {
+                        device
+                            .axes
+                            .push(format!("{axis}:{}..{}", range.minimum, range.maximum));
+                    }
+                }
+            }
+            Err(error) => device.error = Some(format!("open read-only: {}", error.kind())),
+        }
+    }
+    devices
+}
+
+fn input_inventory_from(content: &str) -> Vec<kobo_profile::observation::InputObservation> {
+    content
+        .split("\n\n")
+        .filter_map(|block| {
+            let name = block
+                .lines()
+                .find_map(|line| line.strip_prefix("N: Name="))?;
+            let handlers = block
+                .lines()
+                .find_map(|line| line.strip_prefix("H: Handlers="))?;
+            let event = handlers.split_whitespace().find(|handler| {
+                handler
+                    .strip_prefix("event")
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            })?;
+            Some(kobo_profile::observation::InputObservation {
+                name: name.trim_matches('"').chars().take(256).collect(),
+                path: format!("/dev/input/{event}"),
+                capabilities: block
+                    .lines()
+                    .filter(|line| {
+                        ["B: EV=", "B: KEY=", "B: ABS=", "B: SW="]
+                            .iter()
+                            .any(|p| line.starts_with(p))
+                    })
+                    .take(4)
+                    .map(|line| line.chars().take(256).collect())
+                    .collect(),
+                axes: Vec::new(),
+                error: None,
+            })
+        })
+        .take(32)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::discover_touch_path_from;
     use std::path::Path;
+
+    #[test]
+    fn inventory_keeps_unknown_single_touch_and_separate_power_nodes() {
+        let fixture = "N: Name=\"infrared touch\"\nH: Handlers=event4\nB: ABS=3\nU: Uniq=private\n\nN: Name=\"dedicated power\"\nH: Handlers=event5\nB: KEY=100000 0 0 0\n\nN: Name=\"bad\"\nH: Handlers=event../../bad\n";
+        let devices = super::input_inventory_from(fixture);
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].capabilities, ["B: ABS=3"]);
+        assert_eq!(devices[1].path, "/dev/input/event5");
+        assert!(super::discover_touch_path_from(fixture).is_none());
+    }
 
     #[test]
     fn finds_cypress_touch_handler() {

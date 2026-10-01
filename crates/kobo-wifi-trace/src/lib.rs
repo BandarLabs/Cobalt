@@ -473,7 +473,9 @@ impl Sampler {
                 power_text.split_whitespace().any(|value| value == "mem")
             )
         };
-        let wakeup_count = bounded_number(&self.path("/sys/power/wakeup_count"));
+        // This is a suspend handshake, not a passive counter: reading can
+        // wait for wakeup events to settle even with O_NONBLOCK. Never open it.
+        let wakeup_count = "not-sampled".to_owned();
         let suspend_success = bounded_number(&self.path("/sys/kernel/debug/suspend_stats/success"));
         let suspend_fail = bounded_number(&self.path("/sys/kernel/debug/suspend_stats/fail"));
         let reboot_reason = first_reason_category(&[
@@ -2307,6 +2309,22 @@ fn json_usize(value: usize) -> Value {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn passive_sampling_never_opens_the_wakeup_handshake() {
+        let root = test_root("wakeup-fifo");
+        fs::create_dir_all(root.join("sys/power")).unwrap();
+        let fifo = root.join("sys/power/wakeup_count");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        // A FIFO with no writer would hang any attempt to open/read it.
+        let snapshot = Sampler::at(root.clone(), PrivacyKey::test(1)).sample_core();
+        assert_eq!(snapshot.wakeup_count, "not-sampled");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn test_root(label: &str) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
