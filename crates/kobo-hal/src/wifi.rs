@@ -3,9 +3,10 @@
 //! This module never starts a second supplicant. Nickel and Cobalt would then
 //! be two owners of one interface, an arrangement already proven unsafe on the
 //! Clara BW. The backend is available only when the firmware's `wpa_cli` and
-//! the device's wireless interface (detected by [`crate::network::wireless_link`],
-//! not assumed to be `wlan0`) are both present; all operations go through that
-//! existing owner.
+//! a unique `/sys/class/net/*/wireless` interface are both present. Each
+//! exchange revalidates that interface; missing, changed, or ambiguous matches
+//! are refused without a cached name or fallback. All operations go through
+//! the existing firmware owner.
 
 use kobo_protocol::{DeviceError, DeviceResult, WifiNetwork, MAX_RADIO_DEVICES};
 use std::path::{Path, PathBuf};

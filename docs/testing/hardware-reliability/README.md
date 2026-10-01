@@ -14,7 +14,9 @@ fixtures added here are original; no external implementation was imported.
   unchanged. Provisional profiles remain not write-ready.
 - Passive Wi-Fi tracing retains the `wakeup_count` field as `not-sampled` and
   never opens the sysfs node. A numeric parsing limit was not a read deadline.
-  A FIFO fixture with no writer verifies that sampling does not open it.
+  A FIFO fixture with no writer verifies that sampling does not open it. The
+  sample runs in a subprocess that is killed and reaped after five seconds if
+  a blocking read regresses, so the regression fails rather than hanging CI.
 - Wi-Fi subprocesses have a three-second deadline, nonblocking input/output
   pipes, a 64 KiB output ceiling, and owned-child kill/reap cleanup. Inherited
   output pipes cannot keep the caller waiting indefinitely. Credentials stay
@@ -92,3 +94,16 @@ No attended display, input, radio, hand-back, suspend, or Settings/About photo
 was obtained. Firmware interactive-client behavior and real hardware timing
 remain unverified. Keep this PR draft pending review and attended qualification;
 nothing was merged, deployed, or installed on a reader.
+
+## Review follow-up
+
+The FIFO regression now samples in a child process with a five-second deadline;
+its parent kills/reaps the child and removes the fixture before asserting. A
+local mutation temporarily restored the old blocking `wakeup_count` read. The
+test failed at its deadline as intended (8.11 seconds including compilation),
+and passed again after restoring production code. No mutation was committed.
+HAL's 189 tests and trace's 21 library plus one binary test passed, as did strict
+all-target/all-feature Clippy for HAL/trace, formatting, and whitespace checks.
+Wi-Fi module documentation now describes unique sysfs discovery and per-exchange
+revalidation rather than the hand-back module's cached fallback. These changes
+add no hardware qualification or runtime behavior.

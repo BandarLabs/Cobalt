@@ -2312,6 +2312,13 @@ mod tests {
 
     #[test]
     fn passive_sampling_never_opens_the_wakeup_handshake() {
+        const CHILD_ROOT: &str = "COBALT_WAKEUP_FIFO_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let snapshot = Sampler::at(PathBuf::from(root), PrivacyKey::test(1)).sample_core();
+            assert_eq!(snapshot.wakeup_count, "not-sampled");
+            return;
+        }
+
         let root = test_root("wakeup-fifo");
         fs::create_dir_all(root.join("sys/power")).unwrap();
         let fifo = root.join("sys/power/wakeup_count");
@@ -2320,10 +2327,37 @@ mod tests {
             .status()
             .unwrap()
             .success());
-        // A FIFO with no writer would hang any attempt to open/read it.
-        let snapshot = Sampler::at(root.clone(), PrivacyKey::test(1)).sample_core();
-        assert_eq!(snapshot.wakeup_count, "not-sampled");
+        // Keep the blocking fixture, but contain the sample in a child. If a
+        // read returns, the parent must fail promptly rather than hang CI.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::passive_sampling_never_opens_the_wakeup_handshake",
+            ])
+            .env(CHILD_ROOT, &root)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => (),
+                Err(_) => break None,
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Always reap before asserting, including timeout and wait errors.
+        let _ = child.kill();
+        child.wait().unwrap();
         fs::remove_dir_all(root).unwrap();
+        assert!(
+            status.is_some_and(|status| status.success()),
+            "passive sample failed or exceeded its five-second deadline"
+        );
     }
 
     fn test_root(label: &str) -> PathBuf {
