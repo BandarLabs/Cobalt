@@ -836,19 +836,25 @@ impl Game {
 
     fn stats_screen(&self) -> Screen {
         let mut builder = ScreenBuilder::new("inkling-stats")
-            .top_bar("Statistics")
+            .top_bar("Daily statistics")
             .owns_back(true)
-            .heading("Daily puzzles")
             .text(format!("Played {}. Won {}.", self.played, self.wins));
         if self.played > 0 && self.dist.iter().all(|count| *count == 0) {
             builder = builder.text("Guess counts are recorded from version 0.2.0 on.");
         }
-        for (index, count) in self.dist.iter().enumerate() {
-            if *count > 0 {
-                builder = builder.text(format!("Solved in {} of 6: {}", index + 1, count));
+        for (pair, counts) in self.dist.chunks(2).enumerate() {
+            if counts.iter().any(|count| *count > 0) {
+                builder = builder.secondary(format!(
+                    "{} {}: {} · {} guesses: {}",
+                    pair * 2 + 1,
+                    if pair == 0 { "guess" } else { "guesses" },
+                    counts[0],
+                    pair * 2 + 2,
+                    counts[1]
+                ));
             }
         }
-        builder = builder.text(format!("Today is {}.", full_date(&self.today)));
+        builder = builder.secondary(format!("Today is {}.", full_date(&self.today)));
         builder = match self.export_status {
             ExportStatus::Idle => builder,
             ExportStatus::Writing => builder.secondary("Writing results…"),
@@ -1477,36 +1483,41 @@ mod feedback_tests {
 
     #[test]
     fn full_statistics_and_export_feedback_fit_every_clara_text_size() {
-        for text_scale in TextScale::STEPS {
-            let metrics = kobo_ui::DisplayMetrics {
-                text_scale,
-                ..CLARA_BW_METRICS
-            };
-            let mut runner = AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
-            let app = runner.app_mut();
-            app.view = View::Stats;
-            app.played = 600;
-            app.wins = 600;
-            app.dist = [100; 6];
-            for state in [
-                ExportStatus::Idle,
-                ExportStatus::Writing,
-                ExportStatus::Saved,
-                ExportStatus::Failed,
-            ] {
-                runner.app_mut().export_status = state;
-                let screen = runner.app().screen();
-                let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
-                let diagnostics = screen.diagnostics(&metrics, &chrome);
-                assert!(
-                    diagnostics.issues.is_empty(),
-                    "{text_scale:?} {state:?}: {:?}",
-                    diagnostics.issues
-                );
-                assert!(screen
-                    .layout_with(&metrics, &chrome)
-                    .rect_of_action(action_id("close-stats"))
-                    .is_some());
+        // Elipsa font DPI is exercised in a separate native profile process.
+        for (width, height) in [(1072, 1448), (1448, 1072), (1264, 1680), (1680, 1264)] {
+            for text_scale in TextScale::STEPS {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    width,
+                    height,
+                    ..CLARA_BW_METRICS
+                };
+                let mut runner = AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+                let app = runner.app_mut();
+                app.view = View::Stats;
+                app.played = 600;
+                app.wins = 600;
+                app.dist = [100; 6];
+                for state in [
+                    ExportStatus::Idle,
+                    ExportStatus::Writing,
+                    ExportStatus::Saved,
+                    ExportStatus::Failed,
+                ] {
+                    runner.app_mut().export_status = state;
+                    let screen = runner.app().screen();
+                    let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?} {state:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(screen
+                        .layout_with(&metrics, &chrome)
+                        .rect_of_action(action_id("close-stats"))
+                        .is_some());
+                }
             }
         }
     }
