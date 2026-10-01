@@ -287,8 +287,7 @@ impl Chat {
         ScreenBuilder::new("chat-service")
             .top_bar("Service")
             .nav_bar(2, DESTINATIONS)
-            .text("Add a service key from your computer, for example kobo secret set openai.")
-            .section("Talk to")
+            .secondary("Add a service key from your computer, for example kobo secret set openai.")
             .rows(PROVIDERS.iter().enumerate().map(|(index, provider)| {
                 (
                     CHOICES[index],
@@ -1572,35 +1571,52 @@ mod tests {
     }
     #[test]
     fn service_rows_fit_and_select_their_provider_at_every_text_size() {
-        for scale in kobo_ui::TextScale::STEPS {
-            let metrics = kobo_ui::DisplayMetrics {
-                text_scale: scale,
-                ..kobo_ui::CLARA_BW_METRICS
-            };
-            let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
-            for (index, provider) in PROVIDERS.iter().enumerate() {
-                runner.app_mut().view = View::Choosing;
-                let screen = runner.app().screen();
-                let diagnostics = screen.diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
-                assert!(
-                    !diagnostics.has_errors(),
-                    "{scale:?}: {:?}",
-                    diagnostics.issues
-                );
-                let action = action_id(CHOICES[index]);
-                let rect = diagnostics
-                    .layout
-                    .rect_of_action(action)
-                    .expect("provider row");
-                assert_eq!(
-                    diagnostics
+        // Exercise the 300ppi panel geometries in portrait and logical landscape.
+        // The Elipsa 227ppi profile is verified in its own native-renderer
+        // process: an installed real-font typesetter retains its initial PPI.
+        for (width, height, pixels_per_inch) in [
+            (1072, 1448, 300),
+            (1448, 1072, 300),
+            (1264, 1680, 300),
+            (1680, 1264, 300),
+        ] {
+            for scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale: scale,
+                    width,
+                    height,
+                    pixels_per_inch,
+                };
+                let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
+                for (index, provider) in PROVIDERS.iter().enumerate() {
+                    runner.app_mut().view = View::Choosing;
+                    let screen = runner.app().screen().with_own_back(true);
+                    let chrome = kobo_ui::Chrome::for_screen(
+                        &screen,
+                        false,
+                        kobo_ui::Chrome::measuring(true).status,
+                    );
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        !diagnostics.has_errors(),
+                        "{width}x{height} {pixels_per_inch}ppi {scale:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    let action = action_id(CHOICES[index]);
+                    let rect = diagnostics
                         .layout
-                        .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
-                    Some(action)
-                );
-                let commands = runner.action(action);
-                assert_eq!(runner.app().provider, *provider);
-                assert!(commands.iter().any(|command| matches!(command,Command::Store(StoreRequest::Save{key,value}) if key==CHOSEN && value==provider.key().as_bytes())));
+                        .rect_of_action(action)
+                        .expect("provider row");
+                    assert_eq!(
+                        diagnostics
+                            .layout
+                            .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                        Some(action)
+                    );
+                    let commands = runner.action(action);
+                    assert_eq!(runner.app().provider, *provider);
+                    assert!(commands.iter().any(|command| matches!(command,Command::Store(StoreRequest::Save{key,value}) if key==CHOSEN && value==provider.key().as_bytes())));
+                }
             }
         }
     }
