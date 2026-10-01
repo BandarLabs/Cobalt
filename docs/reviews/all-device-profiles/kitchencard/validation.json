@@ -1,0 +1,175 @@
+{
+  "app": "kitchencard",
+  "PR": 248,
+  "before_source": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "after_source": "9d71ca5308ed95170b1d1e63ec98ec8c2dbe9a28",
+  "after_local_tree_equivalent": "581df00afdec85ff2a53d8d56d695a43e95ce64a",
+  "after_tree": "62f4b2d8919c36b57ec20dd3e520c54524c9c6ce",
+  "capture_kind": "Native app renderer and callbacks/hit tests, with exact simulator chrome; NOT full simulator or physical hardware",
+  "profiles": 9,
+  "font_percentages_tested": [
+    80,
+    100,
+    170
+  ],
+  "before_native_cases": 54,
+  "after_native_cases": 54,
+  "after_functional_result": "passed",
+  "after_failed_assertions": [],
+  "after_layout_error_images": 0,
+  "after_layout_warning_images": 0,
+  "limitations": [
+    "AF_UNIX denied; no full simulator socket/rendering loop used",
+    "Network/device service outcomes supplied by fixtures; no live service, radio or touch-controller validation",
+    "Logical landscape stress does not certify physical device rotations",
+    "Baseline errors are preserved and labeled, not counted as successful changed-flow fixes"
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "profile": "clara-bw-391",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "71ce8008a56e36c34478312b3a05f8310ec53a450be2a7d1a437563acb77ab26",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "7aa13bffc3fe2ea4548c0b4a268b998dd421c0e99d4638cd4713ee5d78811a62",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 2,
+      "profile": "clara-bw-395",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "71ce8008a56e36c34478312b3a05f8310ec53a450be2a7d1a437563acb77ab26",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "7aa13bffc3fe2ea4548c0b4a268b998dd421c0e99d4638cd4713ee5d78811a62",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 3,
+      "profile": "clara-hd-376",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "71ce8008a56e36c34478312b3a05f8310ec53a450be2a7d1a437563acb77ab26",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "7aa13bffc3fe2ea4548c0b4a268b998dd421c0e99d4638cd4713ee5d78811a62",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 4,
+      "profile": "clara-colour-393",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "71ce8008a56e36c34478312b3a05f8310ec53a450be2a7d1a437563acb77ab26",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "7aa13bffc3fe2ea4548c0b4a268b998dd421c0e99d4638cd4713ee5d78811a62",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 5,
+      "profile": "elipsa-2e-389",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "be589e5a21dea26522a30e8d980711703f31513801b913213887415ad50b27aa",
+        "width": 1404,
+        "height": 1872
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "7be4c98a39df345a8199cfac930dc0c8eec3e61566f4fd8b45c9007de3e64a91",
+        "width": 1404,
+        "height": 1872
+      }
+    },
+    {
+      "page": 6,
+      "profile": "libra-2-388",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "3e3dcf7ffcff53d4e0f2b486153d3e282b5642a4c8486ee43438377c84d2c7f7",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "8ccc430c62e3c0c28e41c9abbd960a751a8822f8831edd3f702b1214f70232a0",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 7,
+      "profile": "libra-colour-390",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "3e3dcf7ffcff53d4e0f2b486153d3e282b5642a4c8486ee43438377c84d2c7f7",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "8ccc430c62e3c0c28e41c9abbd960a751a8822f8831edd3f702b1214f70232a0",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 8,
+      "profile": "libra-colour-390-4.46.23836",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "3e3dcf7ffcff53d4e0f2b486153d3e282b5642a4c8486ee43438377c84d2c7f7",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "8ccc430c62e3c0c28e41c9abbd960a751a8822f8831edd3f702b1214f70232a0",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 9,
+      "profile": "libra-h2o-384",
+      "before": {
+        "original_filename": "browse-12-recipes.png",
+        "sha256": "3e3dcf7ffcff53d4e0f2b486153d3e282b5642a4c8486ee43438377c84d2c7f7",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "recipes-first.png",
+        "sha256": "8ccc430c62e3c0c28e41c9abbd960a751a8822f8831edd3f702b1214f70232a0",
+        "width": 1264,
+        "height": 1680
+      }
+    }
+  ],
+  "pdf_sha256": "94cc67206b8c6f9c9d270b194718c9450700d2d4b0298246f5caebc1d62d1dc7",
+  "pdf_bytes": 428027
+}

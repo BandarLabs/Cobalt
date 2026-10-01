@@ -1,0 +1,175 @@
+{
+  "app": "launcher",
+  "PR": 238,
+  "before_source": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "after_source": "8ae722330b05bffb804809fcf4c509465b1d09cb",
+  "after_local_tree_equivalent": "bf15ff1da8388b0ccb668a880111a42cc7986b94",
+  "after_tree": "d8f38796bf0cf5e7da21eca2d05321a35687ac35",
+  "capture_kind": "Native app renderer and callbacks/hit tests, with exact simulator chrome; NOT full simulator or physical hardware",
+  "profiles": 9,
+  "font_percentages_tested": [
+    80,
+    100,
+    170
+  ],
+  "before_native_cases": 54,
+  "after_native_cases": 54,
+  "after_functional_result": "passed",
+  "after_failed_assertions": [],
+  "after_layout_error_images": 0,
+  "after_layout_warning_images": 0,
+  "limitations": [
+    "AF_UNIX denied; no full simulator socket/rendering loop used",
+    "Network/device service outcomes supplied by fixtures; no live service, radio or touch-controller validation",
+    "Logical landscape stress does not certify physical device rotations",
+    "Baseline errors are preserved and labeled, not counted as successful changed-flow fixes"
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "profile": "clara-bw-391",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "6b533257ff357271aeb26a69f9203e90a43a6dbeca9589d6a92657033c2cdbfc",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "83d2b28ab6e159aa57e7e7d2707ba824f227467b7494c8c3239c745d443329ff",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 2,
+      "profile": "clara-bw-395",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "6b533257ff357271aeb26a69f9203e90a43a6dbeca9589d6a92657033c2cdbfc",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "83d2b28ab6e159aa57e7e7d2707ba824f227467b7494c8c3239c745d443329ff",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 3,
+      "profile": "clara-hd-376",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "6b533257ff357271aeb26a69f9203e90a43a6dbeca9589d6a92657033c2cdbfc",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "83d2b28ab6e159aa57e7e7d2707ba824f227467b7494c8c3239c745d443329ff",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 4,
+      "profile": "clara-colour-393",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "6b533257ff357271aeb26a69f9203e90a43a6dbeca9589d6a92657033c2cdbfc",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "83d2b28ab6e159aa57e7e7d2707ba824f227467b7494c8c3239c745d443329ff",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 5,
+      "profile": "elipsa-2e-389",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "34186a2c40919c043ef9f11b368a23b3e1d21bf5b8f4444ceb6d5ca8a737a9d1",
+        "width": 1404,
+        "height": 1872
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "53270e77ae781d6d7afe433812ae2ad4b014d96f0dcf8a0291b9a11fcd40178f",
+        "width": 1404,
+        "height": 1872
+      }
+    },
+    {
+      "page": 6,
+      "profile": "libra-2-388",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "40adc0db4e8e6c85dea21bc1af0d7e563061d1251bdb74297f2fa62df4acf018",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "e4da9e39cde05bb3de7b972377997607b80f366c39541635321b509fb0afb5d9",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 7,
+      "profile": "libra-colour-390",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "40adc0db4e8e6c85dea21bc1af0d7e563061d1251bdb74297f2fa62df4acf018",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "e4da9e39cde05bb3de7b972377997607b80f366c39541635321b509fb0afb5d9",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 8,
+      "profile": "libra-colour-390-4.46.23836",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "40adc0db4e8e6c85dea21bc1af0d7e563061d1251bdb74297f2fa62df4acf018",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "e4da9e39cde05bb3de7b972377997607b80f366c39541635321b509fb0afb5d9",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 9,
+      "profile": "libra-h2o-384",
+      "before": {
+        "original_filename": "terminal-start.png",
+        "sha256": "40adc0db4e8e6c85dea21bc1af0d7e563061d1251bdb74297f2fa62df4acf018",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "terminal-start.png",
+        "sha256": "e4da9e39cde05bb3de7b972377997607b80f366c39541635321b509fb0afb5d9",
+        "width": 1264,
+        "height": 1680
+      }
+    }
+  ],
+  "pdf_sha256": "4aaaa40618aa9727c14af055562502643856b513cd5b0360e5dc1cde6f0eb575",
+  "pdf_bytes": 180245
+}

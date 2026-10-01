@@ -1,0 +1,175 @@
+{
+  "app": "post",
+  "PR": 250,
+  "before_source": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "after_source": "6a065a94f1623e9b3be8b51a8c8002b2811066e9",
+  "after_local_tree_equivalent": "aa2d48d0ef43540e45ff3c72a64437931c8b64a6",
+  "after_tree": "b01dc7b674a1e7b05a1d761317aef904d09d6ccd",
+  "capture_kind": "Native app renderer and callbacks/hit tests, with exact simulator chrome; NOT full simulator or physical hardware",
+  "profiles": 9,
+  "font_percentages_tested": [
+    80,
+    100,
+    170
+  ],
+  "before_native_cases": 54,
+  "after_native_cases": 54,
+  "after_functional_result": "passed",
+  "after_failed_assertions": [],
+  "after_layout_error_images": 0,
+  "after_layout_warning_images": 0,
+  "limitations": [
+    "AF_UNIX denied; no full simulator socket/rendering loop used",
+    "Network/device service outcomes supplied by fixtures; no live service, radio or touch-controller validation",
+    "Logical landscape stress does not certify physical device rotations",
+    "Baseline errors are preserved and labeled, not counted as successful changed-flow fixes"
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "profile": "clara-bw-391",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "29b2e43372781b97df86f47b14e03c4b366420626eaf6c6efa573597b77747a8",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "4485efe8212eab3ae0e1dcdfb8f3916c0bd93f8be5ee844589f2ab63a2dc95e8",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 2,
+      "profile": "clara-bw-395",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "29b2e43372781b97df86f47b14e03c4b366420626eaf6c6efa573597b77747a8",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "4485efe8212eab3ae0e1dcdfb8f3916c0bd93f8be5ee844589f2ab63a2dc95e8",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 3,
+      "profile": "clara-hd-376",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "29b2e43372781b97df86f47b14e03c4b366420626eaf6c6efa573597b77747a8",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "4485efe8212eab3ae0e1dcdfb8f3916c0bd93f8be5ee844589f2ab63a2dc95e8",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 4,
+      "profile": "clara-colour-393",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "29b2e43372781b97df86f47b14e03c4b366420626eaf6c6efa573597b77747a8",
+        "width": 1072,
+        "height": 1448
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "4485efe8212eab3ae0e1dcdfb8f3916c0bd93f8be5ee844589f2ab63a2dc95e8",
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    {
+      "page": 5,
+      "profile": "elipsa-2e-389",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "93b0c16668fc810f462ee65fa7f589c13b8e618a7969f4d4976647b8ac711aac",
+        "width": 1404,
+        "height": 1872
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "9e5d75c37316d356d4344e781be938347295c896fbde066cffb0269075f7be09",
+        "width": 1404,
+        "height": 1872
+      }
+    },
+    {
+      "page": 6,
+      "profile": "libra-2-388",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "f541d8af783c1f2632d309d7c59ea04e3581ff7e96cfe059f8fb7636e33b47b2",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "e252f0ef284b222bd2e8de31f1d77f0e7a614f9ce78a8b026e16c4f4da574a74",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 7,
+      "profile": "libra-colour-390",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "f541d8af783c1f2632d309d7c59ea04e3581ff7e96cfe059f8fb7636e33b47b2",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "e252f0ef284b222bd2e8de31f1d77f0e7a614f9ce78a8b026e16c4f4da574a74",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 8,
+      "profile": "libra-colour-390-4.46.23836",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "f541d8af783c1f2632d309d7c59ea04e3581ff7e96cfe059f8fb7636e33b47b2",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "e252f0ef284b222bd2e8de31f1d77f0e7a614f9ce78a8b026e16c4f4da574a74",
+        "width": 1264,
+        "height": 1680
+      }
+    },
+    {
+      "page": 9,
+      "profile": "libra-h2o-384",
+      "before": {
+        "original_filename": "long-letter.png",
+        "sha256": "f541d8af783c1f2632d309d7c59ea04e3581ff7e96cfe059f8fb7636e33b47b2",
+        "width": 1264,
+        "height": 1680
+      },
+      "after": {
+        "original_filename": "long-letter-first.png",
+        "sha256": "e252f0ef284b222bd2e8de31f1d77f0e7a614f9ce78a8b026e16c4f4da574a74",
+        "width": 1264,
+        "height": 1680
+      }
+    }
+  ],
+  "pdf_sha256": "474223a5891384c7cb83c421eeaf2f99b77b5b31ff55453eda05bac5828905b4",
+  "pdf_bytes": 558490
+}
