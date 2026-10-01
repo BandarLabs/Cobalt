@@ -16,7 +16,7 @@ interactive simulator screenshots. The status capture shows that cancelling setu
 leaves Sync paused.
 
 ```sh
-COBALT_REVIEW_OUT=/tmp/sync-review cargo test -p kobo-syncthing capture_review_pages_when_requested
+COBALT_REVIEW_OUT=/tmp/sync-review python3 apps/syncthing/screenshots/review/capture.py
 ```
 
 Tests repeatedly enter and leave each supporting view, verify the Back contract and
@@ -27,3 +27,8 @@ Open PR #224 changes the refresh description. This branch leaves that copy alone
 but its manifest/generated-page edits will need reconciliation if both are rebased.
 The executor rejects Unix socket bind with EPERM, so interactive simulation and
 physical-device validation remain unverified. No Syncthing engine ran for these tests.
+
+The opt-in capture script copies the app source and the workspace lockfile into a
+temporary Cargo package. PNG encoding adds a dependency only to that temporary
+package, preserving the app’s reviewed release dependency graph. The normal app
+regression suite retains every behavior and layout assertion.

@@ -1592,7 +1592,6 @@ dependencies = [
 name = "kobo-syncthing"
 version = "0.3.2"
 dependencies = [
- "kobo-image",
  "kobo-sdk",
  "kobo-ui",
 ]
