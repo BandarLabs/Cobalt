@@ -422,18 +422,24 @@ fn run_command(command: &str, home: &Path, limit: Duration, grace: Duration) -> 
     let stdout = child.inner().stdout.take().map(read_in_thread);
     let stderr = child.inner().stderr.take().map(read_in_thread);
     let deadline = Instant::now() + limit;
+    let mut status = None;
     let (status, timed_out) = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break (Some(status), false),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
+        if status.is_none() {
+            if let Ok(value) = child.try_wait() {
+                status = value;
+            } else {
                 terminate(&mut child, grace);
-                break (child.wait().ok(), true);
+                break (None, false);
             }
-            Err(_) => break (None, false),
         }
+        if status.is_some() && readers_finished(stdout.as_ref(), stderr.as_ref()) {
+            break (status, false);
+        }
+        if Instant::now() >= deadline {
+            terminate(&mut child, grace);
+            break (status.or_else(|| child.wait().ok()), true);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     };
     let mut output = Vec::new();
     if let Some(reader) = stdout {
@@ -494,15 +500,19 @@ fn append_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
     tail.extend_from_slice(bytes);
 }
 
+fn readers_finished(
+    stdout: Option<&std::thread::JoinHandle<Vec<u8>>>,
+    stderr: Option<&std::thread::JoinHandle<Vec<u8>>>,
+) -> bool {
+    stdout.is_none_or(std::thread::JoinHandle::is_finished)
+        && stderr.is_none_or(std::thread::JoinHandle::is_finished)
+}
+
 fn terminate(child: &mut GroupChild, grace: Duration) {
+    // A reaped leader does not mean its descendants have exited. Give the
+    // entire group its grace period, then kill it even if try_wait saw an exit.
     let _ = child.signal(Signal::SIGTERM);
-    let deadline = Instant::now() + grace;
-    while Instant::now() < deadline {
-        if child.try_wait().ok().flatten().is_some() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    std::thread::sleep(grace);
     let _ = child.kill();
 }
 
@@ -550,12 +560,68 @@ fn finished(status: &'static str, exit: i32, tail: String) -> ResultRecord {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn descendants_ignoring_term_are_killed_after_grace() {
+        let directory = directory();
+        let started = Instant::now();
+        let result = run_command(
+            "(trap '' TERM; sleep 2) &",
+            &directory,
+            Duration::from_millis(100),
+            Duration::from_millis(30),
+        );
+        assert_eq!(result.status, "failed");
+        assert!(result.tail.contains("Killed after"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn command_results_preserve_status_and_bound_noisy_output() {
+        let directory = directory();
+        for (command, expected, code) in [
+            ("printf ok", "ok", 0),
+            ("printf failed >&2; exit 7", "failed", 7),
+            ("yes x | head -c 100000", "ok", 0),
+        ] {
+            let result = run_command(
+                command,
+                &directory,
+                Duration::from_secs(2),
+                Duration::from_millis(20),
+            );
+            assert_eq!(result.status, expected);
+            assert_eq!(result.exit, code);
+            assert!(result.tail.len() <= super::MAX_OUTPUT);
+        }
+        fs::remove_dir_all(&directory).unwrap();
+        let result = run_command("true", &directory, Duration::from_secs(1), Duration::ZERO);
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.exit, -1);
+        assert_eq!(result.tail, "Could not start the command.");
+    }
+    #[test]
+    fn inherited_pipes_remain_subject_to_the_deadline() {
+        let directory = directory();
+        let started = Instant::now();
+        let result = run_command(
+            "sleep 0.6 &",
+            &directory,
+            Duration::from_millis(50),
+            Duration::from_millis(20),
+        );
+        assert_eq!(result.status, "failed");
+        assert!(started.elapsed() < Duration::from_millis(500));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     use std::fmt::Write as _;
 
-    use super::{clean_output, parse_config, stable_id, Deck, PressOutcome};
+    use super::{clean_output, parse_config, run_command, stable_id, Deck, PressOutcome};
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn directory() -> PathBuf {
         let path = std::env::temp_dir().join(format!(
