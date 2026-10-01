@@ -1381,8 +1381,9 @@ dependencies = [
 
 [[package]]
 name = "kobo-post"
-version = "0.1.0"
+version = "0.2.4"
 dependencies = [
+ "kobo-image",
  "kobo-json",
  "kobo-net",
  "kobo-sdk",

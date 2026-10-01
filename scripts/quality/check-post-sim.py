@@ -189,13 +189,13 @@ def main():
 
                 drive('tap A long letter', 'wait-for The kettle takes its time',
                       'wait-idle', timeout=300)
-                drive('tap Next', 'wait 600', 'wait-idle')
+                drive('tap-id next-page', 'wait 600', 'wait-idle')
                 capture('post-letter-page-2')
                 result['checks'].append(dict(
                     name='long letters page', status='passed',
                     detail='the long letter paged forward inside the panel'))
 
-                drive('tap Inbox', 'wait-for Tea notes')
+                drive('tap back', 'wait-for Tea notes')
                 drive('tap Tea notes', 'wait-for First flush')
                 drive('tap Write a reply', 'type Kettle on and book open',
                       'tap Send letter', 'wait-for Sent to Hermes.', 'wait-idle',
@@ -206,10 +206,10 @@ def main():
                     name='reply delivered', status='passed',
                     detail='the reply reached the gateway and shows Delivered'))
 
-                drive('tap Inbox', 'tap Flaky line', 'wait-for drops once')
+                drive('tap back', 'tap Flaky line', 'wait-for drops once')
                 drive('tap Write a reply', 'type Sending this twice would be wrong',
                       'tap Send letter', 'wait-for Reply still queued', timeout=300)
-                drive('tap Inbox', 'tap Check', 'wait-for Sent to Hermes.',
+                drive('tap back', 'tap Check', 'wait-for Sent to Hermes.',
                       timeout=300)
                 flaky = [r for r in gateway.replies if r['letter_id'] == 'l-03']
                 assert len(flaky) == 1, 'a retried send must deliver exactly once'
@@ -227,7 +227,7 @@ def main():
                     name='rejection is distinct', status='passed',
                     detail='a 404 marks the reply Rejected instead of retrying forever'))
 
-                drive('tap Inbox', 'tap Tea notes', 'tap Write a reply', timeout=300)
+                drive('tap back', 'tap Tea notes', 'tap Write a reply', timeout=300)
                 drive('type Adding biscuits', 'tap back')
                 stop()
                 ADDRESS = start()
