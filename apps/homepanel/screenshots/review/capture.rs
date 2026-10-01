@@ -21,6 +21,14 @@ fn capture_review_pages_when_requested() {
     screens.push(("wall-first", app.grid(&context)));
     app.grid_page = app.grid_pages(&context).len() - 1;
     screens.push(("wall-last", app.grid(&context)));
+    let mut race = connected_panel();
+    let poll = begin_poll(&mut race);
+    race.action(action_id("tile.light.desk"));
+    let service = race.app().task.unwrap().0;
+    screens.push(("race-updating", race.app().grid(&race.context())));
+    race.task_outcome(poll, TaskOutcome::Completed(Vec::new()));
+    race.task_outcome(service, TaskOutcome::Failed(TaskError::Unauthorized));
+    screens.push(("race-service-result", race.app().grid(&race.context())));
     for (name, screen) in screens {
         let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
         let screen = kobo_ui::ensure_way_back(screen, &chrome, "Home Panel");

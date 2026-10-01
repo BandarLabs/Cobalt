@@ -999,12 +999,15 @@ impl KoboApp for HomePanel {
             }
             return;
         }
-        let Some((known, kind)) = self.task.take() else {
+        let Some((known, kind)) = self.task else {
             return;
         };
         if known != task {
             return;
         }
+        // A newer request may supersede the tracked UI operation while the
+        // earlier request is still running. Its reply must not consume this one.
+        self.task = None;
         match (kind, outcome) {
             ("test", TaskOutcome::Completed(_)) => {
                 self.banner = None;
@@ -1096,6 +1099,10 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    fn test_context() -> Context {
+        kobo_sdk::AppRunner::new(HomePanel::default()).context()
+    }
+
     fn panel() -> HomePanel {
         HomePanel {
             view: View::Grid,
@@ -1128,7 +1135,7 @@ mod tests {
             tiles: (0..12).map(|n| format!("light.{n}")).collect(),
             ..Default::default()
         };
-        assert!(!app.grid(&Context::default()).layout().nodes.is_empty());
+        assert!(!app.grid(&test_context()).layout().nodes.is_empty());
     }
 
     #[test]
@@ -1186,13 +1193,13 @@ mod tests {
     fn wall_panel_is_one_column() {
         let mut app = panel();
         app.wall = true;
-        let debug = format!("{:?}", app.grid(&Context::default()));
+        let debug = format!("{:?}", app.grid(&test_context()));
         assert!(debug.contains("columns: 1"), "{debug}");
     }
 
     #[test]
     fn empty_grid_offers_add_and_settings_as_header_icons() {
-        let debug = format!("{:?}", HomePanel::default().grid(&Context::default()));
+        let debug = format!("{:?}", HomePanel::default().grid(&test_context()));
         assert!(debug.contains("Plus"), "{debug}");
         assert!(debug.contains("Settings"), "{debug}");
         assert!(!debug.contains("Refresh now"), "{debug}");
@@ -1217,7 +1224,7 @@ mod tests {
             ],
             ..HomePanel::default()
         };
-        let debug = format!("{:?}", app.add(&Context::default()));
+        let debug = format!("{:?}", app.add(&test_context()));
         assert!(debug.contains("Ceiling lights"), "{debug}");
         assert!(!debug.contains("Office temperature"), "{debug}");
     }
@@ -1229,7 +1236,7 @@ mod tests {
             query: "light.kitchen".into(),
             ..HomePanel::default()
         };
-        let debug = format!("{:?}", app.add(&Context::default()));
+        let debug = format!("{:?}", app.add(&test_context()));
         assert!(debug.contains("Add anyway"), "{debug}");
         assert!(valid_entity_id("light.kitchen"));
         assert!(!valid_entity_id("Kitchen light"));

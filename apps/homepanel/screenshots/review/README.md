@@ -30,3 +30,19 @@ The opt-in capture script copies the app source and the workspace lockfile into 
 temporary Cargo package. PNG encoding adds a dependency only to that temporary
 package, preserving the app’s reviewed release dependency graph. The normal app
 regression suite retains every behavior and layout assertion.
+
+## Overlapping request callbacks
+
+`callback-before.png` and `callback-after.png` show the same mocked sequence: start
+a status poll, tap the desk light, complete the older poll, then fail the newer
+service request. The original handler removed the current task before checking the
+reply's ID, so it discarded the service result and stayed at “Updating desk…”. The
+handler now checks identity first and displays the current service error. Exact
+source and scenario details are in `callback-provenance.json`.
+
+A later request owns the displayed result. Earlier replies leave its task, pending
+action and banner intact. Each accepted repeated tap still emits the same service
+request as before; the fix adds no request cancellation, deduplication or queue.
+Regression tests exercise both completion orders, successful confirmation, failed
+services, stale cancellation, device discovery, connection tests and temperature
+errors. Every callback is mocked; no Home Assistant server receives a request.
