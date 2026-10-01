@@ -1,4 +1,4 @@
-# Backgammon new-match review
+# Backgammon match controls and Help review
 
 These are real in-process Cobalt renderer snapshots, **not interactive
 simulator captures or hardware photographs**. Before captures used the original
@@ -17,6 +17,35 @@ and preserves the chosen player mode and match length. Repeated confirmation
 cannot reset the new match again.
 
 ![Cancelled confirmation keeps the match](after-new-match-cancelled.png)
+
+## Complete Help at large text sizes
+
+The existing Help screen lost its doubling rule at 170% text size. Its large
+heading repeated the goal already explained in the body, using three lines in
+portrait. Four concise paragraphs now preserve every rule and both ways back
+to the game, including in landscape.
+
+| Before, 170% portrait | After, 170% portrait |
+| --- | --- |
+| ![The doubling rule is clipped](before-help-170-portrait.png) | ![Every rule and Play remain visible](after-help-170-portrait.png) |
+
+| Before, 170% landscape | After, 170% landscape |
+| --- | --- |
+| ![Help loses its final rules](before-help-170-landscape.png) | ![All instructions fit above Play](after-help-170-landscape.png) |
+
+Help before captures use `9a68f2118b9a75078ae20b01720184a43ca0db5c`,
+whose Help builder is unchanged from the original beta. Only the capture
+fixture and test font initialization were added before these snapshots.
+The same app fixture, bundled font, 300 ppi and synthetic chrome produce both
+sides; metrics are 1072 × 1448 and 1448 × 1072 at 170%.
+
+The older layout test could pass using the fallback font if it ran before
+another test installed the real font. Running it alone with explicit font
+initialization reproduces the exact CI overflow. The common layout-test helper
+now initializes the bundled font before measuring. A regression test checks
+every rule, hit-tests Back and Play at all nine sizes and both poses, and
+verifies that either exit preserves the game and ignores gameplay taps while
+Help is open. Both parallel and serial test runs pass.
 
 ## Capture provenance
 
@@ -37,6 +66,8 @@ reader testing remain pending; no simulator or runtime transport was changed.
 ```sh
 COBALT_REVIEW_OUT="$PWD/target/ui-review" COBALT_REVIEW_PHASE=after \
   cargo test -p kobo-backgammon capture_review_screens -- --ignored
+COBALT_REVIEW_OUT="$PWD/target/ui-review" COBALT_REVIEW_PHASE=after \
+  cargo test -p kobo-backgammon capture_help_screens -- --ignored
 python3 - <<'PY'
 from pathlib import Path
 from PIL import Image

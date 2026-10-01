@@ -1499,13 +1499,12 @@ fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
         return ScreenBuilder::new("backgammon-help")
             .top_bar("How to play")
             .owns_back(true)
-            .heading("Move all 15 checkers home, then off")
-            .text("Roll, tap a checker, then a legal destination marked on the board.")
-            .text("A lone opposing checker is hit and sent to the bar. Move bar checkers first.")
+            .text("Roll, tap a checker, then a marked legal destination.")
+            .text("A lone opposing checker goes to the bar when hit. Move your bar checkers first.")
             .text(
-                "Once every checker is home, bear them off. The first player to clear all 15 wins.",
+                "Bring all 15 checkers home before bearing them off. The first to clear all 15 wins.",
             )
-            .text("Double raises the game's value before a roll; the opponent may take or drop.")
+            .text("Before a roll, Double raises the game's value. Your opponent may take or drop.")
             .bottom_action("close-help", "Play")
             .build();
     }
@@ -1991,6 +1990,12 @@ mod tests {
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
     fn test_screen(game: &Game) -> Screen {
+        // Match runtime typography even when a layout test runs on its own.
+        static FONT: std::sync::Once = std::sync::Once::new();
+        FONT.call_once(|| {
+            let _runner = kobo_sdk::AppRunner::new(Game::default());
+            assert!(kobo_ui::has_typesetter());
+        });
         screen(
             game,
             Some(TilePicture::new(BOARD_PICTURE, BOARD_WIDTH, BOARD_HEIGHT)),
@@ -2963,6 +2968,9 @@ mod tests {
 
 #[cfg(test)]
 mod new_match_tests;
+
+#[cfg(test)]
+mod help_tests;
 
 #[cfg(test)]
 mod review_capture;
