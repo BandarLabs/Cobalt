@@ -1711,6 +1711,7 @@ dependencies = [
  "kobo-json",
  "kobo-read",
  "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
