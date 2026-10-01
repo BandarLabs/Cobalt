@@ -15,7 +15,7 @@ Clara BW metrics with a synthetic status strip and runtime-equivalent Back chrom
 Recreate the after images from the repository root:
 
 ```sh
-COBALT_REVIEW_OUT=/tmp/homepanel-review cargo test -p kobo-homepanel capture_review_pages_when_requested
+COBALT_REVIEW_OUT=/tmp/homepanel-review python3 apps/homepanel/screenshots/review/capture.py
 ```
 
 The regression suite covers all nine supported text scales, 100 discovered
@@ -25,3 +25,8 @@ page turns, search reset, selecting the final device, and Back.
 Interactive simulator attempts were blocked by this executor rejecting Unix-domain
 socket bind with EPERM, including the approved elevated retry. No interactive,
 network, physical-device, or ARM-build success is claimed by these captures.
+
+The opt-in capture script copies the app source and the workspace lockfile into a
+temporary Cargo package. PNG encoding adds a dependency only to that temporary
+package, preserving the app’s reviewed release dependency graph. The normal app
+regression suite retains every behavior and layout assertion.
