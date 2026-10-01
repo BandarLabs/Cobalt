@@ -1,0 +1,18 @@
+{
+  "id": "readeck",
+  "display_name": "Readeck",
+  "short_label": "Readeck",
+  "summary": "Read and search your saved Readeck articles.",
+  "version": "0.1.0",
+  "release_notes": "Initial token-based reader with library search, reading positions, images and article actions.",
+  "minimum_cobalt_version": "999.0.0",
+  "glyph": "bookmark",
+  "capabilities": ["network", "frontlight-control"],
+  "setup": {
+    "steps": [
+      {"text": "Use an HTTPS Readeck instance and create an API token that permits reading and updating bookmarks."},
+      {"text": "Close Cobalt normally. Install the token from a private file using the computer CLI.", "command": "kobo secret set readeck --app readeck --server https://<server> --from <token-file> --device <address>"},
+      {"text": "Open Readeck, enter the same HTTPS server address, and choose Use saved token. Alternatively, tap Next to enter the token on the Kobo."}
+    ]
+  }
+}

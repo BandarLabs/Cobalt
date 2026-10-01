@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Readeck for Kobo e-readers | Cobalt</title>
+<meta name="description" content="Read and search your saved Readeck articles. Install it on a supported Kobo e-reader with Cobalt.">
+<link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/readeck/">
+<link rel="icon" href="../../logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Readeck for Kobo e-readers | Cobalt">
+<meta property="og:description" content="Read and search your saved Readeck articles. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/readeck/">
+<meta property="og:site_name" content="Cobalt">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/store.png">
+<meta property="og:image:width" content="1072">
+<meta property="og:image:height" content="1448">
+<meta property="og:image:alt" content="Readeck available from the signed Cobalt Apps Catalog">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Readeck for Kobo e-readers | Cobalt">
+<meta name="twitter:description" content="Read and search your saved Readeck articles. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/store.png">
+<meta name="twitter:image:alt" content="Readeck available from the signed Cobalt Apps Catalog">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-0MfjYSlmUKGnAsJGNOxR1EBL7oPGEoelTivyxAF0QPM='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Readeck",
+      "description": "Read and search your saved Readeck articles.",
+      "url": "https://bandarlabs.github.io/Cobalt/apps/readeck/",
+      "image": {
+        "@type": "ImageObject",
+        "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/store.png",
+        "width": 1072,
+        "height": 1448,
+        "caption": "Readeck available from the signed Cobalt Apps Catalog"
+      },
+      "applicationSuite": "Cobalt",
+      "applicationCategory": "ReferenceApplication",
+      "operatingSystem": "Cobalt on supported Kobo e-readers",
+      "softwareVersion": "0.1.0",
+      "isAccessibleForFree": true,
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/readeck/",
+      "sameAs": "https://github.com/BandarLabs/Cobalt/tree/main/apps/readeck"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Cobalt",
+          "item": "https://bandarlabs.github.io/Cobalt/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Apps",
+          "item": "https://bandarlabs.github.io/Cobalt/#apps"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Readeck",
+          "item": "https://bandarlabs.github.io/Cobalt/apps/readeck/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="stylesheet" href="../install.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a class="active" href="../../#apps">Apps</a>
+      <a href="../../developers.html">Developers</a>
+      <a href="../../faq.html">FAQ</a>
+      <a href="../../#store">Store</a>
+      <a href="../../#install">Install</a>
+      <a href="../../#contributing">Contributing</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap" data-app-id="readeck" data-minimum-cobalt-version="999.0.0">
+  <div class="app-hero">
+    <div class="app-copy">
+      <p class="eyebrow">Reading</p>
+      <h1>Readeck</h1>
+      <p class="summary">Read and search your saved Readeck articles.</p>
+      <dl class="facts">
+        <div><dt>Version</dt><dd>0.1.0</dd></div>
+        <div><dt>Permissions</dt><dd>network, frontlight-control</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 999.0.0</dd></div>
+      </dl>
+      <a class="cta" href="#setup-panel">Install on your Kobo</a>
+      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/readeck">Source code on GitHub</a></p>
+    </div>
+    <figure class="app-shot">
+      <img src="../../media/site/apps/store.png" width="1072" height="1448" alt="Readeck available from the signed Cobalt Apps Catalog">
+    </figure>
+  </div>
+  <section class="whats-new">
+    <h2>New in 0.1.0</h2>
+    <p>Initial token-based reader with library search, reading positions, images and article actions.</p>
+  </section>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>Use an HTTPS Readeck instance and create an API token that permits reading and updating bookmarks.</li>
+      <li>Close Cobalt normally. Install the token from a private file using the computer CLI.
+        <code class="setup-command">kobo secret set readeck --app readeck --server https://&lt;server&gt; --from &lt;token-file&gt; --device &lt;address&gt;</code></li>
+      <li>Open Readeck, enter the same HTTPS server address, and choose Use saved token. Alternatively, tap Next to enter the token on the Kobo.</li>
+    </ol>
+  </section>
+  <section class="panel get-cobalt" id="setup-panel">
+    <div class="get-cobalt-copy">
+      <p class="eyebrow">New to Cobalt?</p>
+      <h2>Install Cobalt from your browser</h2>
+      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
+      <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
+    </div>
+    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  </section>
+  <section class="panel" id="pair-panel">
+    <p class="eyebrow">Already have Cobalt?</p>
+    <h2>Link your Kobo to install</h2>
+    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+    <form id="pair-form">
+      <div class="field">
+        <label for="pair-code">Pairing code</label>
+        <input id="pair-code" name="code" inputmode="text" autocomplete="one-time-code" maxlength="8" required>
+      </div>
+      <div class="field" id="pair-secret-field">
+        <label for="pair-secret">Verification key</label>
+        <input class="secret" id="pair-secret" name="secret" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="45" required>
+      </div>
+      <button type="submit">Link Kobo</button>
+    </form>
+    <p class="status" id="pair-status" role="status" aria-live="polite"></p>
+  </section>
+  <section class="panel" id="install-panel" hidden>
+    <h2>Install on <span id="device-name">your Kobo</span></h2>
+    <p>Your Kobo checks the app's signature before installing it.</p>
+    <div class="actions">
+      <button type="button" id="install">Install Readeck</button>
+      <button type="button" id="forget" class="secondary">Forget this Kobo</button>
+    </div>
+    <p class="status" id="install-status" role="status" aria-live="polite"></p>
+  </section>
+  <aside class="community">
+    <strong>Want another Kobo app?</strong>
+    Request it, suggest a feature or report a bug in
+    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
+  </aside>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Cobalt · AGPL-3.0</span>
+    <nav aria-label="Footer navigation">
+      <a href="../../">Home</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</footer>
+<script src="../install.js" defer></script>
+</body>
+</html>
