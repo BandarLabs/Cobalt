@@ -13,8 +13,5 @@ kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 kobo-ui = { path = "../../crates/kobo-ui" }
 
-[dev-dependencies]
-kobo-image = { path = "../../crates/kobo-image" }
-
 [lints]
 workspace = true

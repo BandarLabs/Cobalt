@@ -1383,7 +1383,6 @@ dependencies = [
 name = "kobo-post"
 version = "0.2.4"
 dependencies = [
- "kobo-image",
  "kobo-json",
  "kobo-net",
  "kobo-sdk",

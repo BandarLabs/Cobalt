@@ -15,7 +15,7 @@ The reply action stays in place. The page strip shows position and arrow targets
 and runtime Back returns to the inbox without a second competing Inbox button.
 
 ```sh
-COBALT_REVIEW_OUT=/tmp/post-review cargo test -p kobo-post capture_review_pages_when_requested
+COBALT_REVIEW_OUT=/tmp/post-review python3 apps/post/screenshots/review/capture.py
 ```
 
 Regressions verify every original word, every page's layout and reply target at
@@ -24,3 +24,8 @@ restoration, opening a reply and returning through the inbox.
 
 Interactive simulation is blocked by Unix socket bind EPERM in this executor.
 No interactive, live gateway or physical-device success is claimed.
+
+The opt-in capture script copies the app source and the workspace lockfile into a
+temporary Cargo package. PNG encoding adds a dependency only to that temporary
+package, preserving the app’s reviewed release dependency graph. The normal app
+regression suite retains every behavior and layout assertion.
