@@ -173,3 +173,58 @@ fn physical_page_turns_preserve_selection_and_the_round_uses_that_category() {
         .iter()
         .all(|question| question.category == "Geography"));
 }
+
+#[test]
+fn all_players_and_start_fit_every_text_size_and_pose() {
+    for (width, height) in [(1072, 1448), (1448, 1072)] {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                width,
+                height,
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(
+                Quiz {
+                    view: View::Players,
+                    names: [
+                        "Alexanderthe1".into(),
+                        "Bartholomew2".into(),
+                        "Christopher3".into(),
+                        "Desdemona444".into(),
+                    ],
+                    ..Quiz::default()
+                },
+                metrics,
+            );
+            for count in 2..=4 {
+                runner.app_mut().players = count;
+                let screen = players_screen(runner.app());
+                let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                assert!(
+                    screen.diagnostics(&metrics, &chrome).issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    screen.diagnostics(&metrics, &chrome).issues
+                );
+                let layout = screen.layout_with(&metrics, &chrome);
+                for name in (0..count).map(|i| format!("rename-{i}")).chain([
+                    "start".into(),
+                    "count-2".into(),
+                    "count-3".into(),
+                    "count-4".into(),
+                ]) {
+                    let action = action_id(&name);
+                    let rect = layout
+                        .rect_of_action(action)
+                        .expect("player control visible");
+                    assert_eq!(
+                        layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                        Some(action)
+                    );
+                }
+            }
+            runner.action(action_id("start"));
+            assert_eq!(runner.app().view, View::Question);
+        }
+    }
+}

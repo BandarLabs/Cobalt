@@ -798,20 +798,19 @@ fn setup_screen(quiz: &Quiz, context: &Context) -> Screen {
 
 fn players_screen(quiz: &Quiz) -> Screen {
     ScreenBuilder::new("pubquiz-players")
-        .top_bar("Pub Quiz")
+        .top_bar("Players")
         .owns_back(true)
-        .heading("Pass-around players")
-        .secondary(format!("{} players take turns.", quiz.players))
+        .secondary(format!(
+            "{} players · Tap a name to rename it.",
+            quiz.players
+        ))
         .buttons([("count-2", "2"), ("count-3", "3"), ("count-4", "4")])
-        .rows((0..quiz.players).map(|i| {
-            (
-                format!("rename-{i}"),
-                quiz.names[i].as_str(),
-                "Rename",
-                Glyph::Person,
-            )
-        }))
-        .primary_button("start", "Start round")
+        .grid(
+            2,
+            false,
+            (0..quiz.players).map(|i| (format!("rename-{i}"), quiz.names[i].as_str())),
+        )
+        .bottom_action("start", "Start round")
         .build()
 }
 
