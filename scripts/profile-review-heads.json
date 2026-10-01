@@ -45,31 +45,34 @@
       "app": "pubquiz",
       "url": "https://github.com/BandarLabs/Cobalt/pull/242",
       "number": 242,
-      "head": "b3a27d85a45d9a2509c387018c3d377eed1a6f95",
+      "head": "297731d1f01556f5845a0f4c0abf5aaf84861016",
       "branch": "dot/ui-pubquiz-category-selection",
       "local_commit": "a86fae0cd4695bacd60a38408477d0877703a701",
-      "tree": "b20696f92a2dc926ab1f7264ebfc7295dc37888a",
-      "draft": true
+      "tree": "85289bcba06589b6015ca496e93c16bd20684ab2",
+      "draft": true,
+      "local_object_status": "prior local route commit lost; remote tree verified during recovered publication"
     },
     {
       "app": "parser",
       "url": "https://github.com/BandarLabs/Cobalt/pull/243",
       "number": 243,
-      "head": "e7e82fb29daa61e1e83b7f407f14104bf74afb7f",
+      "head": "89d3b26d832b4cc071b85e0288018ec3de2a5875",
       "branch": "dot/ui-parser-library-navigation",
       "local_commit": "3c58229a4ef53445815c3a6609ebf82d5736e937",
-      "tree": "7b6b7640dce88147e973b3a44aaaff68e0d83d87",
-      "draft": true
+      "tree": "4351a6e5cb7ff2de28f30fc1336f09b3e07a5600",
+      "draft": true,
+      "local_object_status": "prior local route commit lost; remote tree verified during recovered publication"
     },
     {
       "app": "backgammon",
       "url": "https://github.com/BandarLabs/Cobalt/pull/244",
       "number": 244,
-      "head": "e6b74602fa336f933f0c0c7856cd083116a7ddf1",
+      "head": "d0ac32d946c35a8d2dbc065f09fbe32faee54afa",
       "branch": "dot/ui-backgammon-new-match",
       "local_commit": "425c35d2e8211a7583dfb032e1aa7404e0f7926b",
-      "tree": "907682865dc0bb83626946690e04fdd136a1579f",
-      "draft": true
+      "tree": "896f7c1cd57e990eddb46c1372af373fba1a851f",
+      "draft": true,
+      "local_object_status": "prior local route commit lost; remote tree verified during recovered publication"
     },
     {
       "app": "settings",
@@ -311,5 +314,18 @@
       "tree": "c5d5390f065039dc7994fff5944cae78a26cd586",
       "draft": true
     }
-  ]
+  ],
+  "repair_after_apps": [
+    "launcher",
+    "settings",
+    "pubquiz",
+    "backgammon",
+    "zotero-reader",
+    "parser"
+  ],
+  "repair_after_by_profile": {
+    "libra-colour-390-4.46.23836": [
+      "birds"
+    ]
+  }
 }

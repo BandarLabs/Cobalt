@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        phase: [after]
+        phase: [before]
         profile: [clara-bw-391, clara-bw-395, clara-hd-376, clara-colour-393, elipsa-2e-389, libra-2-388, libra-colour-390, libra-colour-390-4.46.23836, libra-h2o-384]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -27,7 +27,12 @@ jobs:
         with:
           toolchain: 1.85.1
       - name: Run exact source profile routes
-        run: python3 scripts/run-profile-review.py --profile '${{ matrix.profile }}' --phase '${{ matrix.phase }}'
+        run: |
+          args=()
+          if [ '${{ matrix.phase }}' = after ]; then
+            args=(--repair-only)
+          fi
+          python3 scripts/run-profile-review.py --profile '${{ matrix.profile }}' --phase '${{ matrix.phase }}' "${args[@]}"
       - name: Upload profile evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
