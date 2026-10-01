@@ -131,6 +131,7 @@ struct ReadLater {
     session: Option<session::Session>,
     depth: u16,
     tab: Tab,
+    queue_page: usize,
     entries: Vec<Entry>,
     entries_origin: Option<String>,
     task_origin: Option<String>,
@@ -250,19 +251,20 @@ impl ReadLater {
                     .top_bar("Read Later settings")
                     .typed(&self.keyboard, prompt)
                     .keyboard(&self.keyboard, "Save")
+                    .owns_back(true)
                     .build(),
             );
             return;
         }
         let screen = match view {
-            View::Queue => self.queue_screen(),
+            View::Queue => self.queue_screen(context),
             View::Article => {
                 let entry = self.open.and_then(|i| self.entries.get(i));
                 let loading = matches!(self.task, Some((_, PendingTask::Article(_))));
                 match entry {
                     Some(e) if !e.content.is_empty() => article_screen(context, e),
-                    Some(e) if loading => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).secondary(&e.site).text("Loading article…").button("back", "Back").build(),
-                    Some(e) => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).text("Wallabag couldn't extract this one. Open the original URL in Wallabag.").action_bar([("archive", "Archive"), ("back", "Back")]).build(),
+                    Some(e) if loading => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).secondary(&e.site).activity("Loading article", None).build(),
+                    Some(e) => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).text("Wallabag couldn't extract this one. Open the original URL in Wallabag.").bottom_action("archive", "Archive").build(),
                     None => ScreenBuilder::new("readlater").top_bar("Read Later").splash(Some(Glyph::Bookmark), "Choose an article", "Open one from your reading list.").build(),
                 }
             }
@@ -290,24 +292,13 @@ impl ReadLater {
                     50 => 1,
                     _ => 0,
                 })
-                .button("back", "Back")
                 .build()
             }
         };
-        context.set_screen(screen);
+        context.set_screen(screen.with_own_back(view != View::Queue));
     }
-    fn queue_screen(&self) -> kobo_sdk::Screen {
-        if !self.ready() {
-            return ScreenBuilder::new("readlater")
-                .top_bar("Read Later")
-                .splash(
-                    Some(Glyph::Bookmark),
-                    "Connect Wallabag",
-                    "On your computer run `kobo readlater login`, or install a credential named wallabag and add the HTTPS address here.",
-                )
-                .primary_button("settings", "Add address")
-                .build();
-        }
+
+    fn queue_prefix(&self) -> ScreenBuilder {
         let mut page = ScreenBuilder::new("readlater")
             .top_bar("Read Later")
             .top_bar_action("sync", "Sync")
@@ -326,48 +317,102 @@ impl ReadLater {
         if self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty {
             page = page.button("retry-save", "Retry saving");
         }
-        let visible: Vec<(usize, &Entry)> = self
-            .entries
+        if !self.pending.is_empty() {
+            page = page.secondary(format!(
+                "{} change{} waiting to sync",
+                self.pending.len(),
+                if self.pending.len() == 1 { "" } else { "s" }
+            ));
+        }
+        page
+    }
+
+    fn queue_rows(&self, context: &Context) -> Vec<(usize, String, String)> {
+        self.entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| self.tab.shows(entry))
-            .collect();
-        if visible.is_empty() {
-            page.splash(
-                Some(Glyph::Bookmark),
-                match self.tab {
-                    Tab::Unread => "No saved articles",
-                    Tab::Starred => "No starred articles",
-                    Tab::Archive => "No archived articles",
-                },
-                "Sync Wallabag to add some.",
-            )
-            .button("sync", "Sync")
-            .build()
-        } else {
-            page.rows(visible.into_iter().map(|(i, e)| {
+            .map(|(index, entry)| {
+                let pending = self.pending.iter().any(|action| action.id == entry.id);
+                let summary = format!(
+                    "{}{} · {} min",
+                    if pending { "Waiting to sync · " } else { "" },
+                    entry.site,
+                    entry.reading_time
+                );
                 (
-                    format!("entry-{i}"),
-                    e.title.clone(),
-                    if self.pending.iter().any(|action| action.id == e.id) {
-                        format!("{} · {} min · Waiting to sync", e.site, e.reading_time)
-                    } else {
-                        format!("{} · {} min", e.site, e.reading_time)
-                    },
-                    if e.starred {
-                        Glyph::Heart
-                    } else {
-                        Glyph::Bookmark
-                    },
+                    index,
+                    context.clamped_row(&entry.title, 2, false),
+                    context.one_line_row(&summary, false),
                 )
-            }))
-            .secondary(format!(
-                "{} action{} pending sync",
-                self.pending.len(),
-                if self.pending.len() == 1 { "" } else { "s" }
-            ))
-            .build()
+            })
+            .collect()
+    }
+
+    fn queue_pages(&self, context: &Context, rows: &[(usize, String, String)]) -> Vec<Vec<usize>> {
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(_, title, summary)| (title.as_str(), summary.as_str()))
+            .collect();
+        context.paginate_rows_under(
+            &borrowed,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &self.queue_prefix().build(),
+        )
+    }
+
+    fn queue_screen(&self, context: &Context) -> kobo_sdk::Screen {
+        if !self.ready() {
+            return ScreenBuilder::new("readlater")
+                .top_bar("Read Later")
+                .splash(
+                    Some(Glyph::Bookmark),
+                    "Connect Wallabag",
+                    "On your computer run `kobo readlater login`, or install a credential named wallabag and add the HTTPS address here.",
+                )
+                .primary_button("settings", "Add address")
+                .build();
         }
+        let mut page = self.queue_prefix();
+        let rows = self.queue_rows(context);
+        if rows.is_empty() {
+            return page
+                .splash(
+                    Some(Glyph::Bookmark),
+                    match self.tab {
+                        Tab::Unread => "No saved articles",
+                        Tab::Starred => "No starred articles",
+                        Tab::Archive => "No archived articles",
+                    },
+                    "Sync Wallabag to add some.",
+                )
+                .build();
+        }
+        let pages = self.queue_pages(context, &rows);
+        let current = self.queue_page.min(pages.len().saturating_sub(1));
+        page = page.rows(pages.get(current).into_iter().flatten().map(|&row| {
+            let (index, title, summary) = &rows[row];
+            (
+                format!("entry-{index}"),
+                title.clone(),
+                summary.clone(),
+                if self.entries[*index].starred {
+                    Glyph::Heart
+                } else {
+                    Glyph::Bookmark
+                },
+            )
+        }));
+        if pages.len() > 1 {
+            page = page
+                .page_turns("queue-previous", "queue-next")
+                .page_position(
+                    u16::try_from(current + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        page.build()
     }
 
     fn sync(&mut self, context: &mut Context) {
@@ -392,6 +437,7 @@ impl ReadLater {
             return;
         }
         self.tab = tab;
+        self.queue_page = 0;
         self.open = None;
         self.view = Some(View::Queue);
         self.sync(context);
@@ -746,6 +792,17 @@ impl KoboApp for ReadLater {
             self.switch_tab(context, Tab::Archive);
         } else if action == action_id("back") || action == ActionId::BACK {
             self.view = Some(View::Queue);
+        } else if self.view.unwrap_or(View::Queue) == View::Queue
+            && (action == action_id("queue-previous") || action == action_id("queue-next"))
+        {
+            let pages = self.queue_pages(context, &self.queue_rows(context));
+            let last = pages.len().saturating_sub(1);
+            let current = self.queue_page.min(last);
+            self.queue_page = if action == action_id("queue-next") {
+                current.saturating_add(1).min(last)
+            } else {
+                current.saturating_sub(1)
+            };
         } else if action == action_id("depth-20") {
             self.depth = 20;
         } else if action == action_id("depth-50") {
@@ -986,6 +1043,149 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    fn reading_list(count: usize) -> ReadLater {
+        ReadLater {
+            server: "https://bag.example".into(),
+            depth: 100,
+            entries: (0..count)
+                .map(|index| Entry {
+                    id: u64::try_from(index + 1).unwrap(),
+                    title: format!("Article {}: A walk beside the river", index + 1),
+                    site: "example.org".into(),
+                    reading_time: 8,
+                    position: 0,
+                    content: "The first light reaches the bridge before the town wakes.".into(),
+                    starred: false,
+                    archived: false,
+                })
+                .collect(),
+            ..ReadLater::default()
+        }
+    }
+
+    #[test]
+    fn every_saved_article_is_reachable_at_every_text_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let context =
+                kobo_sdk::AppRunner::with_metrics(ReadLater::default(), metrics).context();
+            let mut app = reading_list(100);
+            app.entries[0].title.push_str(
+                " through the allotments and along the old stone bridge on a quiet autumn morning",
+            );
+            for trouble in [false, true] {
+                app.notice = trouble
+                    .then(|| "Articles could not be saved. Retry saving before closing.".into());
+                app.cache_dirty = trouble;
+                app.pending = if trouble {
+                    vec![OutboxAction {
+                        id: 1,
+                        kind: OutboxKind::Star,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                let rows = app.queue_rows(&context);
+                let pages = app.queue_pages(&context, &rows);
+                assert!(pages.len() > 1);
+                let mut seen = Vec::new();
+                for (page, shown) in pages.iter().enumerate() {
+                    app.queue_page = page;
+                    let screen = app.queue_screen(&context);
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?}, page {page}, trouble {trouble}: {:?}",
+                        diagnostics.issues
+                    );
+                    for &row in shown {
+                        let index = rows[row].0;
+                        let action = action_id(&format!("entry-{index}"));
+                        let rect = diagnostics
+                            .layout
+                            .rect_of_action(action)
+                            .expect("a listed article has a touch target");
+                        assert_eq!(
+                            diagnostics
+                                .layout
+                                .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                            Some(action)
+                        );
+                        seen.push(index);
+                    }
+                }
+                assert_eq!(seen, (0..100).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_back_unwinds_editing_settings_and_articles_without_leaving_the_list() {
+        let mut app = reading_list(30);
+        let mut context = kobo_sdk::AppRunner::new(ReadLater::default()).context();
+        let last_screen = |context: &Context| {
+            context
+                .commands()
+                .iter()
+                .rev()
+                .find_map(|command| {
+                    if let kobo_sdk::Command::SetScreen(screen) = command {
+                        Some(screen.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        app.on_action(&mut context, action_id("queue-next"));
+        assert_eq!(app.queue_page, 1);
+        app.on_action(&mut context, action_id("settings"));
+        assert!(last_screen(&context).owns_back);
+        app.on_action(&mut context, action_id("server"));
+        assert!(last_screen(&context).owns_back);
+        app.on_action(&mut context, ActionId::BACK);
+        assert!(app.editing.is_none());
+        assert_eq!(app.view, Some(View::Settings));
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.view, Some(View::Queue));
+        assert!(!last_screen(&context).owns_back);
+        assert_eq!(app.queue_page, 1);
+        let rows = app.queue_rows(&context);
+        let pages = app.queue_pages(&context, &rows);
+        let opened = rows[pages[1][0]].0;
+        app.on_action(&mut context, action_id(&format!("entry-{opened}")));
+        assert_eq!(app.open, Some(opened));
+        assert!(last_screen(&context).owns_back);
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.view, Some(View::Queue));
+        assert_eq!(app.queue_page, 1);
+        assert!(!last_screen(&context).owns_back);
+    }
+
+    #[test]
+    fn list_page_turns_clamp_after_filtering_and_never_skip_articles() {
+        let mut app = reading_list(30);
+        let mut context = kobo_sdk::AppRunner::new(ReadLater::default()).context();
+        app.on_action(&mut context, action_id("queue-previous"));
+        assert_eq!(app.queue_page, 0);
+        let count = app.queue_pages(&context, &app.queue_rows(&context)).len();
+        for _ in 0..count + 2 {
+            app.on_action(&mut context, action_id("queue-next"));
+        }
+        assert_eq!(app.queue_page, count - 1);
+        app.entries.truncate(1);
+        app.on_action(&mut context, action_id("queue-previous"));
+        assert_eq!(app.queue_page, 0);
+        assert!(app.queue_screen(&context).page_turns.is_none());
+        app.queue_page = 8;
+        app.on_action(&mut context, action_id("starred"));
+        assert_eq!(app.queue_page, 0);
+        assert_eq!(app.tab, Tab::Starred);
+    }
+
     #[test]
     fn long_articles_page_without_losing_text_and_resume_after_reflow() {
         use kobo_sdk::{AppRunner, Command};

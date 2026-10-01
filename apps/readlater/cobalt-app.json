@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.3",
-  "release_notes": "An article with a queued archive or star says Waiting to sync on its row.",
+  "version": "0.2.4",
+  "release_notes": "Every saved article stays reachable in a paginated reading list at all text sizes. Back returns from articles and settings to the same list page.",
   "glyph": "bookmark",
   "capabilities": [
     "network"
