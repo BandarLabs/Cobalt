@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-deck"
-version = "0.2.0"
+version = "0.2.6"
 dependencies = [
  "kobo-image",
  "kobo-json",
