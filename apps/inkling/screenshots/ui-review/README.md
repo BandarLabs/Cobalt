@@ -1,5 +1,16 @@
 # Inkling interaction and feedback review
 
+## Current follow-up
+
+[PR259 follow-up evidence](followup/README.md) adds real full-simulator
+before/after captures and passing functional journeys for all nine supported
+profiles, the reproduced Help regression and fix, and fixture-tested companion
+export reception. The original renderer-only evidence below is preserved as
+historical evidence; its simulator-access limitation does not apply to the
+follow-up environment. Physical hardware remains untested.
+
+## Original review
+
 These are genuine retained-screen captures from Inkling's screen builder, SDK
 callbacks and the Cobalt renderer. They are **not interactive simulator or
 physical-device screenshots**. The cloud host refused AF_UNIX socket creation,
