@@ -141,6 +141,7 @@ struct Grimoire {
     /// the other screen here made of more prose than a panel holds.
     detail_page: usize,
     bookmarks: Vec<usize>,
+    bookmarks_page: usize,
     roll: u16,
     modifier: i8,
     advantage: i8,
@@ -186,6 +187,7 @@ impl Default for Grimoire {
             detail: None,
             detail_page: 0,
             bookmarks: vec![],
+            bookmarks_page: 0,
             roll: 20,
             modifier: 0,
             advantage: 0,
@@ -342,7 +344,7 @@ impl Grimoire {
                 .build(),
             View::Compendium => self.compendium(s, context),
             View::Filters | View::FilterChoice => self.filter_screen(context),
-            View::Bookmarks => self.bookmarks(s),
+            View::Bookmarks => self.bookmarks(s, context),
             View::Search => s
                 .secondary(format!("Prefix search: {}", self.keyboard.text()))
                 .keyboard(&self.keyboard, "Search")
@@ -574,8 +576,33 @@ impl Grimoire {
         );
     }
 
-    fn bookmarks(&self, s: ScreenBuilder) -> Screen {
-        if self.bookmarks.is_empty() {
+    fn bookmark_rows(&self, context: &Context) -> Vec<(usize, String, String)> {
+        self.bookmarks
+            .iter()
+            .filter_map(|index| {
+                self.corpus.get(*index).map(|entry| {
+                    (
+                        *index,
+                        context.clamped_row(&entry.name, 2, true),
+                        entry.subtitle.clone(),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn bookmark_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.bookmark_rows(context);
+        let labels = rows
+            .iter()
+            .map(|(_, name, detail)| (name.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        context.paginate_rows(&labels, true)
+    }
+
+    fn bookmarks(&self, s: ScreenBuilder, context: &Context) -> Screen {
+        let rows = self.bookmark_rows(context);
+        if rows.is_empty() {
             return s
                 .splash(
                     Some(Glyph::Bookmark),
@@ -585,19 +612,29 @@ impl Grimoire {
                 .bottom_action("back", "Back")
                 .build();
         }
-        s.rows(self.bookmarks.iter().filter_map(|i| {
-            self.corpus.get(*i).map(|e| {
-                (
-                    format!("entry-{i}"),
-                    e.name.clone(),
-                    e.subtitle.clone(),
-                    Glyph::Bookmark,
-                )
-            })
-        }))
-        .bottom_action("back", "Back")
-        .build()
+        let pages = self.bookmark_pages(context);
+        let page = self.bookmarks_page.min(pages.len().saturating_sub(1));
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = s.rows(visible.iter().map(|&index| {
+            let (entry, name, detail) = &rows[index];
+            (
+                format!("entry-{entry}"),
+                name.clone(),
+                detail.clone(),
+                Glyph::Bookmark,
+            )
+        }));
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("bookmarks-previous", "bookmarks-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.bottom_action("back", "Back").build()
     }
+
     fn dice(&self, s: ScreenBuilder) -> Screen {
         s.secondary(format!(
             "d20 {} · modifier {:+}",
@@ -1112,8 +1149,33 @@ impl KoboApp for Grimoire {
         }
     }
 
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Bookmarks {
+            self.on_action(
+                context,
+                action_id(if forward {
+                    "bookmarks-next"
+                } else {
+                    "bookmarks-previous"
+                }),
+            );
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
+        if self.view == View::Bookmarks
+            && (a == action_id("bookmarks-next") || a == action_id("bookmarks-previous"))
+        {
+            let last = self.bookmark_pages(c).len().saturating_sub(1);
+            self.bookmarks_page = if a == action_id("bookmarks-next") {
+                self.bookmarks_page.saturating_add(1).min(last)
+            } else {
+                self.bookmarks_page.min(last).saturating_sub(1)
+            };
+            self.show(c);
+            return;
+        }
         if self.filter_action(c, a) {
             self.show(c);
             return;
@@ -1198,6 +1260,7 @@ impl KoboApp for Grimoire {
             self.keyboard = Keyboard::with_text(&self.query);
             self.view = View::Search;
         } else if a == action_id("bookmarks") {
+            self.bookmarks_page = 0;
             self.bookmarks_open = true;
             self.view = View::Bookmarks;
         } else if a == action_id("previous") {
@@ -1990,3 +2053,6 @@ mod tests {
         assert!(!include_str!("../data/corpus.tsv").contains("Kobold Press"));
     }
 }
+
+#[cfg(test)]
+mod bookmark_tests;
