@@ -407,6 +407,7 @@ enum View {
     /// beside the controls that play it.
     Match,
     Help,
+    NewMatch,
 }
 
 impl Phase {
@@ -778,6 +779,8 @@ impl Game {
     }
 
     fn start_match(&mut self) {
+        self.played.clear();
+        self.turn_moves.clear();
         self.score = [0; 2];
         self.crawford_used = false;
         self.start_game();
@@ -1477,6 +1480,18 @@ fn board_pixels(game: &Game) -> Vec<u8> {
 }
 
 fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+    if game.view == View::NewMatch {
+        return ScreenBuilder::new("backgammon-new-match")
+            .top_bar("Backgammon")
+            .owns_back(true)
+            .confirmation(
+                "Start a new match?",
+                "Clear this game, the score and turn history. This cannot be undone.",
+                kobo_sdk::DialogAction::new("confirm-new-match", "Start match"),
+                kobo_sdk::DialogAction::new("cancel-new-match", "Keep match"),
+            )
+            .build();
+    }
     if game.view == View::Match {
         return match_screen(game);
     }
@@ -1832,6 +1847,19 @@ impl Game {
 /// the same word means something different on each of them.
 fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
     match game.view {
+        View::NewMatch => {
+            if action == action_id("confirm-new-match") {
+                game.start_match();
+                game.view = View::Board;
+            } else if action == action_id("cancel-new-match") || action == ActionId::BACK {
+                game.view = View::Match;
+            }
+            Some(())
+        }
+        View::Match if action == action_id("new-match") => {
+            game.view = View::NewMatch;
+            Some(())
+        }
         View::Help => {
             if action == action_id("close-help") || action == ActionId::BACK {
                 game.view = View::Board;
@@ -1857,8 +1885,9 @@ fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
 }
 
 fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
-    if game.view == View::Help {
-        return view_action(game, action).filter(|()| game.view != View::Help);
+    if matches!(game.view, View::Help | View::NewMatch) {
+        let previous = game.view;
+        return view_action(game, action).filter(|()| game.view != previous);
     }
     if view_action(game, action).is_some() {
         return Some(());
@@ -2781,7 +2810,7 @@ mod tests {
                         assert!(drawn.contains("Turn history"), "{drawn}");
                         assert!(drawn.contains("Black 13/8 24/23"), "{drawn}");
                     }
-                    View::Help => {}
+                    View::Help | View::NewMatch => {}
                 }
             }
         }
@@ -2931,3 +2960,9 @@ mod tests {
         assert!(pixels.contains(&248));
     }
 }
+
+#[cfg(test)]
+mod new_match_tests;
+
+#[cfg(test)]
+mod review_capture;
