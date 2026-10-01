@@ -1,0 +1,174 @@
+{
+  "app": "settings",
+  "PR": 245,
+  "before": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "after": "6b988076524138c48d7ecb5aa2d33a67987bf61a",
+  "local_after_tree_equivalent": "40900d0bb6fb179adfc921e4bed31e04a77576b4",
+  "source_tree": "e37872e6c5d9ca4cd59b0a23b1231e3478d64edd",
+  "capture_kind": "Native app renderer and callbacks/hit tests, with exact simulator chrome; NOT full simulator or physical hardware",
+  "profile_count": 9,
+  "profile_cases_per_phase": 54,
+  "font_percentages": [
+    80,
+    100,
+    170
+  ],
+  "after_assertions_passed": 270,
+  "after_assertions_failed": 0,
+  "after_layout_error_images": 0,
+  "after_layout_warning_images": 60,
+  "before_images": 162,
+  "after_images": 324,
+  "published_comparisons": [
+    {
+      "profile": "clara-bw-391",
+      "case": "portrait-100",
+      "before": "clara-bw-391/before-portrait-100.png",
+      "before_sha256": "7d0d7ddc40b1d7c527b3bc4dc202b400c48d4671d45ba87b3585a473e4d98b6b",
+      "after": "clara-bw-391/after-portrait-100.png",
+      "after_sha256": "e569b406b16b7fbf2de930e90d5591bd1032f6bd6fca7234b1803103825ed563"
+    },
+    {
+      "profile": "clara-bw-395",
+      "case": "portrait-100",
+      "before": "clara-bw-395/before-portrait-100.png",
+      "before_sha256": "7d0d7ddc40b1d7c527b3bc4dc202b400c48d4671d45ba87b3585a473e4d98b6b",
+      "after": "clara-bw-395/after-portrait-100.png",
+      "after_sha256": "e569b406b16b7fbf2de930e90d5591bd1032f6bd6fca7234b1803103825ed563"
+    },
+    {
+      "profile": "clara-hd-376",
+      "case": "portrait-100",
+      "before": "clara-hd-376/before-portrait-100.png",
+      "before_sha256": "7d0d7ddc40b1d7c527b3bc4dc202b400c48d4671d45ba87b3585a473e4d98b6b",
+      "after": "clara-hd-376/after-portrait-100.png",
+      "after_sha256": "e569b406b16b7fbf2de930e90d5591bd1032f6bd6fca7234b1803103825ed563"
+    },
+    {
+      "profile": "clara-colour-393",
+      "case": "portrait-100",
+      "before": "clara-colour-393/before-portrait-100.png",
+      "before_sha256": "7d0d7ddc40b1d7c527b3bc4dc202b400c48d4671d45ba87b3585a473e4d98b6b",
+      "after": "clara-colour-393/after-portrait-100.png",
+      "after_sha256": "e569b406b16b7fbf2de930e90d5591bd1032f6bd6fca7234b1803103825ed563"
+    },
+    {
+      "profile": "elipsa-2e-389",
+      "case": "portrait-100",
+      "before": "elipsa-2e-389/before-portrait-100.png",
+      "before_sha256": "2c8e01a9f2a1182d7a915b0d317ac2e703a6dc4b8ea54a19ff99d31b4c16a180",
+      "after": "elipsa-2e-389/after-portrait-100.png",
+      "after_sha256": "b1074472c85df8db2773de176d0268f10697c1cd4b804126639d1a6526347e0d"
+    },
+    {
+      "profile": "libra-2-388",
+      "case": "portrait-100",
+      "before": "libra-2-388/before-portrait-100.png",
+      "before_sha256": "a928a8e5f3ea8956a99554506557c404b9f7175eee94c6e235af34730febfee7",
+      "after": "libra-2-388/after-portrait-100.png",
+      "after_sha256": "686f59a7983be924864bb61bbfeffdb802b10795238989bcb3ff1e0fd1cfc415"
+    },
+    {
+      "profile": "libra-colour-390",
+      "case": "portrait-100",
+      "before": "libra-colour-390/before-portrait-100.png",
+      "before_sha256": "a928a8e5f3ea8956a99554506557c404b9f7175eee94c6e235af34730febfee7",
+      "after": "libra-colour-390/after-portrait-100.png",
+      "after_sha256": "686f59a7983be924864bb61bbfeffdb802b10795238989bcb3ff1e0fd1cfc415"
+    },
+    {
+      "profile": "libra-colour-390-4.46.23836",
+      "case": "portrait-100",
+      "before": "libra-colour-390-4.46.23836/before-portrait-100.png",
+      "before_sha256": "a928a8e5f3ea8956a99554506557c404b9f7175eee94c6e235af34730febfee7",
+      "after": "libra-colour-390-4.46.23836/after-portrait-100.png",
+      "after_sha256": "686f59a7983be924864bb61bbfeffdb802b10795238989bcb3ff1e0fd1cfc415"
+    },
+    {
+      "profile": "libra-h2o-384",
+      "case": "portrait-100",
+      "before": "libra-h2o-384/before-portrait-100.png",
+      "before_sha256": "a928a8e5f3ea8956a99554506557c404b9f7175eee94c6e235af34730febfee7",
+      "after": "libra-h2o-384/after-portrait-100.png",
+      "after_sha256": "686f59a7983be924864bb61bbfeffdb802b10795238989bcb3ff1e0fd1cfc415"
+    },
+    {
+      "profile": "clara-bw-391",
+      "case": "landscape-stress-170",
+      "before": "clara-bw-391/before-landscape-stress-170.png",
+      "before_sha256": "e9e5622ac11e19ce3e52ab1d028d7bf5b1a63f24ca694a0db154cd578137b346",
+      "after": "clara-bw-391/after-landscape-stress-170.png",
+      "after_sha256": "ace882c757c14e582defc095eae33f6bfd54640d87d171d96837358d53a86126"
+    },
+    {
+      "profile": "clara-bw-395",
+      "case": "landscape-stress-170",
+      "before": "clara-bw-395/before-landscape-stress-170.png",
+      "before_sha256": "e9e5622ac11e19ce3e52ab1d028d7bf5b1a63f24ca694a0db154cd578137b346",
+      "after": "clara-bw-395/after-landscape-stress-170.png",
+      "after_sha256": "ace882c757c14e582defc095eae33f6bfd54640d87d171d96837358d53a86126"
+    },
+    {
+      "profile": "clara-hd-376",
+      "case": "landscape-stress-170",
+      "before": "clara-hd-376/before-landscape-stress-170.png",
+      "before_sha256": "e9e5622ac11e19ce3e52ab1d028d7bf5b1a63f24ca694a0db154cd578137b346",
+      "after": "clara-hd-376/after-landscape-stress-170.png",
+      "after_sha256": "ace882c757c14e582defc095eae33f6bfd54640d87d171d96837358d53a86126"
+    },
+    {
+      "profile": "clara-colour-393",
+      "case": "landscape-stress-170",
+      "before": "clara-colour-393/before-landscape-stress-170.png",
+      "before_sha256": "e9e5622ac11e19ce3e52ab1d028d7bf5b1a63f24ca694a0db154cd578137b346",
+      "after": "clara-colour-393/after-landscape-stress-170.png",
+      "after_sha256": "ace882c757c14e582defc095eae33f6bfd54640d87d171d96837358d53a86126"
+    },
+    {
+      "profile": "elipsa-2e-389",
+      "case": "landscape-stress-170",
+      "before": "elipsa-2e-389/before-landscape-stress-170.png",
+      "before_sha256": "cf0141a93af1c04d7938fb4b7074175caf1cf1b85808b65ed0deb68f2418f3bc",
+      "after": "elipsa-2e-389/after-landscape-stress-170.png",
+      "after_sha256": "8d2c2144dfccd2b2545cdf0893108e01e571c883beeb95a461cd20b8be0eebb6"
+    },
+    {
+      "profile": "libra-2-388",
+      "case": "landscape-stress-170",
+      "before": "libra-2-388/before-landscape-stress-170.png",
+      "before_sha256": "966ef740a15110a785f7788d55651b6e9b2ee5f12d5e1b3670eba71f113b7a17",
+      "after": "libra-2-388/after-landscape-stress-170.png",
+      "after_sha256": "5a51174dbec6333e2d932ba995e9bc6e512f5d9d5715470cbad850c7313bfa76"
+    },
+    {
+      "profile": "libra-colour-390",
+      "case": "landscape-stress-170",
+      "before": "libra-colour-390/before-landscape-stress-170.png",
+      "before_sha256": "966ef740a15110a785f7788d55651b6e9b2ee5f12d5e1b3670eba71f113b7a17",
+      "after": "libra-colour-390/after-landscape-stress-170.png",
+      "after_sha256": "5a51174dbec6333e2d932ba995e9bc6e512f5d9d5715470cbad850c7313bfa76"
+    },
+    {
+      "profile": "libra-colour-390-4.46.23836",
+      "case": "landscape-stress-170",
+      "before": "libra-colour-390-4.46.23836/before-landscape-stress-170.png",
+      "before_sha256": "966ef740a15110a785f7788d55651b6e9b2ee5f12d5e1b3670eba71f113b7a17",
+      "after": "libra-colour-390-4.46.23836/after-landscape-stress-170.png",
+      "after_sha256": "5a51174dbec6333e2d932ba995e9bc6e512f5d9d5715470cbad850c7313bfa76"
+    },
+    {
+      "profile": "libra-h2o-384",
+      "case": "landscape-stress-170",
+      "before": "libra-h2o-384/before-landscape-stress-170.png",
+      "before_sha256": "966ef740a15110a785f7788d55651b6e9b2ee5f12d5e1b3670eba71f113b7a17",
+      "after": "libra-h2o-384/after-landscape-stress-170.png",
+      "after_sha256": "5a51174dbec6333e2d932ba995e9bc6e512f5d9d5715470cbad850c7313bfa76"
+    }
+  ],
+  "limitations": [
+    "AF_UNIX denied; no full simulator socket/rendering loop used",
+    "Network/device service outcomes supplied by fixtures; no live service, radio or touch-controller validation",
+    "Logical landscape stress does not certify physical device rotations",
+    "Baseline errors are preserved and labeled, not counted as successful changed-flow fixes"
+  ]
+}
