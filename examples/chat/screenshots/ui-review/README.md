@@ -34,6 +34,8 @@ After:
 
 ## Validation
 
+The simulator drive script verifies both provider titles and model subtitles independently, matching the new row structure. The first remote CI run correctly exposed its obsolete combined-label assertion; that assertion is now updated without dropping any provider/model checks.
+
 57 app tests; strict Clippy; formatting; all nine text scales and each provider hit-tested. Full contributor validation also passed for Store-distributed apps, including static ARM verification and a local Beta-shaped package/catalog. The documented public smoke-test seed was supplied locally because the baseline omitted that test fixture; no production key was used or committed.
 
 ## Reproduce renderer evidence
