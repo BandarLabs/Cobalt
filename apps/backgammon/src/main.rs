@@ -408,6 +408,7 @@ enum View {
     Match,
     Help,
     NewMatch,
+    History,
 }
 
 impl Phase {
@@ -457,6 +458,7 @@ struct Game {
     dice: Vec<u8>,
     selected: Option<Selected>,
     point_page: usize,
+    history_page: usize,
     cube: u8,
     cube_owner: Option<Player>,
     score: [u8; 2],
@@ -488,6 +490,7 @@ impl Default for Game {
             dice: Vec::new(),
             selected: None,
             point_page: 0,
+            history_page: 0,
             cube: 1,
             cube_owner: None,
             score: [0; 2],
@@ -903,6 +906,7 @@ impl Game {
             dice: saved_dice(fields[4])?,
             selected: None,
             point_page: 0,
+            history_page: 0,
             cube: fields[5].parse().ok()?,
             cube_owner: saved_owner(fields[6]).ok()?,
             score: saved_pair(fields[7])?,
@@ -1479,7 +1483,15 @@ fn board_pixels(game: &Game) -> Vec<u8> {
     pixels
 }
 
+#[cfg(test)]
 fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+    screen_for(game, picture, &Context::default())
+}
+
+fn screen_for(game: &Game, picture: Option<TilePicture>, context: &Context) -> Screen {
+    if game.view == View::History {
+        return history_screen(game, context);
+    }
     if game.view == View::NewMatch {
         return ScreenBuilder::new("backgammon-new-match")
             .top_bar("Backgammon")
@@ -1667,14 +1679,10 @@ fn match_screen(game: &Game) -> Screen {
     let mut screen = ScreenBuilder::new("backgammon-match")
         .top_bar("Match")
         .owns_back(true)
-        .facts([
-            ("Players", game.mode.label().to_owned()),
-            ("Plays to", game.match_to.to_string()),
-            (
-                "Score",
-                format!("White {} · Black {}", game.score[0], game.score[1]),
-            ),
-        ]);
+        .secondary(format!(
+            "White {} · Black {} · First to {}",
+            game.score[0], game.score[1], game.match_to
+        ));
     if let Some(provenance) = game.dice_source.provenance() {
         // A recorded game that looks like chance and is not would be a lie
         // about the dice, so a seeded run says so wherever the match is shown.
@@ -1696,14 +1704,7 @@ fn match_screen(game: &Game) -> Screen {
             ),
         ],
     );
-    screen = screen.section("Turn history");
-    if game.played.is_empty() {
-        screen = screen.secondary("Nothing played yet.");
-    } else {
-        for line in game.played.iter().rev().take(6) {
-            screen = screen.text(line.clone());
-        }
-    }
+    screen = screen.button("turn-history", "Turn history");
     screen
         .grid(
             2,
@@ -1712,6 +1713,40 @@ fn match_screen(game: &Game) -> Screen {
         )
         .bottom_action("close-match", "Board")
         .build()
+}
+
+fn history_pages(game: &Game, context: &Context) -> Vec<Vec<String>> {
+    let text = if game.played.is_empty() {
+        "Nothing played yet.".to_owned()
+    } else {
+        game.played
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    context.paginate(&text, false)
+}
+
+fn history_screen(game: &Game, context: &Context) -> Screen {
+    let pages = history_pages(game, context);
+    let page = game.history_page.min(pages.len().saturating_sub(1));
+    let mut builder = ScreenBuilder::new("backgammon-history")
+        .top_bar("Turn history")
+        .owns_back(true);
+    for text in &pages[page] {
+        builder = builder.text(text);
+    }
+    if pages.len() > 1 {
+        builder = builder
+            .page_turns("history-previous", "history-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+    }
+    builder.build()
 }
 
 /// One move as a board writes it: "8/5", "bar/20", "6/off".
@@ -1746,7 +1781,25 @@ impl KoboApp for Game {
         context.store().load(OLD_SAVE);
         self.show(context);
     }
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::History {
+            let last = history_pages(self, context).len().saturating_sub(1);
+            let page = self.history_page.min(last);
+            self.history_page = if forward {
+                (page + 1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            self.show(context);
+        }
+    }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.view == View::History
+            && (action == action_id("history-next") || action == action_id("history-previous"))
+        {
+            self.on_page_turn(context, action == action_id("history-next"));
+            return;
+        }
         if let Some(persisted) = self.apply_action(action) {
             if persisted {
                 context.store().save(SAVE, self.encode());
@@ -1836,7 +1889,7 @@ impl Game {
         } else {
             None
         };
-        context.set_screen(screen(self, picture));
+        context.set_screen(screen_for(self, picture, context));
     }
 }
 
@@ -1846,6 +1899,17 @@ impl Game {
 /// the same word means something different on each of them.
 fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
     match game.view {
+        View::History => {
+            if action == ActionId::BACK {
+                game.view = View::Match;
+            }
+            Some(())
+        }
+        View::Match if action == action_id("turn-history") => {
+            game.history_page = 0;
+            game.view = View::History;
+            Some(())
+        }
         View::NewMatch => {
             if action == action_id("confirm-new-match") {
                 game.start_match();
@@ -1884,7 +1948,7 @@ fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
 }
 
 fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
-    if matches!(game.view, View::Help | View::NewMatch) {
+    if matches!(game.view, View::Help | View::NewMatch | View::History) {
         let previous = game.view;
         return view_action(game, action).filter(|()| game.view != previous);
     }
@@ -2788,7 +2852,7 @@ mod tests {
             };
             game.roll();
             game.played.push("Black 13/8 24/23".into());
-            for view in [View::Board, View::Match, View::Help] {
+            for view in [View::Board, View::Match, View::Help, View::History] {
                 game.view = view;
                 let screen = test_screen(&game);
                 let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
@@ -2813,6 +2877,8 @@ mod tests {
                     }
                     View::Match => {
                         assert!(drawn.contains("Turn history"), "{drawn}");
+                    }
+                    View::History => {
                         assert!(drawn.contains("Black 13/8 24/23"), "{drawn}");
                     }
                     View::Help | View::NewMatch => {}
@@ -2974,3 +3040,6 @@ mod help_tests;
 
 #[cfg(test)]
 mod review_capture;
+
+#[cfg(test)]
+mod match_history_tests;
