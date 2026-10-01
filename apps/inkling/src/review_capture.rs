@@ -32,7 +32,7 @@ fn capture(name: &str, original: Screen, metrics: DisplayMetrics) {
         png,
     )
     .unwrap();
-    let evidence = format!("Capture: genuine app screen builder + Cobalt renderer; NOT a live simulator capture.\nScenario: {name}\nSource base: 97153048\nShell: synthetic measuring status strip, runtime ensure_way_back\nFont: {font:?}\nFont roles: {:?}\nMetrics: {metrics:?}\nScreen: {screen:#?}\nLayout: {:#?}\nDiagnostics: {:#?}\n", kobo_text::installed_sources(), screen.layout_with(&metrics, &chrome), screen.diagnostics(&metrics, &chrome));
+    let evidence = format!("Capture: genuine app screen builder + Cobalt renderer; NOT a live simulator capture.\nScenario: {name}\nApp source SHA-256: {}\nShell: synthetic measuring status strip, runtime ensure_way_back\nFont: {font:?}\nFont roles: {:?}\nMetrics: {metrics:?}\nScreen: {screen:#?}\nLayout: {:#?}\nDiagnostics: {:#?}\n", std::env::var("COBALT_REVIEW_SOURCE_SHA256").unwrap_or_default(), kobo_text::installed_sources(), screen.layout_with(&metrics, &chrome), screen.diagnostics(&metrics, &chrome));
     std::fs::write(
         directory.join(format!("{name}-{}.txt", metrics.text_scale.percent())),
         evidence,
@@ -43,12 +43,24 @@ fn metrics() -> Vec<DisplayMetrics> {
     [
         TextScale::Default,
         TextScale::ExtraLarge,
+        TextScale::Huge,
         TextScale::Largest,
     ]
     .into_iter()
     .map(|text_scale| DisplayMetrics {
         text_scale,
-        ..CLARA_BW_METRICS
+        ..std::env::var("COBALT_REVIEW_METRICS")
+            .ok()
+            .map(|value| {
+                let parts: Vec<i32> = value.split(',').map(|n| n.parse().unwrap()).collect();
+                DisplayMetrics {
+                    width: parts[0],
+                    height: parts[1],
+                    pixels_per_inch: parts[2],
+                    ..CLARA_BW_METRICS
+                }
+            })
+            .unwrap_or(CLARA_BW_METRICS)
     })
     .collect()
 }

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Render real app fixtures in an isolated package, leaving release dependencies intact."""
+
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,11 @@ import tomllib
 
 def value(item):
     if isinstance(item, dict):
-        return "{ " + ", ".join(f"{key} = {value(val)}" for key, val in item.items()) + " }"
+        return (
+            "{ "
+            + ", ".join(f"{key} = {value(val)}" for key, val in item.items())
+            + " }"
+        )
     return json.dumps(item)
 
 
@@ -31,6 +37,15 @@ def main():
         mirror = Path(temporary)
         package = mirror / app.relative_to(root)
         shutil.copytree(app, package)
+        revision = os.environ.get("COBALT_REVIEW_SOURCE_REV")
+        if revision:
+            source = subprocess.check_output(
+                ["git", "show", f"{revision}:apps/inkling/src/main.rs"], cwd=root
+            )
+            (package / "src/main.rs").write_bytes(source)
+        environment["COBALT_REVIEW_SOURCE_SHA256"] = hashlib.sha256(
+            (package / "src/main.rs").read_bytes()
+        ).hexdigest()
         # Some ordinary regression tests include committed shared fixtures.
         (mirror / "scripts").symlink_to(root / "scripts", target_is_directory=True)
         with (package / "src/main.rs").open("a") as main_source:
@@ -54,7 +69,21 @@ def main():
         (package / "Cargo.toml").write_text("\n".join(lines) + "\n")
         # Only this temporary lock is pruned; the reviewed root lock is untouched.
         shutil.copyfile(root / "Cargo.lock", package / "Cargo.lock")
-        subprocess.run(["cargo", "test", "--offline", "--manifest-path", str(package / "Cargo.toml"), "capture_", "--", "--nocapture"], cwd=root, env=environment, check=True)
+        subprocess.run(
+            [
+                "cargo",
+                "test",
+                "--offline",
+                "--manifest-path",
+                str(package / "Cargo.toml"),
+                "capture_",
+                "--",
+                "--nocapture",
+            ],
+            cwd=root,
+            env=environment,
+            check=True,
+        )
 
 
 if __name__ == "__main__":

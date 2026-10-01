@@ -826,10 +826,9 @@ impl Game {
         ScreenBuilder::new("inkling-help")
             .top_bar("How to play")
             .owns_back(true)
-            .heading("Find the five-letter word")
-            .text("You have six guesses. Type five letters, then tap Guess.")
-            .text("[A] is in the right spot. (A) is elsewhere in the word. A\u{00d7} is absent.")
-            .text("Known letters show while you type. Hard mode reuses placed letters.")
+            .text("Find the five-letter word in six guesses. Type, then tap Guess.")
+            .text("[A] Right spot. (A) Wrong spot. A\u{00d7} Absent.")
+            .text("Known letters show as you type. Hard mode keeps known letters.")
             .bottom_action("close-help", "Play")
             .build()
     }
@@ -1378,9 +1377,15 @@ mod help_layout_tests {
         game.view = View::Help;
         let screens = [game.screen()];
         for screen in screens {
-            for (width, height, pixels_per_inch) in
-                [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
-            {
+            for (width, height, pixels_per_inch) in [
+                (1072, 1448, 300),
+                (758, 1024, 212),
+                (1448, 1072, 300),
+                (1264, 1680, 300),
+                (1680, 1264, 300),
+                (1404, 1872, 227),
+                (1872, 1404, 227),
+            ] {
                 for text_scale in kobo_ui::TextScale::STEPS {
                     let metrics = kobo_sdk::DisplayMetrics {
                         width,
