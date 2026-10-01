@@ -1590,8 +1590,9 @@ dependencies = [
 
 [[package]]
 name = "kobo-syncthing"
-version = "0.2.0"
+version = "0.3.2"
 dependencies = [
+ "kobo-image",
  "kobo-sdk",
  "kobo-ui",
 ]
