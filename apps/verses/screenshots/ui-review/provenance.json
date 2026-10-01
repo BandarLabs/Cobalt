@@ -1,0 +1,41 @@
+{
+  "evidence_type": "app-renderer and SDK callbacks; no live simulator or device",
+  "source_base": "97153048",
+  "panel": {
+    "width": 1072,
+    "height": 1448,
+    "ppi": 300,
+    "text_scale_percent": 140
+  },
+  "status_strip": "synthetic measuring chrome; hidden for reading",
+  "source_sha256": {
+    "apps/verses/src/main.rs": "f25dafe408c7c49b665a614494a1129af866e9cb6608266f7b0976255ae2c4d5",
+    "apps/verses/src/navigation_tests.rs": "10bb6209b5919414979dac800ad7d197933db4874459687ad1c2ef1bb07850fa",
+    "apps/verses/src/review_capture.rs": "f6e9d553cb300cffe685f5f0ec0064a7a2346aaa4a65d90727dafd39223a49a9",
+    "apps/verses/screenshots/ui-review/capture.py": "2484577641ca687a32b8051ab87413a59e4bd04ee3c5f148d5164f1f6e47962b"
+  },
+  "captures_sha256": {
+    "after-author-search.png": "e69f83fb6ae2ee215f91b91f578976fce3e9fce690d6d9e12d4152b67f41ca1c",
+    "after-favorites-last.png": "01d4a9944fff5af2b691bc24295e940ad715873c5c2a86567cefec04efb6286b",
+    "after-online-last.png": "1ef62aa899409bd0f80e1d947df93e860de026dcb7bbc9091fd3e08164ac3c81",
+    "after-online-poem.png": "0cd5449219c0883ebd249395074dccd00d2ecba0a2e82276f062af18ee0610fe",
+    "before-favorites.png": "25f70eac1a8eec33eef8fffe74a3d3167c1b9a3a1245c4918f7400f3c9475e3c",
+    "after-favorites.png": "bb8d31caac42800d5d3441dfe57ddc0296f317d6b1ef67e2cc2a9721d6ad88c3",
+    "before-online-poem.png": "55deccfae6c702f821b5cda514cc270a8bea0b299efe573098aa374562f87996"
+  },
+  "isolated_capture_verification": {
+    "normal_app_tests": 23,
+    "capture_tests": 1,
+    "node_tests": 105,
+    "committed_after_images_byte_identical": [
+      "after-author-search.png",
+      "after-favorites-last.png",
+      "after-online-last.png",
+      "after-online-poem.png",
+      "after-favorites.png"
+    ],
+    "full_capture_set_byte_identical_count": 33,
+    "full_capture_set_count": 33,
+    "release_cargo_manifest_and_lock": "byte-identical to beta97153048"
+  }
+}
