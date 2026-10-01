@@ -1104,23 +1104,44 @@ impl ReadingList {
         prefix: &Screen,
         has_actions: bool,
     ) -> Vec<Vec<String>> {
-        let metrics = context.metrics();
-        kobo_ui::with_text_scale(metrics.text_scale, || {
-            let used = prefix
-                .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
-                .content_used();
-            let mut area = metrics.prose_area(true, has_actions);
-            // The same notice is drawn on every detail page. Reserve it on
-            // every page, as well as the runtime strip and page indicator.
-            area.height = area
-                .height
-                .saturating_sub(metrics.status_band_height())
-                .saturating_sub(metrics.page_position_band())
-                .saturating_sub(used)
-                .saturating_sub(if used > 0 { area.gap } else { 0 })
-                .max(1);
-            kobo_ui::paginate(&self.detail_body, area)
-        })
+        // The SDK reserves a placed block on the first page. Reflow the
+        // continuation below the same block so a recovery notice remains
+        // accounted for on every page, without reaching into renderer internals.
+        let text = self.detail_body.replace("\r\n", "\n").replace('\r', "\n");
+        let mut remaining = text
+            .split("\n\n")
+            .enumerate()
+            .map(|(index, text)| (u32::try_from(index).unwrap_or(u32::MAX), text.to_owned()))
+            .collect::<Vec<_>>();
+        let mut pages = Vec::new();
+        while !remaining.is_empty() {
+            let paragraphs = remaining
+                .iter()
+                .map(|(tag, text)| (*tag, 0, kobo_sdk::QuoteRole::Body, text.as_str()))
+                .collect::<Vec<_>>();
+            let mut measured = context
+                .paginate_tagged_under(&paragraphs, has_actions, prefix)
+                .into_iter();
+            let Some(page) = measured.next() else { break };
+            if page.is_empty() {
+                break;
+            }
+            pages.push(page.into_iter().map(|(_, _, _, text)| text).collect());
+            remaining.clear();
+            // Rejoin only pieces of the same original paragraph. This keeps
+            // paragraph gaps while retaining the SDK's wrapped continuation.
+            for (tag, _, _, text) in measured.flatten() {
+                if let Some((last_tag, last_text)) = remaining.last_mut() {
+                    if *last_tag == tag {
+                        last_text.push(' ');
+                        last_text.push_str(&text);
+                        continue;
+                    }
+                }
+                remaining.push((tag, text));
+            }
+        }
+        pages
     }
 
     fn converting_screen(&self) -> Screen {
@@ -2052,13 +2073,23 @@ mod tests {
         StoreResult, Task, TaskError, TaskId, TaskOutcome,
     };
 
+    fn text_size_metrics() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        let mut smallest = kobo_sdk::CLARA_BW_METRICS;
+        while let Some(scale) = smallest.text_scale.smaller() {
+            smallest.text_scale = scale;
+        }
+        std::iter::successors(Some(smallest), |metrics| {
+            Some(kobo_sdk::DisplayMetrics {
+                text_scale: metrics.text_scale.larger()?,
+                ..*metrics
+            })
+        })
+    }
+
     #[test]
     fn setup_instructions_and_invalid_id_recovery_fit_every_text_size() {
-        for text_scale in kobo_ui::TextScale::STEPS {
-            let metrics = kobo_sdk::DisplayMetrics {
-                text_scale,
-                ..kobo_sdk::CLARA_BW_METRICS
-            };
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
             let _runner = AppRunner::with_metrics(ReadingList::default(), metrics);
             for trouble in [
                 None,
@@ -2101,11 +2132,8 @@ mod tests {
 
     #[test]
     fn paper_and_collection_pages_reserve_room_for_notices_and_recovery() {
-        for text_scale in kobo_ui::TextScale::STEPS {
-            let metrics = kobo_sdk::DisplayMetrics {
-                text_scale,
-                ..kobo_sdk::CLARA_BW_METRICS
-            };
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
             let context = AppRunner::with_metrics(ReadingList::default(), metrics).context();
             let mut app = ReadingList::default();
             app.collections = (0..12)
@@ -2198,11 +2226,8 @@ mod tests {
 
     #[test]
     fn long_detail_text_fits_beneath_recovery_notices_without_losing_words() {
-        for text_scale in kobo_ui::TextScale::STEPS {
-            let metrics = kobo_sdk::DisplayMetrics {
-                text_scale,
-                ..kobo_sdk::CLARA_BW_METRICS
-            };
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
             let mut context = AppRunner::with_metrics(ReadingList::default(), metrics).context();
             let body = "The researchers measured the river throughout the year and compared the rainfall with the surrounding fields. ".repeat(20);
             let mut app = ReadingList {

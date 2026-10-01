@@ -48,3 +48,15 @@ reproduce them. Source and image hashes are in `provenance.json`.
   Unix-domain socket with EPERM even after a reviewed escalated launch
 - Native callbacks do not prove process transport, transformed touch coordinates,
   live Zotero access, or physical E Ink behavior
+
+
+## Dependency compatibility follow-up
+
+The app manifest retains its original dependency graph. Detail pagination now
+uses the existing SDK tagged paginator, reflowing continuation text beneath the
+same recovery notice on each page. Tests walk all supported display scales
+through SDK-exported metrics; the separate temporary capture project owns
+renderer-only dependencies. All 105 Node tooling tests, 28 app tests and strict
+app clippy pass. All 24 native captures are byte-for-byte identical to the prior
+implementation; `dependency-followup-provenance.json` records the final source
+hash and comparison. The protocol baseline and shared runtime are unchanged.
