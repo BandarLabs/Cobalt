@@ -125,6 +125,9 @@ enum View {
 struct QuestionPage {
     detail: String,
     choices: Vec<usize>,
+    /// A single oversized choice, continued without changing its answer label.
+    /// Its stable option number identifies every part, even for a long name.
+    choice_text: Option<String>,
 }
 
 #[derive(Default)]
@@ -353,8 +356,15 @@ impl Sidekick {
                 let choice = &ask.choices[index];
                 (
                     chosen_action(index),
-                    choice.label.clone(),
-                    choice.description.clone(),
+                    if content.choice_text.is_some() {
+                        format!("Option {}", index + 1)
+                    } else {
+                        choice.label.clone()
+                    },
+                    content
+                        .choice_text
+                        .clone()
+                        .unwrap_or_else(|| choice.description.clone()),
                     if self.is_ticked(index) {
                         Glyph::Check
                     } else {
@@ -392,38 +402,15 @@ impl Sidekick {
         let mut rest = detail.as_str();
         let mut pages = Vec::new();
         while !rest.is_empty() {
-            let ends = rest
-                .char_indices()
-                .map(|(index, _)| index)
-                .chain(std::iter::once(rest.len()))
-                .collect::<Vec<_>>();
-            let (mut low, mut high) = (0, ends.len() - 1);
-            while low < high {
-                let mid = (low + high + 1) / 2;
-                if fits(&QuestionPage {
-                    detail: rest[..ends[mid]].to_owned(),
-                    choices: Vec::new(),
-                }) {
-                    low = mid;
-                } else {
-                    high = mid - 1;
-                }
-            }
-            let mut end = ends[low.max(1)];
-            if end < rest.len() {
-                if let Some((boundary, c)) = rest[..end]
-                    .char_indices()
-                    .rev()
-                    .find(|(_, c)| c.is_whitespace())
-                {
-                    if boundary > 0 {
-                        end = boundary + c.len_utf8();
-                    }
-                }
-            }
+            let end = fitting_prefix(rest, |text| {
+                fits(&QuestionPage {
+                    detail: text.to_owned(),
+                    ..QuestionPage::default()
+                })
+            });
             pages.push(QuestionPage {
                 detail: rest[..end].to_owned(),
-                choices: Vec::new(),
+                ..QuestionPage::default()
             });
             rest = &rest[end..];
         }
@@ -434,13 +421,39 @@ impl Sidekick {
             let last = pages.last_mut().expect("at least one page");
             let mut candidate = last.clone();
             candidate.choices.push(index);
-            if fits(&candidate) {
+            if last.choice_text.is_none() && fits(&candidate) {
                 *last = candidate;
+                continue;
+            }
+            let mut alone = QuestionPage {
+                choices: vec![index],
+                ..QuestionPage::default()
+            };
+            if last.detail.is_empty() && last.choices.is_empty() {
+                pages.pop();
+            }
+            if fits(&alone) {
+                pages.push(alone);
+                continue;
+            }
+            // Moving an oversized row to a fresh page does not make it fit.
+            // Read its entire name and description across numbered parts;
+            // each part still selects the original choice, never a fragment.
+            let choice = &ask.choices[index];
+            let text = if choice.description.is_empty() {
+                choice.label.clone()
             } else {
-                pages.push(QuestionPage {
-                    detail: String::new(),
-                    choices: vec![index],
+                format!("{}\n\n{}", choice.label, choice.description)
+            };
+            let mut rest = text.as_str();
+            while !rest.is_empty() {
+                let end = fitting_prefix(rest, |text| {
+                    alone.choice_text = Some(text.to_owned());
+                    fits(&alone)
                 });
+                alone.choice_text = Some(rest[..end].to_owned());
+                pages.push(alone.clone());
+                rest = &rest[end..];
             }
         }
         pages
@@ -740,6 +753,38 @@ impl Sidekick {
         }
         true
     }
+}
+
+/// Keep UTF-8 and whitespace intact while preferring a word boundary. Both
+/// callers measure the complete screen, including the controls and page turns.
+fn fitting_prefix(text: &str, mut fits: impl FnMut(&str) -> bool) -> usize {
+    let ends = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain(std::iter::once(text.len()))
+        .collect::<Vec<_>>();
+    let (mut low, mut high) = (0, ends.len() - 1);
+    while low < high {
+        let mid = (low + high + 1) / 2;
+        if fits(&text[..ends[mid]]) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    let mut end = ends[low.max(1)];
+    if end < text.len() {
+        if let Some((boundary, c)) = text[..end]
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+        {
+            if boundary > 0 {
+                end = boundary + c.len_utf8();
+            }
+        }
+    }
+    end
 }
 
 /// The agent's name as a person says it, not as its process does.
@@ -2125,5 +2170,236 @@ mod tests {
                 diagnostics.issues
             );
         }
+    }
+
+    fn oversized_choice(label: String, description: String) -> Sidekick {
+        let (mut app, _) = paired();
+        app.view = View::Asking;
+        app.poll = None;
+        app.ask = Some(super::Ask {
+            id: 42,
+            source: "codex".into(),
+            session: "project ab12".into(),
+            tool: "shell".into(),
+            detail: "Choose the sections to retain.".into(),
+            choices: vec![
+                super::Choice { label, description },
+                super::Choice {
+                    label: "Keep the deployment notes".into(),
+                    description: "Retain the notes too.".into(),
+                },
+            ],
+            permission: false,
+            multi: true,
+        });
+        app.ticked = vec![false; 2];
+        app
+    }
+
+    fn migration_description() -> String {
+        "Keep all existing migrations, validate their checksums, preserve the deployment order, and report every validation error before applying changes. ".repeat(5)
+    }
+
+    fn assert_reachable(screen: &Screen, metrics: &DisplayMetrics, action: &str) {
+        let diagnostics = screen.diagnostics(metrics, &Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{:?}: {:?}",
+            metrics.text_scale,
+            diagnostics.issues
+        );
+        let action = action_id(action);
+        let rect = diagnostics
+            .layout
+            .rect_of_action(action)
+            .expect("visible action");
+        assert_eq!(
+            diagnostics
+                .layout
+                .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(action)
+        );
+    }
+
+    #[test]
+    fn oversized_choice_text_is_complete_and_every_part_fits_the_wire_and_panel() {
+        let cases = [
+            (
+                "Preserve the migration plan".into(),
+                migration_description(),
+            ),
+            (
+                "Preserve the migration and rollback checks. ".repeat(30),
+                migration_description(),
+            ),
+            ("café_à_revoir_".repeat(90), String::new()),
+        ];
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for (label, description) in &cases {
+                for permission in [false, true] {
+                    let mut app = oversized_choice(label.clone(), description.clone());
+                    app.ask.as_mut().unwrap().permission = permission;
+                    app.ticked[0] = true;
+                    let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+                    let app = runner.app();
+                    let ask = app.ask.as_ref().unwrap();
+                    let pages = app.question_pages(&runner.context(), ask);
+                    let mut recovered = String::new();
+                    for (page, content) in pages.iter().enumerate() {
+                        if content.choices.contains(&0) {
+                            recovered.push_str(content.choice_text.as_deref().unwrap_or(label));
+                            if content.choice_text.is_none() && !description.is_empty() {
+                                recovered.push_str("\n\n");
+                                recovered.push_str(description);
+                            }
+                        }
+                        // Context::set_screen performs wire and glyph validation,
+                        // which layout diagnostics alone cannot exercise.
+                        let mut context = runner.context();
+                        context.set_screen(
+                            app.question_screen(ask, content, page, pages.len())
+                                .with_own_back(true),
+                        );
+                        let screen = painted(context.commands()).expect("wire-valid screen");
+                        assert_reachable(&screen, &metrics, IGNORE);
+                        assert_reachable(&screen, &metrics, SEND);
+                        for &index in &content.choices {
+                            assert_reachable(&screen, &metrics, &super::chosen_action(index));
+                        }
+                        for action in [ALLOW, DENY] {
+                            if permission {
+                                assert_reachable(&screen, &metrics, action);
+                            } else {
+                                assert!(screen
+                                    .layout_for(&metrics)
+                                    .rect_of_action(action_id(action))
+                                    .is_none());
+                            }
+                        }
+                    }
+                    let expected = if description.is_empty() {
+                        label.clone()
+                    } else {
+                        format!("{label}\n\n{description}")
+                    };
+                    assert_eq!(
+                        recovered, expected,
+                        "all name/description bytes survive paging"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn oversized_choice_callbacks_retain_answers_bounds_and_retry_without_double_submit() {
+        // Layout and wire validation above cover all nine scales. Exercise the
+        // full asynchronous flow at both ends of the supported size range.
+        for scale in [TextScale::Default, TextScale::Largest] {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            let label = "Preserve every migration, including rollback checks. ".repeat(20);
+            let mut runner = kobo_sdk::AppRunner::with_metrics(
+                oversized_choice(label.clone(), migration_description()),
+                metrics,
+            );
+            let pages = runner
+                .app()
+                .question_pages(&runner.context(), runner.app().ask.as_ref().unwrap());
+            assert!(pages.len() > 2);
+            runner.action(action_id(super::PREVIOUS));
+            assert_eq!(runner.app().page, 0);
+            let first = pages
+                .iter()
+                .position(|page| page.choices.contains(&0))
+                .unwrap();
+            for _ in 0..first {
+                runner.action(action_id(super::NEXT));
+            }
+            assert!(posted(&runner.action(action_id("choice.0"))).is_none());
+            for _ in 0..pages.len() + 2 {
+                let commands = runner.action(action_id(super::NEXT));
+                assert!(posted(&commands).is_none());
+                if let Some(screen) = painted(&commands) {
+                    assert_reachable(&screen, &metrics, IGNORE);
+                    assert_reachable(&screen, &metrics, SEND);
+                }
+                assert!(runner.app().is_ticked(0));
+            }
+            assert_eq!(runner.app().page, pages.len() - 1);
+            runner.action(action_id("choice.1"));
+            for _ in 0..pages.len() + 2 {
+                runner.action(action_id(super::PREVIOUS));
+            }
+            assert_eq!(runner.app().page, 0);
+            assert_eq!(runner.app().ticked, vec![true, true]);
+            let (task, _, body) = posted(&runner.action(action_id(SEND))).expect("one post");
+            let body = kobo_json::parse(&body).unwrap();
+            let labels = body.get("labels").unwrap().as_array().unwrap();
+            assert_eq!(labels[0].as_str(), Some(label.as_str()));
+            assert_eq!(labels[1].as_str(), Some("Keep the deployment notes"));
+            for action in [SEND, ALLOW, DENY, IGNORE, super::NEXT, "choice.0"] {
+                assert!(posted(&runner.action(action_id(action))).is_none());
+            }
+            assert!(posted(&runner.action(ActionId::BACK)).is_none());
+            let commands =
+                runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized));
+            assert_eq!(runner.app().view, View::Asking);
+            assert_eq!(runner.app().ticked, vec![true, true]);
+            assert_reachable(&painted(&commands).expect("retry screen"), &metrics, SEND);
+            let retry_pages = runner
+                .app()
+                .question_pages(&runner.context(), runner.app().ask.as_ref().unwrap())
+                .len();
+            for _ in 0..retry_pages + 2 {
+                if let Some(screen) = painted(&runner.action(action_id(super::NEXT))) {
+                    assert_reachable(&screen, &metrics, SEND);
+                }
+            }
+            assert_eq!(runner.app().page, retry_pages - 1);
+            let (task, _, _) = posted(&runner.action(action_id(SEND))).expect("retry post");
+            let commands =
+                runner.task_outcome(task, TaskOutcome::Completed(br#"{"ok":true}"#.to_vec()));
+            let (poll, _) = fetched(&commands).expect("poll resumes");
+            runner.task_outcome(poll, multi_select(43));
+            assert_eq!(runner.app().page, 0);
+            assert_eq!(runner.app().ticked, vec![false; 3]);
+        }
+    }
+
+    #[test]
+    fn a_single_choice_continuation_submits_its_exact_original_label() {
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Largest,
+            ..CLARA_BW_METRICS
+        };
+        let label = "Keep the migration plan exactly as approved. ".repeat(25);
+        let mut app = oversized_choice(label.clone(), migration_description());
+        app.ask.as_mut().unwrap().multi = false;
+        app.ask.as_mut().unwrap().detail.clear();
+        let mut runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+        let pages = runner
+            .app()
+            .question_pages(&runner.context(), runner.app().ask.as_ref().unwrap());
+        assert!(pages[0].choice_text.is_some(), "no empty introductory page");
+        let screen = painted(&runner.action(action_id(super::NEXT))).expect("continuation");
+        assert_reachable(&screen, &metrics, "choice.0");
+        assert!(screen
+            .layout_for(&metrics)
+            .rect_of_action(action_id(SEND))
+            .is_none());
+        let (_, _, body) = posted(&runner.action(action_id("choice.0"))).expect("single answer");
+        let body = kobo_json::parse(&body).unwrap();
+        assert_eq!(
+            body.get("labels").unwrap().as_array().unwrap()[0].as_str(),
+            Some(label.as_str())
+        );
+        assert!(posted(&runner.action(action_id("choice.0"))).is_none());
     }
 }

@@ -38,6 +38,29 @@ fn capture() {
             metrics,
             false,
         );
+        app.ask.as_mut().unwrap().detail = "Choose the sections to retain.".into();
+        app.ask.as_mut().unwrap().choices = vec![Choice {
+            label: "Preserve the migration plan".into(),
+            description: "Keep all existing migrations, validate their checksums, preserve the deployment order, and report every validation error before applying changes. ".repeat(5),
+        }];
+        app.ticked = vec![true];
+        for scenario in ["oversized-description", "oversized-label"] {
+            if scenario == "oversized-label" {
+                app.ask.as_mut().unwrap().choices[0].label =
+                    "Preserve every migration and its deployment order, including rollback checks. ".repeat(12);
+            }
+            for page in 0..APP_QUESTION_PAGES {
+                APP_SET_PAGE
+                save_capture(
+                    &format!("{prefix}-{scenario}-{page}"),
+                    &APP_SCREEN.with_own_back(true),
+                    metrics,
+                    false,
+                );
+            }
+        }
+        let page = 0;
+        APP_SET_PAGE
         app.view = View::Board;
         app.board = (0..10)
             .map(|i| Ask {

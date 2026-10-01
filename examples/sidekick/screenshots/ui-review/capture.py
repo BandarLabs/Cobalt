@@ -16,6 +16,8 @@ app=root/config['app']; out=a.out.resolve();out.mkdir(parents=True,exist_ok=True
 source=(app/'src/main.rs').read_text();cargo=tomllib.loads((app/'Cargo.toml').read_text())
 scene=(here/'capture-scene.rs').read_text()
 scene=scene.replace('APP_SCREEN', 'app.screen(&context)' if 'fn screen(&self, context: &Context)' in source else 'app.screen()')
+scene=scene.replace('APP_QUESTION_PAGES', 'app.question_pages(&context, app.ask.as_ref().unwrap()).len()' if 'fn question_pages(' in source else '1')
+scene=scene.replace('APP_SET_PAGE', 'app.page = page;' if 'fn question_pages(' in source else '')
 probe=app/'src/ui_review_capture_probe.rs'
 if probe.exists():raise SystemExit('Refusing to replace an existing review probe')
 with tempfile.TemporaryDirectory(prefix='cobalt-render-') as tmp:
