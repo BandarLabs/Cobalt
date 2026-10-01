@@ -30,8 +30,10 @@ enum Setting {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingTask {
-    Queue,
-    Article(usize),
+    /// The response is authoritative only for the tab that was requested.
+    Queue(Tab),
+    /// Stable entry identity; replaying a fetch never carries navigation.
+    Article(u64),
     /// The outbox entry at index zero is in flight.
     Outbox,
     /// A token refresh; `resume` holds what to replay when it lands.
@@ -260,7 +262,10 @@ impl ReadLater {
             View::Queue => self.queue_screen(context),
             View::Article => {
                 let entry = self.open.and_then(|i| self.entries.get(i));
-                let loading = matches!(self.task, Some((_, PendingTask::Article(_))));
+                let loading = entry.is_some_and(|entry| {
+                    matches!(self.task, Some((_, PendingTask::Article(id))) if id == entry.id)
+                        || (self.refreshing && self.resume == Some(PendingTask::Article(entry.id)))
+                });
                 match entry {
                     Some(e) if !e.content.is_empty() => article_screen(context, e),
                     Some(e) if loading => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).secondary(&e.site).activity("Loading article", None).build(),
@@ -420,7 +425,7 @@ impl ReadLater {
             self.view = Some(View::Settings);
             return;
         }
-        if self.task.is_some() {
+        if self.task.is_some() || self.refreshing {
             return;
         }
         // Local changes reach Wallabag before the list is read back, so an
@@ -429,7 +434,7 @@ impl ReadLater {
             self.post_outbox(context);
             return;
         }
-        self.fetch_queue(context);
+        self.fetch_queue(context, self.tab);
     }
 
     fn switch_tab(&mut self, context: &mut Context, tab: Tab) {
@@ -443,9 +448,9 @@ impl ReadLater {
         self.sync(context);
     }
 
-    fn fetch_queue(&mut self, context: &mut Context) {
+    fn fetch_queue(&mut self, context: &mut Context, tab: Tab) {
         self.notice = Some("Syncing articles…".to_owned());
-        let (starred, archived) = self.tab.params();
+        let (starred, archived) = tab.params();
         if let Some(id) = context.spawn_retrying(Task::Fetch {
             url: wallabag::queue_url(&self.server(), self.depth.max(20), starred, archived),
             offset: 0,
@@ -453,14 +458,14 @@ impl ReadLater {
             credential: Some(Credential::bearer(CREDENTIAL)),
             headers: Vec::new(),
         }) {
-            self.task = Some((id, PendingTask::Queue));
+            self.task = Some((id, PendingTask::Queue(tab)));
             self.task_origin = Some(self.server());
         }
     }
 
-    /// The server list is the truth for the current tab; bodies and reading
+    /// The server list is the truth for its requested tab; bodies and reading
     /// places carry over only within one library, never across servers by id.
-    fn queue_completed(&mut self, context: &mut Context, origin: &str, bytes: &[u8]) {
+    fn queue_completed(&mut self, context: &mut Context, origin: &str, tab: Tab, bytes: &[u8]) {
         let Some(mut entries) = wallabag::parse_entries(bytes) else {
             self.notice =
                 Some("Couldn't load the reading list. Current articles are unchanged.".into());
@@ -476,7 +481,6 @@ impl ReadLater {
                 }
             }
         }
-        let tab = self.tab;
         self.entries
             .retain(|entry| !tab.shows(entry) || entries.iter().any(|e| e.id == entry.id));
         for entry in entries {
@@ -587,20 +591,34 @@ impl ReadLater {
     fn open_article(&mut self, context: &mut Context, index: usize) {
         self.open = Some(index);
         self.view = Some(View::Article);
-        let Some(entry) = self.entries.get(index) else {
+        if let Some(entry) = self.entries.get(index) {
+            if self.refreshing && entry.content.is_empty() {
+                // The newest reading request may replace a refused request,
+                // but must not overwrite the renewal or race token installation.
+                self.resume = Some(PendingTask::Article(entry.id));
+            } else {
+                self.fetch_article(context, entry.id);
+            }
+        }
+    }
+
+    /// Fetch/cache an article without choosing a view. A token renewal may
+    /// replay this after Back, another article, or Settings has been opened.
+    fn fetch_article(&mut self, context: &mut Context, entry_id: u64) {
+        let Some(entry) = self.entries.iter().find(|entry| entry.id == entry_id) else {
             return;
         };
         if !entry.content.is_empty() || !self.ready() {
             return;
         }
         if let Some(id) = context.spawn_retrying(Task::Fetch {
-            url: wallabag::entry_url(&self.server(), entry.id),
+            url: wallabag::entry_url(&self.server(), entry_id),
             offset: 0,
             max_bytes: 512 * 1024,
             credential: Some(Credential::bearer(CREDENTIAL)),
             headers: Vec::new(),
         }) {
-            self.task = Some((id, PendingTask::Article(index)));
+            self.task = Some((id, PendingTask::Article(entry_id)));
             self.task_origin = Some(self.server());
         }
     }
@@ -855,16 +873,16 @@ impl KoboApp for ReadLater {
             return;
         }
         match (kind, outcome) {
-            (PendingTask::Queue, TaskOutcome::Completed(bytes)) => {
+            (PendingTask::Queue(tab), TaskOutcome::Completed(bytes)) => {
                 self.refreshing = false;
                 self.refresh_attempts = 0;
-                self.queue_completed(context, &origin, &bytes);
+                self.queue_completed(context, &origin, tab, &bytes);
             }
-            (PendingTask::Article(index), TaskOutcome::Completed(bytes)) => {
+            (PendingTask::Article(entry_id), TaskOutcome::Completed(bytes)) => {
                 self.refreshing = false;
                 self.refresh_attempts = 0;
                 if let Some(entry) = wallabag::parse_entry_document(&bytes) {
-                    if let Some(slot) = self.entries.get_mut(index) {
+                    if let Some(slot) = self.entries.iter_mut().find(|slot| slot.id == entry_id) {
                         if slot.id == entry.id {
                             let position = slot.position;
                             let (starred, archived) = (slot.starred, slot.archived);
@@ -901,6 +919,7 @@ impl KoboApp for ReadLater {
                     // The refused request replays when the runtime
                     // acknowledges the replacement token.
                 } else {
+                    self.refreshing = false;
                     self.resume = None;
                     self.notice = Some(
                         "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
@@ -909,6 +928,7 @@ impl KoboApp for ReadLater {
                 }
             }
             (PendingTask::Refresh, TaskOutcome::Failed(_) | TaskOutcome::Cancelled) => {
+                self.refreshing = false;
                 self.resume = None;
                 self.notice = Some(
                     "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
@@ -950,16 +970,16 @@ impl KoboApp for ReadLater {
             if result == DeviceResult::Done {
                 self.refreshing = false;
                 if let Some(resume) = self.resume.take() {
+                    self.notice = Some("Wallabag sign-in renewed.".into());
                     match resume {
-                        PendingTask::Queue => self.fetch_queue(context),
-                        PendingTask::Article(index) => {
-                            self.open_article(context, index);
-                        }
+                        PendingTask::Queue(tab) => self.fetch_queue(context, tab),
+                        PendingTask::Article(entry_id) => self.fetch_article(context, entry_id),
                         PendingTask::Outbox => self.post_outbox(context),
                         PendingTask::Refresh => {}
                     }
                 }
             } else {
+                self.refreshing = false;
                 self.resume = None;
                 self.notice =
                     Some("The refreshed sign-in could not be installed on this reader.".into());
@@ -1458,7 +1478,7 @@ mod tests {
         };
         let metadata = br#"{"items":[{"id":7,"title":"Updated title"}]}"#;
         let mut context = Context::default();
-        app.task = Some((TaskId(1), PendingTask::Queue));
+        app.task = Some((TaskId(1), PendingTask::Queue(Tab::Unread)));
         app.task_origin = Some(origin.clone());
         app.on_task(
             &mut context,
@@ -1467,7 +1487,7 @@ mod tests {
         );
         assert_eq!(app.entries[0].title, "Updated title");
         assert_eq!(app.entries[0].content, "An original saved article body.");
-        app.task = Some((TaskId(2), PendingTask::Queue));
+        app.task = Some((TaskId(2), PendingTask::Queue(Tab::Unread)));
         app.task_origin = Some(origin.clone());
         app.on_task(
             &mut context,
@@ -1478,7 +1498,7 @@ mod tests {
         assert!(app.notice.as_deref().unwrap().contains("unchanged"));
         capture_queue(&app, "refresh-failed.png");
         app.server = "https://another.example".into();
-        app.task = Some((TaskId(3), PendingTask::Queue));
+        app.task = Some((TaskId(3), PendingTask::Queue(Tab::Unread)));
         app.task_origin = Some(origin);
         app.on_task(
             &mut context,
@@ -1490,7 +1510,7 @@ mod tests {
             1,
             "late old-server reply replaced the list"
         );
-        app.task = Some((TaskId(4), PendingTask::Queue));
+        app.task = Some((TaskId(4), PendingTask::Queue(Tab::Unread)));
         app.task_origin = Some(app.server.clone());
         app.on_task(
             &mut context,
@@ -1515,7 +1535,7 @@ mod tests {
             ..ReadLater::default()
         };
         let mut context = Context::default();
-        app.task = Some((TaskId(1), PendingTask::Queue));
+        app.task = Some((TaskId(1), PendingTask::Queue(Tab::Unread)));
         app.task_origin = Some(app.server());
         app.on_task(
             &mut context,
@@ -1523,7 +1543,7 @@ mod tests {
             TaskOutcome::Failed(TaskError::Unauthorized),
         );
         assert!(app.refreshing);
-        assert_eq!(app.resume, Some(PendingTask::Queue));
+        assert_eq!(app.resume, Some(PendingTask::Queue(Tab::Unread)));
         let posted = context.commands().iter().any(|command| {
             matches!(
                 command,
@@ -1682,6 +1702,538 @@ mod tests {
                 .layout_with(&CLARA_BW_METRICS, &Chrome::default())
                 .rect_of_action(action_id(if self.ready() { "sync" } else { "settings" }))
                 .expect("primary action must be reachable")
+        }
+    }
+}
+
+#[cfg(test)]
+mod independent_review {
+    use super::*;
+    use kobo_sdk::{AppRunner, Command};
+    use kobo_ui::{Chrome, DisplayMetrics, CLARA_BW_METRICS};
+
+    fn fixture() -> ReadLater {
+        ReadLater {
+            server: "https://bag.example".into(),
+            depth: 50,
+            entries_origin: Some("https://bag.example".into()),
+            entries: (0..30)
+                .map(|i| Entry {
+                    id: i + 1,
+                    title: format!("Article {i}"),
+                    site: "example.org".into(),
+                    reading_time: 3,
+                    position: 0,
+                    content: if i == 0 {
+                        String::new()
+                    } else {
+                        "Cached reading body.".into()
+                    },
+                    starred: false,
+                    archived: false,
+                })
+                .collect(),
+            ..ReadLater::default()
+        }
+    }
+    fn latest(commands: &[Command]) -> &kobo_sdk::Screen {
+        commands
+            .iter()
+            .rev()
+            .find_map(|c| {
+                if let Command::SetScreen(s) = c {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+    fn fetch(commands: &[Command]) -> TaskId {
+        commands
+            .iter()
+            .find_map(|c| {
+                if let Command::Spawn {
+                    task,
+                    work: Task::Fetch { .. },
+                } = c
+                {
+                    Some(*task)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn review_back_during_load_stays_on_current_navigation() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(fixture(), metrics);
+            let task = fetch(&runner.action(action_id("entry-0")));
+            let back = runner.action(ActionId::BACK);
+            assert_eq!(runner.app().view, Some(View::Queue));
+            assert!(!latest(&back).owns_back);
+            runner.action(action_id("queue-next"));
+            let page = runner.app().queue_page;
+            let commands = runner.task_outcome(
+                task,
+                TaskOutcome::Completed(
+                    br#"{"id":1,"title":"Completed article","content":"<p>Fetched body.</p>"}"#
+                        .to_vec(),
+                ),
+            );
+            assert_eq!(runner.app().view, Some(View::Queue));
+            assert_eq!(runner.app().queue_page, page);
+            assert!(runner.app().entries[0].content.contains("Fetched body"));
+            assert!(!latest(&commands).owns_back);
+            assert!(!latest(&commands)
+                .diagnostics(&metrics, &Chrome::measuring(true))
+                .has_errors());
+        }
+    }
+
+    #[test]
+    fn review_back_during_token_refresh_does_not_reopen_article() {
+        let mut app = fixture();
+        app.session = Some(session::Session {
+            server: "https://bag.example".into(),
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+            refresh_token: "refresh".into(),
+        });
+        let mut runner = AppRunner::new(app);
+        let task = fetch(&runner.action(action_id("entry-0")));
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+        let refresh = runner.app().task.unwrap().0;
+        assert_eq!(runner.app().resume, Some(PendingTask::Article(1)));
+        runner.action(ActionId::BACK);
+        runner.action(action_id("queue-next"));
+        assert_eq!(runner.app().view, Some(View::Queue));
+        runner.task_outcome(
+            refresh,
+            TaskOutcome::Completed(
+                br#"{"access_token":"replacement","refresh_token":"rolled"}"#.to_vec(),
+            ),
+        );
+        runner.device_result(DeviceResult::Done);
+        assert_eq!(
+            runner.app().view,
+            Some(View::Queue),
+            "late credential installation must not navigate back to a dismissed article"
+        );
+    }
+
+    #[test]
+    fn review_inflight_queue_response_keeps_new_tab_entries() {
+        let mut app = fixture();
+        app.entries[1].archived = true;
+        let mut runner = AppRunner::new(app);
+        let task = fetch(&runner.action(action_id("sync")));
+        runner.action(action_id("archive-tab"));
+        assert_eq!(runner.app().tab, Tab::Archive);
+        assert!(runner.app().entries.iter().any(|e| e.id == 2));
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(
+                br#"{"items":[{"id":1,"title":"Unread","is_archived":0}]}"#.to_vec(),
+            ),
+        );
+        assert!(
+            runner.app().entries.iter().any(|e| e.id == 2),
+            "old Unread response must not erase cached Archive entries"
+        );
+    }
+    #[test]
+    fn review_saved_ack_after_back_preserves_list_page_and_view() {
+        let mut app = fixture();
+        let mut context = AppRunner::new(ReadLater::default()).context();
+        app.open_cache(&mut context);
+        let key = app.snapshot.as_ref().unwrap().key.clone();
+        app.on_load(
+            &mut context,
+            &key,
+            StoreResult::Loaded {
+                key: key.clone(),
+                value: None,
+            },
+        );
+        let _ = context.take_commands();
+        app.on_action(&mut context, action_id("queue-next"));
+        let page = app.queue_page;
+        app.on_action(&mut context, action_id("entry-8"));
+        app.on_action(&mut context, action_id("star"));
+        let (name, bytes) = context
+            .take_commands()
+            .into_iter()
+            .find_map(|c| {
+                if let Command::Store(kobo_sdk::StoreRequest::ShelfWrite { name, bytes, .. }) = c {
+                    Some((name, bytes))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert!(app.snapshot.as_ref().unwrap().busy());
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.view, Some(View::Queue));
+        app.on_shelf(
+            &mut context,
+            &name,
+            StoreResult::ShelfWritten {
+                name: name.clone(),
+                size: u32::try_from(bytes.len()).unwrap(),
+            },
+        );
+        app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
+        assert_eq!(app.view, Some(View::Queue));
+        assert_eq!(app.queue_page, page);
+        assert!(app.entries[8].starred);
+        assert!(!latest(context.commands()).owns_back);
+    }
+
+    #[test]
+    fn review_all_rows_open_and_return_via_actual_callbacks() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut app = fixture();
+            app.entries[0].content = "Cached body.".into();
+            let mut runner = AppRunner::with_metrics(app, metrics);
+            let mut visited = Vec::new();
+            let page_count = runner
+                .app()
+                .queue_pages(
+                    &runner.context(),
+                    &runner.app().queue_rows(&runner.context()),
+                )
+                .len();
+            for page in 0..page_count {
+                assert_eq!(runner.app().queue_page, page);
+                let rows = runner.app().queue_rows(&runner.context());
+                let pages = runner.app().queue_pages(&runner.context(), &rows);
+                let indices = pages[page].iter().map(|&r| rows[r].0).collect::<Vec<_>>();
+                for index in indices {
+                    let screen = runner.app().queue_screen(&runner.context());
+                    let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                    let rect = layout
+                        .rect_of_action(action_id(&format!("entry-{index}")))
+                        .unwrap();
+                    let action = layout
+                        .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2)
+                        .unwrap();
+                    let opened = runner.action(action);
+                    assert_eq!(runner.app().open, Some(index));
+                    assert_eq!(runner.app().view, Some(View::Article));
+                    assert!(latest(&opened).owns_back);
+                    runner.action(ActionId::BACK);
+                    assert_eq!(runner.app().view, Some(View::Queue));
+                    assert_eq!(runner.app().queue_page, page);
+                    visited.push(index);
+                }
+                runner.action(action_id("queue-next"));
+            }
+            assert_eq!(visited, (0..30).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn credential_ack_and_article_completion_preserve_newer_navigation() {
+        for dismiss_after_token in [false, true] {
+            for destination in ["queue", "settings", "article"] {
+                let mut app = fixture();
+                app.session = Some(session::Session {
+                    server: app.server.clone(),
+                    client_id: "id".into(),
+                    client_secret: "synthetic".into(),
+                    refresh_token: "synthetic".into(),
+                });
+                let mut runner = AppRunner::new(app);
+                let task = fetch(&runner.action(action_id("entry-0")));
+                runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+                let refresh = runner.app().task.unwrap().0;
+                let token =
+                    || TaskOutcome::Completed(br#"{"access_token":"replacement"}"#.to_vec());
+                if dismiss_after_token {
+                    runner.task_outcome(refresh, token());
+                }
+                runner.action(ActionId::BACK);
+                runner.action(action_id("queue-next"));
+                let page = runner.app().queue_page;
+                match destination {
+                    "settings" => {
+                        runner.action(action_id("settings"));
+                    }
+                    "article" => {
+                        runner.action(action_id("entry-8"));
+                    }
+                    _ => {}
+                }
+                let navigation = (runner.app().view, runner.app().open);
+                if !dismiss_after_token {
+                    runner.task_outcome(refresh, token());
+                }
+                let commands = runner.device_result(DeviceResult::Done);
+                let retried = fetch(&commands);
+                assert_eq!(
+                    runner.app().notice.as_deref(),
+                    Some("Wallabag sign-in renewed.")
+                );
+                assert_eq!((runner.app().view, runner.app().open), navigation);
+                assert_eq!(runner.app().queue_page, page);
+                let mut context = runner.context();
+                runner.app().show(&mut context);
+                assert_eq!(latest(context.commands()).owns_back, destination != "queue");
+                runner.task_outcome(retried, TaskOutcome::Completed(
+                    br#"{"id":1,"title":"Finished in the background","content":"<p>Fetched body.</p>"}"#.to_vec(),
+                ));
+                assert_eq!((runner.app().view, runner.app().open), navigation);
+                assert_eq!(runner.app().queue_page, page);
+                assert!(runner.app().entries[0].content.contains("Fetched body"));
+                let mut context = runner.context();
+                runner.app().show(&mut context);
+                assert_eq!(latest(context.commands()).owns_back, destination != "queue");
+                // Repeated navigation after the late callback still returns
+                // to the saved queue page rather than the resumed request.
+                for _ in 0..3 {
+                    runner.action(action_id("entry-8"));
+                    runner.action(ActionId::BACK);
+                    assert_eq!(runner.app().view, Some(View::Queue));
+                    assert_eq!(runner.app().queue_page, page);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn queue_retry_keeps_requested_tab_and_preserves_other_tabs_on_disk() {
+        for requested in [Tab::Unread, Tab::Starred, Tab::Archive] {
+            for current in [Tab::Unread, Tab::Starred, Tab::Archive] {
+                for renew in [false, true] {
+                    let mut app = fixture();
+                    app.entries.truncate(3);
+                    app.entries[1].starred = true;
+                    app.entries[2].archived = true;
+                    let expected = app
+                        .entries
+                        .iter()
+                        .filter(|entry| !requested.shows(entry))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    app.tab = requested;
+                    app.session = Some(session::Session {
+                        server: app.server.clone(),
+                        client_id: "id".into(),
+                        client_secret: "synthetic".into(),
+                        refresh_token: "synthetic".into(),
+                    });
+                    let mut context = AppRunner::new(ReadLater::default()).context();
+                    app.open_cache(&mut context);
+                    let key = app.snapshot.as_ref().unwrap().key.clone();
+                    app.on_load(
+                        &mut context,
+                        &key,
+                        StoreResult::Loaded {
+                            key: key.clone(),
+                            value: None,
+                        },
+                    );
+                    let mut runner = AppRunner::new(app);
+                    let mut task = fetch(&runner.action(action_id("sync")));
+                    if renew {
+                        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+                    }
+                    let action = match current {
+                        Tab::Unread => "unread",
+                        Tab::Starred => "starred",
+                        Tab::Archive => "archive-tab",
+                    };
+                    runner.action(action_id(action));
+                    if renew {
+                        let refresh = runner.app().task.unwrap().0;
+                        runner.task_outcome(
+                            refresh,
+                            TaskOutcome::Completed(br#"{"access_token":"replacement"}"#.to_vec()),
+                        );
+                        let commands = runner.device_result(DeviceResult::Done);
+                        task = fetch(&commands);
+                        let (starred, archived) = requested.params();
+                        let expected_url =
+                            wallabag::queue_url("https://bag.example", 50, starred, archived);
+                        assert!(commands.iter().any(|command| matches!(command,
+                            Command::Spawn {work: Task::Fetch {url, ..}, ..} if url == &expected_url)));
+                    }
+                    assert_eq!(runner.app().task.unwrap().1, PendingTask::Queue(requested));
+                    let commands = runner
+                        .task_outcome(task, TaskOutcome::Completed(br#"{"items":[]}"#.to_vec()));
+                    assert_eq!(runner.app().tab, current);
+                    assert_eq!(runner.app().entries, expected);
+                    let (name, bytes) = commands
+                        .into_iter()
+                        .find_map(|command| match command {
+                            Command::Store(kobo_sdk::StoreRequest::ShelfWrite {
+                                name,
+                                bytes,
+                                ..
+                            }) => Some((name, bytes)),
+                            _ => None,
+                        })
+                        .unwrap();
+                    assert_eq!(cache::decode(&bytes).unwrap(), expected);
+                    // Acknowledging the snapshot keeps the same tab and data.
+                    let app = runner.app_mut();
+                    app.on_shelf(
+                        &mut context,
+                        &name,
+                        StoreResult::ShelfWritten {
+                            name: name.clone(),
+                            size: bytes.len().try_into().unwrap(),
+                        },
+                    );
+                    app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
+                    assert_eq!(app.tab, current);
+                    assert_eq!(
+                        cache::decode(app.snapshot.as_ref().unwrap().bytes.as_deref().unwrap())
+                            .unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn article_retry_uses_identity_after_cached_entries_reorder() {
+        let mut app = fixture();
+        app.session = Some(session::Session {
+            server: app.server.clone(),
+            client_id: "id".into(),
+            client_secret: "synthetic".into(),
+            refresh_token: "synthetic".into(),
+        });
+        let mut runner = AppRunner::new(app);
+        let task = fetch(&runner.action(action_id("entry-0")));
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+        let refresh = runner.app().task.unwrap().0;
+        runner.action(ActionId::BACK);
+        // A cache reload may move entries while a request is still pending.
+        runner.app_mut().entries.rotate_left(1);
+        runner.task_outcome(
+            refresh,
+            TaskOutcome::Completed(br#"{"access_token":"replacement"}"#.to_vec()),
+        );
+        let commands = runner.device_result(DeviceResult::Done);
+        let retried = fetch(&commands);
+        assert_eq!(runner.app().task.unwrap().1, PendingTask::Article(1));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn {work: Task::Fetch {url, ..}, ..} if url.ends_with("/entries/1.json"))));
+        runner.task_outcome(
+            retried,
+            TaskOutcome::Completed(
+                br#"{"id":1,"title":"Fetched by id","content":"<p>Correct body.</p>"}"#.to_vec(),
+            ),
+        );
+        assert_eq!(runner.app().view, Some(View::Queue));
+        assert_eq!(runner.app().entries[0].id, 2);
+        assert_eq!(runner.app().entries[0].content, "Cached reading body.");
+        assert!(runner
+            .app()
+            .entries
+            .last()
+            .unwrap()
+            .content
+            .contains("Correct body"));
+    }
+
+    #[test]
+    fn newer_uncached_article_waits_for_the_inflight_renewal() {
+        for initial in ["entry-0", "sync"] {
+            for open_after_token in [false, true] {
+                let mut app = fixture();
+                app.entries[1].content.clear();
+                app.session = Some(session::Session {
+                    server: app.server.clone(),
+                    client_id: "id".into(),
+                    client_secret: "synthetic".into(),
+                    refresh_token: "synthetic".into(),
+                });
+                let mut runner = AppRunner::new(app);
+                let task = fetch(&runner.action(action_id(initial)));
+                runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+                let refresh = runner.app().task.unwrap().0;
+                let token =
+                    || TaskOutcome::Completed(br#"{"access_token":"replacement"}"#.to_vec());
+                if open_after_token {
+                    runner.task_outcome(refresh, token());
+                    assert!(runner.app().task.is_none());
+                }
+                runner.action(ActionId::BACK);
+                // Repeated Sync cannot race an unacknowledged installation.
+                runner.action(action_id("sync"));
+                runner.action(action_id("sync"));
+                runner.action(action_id("entry-1"));
+                assert_eq!(runner.app().resume, Some(PendingTask::Article(2)));
+                let mut context = runner.context();
+                runner.app().show(&mut context);
+                assert!(latest(context.commands())
+                    .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+                    .rect_of_action(action_id("archive")).is_none(),
+                    "a request awaiting credentials must remain loading, not show extraction failure");
+                if !open_after_token {
+                    assert_eq!(runner.app().task.unwrap(), (refresh, PendingTask::Refresh));
+                    runner.task_outcome(refresh, token());
+                }
+                assert_eq!(runner.outstanding_requests(), 1);
+                let commands = runner.device_result(DeviceResult::Done);
+                let retried = fetch(&commands);
+                assert_eq!(runner.app().task.unwrap().1, PendingTask::Article(2));
+                assert_eq!(runner.app().open, Some(1));
+                assert_eq!(runner.app().view, Some(View::Article));
+                runner.task_outcome(
+                    retried,
+                    TaskOutcome::Completed(
+                        br#"{"id":2,"title":"Newer choice","content":"<p>Newer body.</p>"}"#
+                            .to_vec(),
+                    ),
+                );
+                assert!(runner.app().entries[1].content.contains("Newer body"));
+                assert_eq!(runner.app().open, Some(1));
+                assert!(!runner.app().refreshing);
+            }
+        }
+    }
+
+    #[test]
+    fn failed_renewal_releases_the_busy_guard_without_replaying_navigation() {
+        for outcome in [
+            TaskOutcome::Cancelled,
+            TaskOutcome::Failed(TaskError::Unauthorized),
+            TaskOutcome::Completed(b"invalid token reply".to_vec()),
+        ] {
+            let mut app = fixture();
+            app.session = Some(session::Session {
+                server: app.server.clone(),
+                client_id: "id".into(),
+                client_secret: "synthetic".into(),
+                refresh_token: "synthetic".into(),
+            });
+            let mut runner = AppRunner::new(app);
+            let task = fetch(&runner.action(action_id("entry-0")));
+            runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+            let refresh = runner.app().task.unwrap().0;
+            runner.action(ActionId::BACK);
+            runner.task_outcome(refresh, outcome);
+            assert!(!runner.app().refreshing);
+            assert!(runner.app().resume.is_none());
+            assert_eq!(runner.app().view, Some(View::Queue));
+            // A later explicit retry is still possible after the terminal error.
+            fetch(&runner.action(action_id("sync")));
         }
     }
 }

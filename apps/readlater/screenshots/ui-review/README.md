@@ -49,3 +49,64 @@ captured from that revision before app edits. See `provenance.json` for hashes.
   including a reviewed escalated launch. No transport workaround was used
 - Native callback tests do not prove simulator process transport, touch
   coordinate transformation, live Wallabag traffic or physical E Ink behavior
+
+
+## Interrupted sync and sign-in follow-up
+
+Two AppRunner regressions reproduced on the first draft commit
+`cc0f5aa7ec36607ce7744c83675432dbaacf5891`:
+
+1. Open an uncached article, receive Unauthorized, press Back, advance the
+   reading list, then complete token refresh and credential installation.
+   The late replay reopened the dismissed article. Replays now fetch by
+   stable article identity without changing the view or list page; the
+   sign-in banner also stops claiming renewal is still in progress.
+2. Start an Unread sync, switch to Archive, then finish the Unread request.
+   The completion used the current tab when pruning entries and erased the
+   cached Archive. Each queue request and token retry now retains its own tab.
+
+<table>
+<tr>
+<td><img width="280" src="before-default-dismissed-refresh.png" alt="Before: late token installation reopens the dismissed article loader"><br>Before: dismissed loader reopens</td>
+<td><img width="280" src="after-default-dismissed-refresh.png" alt="After: token installation leaves the reading list on page two"><br>After: reading-list page two stays open</td>
+</tr>
+<tr>
+<td><img width="280" src="before-default-late-unread.png" alt="Before: an Unread response removes the cached Archive article"><br>Before: Archive becomes empty</td>
+<td><img width="280" src="after-default-late-unread.png" alt="After: the cached Archive article remains after the same Unread response"><br>After: Archive entry stays available</td>
+</tr>
+</table>
+
+These matching pairs use the same callback sequence and 30 synthetic articles,
+with the same native renderer and representative status strip described above.
+The Archive capture intentionally has no initialized snapshot, so its existing
+Retry saving control is shown; separate callback tests initialize and acknowledge
+real snapshot writes and verify that other-tab entries survive on disk.
+Default and largest text-size PNGs are included; every updated capture has no
+layout diagnostics. `interrupted-provenance.json` records each source and image
+hash. The before captures use the unmodified first-draft source; the after
+source hash identifies the edited source before its final commit.
+
+Reproduce with:
+
+```sh
+python3 apps/readlater/screenshots/ui-review/capture-interrupted.py --output target/readlater-interrupted-review
+```
+
+For the before capture, pass `--root` pointing to a checkout of the first-draft
+commit above. The self-contained `interrupted-scenario.rs` is appended to a
+temporary audit crate; the app source is not rewritten except for absolute
+module paths. AppRunner deduplicates unchanged screens, so the harness renders
+the app's current screen after each callback rather than requiring a redundant
+SetScreen command.
+
+The app now has 32 tests. Added coverage includes every requested/current tab
+combination with and without token renewal, acknowledged snapshot contents,
+Back before and after the token response, Settings and a newer cached article,
+late article completion, reordered cache entries, and repeated open/Back cycles.
+A newer uncached reading choice waits for the existing renewal and replaces only
+the refused request; it cannot overwrite the renewal task or race token
+installation. Repeated Sync during installation stays bounded, and terminal
+renewal failures release that guard for an explicit retry.
+The original two repros failed before this follow-up and pass afterward.
+Interactive simulator and physical-device proof remain pending for the same
+socket restriction described above.

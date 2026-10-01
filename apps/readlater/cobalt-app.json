@@ -5,7 +5,7 @@
   "summary": "Read your Wallabag articles anywhere.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
   "version": "0.2.4",
-  "release_notes": "Every saved article stays reachable in a paginated reading list at all text sizes. Back returns from articles and settings to the same list page.",
+  "release_notes": "Every saved article stays reachable at all text sizes. Back keeps your list page, late sign-in refreshes respect navigation, and overlapping syncs preserve other tabs.",
   "glyph": "bookmark",
   "capabilities": [
     "network"
