@@ -1,6 +1,6 @@
 [package]
 name = "kobo-homepanel"
-version = "0.2.2"
+version = "0.2.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]
+kobo-image = { path = "../../crates/kobo-image" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]
