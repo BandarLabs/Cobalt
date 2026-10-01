@@ -1490,8 +1490,6 @@ dependencies = [
  "kobo-app-store",
  "kobo-json",
  "kobo-sdk",
- "kobo-text",
- "kobo-ui",
 ]
 
 [[package]]

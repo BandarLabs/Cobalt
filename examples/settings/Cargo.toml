@@ -13,9 +13,5 @@ kobo-json = { path = "../../crates/kobo-json" }
 # update requests for, so it is the one that turns that feature on.
 kobo-sdk = { path = "../../crates/kobo-sdk", features = ["runtime-settings"] }
 
-[dev-dependencies]
-kobo-ui = { path = "../../crates/kobo-ui" }
-kobo-text = { path = "../../crates/kobo-text" }
-
 [lints]
 workspace = true

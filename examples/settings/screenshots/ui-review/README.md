@@ -54,7 +54,7 @@ simulator transport was changed.
 
 ```sh
 COBALT_REVIEW_OUT="$PWD/target/ui-review" COBALT_REVIEW_PHASE=after \
-  cargo test -p kobo-settings capture_review_screens -- --ignored
+  python3 examples/settings/screenshots/ui-review/capture.py
 python3 - <<'PY'
 from pathlib import Path
 from PIL import Image
@@ -63,5 +63,10 @@ for source in Path('target/ui-review/settings/after').glob('*.pgm'):
 PY
 ```
 
-Normal tests write no screenshots. The ignored fixture is
-`src/review_capture.rs` and its helper is `render.rs` in this directory.
+Normal tests write no screenshots and need no direct renderer dependencies.
+The Python 3.11+ script copies the current Settings source and the ignored
+`src/review_capture.rs` fixture into a temporary Cargo package, adding only
+the capture module. Its renderer dependencies and lockfile stay outside the
+workspace. It uses the workspace version, SDK, font and renderer sources;
+`render.rs` in this directory is its capture helper. Run a workspace Cargo
+build first to populate the dependency cache used by its offline build.

@@ -1,6 +1,19 @@
 use super::*;
-use kobo_sdk::{AppRunner, Command};
-use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
+use kobo_sdk::{AppRunner, Chrome, Command, DisplayMetrics, CLARA_BW_METRICS};
+
+fn interface_sizes() -> Vec<DisplayMetrics> {
+    let mut metrics = CLARA_BW_METRICS;
+    while let Some(smaller) = metrics.text_scale.smaller() {
+        metrics.text_scale = smaller;
+    }
+    let mut sizes = vec![metrics];
+    while let Some(larger) = metrics.text_scale.larger() {
+        metrics.text_scale = larger;
+        sizes.push(metrics);
+    }
+    assert_eq!(sizes.len(), 9);
+    sizes
+}
 
 fn fixture() -> Settings {
     Settings {
@@ -48,15 +61,13 @@ fn touch(screen: &Screen, metrics: DisplayMetrics, action: ActionId) -> ActionId
 #[test]
 fn every_home_destination_is_reachable_at_all_sizes_and_both_poses() {
     for pose in [(1072, 1448), (1448, 1072)] {
-        for text_scale in TextScale::STEPS {
+        for size in interface_sizes() {
             let metrics = DisplayMetrics {
                 width: pose.0,
                 height: pose.1,
-                text_scale,
-                ..CLARA_BW_METRICS
+                ..size
             };
             let runner = AppRunner::with_metrics(Settings::default(), metrics);
-            kobo_text::install(metrics).expect("font installs");
             let mut context = runner.context();
             let mut app = fixture();
             let rows = app.home_rows();
@@ -87,15 +98,13 @@ fn every_home_destination_is_reachable_at_all_sizes_and_both_poses() {
 #[test]
 fn every_measured_radio_row_targets_its_own_identity_on_later_pages() {
     for pose in [(1072, 1448), (1448, 1072)] {
-        for text_scale in TextScale::STEPS {
+        for size in interface_sizes() {
             let metrics = DisplayMetrics {
                 width: pose.0,
                 height: pose.1,
-                text_scale,
-                ..CLARA_BW_METRICS
+                ..size
             };
             let runner = AppRunner::with_metrics(Settings::default(), metrics);
-            kobo_text::install(metrics).expect("font installs");
             let mut context = runner.context();
             let mut app = fixture();
             app.view = View::Wifi;
@@ -152,12 +161,8 @@ fn every_measured_radio_row_targets_its_own_identity_on_later_pages() {
 
 #[test]
 fn radio_notices_and_connected_status_are_included_in_the_page_budget() {
-    let metrics = DisplayMetrics {
-        text_scale: TextScale::Largest,
-        ..CLARA_BW_METRICS
-    };
+    let metrics = *interface_sizes().last().unwrap();
     let runner = AppRunner::with_metrics(Settings::default(), metrics);
-    kobo_text::install(metrics).unwrap();
     let context = runner.context();
     for trouble in [false, true] {
         let mut app = fixture();
@@ -198,10 +203,7 @@ fn radio_notices_and_connected_status_are_included_in_the_page_budget() {
 
 #[test]
 fn refreshed_lists_and_repeated_page_turns_clamp_without_wrapping() {
-    let metrics = DisplayMetrics {
-        text_scale: TextScale::Largest,
-        ..CLARA_BW_METRICS
-    };
+    let metrics = *interface_sizes().last().unwrap();
     let runner = AppRunner::with_metrics(Settings::default(), metrics);
     let mut context = runner.context();
     let mut app = fixture();
