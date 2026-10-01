@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Browse OPDS libraries and read their books on your Kobo.",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "When a catalog page cannot be refreshed, the shelf says it is showing the saved page."
+  "release_notes": "Added catalogs stay reachable through measured pages, including at large text sizes and after a catalog error. Returning from a shelf keeps your place in the catalog list."
 }
