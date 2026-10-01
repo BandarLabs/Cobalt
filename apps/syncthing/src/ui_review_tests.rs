@@ -90,3 +90,21 @@ fn backing_out_of_setup_does_not_enable_paused_sync() {
     assert_eq!(runner.app().config.cadence, Cadence::Manual);
     assert_eq!(runner.app().scheduled_at, 0);
 }
+
+#[test]
+fn setup_instructions_fit_at_every_portrait_text_size() {
+    for text_scale in kobo_ui::TextScale::STEPS {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        let screen = guide_screen().with_own_back(true);
+        let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+        let diagnostics = screen.diagnostics(&metrics, &chrome);
+        assert!(
+            !diagnostics.has_errors(),
+            "{text_scale:?}: {:?}",
+            diagnostics.issues
+        );
+    }
+}

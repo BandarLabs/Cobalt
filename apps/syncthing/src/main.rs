@@ -365,11 +365,11 @@ const EPOCH: Snapshot = Snapshot {
 fn guide_screen() -> Screen {
     ScreenBuilder::new("syncthing")
         .top_bar("Set up Sync")
-        .heading("Pair one computer folder")
-        .text("1. Install Syncthing on the computer with its package manager.")
-        .text("2. Wake the reader on Wi-Fi, then on the computer run:")
+        .section("Pair one computer folder")
+        .secondary("1. Install Syncthing on the computer with its package manager.")
+        .secondary("2. Wake the reader on Wi-Fi, then on the computer run:")
         .text("kobo sync setup ~/Documents/notes --folder vault --device <address>")
-        .text("3. Resume Sync here. The first window runs within the cadence you choose; vault, frame and books arrive receive-only, so originals on the reader stay protected.")
+        .secondary("3. Resume Sync here. The first window runs within the cadence you choose; vault, frame and books arrive receive-only, so originals on the reader stay protected.")
         .secondary("Folders are fixed: sync/vault, sync/frame and sync/books arrive; sync/out leaves. Transferred packages import into Vault and Frame after each window.")
         .build()
 }
