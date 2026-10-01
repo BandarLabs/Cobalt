@@ -19,19 +19,27 @@ becomes redundant once #237 lands. After dismissal, the plain list releases
 Back again.
 
 <table><tr>
-<td><img width="300" src="before-open-menu.png" alt="The original saved-story menu above the Saved list"><br>Original open-menu state</td>
-<td><img width="300" src="after-open-menu.png" alt="The same menu before testing app-specific dismissal behavior"><br>Updated open-menu state</td>
+<td><img width="300" src="before-default-notice-dismissed-menu.png" alt="Before: menu Back removes the offline status banner"><br>Before: dismissing the menu loses the notice</td>
+<td><img width="300" src="after-default-notice-dismissed-menu.png" alt="After: the same menu Back leaves the offline status banner above the list"><br>After: the offline notice remains</td>
 </tr></table>
 
-The [list after native dismissal](after-dismissed-menu.png) is also captured.
-The menu's appearance did not need changing. The pictures illustrate the
-states; dismissal semantics are established by the callback and hit-test
-assertions, not by a visual difference. The captured open menu changed from
-`owns_back: false` to `true`, and the dismissed list has `false` again. A test
-repeats opening/dismissing three times, hit-tests outside the popover and checks
-that the list, page and notice survive. All 64 app tests, formatting and strict
-clippy pass. The pre-existing popover `ToneBudget` warning remains; there are no
-layout errors, and the shared renderer is unchanged.
+This pair starts with the same saved list and synthetic offline notice, opens
+its first row menu, and delivers the same native Back callback. Original Beta
+clears the notice; the updated app keeps it. Default and largest-size pairs are
+included with hashes in `notice-dismissal-provenance.json`. The callback is
+deliberately delivered to both versions to isolate the app behavior from the
+runtime routing addressed by #237. These images do not claim a baseline
+interactive runtime delivered that callback without #237.
+
+The [original open menu](before-open-menu.png), [updated open menu](after-open-menu.png)
+and [plain dismissed list](after-dismissed-menu.png) remain as context. The two
+open-menu pictures are byte-identical and do not demonstrate the notice fix.
+A test repeats opening/dismissing three times, hit-tests outside the popover
+and checks that the list, page and notice survive. All 64 app tests, formatting
+and strict clippy pass. The exact 105 Node tooling tests pass on the final
+dependency graph. The pre-existing popover `ToneBudget` warning remains on
+open-menu frames; both matched dismissed-list pairs have no layout diagnostics.
+The shared renderer is unchanged.
 
 ## Reproduce
 
