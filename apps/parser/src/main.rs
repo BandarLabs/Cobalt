@@ -38,6 +38,7 @@ enum SlotAction {
 struct Parser {
     view: View,
     stories: Vec<(String, u32)>,
+    library_page: usize,
     saves: Vec<String>,
     slots_page: usize,
     machine: Option<Machine>,
@@ -64,6 +65,7 @@ impl Default for Parser {
         Self {
             view: View::Library,
             stories: Vec::new(),
+            library_page: 0,
             saves: Vec::new(),
             slots_page: 0,
             machine: None,
@@ -120,46 +122,65 @@ impl Parser {
     fn show(&mut self, context: &mut Context) {
         self.repaginate(context);
         context.set_screen(match self.view {
-            View::Library => self.library_screen(),
+            View::Library => self.library_screen(context),
             View::Play => self.play_screen(),
             View::Slots => self.slots_screen(),
         });
     }
 
-    fn library_screen(&self) -> Screen {
+    fn library_prefix(&self) -> ScreenBuilder {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
             .heading("Interactive fiction");
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
-        let stories = self
-            .stories
-            .iter()
-            .enumerate()
-            .map(|(index, (name, size))| {
+        builder
+    }
+
+    fn library_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        context.paginate_tiles_under(
+            self.stories.len(),
+            TileShape::Portrait,
+            true,
+            &self.library_prefix().build(),
+        )
+    }
+
+    fn library_screen(&self, context: &Context) -> Screen {
+        let builder = self.library_prefix();
+        if self.stories.is_empty() {
+            return builder
+                .empty_state(
+                    "No stories yet. Push a .z3, .z5 or .z8 story with \
+                     `kobo parser push FILE --device IP`; stories play completely offline.",
+                )
+                .bottom_action("refresh", "Refresh library")
+                .build();
+        }
+        let pages = self.library_pages(context);
+        let page = self.library_page.min(pages.len().saturating_sub(1));
+        let mut builder = builder.tile_grid(
+            TileShape::Portrait,
+            pages[page].iter().map(|&index| {
+                let (name, size) = &self.stories[index];
                 (
                     format!("story-{index}"),
                     display_name(name),
                     Glyph::Book,
                     move |tile: kobo_sdk::Tile| tile.with_subtitle(format_size(*size)),
                 )
-            })
-            .collect::<Vec<_>>();
-        if stories.is_empty() {
-            builder
-                .empty_state(
-                    "No stories yet. Push a .z3, .z5 or .z8 story with \
-                     `kobo parser push FILE --device IP`; stories play completely offline.",
-                )
-                .bottom_action("refresh", "Refresh library")
-                .build()
-        } else {
-            builder
-                .tile_grid(TileShape::Portrait, stories)
-                .bottom_action("refresh", "Refresh library")
-                .build()
+            }),
+        );
+        if pages.len() > 1 {
+            builder = builder
+                .page_turns("library-previous", "library-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
         }
+        builder.bottom_action("refresh", "Refresh library").build()
     }
 
     fn play_screen(&self) -> Screen {
@@ -192,7 +213,7 @@ impl Parser {
         let commands = palette(self.machine.as_ref());
         let mut builder = ScreenBuilder::new("parser-play")
             .top_bar(status)
-            .top_bar_glyph("library", "Library", Glyph::Book)
+            .owns_back(true)
             .reading(true)
             .rich_text_linking(
                 text,
@@ -295,7 +316,7 @@ impl Parser {
         };
         let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
-            .top_bar_action("play", "Back")
+            .owns_back(true)
             .text(guidance)
             .rows(rows);
         if page_count > 1 {
@@ -317,6 +338,12 @@ impl Parser {
             return;
         };
         self.message = None;
+        if self.open_blob.as_ref() == Some(name) && self.machine.is_some() {
+            // The library is a detour, not a restart of the open story.
+            self.view = View::Play;
+            self.show(context);
+            return;
+        }
         let mut download = ShelfDownload::new(name).at_most(16 * 1024 * 1024);
         download.start(context);
         self.loading = Some(download);
@@ -595,13 +622,20 @@ impl KoboApp for Parser {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id("library") {
+        if action == ActionId::BACK && self.view == View::Play && self.keyboard_open {
+            self.keyboard_open = false;
+            self.show(context);
+            return;
+        }
+        if action == action_id("library") || (action == ActionId::BACK && self.view == View::Play) {
             self.view = View::Library;
+            self.message = None;
             context.shelf().list();
             self.show(context);
             return;
         }
-        if action == action_id("play") {
+        if action == action_id("play") || (action == ActionId::BACK && self.view == View::Slots) {
+            self.message = None;
             if self.view == View::Slots {
                 if let Some(machine) = &mut self.machine {
                     if machine.awaiting_restore() {
@@ -620,6 +654,12 @@ impl KoboApp for Parser {
         }
         if action == action_id("refresh") {
             context.shelf().list();
+            return;
+        }
+        if self.view == View::Library
+            && (action == action_id("library-previous") || action == action_id("library-next"))
+        {
+            self.on_page_turn(context, action == action_id("library-next"));
             return;
         }
         for index in 0..self.stories.len() {
@@ -761,6 +801,17 @@ impl KoboApp for Parser {
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Library {
+            let last = self.library_pages(context).len().saturating_sub(1);
+            let page = self.library_page.min(last);
+            self.library_page = if forward {
+                (page + 1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            self.show(context);
+            return;
+        }
         if self.view == View::Slots {
             let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
             self.slots_page = if forward {
@@ -1399,7 +1450,7 @@ mod tests {
                     for keyboard_open in [false, true] {
                         parser.keyboard_open = keyboard_open;
                         for (name, screen) in [
-                            ("library", parser.library_screen()),
+                            ("library", parser.library_screen(&Context::default())),
                             ("play", parser.play_screen()),
                         ] {
                             let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
@@ -1417,3 +1468,9 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod review_capture;
+
+#[cfg(test)]
+mod navigation_tests;
