@@ -20,7 +20,7 @@ else:
         dest=out/p['app'];dest.mkdir(exist_ok=True)
         proc=subprocess.run([sys.executable,str(work/'scripts/check-apps-sim.py'),p['app'],'--out',str(dest)],cwd=work,env=env)
         result=json.loads((dest/'results.json').read_text())['results'][0] if (dest/'results.json').exists() else {'app':p['app'],'status':'fail','error':'runner produced no report'}
-        result.update(source_sha=p['head'],pr=p['number'],profile=args.profile,phase=args.phase,app_source_tree=subprocess.check_output(['git','-C',str(work),'rev-parse','HEAD'],text=True).strip())
+        result.update(source_sha=p['head'],pr=p['number'],profile=args.profile,phase=args.phase,app_source_tree=subprocess.check_output(['git','-C',str(work),'rev-parse','HEAD:'+next(group+'/'+p['app'] for group in ['apps','examples'] if (work/group/p['app']).is_dir())],text=True).strip())
         report['results'].append(result)
         (out/'profile-results.json').write_text(json.dumps(report,indent=2)+'\n')
         run('git','worktree','remove',str(work))
