@@ -39,7 +39,8 @@ impl Page {
             Self::Today => 0,
             Self::Streaks => 1,
             Self::Manage => 2,
-            Self::Edit | Self::Stats | Self::Settings => 4,
+            Self::Stats => 3,
+            Self::Edit | Self::Settings => 4,
         }
     }
     fn all() -> [(&'static str, &'static str); 4] {
@@ -1667,3 +1668,6 @@ mod tests {
         assert!(diagnostics.issues.is_empty(), "{:#?}", diagnostics.issues);
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

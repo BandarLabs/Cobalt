@@ -121,7 +121,10 @@ def main():
                 # Review, delete, undo.
                 drive("tap Review sightings", "wait-for American Robin ×2")
                 capture("fieldbook-sightings")
-                drive("tap American Robin ×2", "wait-for Sighting deleted.",
+                drive("tap American Robin ×2", "wait-for Delete sighting?",
+                      "tap Keep sighting", "wait-for American Robin ×2")
+                drive("tap American Robin ×2", "wait-for Delete sighting?",
+                      "tap Delete", "wait-for Sighting deleted.",
                       "tap Undo delete", "wait-for American Robin ×2")
 
                 # Log from search while the outing is open: a species beyond

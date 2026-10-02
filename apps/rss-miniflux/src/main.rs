@@ -126,6 +126,8 @@ struct Reader {
     open: Option<usize>,
     menu_open: Option<usize>,
     view: Option<View>,
+    /// Suggested feeds can be opened from setup or settings; Back retraces that step.
+    directory_return: Option<(View, usize)>,
     snapshot: Option<Snapshot>,
     book: BookView,
     illustrations: Illustrations,
@@ -426,7 +428,6 @@ impl Reader {
                  this Kobo only knows its name.",
             )
             .button("directory", "Suggested feeds")
-            .button("back", "Back")
             .build()
     }
 
@@ -451,7 +452,6 @@ impl Reader {
         }));
         screen
             .secondary("A feed is added to your Miniflux account after you choose it.")
-            .button("back", "Back")
             .build()
     }
 
@@ -802,11 +802,19 @@ impl KoboApp for Reader {
             self.keyboard = Keyboard::with_text(&self.credential);
             self.editing = Some(Setting::Credential);
         } else if action == action_id("directory") {
+            if self.view != Some(View::Directory) {
+                self.directory_return = Some((self.view.unwrap_or(View::Shelf), self.page));
+            }
             self.page = 0;
             self.view = Some(View::Directory);
         } else if action == action_id("back") || action == ActionId::BACK {
-            self.page = 0;
-            self.view = Some(View::Shelf);
+            if self.view == Some(View::Directory) {
+                let (view, page) = self.directory_return.take().unwrap_or((View::Shelf, 0));
+                self.view = Some(view);
+                self.page = page;
+            } else {
+                self.view = Some(View::Shelf);
+            }
         } else if action == action_id("previous") {
             self.page = self.page.saturating_sub(1);
         } else if action == action_id("next") {
@@ -1135,6 +1143,73 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn suggested_feeds_return_to_their_entry_point_without_losing_the_list_page() {
+        for origin in [View::Shelf, View::Settings] {
+            let mut app = Reader {
+                view: Some(origin),
+                page: 3,
+                ..Reader::default()
+            };
+            let mut context = kobo_sdk::AppRunner::new(Reader::default()).context();
+            for _ in 0..3 {
+                app.on_action(&mut context, action_id("directory"));
+                assert_eq!(app.view, Some(View::Directory));
+                assert_eq!(app.page, 0);
+                app.on_action(&mut context, ActionId::BACK);
+                assert_eq!(app.view, Some(origin));
+                assert_eq!(app.page, 3);
+                assert!(app.directory_return.is_none());
+            }
+            if origin == View::Settings {
+                app.on_action(&mut context, ActionId::BACK);
+                assert_eq!(app.view, Some(View::Shelf));
+                assert_eq!(app.page, 3);
+            }
+        }
+    }
+
+    #[test]
+    fn settings_and_suggested_feeds_have_one_unambiguous_runtime_back() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..kobo_sdk::CLARA_BW_METRICS
+            };
+            let mut context =
+                kobo_sdk::AppRunner::with_metrics(Reader::default(), metrics).context();
+            let mut app = Reader::default();
+            for view in [View::Settings, View::Directory] {
+                app.view = Some(view);
+                app.show(&mut context);
+                let screen = context
+                    .commands()
+                    .iter()
+                    .rev()
+                    .find_map(|command| {
+                        if let kobo_sdk::Command::SetScreen(screen) = command {
+                            Some(screen)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+                assert!(screen.owns_back);
+                let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?}: {:?}",
+                    diagnostics.issues
+                );
+                assert!(diagnostics
+                    .layout
+                    .rect_of_action(action_id("back"))
+                    .is_none());
+                assert!(diagnostics.layout.rect_of_action(ActionId::BACK).is_some());
+            }
+        }
+    }
+
     use super::*;
     use kobo_sdk::{AppRunner, Command, StoreRequest, Task};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};

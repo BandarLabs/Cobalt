@@ -1,0 +1,270 @@
+    Blocking waiting for file lock on build directory
+    Checking simd-adler32 v0.3.10
+    Checking libc v0.2.189
+    Checking kobo-json v0.3.24 (/workspace/Cobalt/crates/kobo-json)
+    Checking kobo-ui v0.3.24 (/workspace/Cobalt/crates/kobo-ui)
+    Checking miniz_oxide v0.9.1
+    Checking subtle v2.6.1
+    Checking rusqlite v0.37.0
+    Checking kobo-dict v0.3.24 (/workspace/Cobalt/crates/kobo-dict)
+    Checking kobo-state v0.3.24 (/workspace/Cobalt/crates/kobo-state)
+    Checking crc32fast v1.5.1
+    Checking flate2 v1.1.10
+    Checking bytemuck v1.25.2
+    Checking miniz_oxide v0.8.9
+    Checking fdeflate v0.3.7
+    Checking typenum v1.20.1
+    Checking arrayvec v0.7.8
+    Checking memchr v2.8.3
+    Checking getrandom v0.2.17
+    Checking ring v0.17.14
+    Checking kobo-abi v0.3.24 (/workspace/Cobalt/crates/kobo-abi)
+    Checking serde_core v1.0.229
+    Checking cpufeatures v0.3.1
+    Checking libm v0.2.16
+    Checking kobo-protocol v0.3.24 (/workspace/Cobalt/crates/kobo-protocol)
+    Checking rustls-webpki v0.103.15
+    Checking kobo-text v0.3.24 (/workspace/Cobalt/crates/kobo-text)
+    Checking log v0.4.34
+    Checking rustls v0.23.45
+    Checking core_maths v0.1.1
+    Checking ttf-parser v0.25.1
+    Checking siphasher v1.0.3
+    Checking serde v1.0.229
+    Checking roxmltree v0.20.0
+    Checking fontconfig-parser v0.5.8
+    Checking slotmap v1.1.1
+    Checking memmap2 v0.9.11
+    Checking num-traits v0.2.19
+    Checking zmij v1.0.23
+    Checking float-cmp v0.9.0
+    Checking strict-num v0.1.1
+    Checking serde_json v1.0.151
+    Checking fontdb v0.23.0
+    Checking hybrid-array v0.4.14
+    Checking arrayref v0.3.9
+    Checking tiny-skia-path v0.11.4
+    Checking bitflags v1.3.2
+    Checking png v0.17.16
+    Checking const-oid v0.10.2
+    Checking crypto-common v0.2.2
+    Checking kobo-net v0.3.24 (/workspace/Cobalt/crates/kobo-net)
+    Checking block-buffer v0.12.1
+    Checking ratex-types v0.1.14
+    Checking phf_shared v0.11.3
+    Checking aho-corasick v1.1.5
+    Checking tiny-skia v0.11.4
+    Checking kobo-policy v0.3.24 (/workspace/Cobalt/crates/kobo-policy)
+    Checking digest v0.11.3
+    Checking same-file v1.0.6
+    Checking regex-syntax v0.8.11
+    Checking walkdir v2.5.0
+    Checking sha2 v0.11.0
+    Checking kobo-sdk v0.3.24 (/workspace/Cobalt/crates/kobo-sdk)
+    Checking thiserror v1.0.69
+    Checking phf v0.11.3
+    Checking bit-vec v0.8.0
+    Checking bit-set v0.8.0
+    Checking ratex-font v0.1.14
+    Checking rust-embed-utils v8.12.0
+    Checking sys-locale v0.3.2
+    Checking system-fonts v0.1.2
+    Checking rust-embed v8.12.0
+    Checking ratex-lexer v0.1.14
+    Checking owned_ttf_parser v0.25.1
+    Checking regex-lite v0.1.9
+    Checking ab_glyph_rasterizer v0.1.10
+    Checking ab_glyph v0.2.32
+    Checking ratex-unicode-font v0.1.14
+    Checking regex-automata v0.4.18
+    Checking ratex-katex-fonts v0.1.14
+    Checking ratex-font-loader v0.1.14
+    Checking pxfm v0.1.30
+    Checking quick-error v2.0.1
+    Checking weezl v0.1.12
+    Checking zune-core v0.4.12
+    Checking color_quant v1.1.0
+    Checking byteorder-lite v0.1.0
+    Checking gif v0.13.3
+    Checking image-webp v0.2.4
+    Checking zune-jpeg v0.4.21
+    Checking png v0.18.1
+    Checking unicase v2.9.0
+    Checking pulldown-cmark-escape v0.11.0
+    Checking pulldown-cmark v0.13.4
+    Checking hashbrown v0.17.1
+    Checking moxcms v0.7.11
+    Checking indexmap v2.14.2
+    Checking kobo-xml v0.3.24 (/workspace/Cobalt/crates/kobo-xml)
+    Checking kobo-profile v0.3.24 (/workspace/Cobalt/crates/kobo-profile)
+    Checking regex v1.13.1
+    Checking fancy-regex v0.14.0
+    Checking generic-array v0.14.9
+    Checking zip v4.6.1
+    Checking ratex-parser v0.1.14
+    Checking const-oid v0.9.6
+    Checking crypto-common v0.1.6
+    Checking block-buffer v0.10.4
+    Checking digest v0.10.7
+    Checking minimp3-sys v0.3.2
+    Checking slice-ring-buffer v0.3.4
+    Checking base64ct v1.8.3
+    Checking minimp3 v0.5.2
+    Checking pem-rfc7468 v0.7.0
+    Checking rand_core v0.6.4
+    Checking cpufeatures v0.2.17
+    Checking sha2 v0.10.9
+    Checking der v0.7.10
+    Checking hmac v0.12.1
+    Checking base64 v0.22.1
+    Checking ff v0.13.1
+    Checking base16ct v0.2.0
+    Checking group v0.13.0
+    Checking hkdf v0.12.4
+    Checking crypto-bigint v0.5.5
+    Checking spki v0.7.3
+    Checking pkcs8 v0.10.2
+    Checking sec1 v0.7.3
+    Checking rfc6979 v0.4.0
+    Checking signature v2.2.0
+    Checking kobo-app-store v0.3.24 (/workspace/Cobalt/crates/kobo-app-store)
+    Checking ratex-layout v0.1.14
+    Checking kobo-wifi-trace v0.3.24 (/workspace/Cobalt/crates/kobo-wifi-trace)
+    Checking elliptic-curve v0.13.8
+    Checking kobo-shell v0.3.24 (/workspace/Cobalt/crates/kobo-shell)
+    Checking ratex-render v0.1.14
+   Compiling kobo-catalog v0.3.24 (/workspace/Cobalt/crates/kobo-catalog)
+    Checking image v0.25.8
+    Checking kobo-html v0.3.24 (/workspace/Cobalt/crates/kobo-html)
+    Checking ecdsa v0.16.9
+    Checking primeorder v0.13.6
+    Checking kobo-doc v0.3.24 (/workspace/Cobalt/crates/kobo-doc)
+    Checking constant_time_eq v0.4.2
+    Checking p256 v0.13.2
+    Checking blake3 v1.8.7
+    Checking vte v0.15.0
+    Checking vt100 v0.16.2
+    Checking crossbeam-utils v0.8.22
+    Checking kobo-opds v0.3.24 (/workspace/Cobalt/crates/kobo-opds)
+    Checking kobo-read v0.3.24 (/workspace/Cobalt/crates/kobo-read)
+    Checking kobo-hal v0.3.24 (/workspace/Cobalt/crates/kobo-hal)
+    Checking crossbeam-epoch v0.9.20
+    Checking kurbo v0.11.3
+    Checking unicode-properties v0.1.4
+    Checking kobo-image v0.3.24 (/workspace/Cobalt/crates/kobo-image)
+    Checking unicode-ccc v0.4.0
+    Checking rand_core v0.10.1
+    Checking unicode-script v0.5.8
+    Checking kobo-comic v0.3.24 (/workspace/Cobalt/crates/kobo-comic)
+    Checking unicode-bidi-mirroring v0.4.0
+    Checking rustybuzz v0.20.1
+    Checking kobo-bookview v0.3.24 (/workspace/Cobalt/crates/kobo-bookview)
+    Checking svgtypes v0.15.3
+    Checking crossbeam-deque v0.8.7
+    Checking kobod v0.3.24 (/workspace/Cobalt/crates/kobod)
+    Checking simplecss v0.2.2
+    Checking pico-args v0.5.0
+    Checking either v1.18.0
+    Checking rawpointer v0.2.1
+    Checking imagesize v0.13.0
+    Checking unicode-bidi v0.3.18
+    Checking kobo-sim v0.3.24 (/workspace/Cobalt/crates/kobo-sim)
+    Checking data-url v0.3.2
+    Checking xmlwriter v0.1.0
+    Checking unicode-vo v0.1.0
+    Checking matrixmultiply v0.3.11
+    Checking rayon-core v1.13.0
+    Checking getrandom v0.4.3
+    Checking chacha20 v0.10.2
+    Checking num-integer v0.1.47
+    Checking num-complex v0.4.6
+    Checking rgb v0.8.53
+    Checking rand v0.10.2
+    Checking ndarray v0.17.2
+    Checking usvg v0.45.1
+    Checking strum v0.28.0
+    Checking snafu v0.9.2
+    Checking rayon v1.12.0
+    Checking itertools v0.15.0
+    Checking resvg v0.45.1
+    Checking priority-queue v2.7.0
+    Checking kobo-opml v0.3.24 (/workspace/Cobalt/crates/kobo-opml)
+    Checking serde_spanned v0.6.9
+    Checking toml_datetime v0.6.11
+    Checking kobo-zstory v0.3.24 (/workspace/Cobalt/crates/kobo-zstory)
+    Checking winnow v0.7.15
+    Checking toml_write v0.1.2
+    Checking kobo-stream v0.3.24 (/workspace/Cobalt/crates/kobo-stream)
+    Checking btoi v0.4.3
+    Checking nix v0.27.1
+    Checking shakmaty v0.27.3
+    Checking fsrs v6.6.2 (/workspace/Cobalt/third_party/fsrs)
+    Checking command-group v5.0.1
+    Checking kobo-flashcards-format v0.3.24 (/workspace/Cobalt/crates/kobo-flashcards-format)
+    Checking toml_edit v0.22.27
+    Checking kobo-music-host v0.3.24 (/workspace/Cobalt/crates/kobo-music-host)
+    Checking kobo-frame-host v0.3.24 (/workspace/Cobalt/crates/kobo-frame-host)
+    Checking kobo-term v0.3.24 (/workspace/Cobalt/crates/kobo-term)
+    Checking kobo-vault-host v0.3.24 (/workspace/Cobalt/crates/kobo-vault-host)
+    Checking qrcodegen v1.8.0
+    Checking kobo-store v0.3.24 (/workspace/Cobalt/examples/store)
+    Checking toml v0.8.23
+    Checking kobo-flashcards v0.1.0 (/workspace/Cobalt/apps/flashcards)
+    Checking kobo-sidekickd v0.3.24 (/workspace/Cobalt/crates/kobo-sidekickd)
+    Checking kobo-cli v0.3.24 (/workspace/Cobalt/crates/kobo-cli)
+    Checking kobo-terminal v0.3.24 (/workspace/Cobalt/examples/terminal)
+    Checking kobo-paperterm v0.1.6 (/workspace/Cobalt/apps/paperterm)
+    Checking kobo-parser v0.1.0 (/workspace/Cobalt/apps/parser)
+    Checking kobo-rss v0.3.24 (/workspace/Cobalt/examples/rss)
+    Checking kobo-lichess v1.0.2 (/workspace/Cobalt/apps/lichess)
+    Checking kobo-zotero-reader v0.3.24 (/workspace/Cobalt/apps/zotero-reader)
+    Checking kobo-fanshelf v0.2.0 (/workspace/Cobalt/apps/fanshelf)
+    Checking kobo-needles v0.1.0 (/workspace/Cobalt/apps/needles)
+    Checking kobo-calibre-web v0.1.3 (/workspace/Cobalt/apps/calibre-web)
+    Checking kobo-books v0.3.24 (/workspace/Cobalt/examples/books)
+    Checking kobo-rss-miniflux v0.1.0 (/workspace/Cobalt/apps/rss-miniflux)
+    Checking kobo-brief v0.3.24 (/workspace/Cobalt/examples/brief)
+    Checking kobo-grimoire v0.1.1 (/workspace/Cobalt/apps/grimoire)
+    Checking kobo-arxiv v0.3.24 (/workspace/Cobalt/apps/arxiv)
+    Checking kobo-gutenbird v0.3.24 (/workspace/Cobalt/examples/gutenbird)
+    Checking kobo-panels v0.1.2 (/workspace/Cobalt/apps/panels)
+    Checking kobo-hn v0.3.24 (/workspace/Cobalt/examples/hn)
+    Checking kobo-handoff v0.3.24 (/workspace/Cobalt/crates/kobo-handoff)
+    Checking kobo-doctor v0.3.24 (/workspace/Cobalt/crates/kobo-doctor)
+    Checking kobo-smoke v0.3.24 (/workspace/Cobalt/crates/kobo-smoke)
+    Checking kobo-guard v0.3.24 (/workspace/Cobalt/crates/kobo-guard)
+    Checking kobo-tap v0.3.24 (/workspace/Cobalt/crates/kobo-tap)
+    Checking kobo-musicstand v0.1.0 (/workspace/Cobalt/apps/musicstand)
+    Checking kobo-nonograms v0.1.6 (/workspace/Cobalt/apps/nonograms)
+    Checking kobo-deck v0.2.0 (/workspace/Cobalt/apps/deck)
+    Checking kobo-birds v0.1.0 (/workspace/Cobalt/apps/birds)
+    Checking kobo-vault v0.1.0 (/workspace/Cobalt/apps/vault)
+    Checking kobo-frame v1.0.1 (/workspace/Cobalt/apps/frame)
+    Checking kobo-habits v0.1.1 (/workspace/Cobalt/apps/habits)
+    Checking kobo-fieldbook v0.2.0 (/workspace/Cobalt/apps/fieldbook)
+    Checking kobo-readlater v0.1.0 (/workspace/Cobalt/apps/readlater)
+    Checking kobo-verses v0.1.0 (/workspace/Cobalt/apps/verses)
+    Checking kobo-audiobook v0.3.24 (/workspace/Cobalt/examples/audiobook)
+    Checking kobo-settings v0.3.24 (/workspace/Cobalt/examples/settings)
+    Checking kobo-gallery v0.3.24 (/workspace/Cobalt/examples/gallery)
+    Checking kobo-launcher v0.3.24 (/workspace/Cobalt/examples/launcher)
+    Checking kobo-sidekick v0.3.24 (/workspace/Cobalt/examples/sidekick)
+    Checking kobo-syncthing v0.2.0 (/workspace/Cobalt/apps/syncthing)
+    Checking kobo-logicpack v0.1.5 (/workspace/Cobalt/apps/logicpack)
+    Checking kobo-chat v0.3.24 (/workspace/Cobalt/examples/chat)
+    Checking kobo-homepanel v0.2.2 (/workspace/Cobalt/apps/homepanel)
+    Checking kobo-morse v0.3.24 (/workspace/Cobalt/apps/morse)
+    Checking kobo-backgammon v0.1.1 (/workspace/Cobalt/apps/backgammon)
+    Checking kobo-post v0.1.0 (/workspace/Cobalt/apps/post)
+    Checking kobo-hello v0.3.24 (/workspace/Cobalt/examples/hello)
+    Checking kobo-inkling v0.2.0 (/workspace/Cobalt/apps/inkling)
+    Checking kobo-pubquiz v0.1.0 (/workspace/Cobalt/apps/pubquiz)
+    Checking kobo-todo v0.3.24 (/workspace/Cobalt/examples/todo)
+    Checking kobo-kitchencard v0.1.0 (/workspace/Cobalt/apps/kitchencard)
+    Checking kobo-magnet v0.3.24 (/workspace/Cobalt/examples/magnet)
+    Checking kobo-tictactoe v0.3.24 (/workspace/Cobalt/examples/tictactoe)
+    Checking kobo-crossword v0.1.3 (/workspace/Cobalt/apps/crossword)
+    Checking kobo-parlor v0.1.0 (/workspace/Cobalt/apps/parlor)
+    Checking kobo-sudoku v1.0.11 (/workspace/Cobalt/apps/sudoku)
+    Checking icon-import v0.3.24 (/workspace/Cobalt/tools/icon-import)
+    Finished `dev` profile [unoptimized] target(s) in 1m 42s

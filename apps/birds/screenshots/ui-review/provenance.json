@@ -1,0 +1,30 @@
+{
+  "evidence_type": "real app renderer with actual decoded PNG and SDK FIFO callbacks; no live simulator/device",
+  "source_base": "97153048",
+  "panel": {
+    "width": 1072,
+    "height": 1448,
+    "ppi": 300,
+    "text_scale_percent": 140
+  },
+  "chrome": "runtime header/back; synthetic measuring status (suppressed by reading mode)",
+  "before_main_sha256": "d7584132b07fbcce6a21e59afb6ba6b1d160589f06471a6f1b24626a417c28ab",
+  "source_sha256": {
+    "apps/birds/src/main.rs": "e01ff342e3b7aa84c0789f24e7530d800f7caa2bbe29843fdb93bbe835f16293",
+    "apps/birds/src/refresh_tests.rs": "2393d2b890c45230eb5436fb9b6e9eb4ceaf337a0d1cc5087abc653d12d9bc85",
+    "apps/birds/src/review_capture.rs": "e68a9acac3e5f709f8b309370bd26965d270cfa7fe6edbe46cd708e3b6846b3b",
+    "apps/birds/screenshots/ui-review/capture.py": "4e796d68086142ffd586ae8fea76d382e994b10bb4013f5a37eb324a11e2ae73",
+    "scripts/fixtures/birds/current.png": "b7e3acf1e90082e31e758e23b12501a6853f9f3cc542c5d4a757ca4960a2fb3a"
+  },
+  "captures_sha256": {
+    "after-refresh.png": "9a501c1c758b1b0fd1dc416e833a602a6652119d5990e2c3e625e8004900e64a",
+    "before-refresh.png": "0b80cb4e6122d900a5b7a6e75dbdff4b7e4d915a7711146dfbae3bdcfae2ac3c"
+  },
+  "validation": {
+    "normal_tests": 11,
+    "capture_tests": 2,
+    "node_tests": 105,
+    "cargo_manifest_and_lock": "byte-identical to beta",
+    "baseline_isolated_reproduction": "repeated-refresh PNGs byte-identical at100/140/170%"
+  }
+}
