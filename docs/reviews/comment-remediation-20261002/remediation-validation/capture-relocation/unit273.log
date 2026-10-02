@@ -1,0 +1,130 @@
+   Compiling kobo-policy v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-policy)
+   Compiling kobo-sdk v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-sdk)
+   Compiling kobo-parlor v0.1.0 (/workspace/cobalt-remediate-273/apps/parlor)
+   Compiling kobo-parser v0.1.0 (/workspace/cobalt-remediate-273/apps/parser)
+   Compiling kobo-pubquiz v0.1.0 (/workspace/cobalt-remediate-273/apps/pubquiz)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.96s
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo_parlor-dbb629f2c5a8d303)
+
+running 28 tests
+test games::tests::international_man_crowns_during_a_capture_and_continues_as_a_king ... ok
+test navigation_tests::back_from_the_record_returns_to_the_unchanged_game ... ok
+test navigation_tests::record_page_turns_clamp_and_do_not_resave_or_change_the_game ... ok
+test tests::a_board_this_panel_cannot_hold_says_so_before_it_is_chosen ... ok
+test navigation_tests::the_record_and_its_runtime_back_fit_all_interface_sizes ... ok
+test tests::a_capture_chain_survives_being_put_down_on_the_board_this_panel_plays ... ok
+test tests::a_legal_square_is_a_drawn_mark_rather_than_whatever_the_typeface_has ... ok
+test tests::a_morris_shuffle_ends_in_a_draw_rather_than_going_on_forever ... ok
+test tests::all_primary_screens_fit_clara_bw ... ok
+test tests::autosave_preserves_an_international_capture_in_progress ... ok
+test tests::autosave_restores_history_needed_for_confirmed_undo ... ok
+test tests::autosave_round_trips_every_position_kind ... ok
+test tests::both_draughts_openings_and_mandatory_chain_are_pinned ... ok
+test tests::deterministic_playouts_preserve_engine_invariants ... ok
+test tests::draughts_capture_code_does_not_silently_hybridize_rules ... ok
+test tests::a_denied_autosave_is_announced_until_a_write_lands ... ok
+test tests::every_screen_fits_the_panel_at_every_text_size ... ok
+test tests::every_game_can_be_played_to_its_end_and_picked_up_again ... ok
+test tests::international_captured_piece_blocks_a_kings_return_path_until_turn_end ... ok
+test tests::international_kings_fly_and_capture_over_distance ... ok
+test tests::kalah_sowing_capture_extra_turn_and_endgame_are_pinned ... ok
+test tests::malformed_autosaves_are_refused_before_they_can_reach_the_board ... ok
+test tests::morris_placement_mill_removal_and_flying_are_legal ... ok
+test tests::reversi_opening_perft_matches_reference ... ok
+test tests::the_board_says_what_just_happened ... ok
+test tests::house_ai_is_deterministic_at_each_named_strength ... ok
+test large_text_tests::save_failure_after_a_move_keeps_board_actions_reachable ... ok
+test navigation_tests::long_records_keep_every_move_reachable_at_every_size_and_pose ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.00s
+
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo_parser-257d2c3101d6c931)
+
+running 41 tests
+test navigation_tests::library_page_turns_clamp_and_preserve_the_active_story ... ok
+test navigation_tests::audit_latest_story_selection_wins_over_pending_other_download ... ok
+test navigation_tests::runtime_back_closes_keys_then_returns_to_the_library_without_restarting ... ok
+test story::tests::a_save_round_trips_mid_story ... ok
+test story::tests::the_file_is_well_formed ... ok
+test story::tests::the_tutorial_teaches_and_ends ... ok
+test story::tests::wrong_turns_are_kind ... ok
+test navigation_tests::runtime_back_cancels_a_story_restore_and_leaves_one_way_out ... ok
+test tests::palette_follows_the_story_dictionary ... ok
+test tests::palette_only_offers_words_the_story_knows ... ok
+test tests::new_output_lands_on_output_not_a_stranded_prompt ... ok
+test tests::restore_marker_separates_old_transcript_from_new ... ok
+test tests::play_screen_status_fits_every_panel_and_text_size ... ok
+test tests::story_fixture_facts_match_provenance ... ok
+test tests::supported_matrix_layouts_fit ... ok
+test tests::the_slots_screen_says_what_a_slot_is ... ok
+test tests::the_story_landing_fits_elipsa_extra_large_with_display_chrome ... ok
+test tests::slot_rows_name_what_each_slot_holds ... ok
+test tests::the_story_opens_answers_and_survives_a_save_round_trip ... ok
+test tests::the_story_opening_paginates_cleanly_and_lands_on_the_story ... ok
+test tests::transcript_words_are_tappable_and_appendable ... ok
+test tests::tutorial_blob_is_a_valid_shelf_key ... ok
+test zvm::tests::call_vn_discards_the_result_in_v5 ... ok
+test zvm::tests::catch_state_survives_a_save_round_trip ... ok
+test zvm::tests::catch_stores_the_frame_id_in_v5_and_pop_is_v1_to_v4_only ... ok
+test zvm::tests::copy_table_is_var_29_in_v5 ... ok
+test zvm::tests::deterministic_v3_v5_v8_stories_execute ... ok
+test zvm::tests::input_is_bounded_tokenized_and_survives_an_awaiting_input_save ... ok
+test zvm::tests::load_is_an_indirect_variable_read_in_v3_and_v4 ... ok
+test zvm::tests::not_is_1op_15_in_v3_and_v4 ... ok
+test zvm::tests::not_is_var_24_in_v5 ... ok
+test zvm::tests::quetzal_round_trip_restores_dynamic_memory_and_execution ... ok
+test zvm::tests::restore_failure_stores_zero_and_needs_no_file ... ok
+test zvm::tests::save_stores_one_and_restore_stores_two_in_v5 ... ok
+test zvm::tests::save_suspends_then_branches_on_completion_in_v3 ... ok
+test zvm::tests::split_window_consumes_no_branch_byte ... ok
+test zvm::tests::throw_resumes_after_catch_with_the_thrown_value ... ok
+test zvm::tests::unsupported_formats_are_named ... ok
+test tests::transcript_pagination_is_measured_utf8_safe_and_preserves_all_text ... ok
+test navigation_tests::every_library_story_is_reachable_at_each_text_size_and_pose ... ok
+test navigation_tests::every_restore_slot_and_checkpoint_is_reachable_in_both_poses ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.84s
+
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo_pubquiz-4635fd3ec43da79b)
+
+running 37 tests
+test regression_tests::consecutive_rounds_do_not_repeat_while_the_pool_allows ... ok
+test help_layout_tests::help_fits_supported_text_scales_and_geometries ... ok
+test regression_tests::late_cache_and_sync_do_not_replace_an_active_round ... ok
+test regression_tests::a_refreshed_pack_survives_the_next_offline_sync ... ok
+test regression_tests::full_rounds_advance_and_each_round_starts_fresh ... ok
+test regression_tests::player_names_stay_short_and_separator_free ... ok
+test regression_tests::offline_sync_keeps_existing_packs_playing ... ok
+test regression_tests::pass_around_renames_and_counts_players ... ok
+test regression_tests::saved_state_carries_names_and_player_count ... ok
+test regression_tests::solo_round_credits_only_the_solo_player_once ... ok
+test regression_tests::zero_scoreboard_condenses_until_the_first_point ... ok
+test setup_tests::long_category_names_are_measured_and_keep_their_exact_selection ... ok
+test setup_tests::physical_page_turns_preserve_selection_and_the_round_uses_that_category ... ok
+test setup_tests::setup_back_and_name_cancel_preserve_the_readers_choices ... ok
+test setup_tests::setup_page_edges_and_empty_question_sets_remain_safe ... ok
+test tests::a_round_has_ten_distinct_questions_and_short_help ... ok
+test tests::about_names_the_pack_source ... ok
+test tests::action_graph_reaches_party_views ... ok
+test tests::age_labels_cover_minutes_hours_and_days ... ok
+test tests::entities_decode_before_render ... ok
+test tests::locked_answer_hides_the_reveal ... ok
+test tests::open_trivia_pack_is_parsed_bounded_and_mixed ... ok
+test tests::pack_difficulty_is_mapped_when_present ... ok
+test tests::pack_source_and_freshness_survive_save_and_load ... ok
+test tests::points_are_pluralized ... ok
+test tests::question_controls_fit_clara ... ok
+test tests::reveal_names_the_result_and_the_right_answer ... ok
+test tests::scorecard_csv_lists_the_round_and_scores ... ok
+test tests::setup_filters_the_round_and_refuses_an_empty_mix ... ok
+test tests::setup_flow_applies_the_chosen_mix ... ok
+test tests::short_pools_deal_short_rounds_without_repeats ... ok
+test tests::sync_stamps_origin_and_time ... ok
+test tests::the_last_question_offers_the_podium ... ok
+test tests::the_podium_offers_a_scorecard_once ... ok
+test setup_tests::all_players_and_start_fit_every_text_size_and_pose ... ok
+test setup_tests::every_visible_category_selects_itself_at_every_text_size_and_pose ... ok
+test regression_tests::long_questions_keep_every_answer_reachable_at_large_text_sizes ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.54s
+

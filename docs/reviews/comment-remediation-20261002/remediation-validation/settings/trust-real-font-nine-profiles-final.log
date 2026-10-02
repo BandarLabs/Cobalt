@@ -1,0 +1,117 @@
+   Compiling kobo-settings v0.3.24 (/workspace/cobalt-remediate-273/examples/settings)
+    Finished `test` profile [unoptimized] target(s) in 1.22s
+     Running unittests src/main.rs (/workspace/cobalt-settings-repair-target/debug/deps/kobo_settings-1e783ded1a231df4)
+
+running 1 test
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.13s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.11s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.04s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.04s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.03s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.07s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.08s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.03s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.04s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.09s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.07s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.16s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.11s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.04s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.07s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.09s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.19s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.15s
+
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 19.60s
+

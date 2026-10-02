@@ -1,0 +1,17 @@
+{
+  "source": "a2d76b1463574e6eee5fd28e9a910850d41124dd",
+  "cli_sha256": "55f95ca1d07b21029bb90caffdeb77ad76071c9f546d7968c6ceb0d7de56774d",
+  "profile": "clara-bw-391",
+  "scale": "170",
+  "runtime_navigation": true,
+  "checks": [
+    "Synthetic enterprise network: typed username/password; certificate shown; refusal returns Wi-Fi disconnected; retry and explicit trust joins; nested Back remains Settings, root Back returns launcher"
+  ],
+  "status": "passed",
+  "hardware": false,
+  "validation_fixture": true,
+  "production_repair_patch_sha256": "7a412e1a37e87b12fa40a79b66e8caea33e110bb05137a7e9f1b0081e658109b",
+  "fixture_patch_sha256": "105f1e03e1d7d3dbfc2d2460d1b49422f6ba1859ecb0d3773119403ac404d333",
+  "settings_binary_sha256": "153bf6316cc70101dee44db7dd4ddbc8f5d1c64756ca5025550508a506b824f0",
+  "production_repair_commit": "8bc539807d67b775eeab5688fb2b5bdcb5599bf7"
+}

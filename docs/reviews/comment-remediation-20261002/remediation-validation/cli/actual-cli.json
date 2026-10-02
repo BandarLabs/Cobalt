@@ -1,0 +1,1165 @@
+{
+  "passed": 80,
+  "cases": [
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "--device",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--device",
+        "--sim",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "--device",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--device",
+        "--device",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "--device",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--device",
+        "-s",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "--device",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--device",
+        "-reader",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "--device",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--device",
+        "",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "-s",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "-s",
+        "--sim",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "-s",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "-s",
+        "--device",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "-s",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "-s",
+        "-s",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "-s",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "-s",
+        "-reader",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "--title",
+        "fixture",
+        "-s",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "needles",
+        "push",
+        "/nonexistent",
+        "-s",
+        "",
+        "--title",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "--device",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--device",
+        "--sim",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "--device",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--device",
+        "--device",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "--device",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--device",
+        "-s",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "--device",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--device",
+        "-reader",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "--device",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--device",
+        "",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "-s",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "-s",
+        "--sim",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "-s",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "-s",
+        "--device",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "-s",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "-s",
+        "-s",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "-s",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "-s",
+        "-reader",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "--exclude",
+        "fixture",
+        "-s",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "vault",
+        "push",
+        "/nonexistent",
+        "-s",
+        "",
+        "--exclude",
+        "fixture"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "--device",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--device",
+        "--sim",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "--device",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--device",
+        "--device",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "--device",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--device",
+        "-s",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "--device",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--device",
+        "-reader",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "--device",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--device",
+        "",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "-s",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "-s",
+        "--sim",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "-s",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "-s",
+        "--device",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "-s",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "-s",
+        "-s",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "-s",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "-s",
+        "-reader",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent",
+        "-s",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "post",
+        "login",
+        "-s",
+        "",
+        "--gateway",
+        "https://letters.example",
+        "--token-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "--device",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--device",
+        "--sim",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "--device",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--device",
+        "--device",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "--device",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--device",
+        "-s",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "--device",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--device",
+        "-reader",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "--device",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--device",
+        "",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "-s",
+        "--sim"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "-s",
+        "--sim",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "-s",
+        "--device"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "-s",
+        "--device",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "-s",
+        "-s"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "-s",
+        "-s",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "-s",
+        "-reader"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "-s",
+        "-reader",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent",
+        "-s",
+        ""
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    },
+    {
+      "args": [
+        "readlater",
+        "login",
+        "-s",
+        "",
+        "--server",
+        "https://bag.example",
+        "--client-id",
+        "id",
+        "--username",
+        "user",
+        "--client-secret-file",
+        "/nonexistent"
+      ],
+      "status": 1,
+      "stderr": "kobo: device host contains unsupported characters"
+    }
+  ]
+}

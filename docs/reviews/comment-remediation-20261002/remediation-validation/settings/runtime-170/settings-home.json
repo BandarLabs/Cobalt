@@ -1,0 +1,167 @@
+{
+  "app": "settings",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "c1dd3c1a154c29cdeec8d7f2305ea90ca647d5b3eda6f7eab98298e4232d97b6",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 170,
+  "mode": "multi-app",
+  "orientation": "portrait",
+  "paints": "4",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.24",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-10-02",
+      "mode": "real",
+      "monotonicMillis": "1671",
+      "unixMillis": "1790961857151",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 279101,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "0",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "settings",
+      "hosted": [
+        "launcher",
+        "settings"
+      ],
+      "mode": "multi-app",
+      "processId": 137118
+    },
+    "observation": null,
+    "panel": {
+      "completed": "8",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "1579",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "8",
+      "submittedAtMillis": "1578",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": {
+      "generation": "0",
+      "hardwareValidated": false,
+      "lastRefusal": "None",
+      "lastWake": "None",
+      "mode": "simulated-entry-with-real-sdk-barrier",
+      "reason": "None",
+      "state": "awake",
+      "usbAttached": false
+    },
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 8,
+    "scenario": "normal",
+    "touch": null,
+    "transition": {
+      "dirty": 279101,
+      "full": false,
+      "refresh": 8,
+      "region": {
+        "height": 48,
+        "width": 392,
+        "x": 112,
+        "y": 912
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 48,
+            "width": 392,
+            "x": 112,
+            "y": 912
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "16b72b27564381b232d99c231eff56a34b1b5c7e655efb56cf9ff3e2298ffb7a",
+    "dirty": false,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "a2d76b1463574e6eee5fd28e9a910850d41124dd"
+  },
+  "version": 1
+}

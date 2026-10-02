@@ -1,0 +1,13 @@
+usage: capture.py [-h] --root ROOT --app APP --scenario SCENARIO --output
+                  OUTPUT [--scope-tests]
+
+External original-app audit: copied source, real native renderer, no simulator
+claim.
+
+options:
+  -h, --help           show this help message and exit
+  --root ROOT
+  --app APP
+  --scenario SCENARIO
+  --output OUTPUT
+  --scope-tests

@@ -1,0 +1,68 @@
+   Compiling nix v0.27.1
+   Compiling command-group v5.0.1
+   Compiling kobo-sidekickd v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-sidekickd)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.39s
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo_sidekickd-a6137b711fd83a6c)
+
+running 58 tests
+test agents::tests::a_configuration_that_does_not_parse_is_refused_rather_than_replaced ... ok
+test agents::tests::a_home_with_no_configuration_yet_gets_a_whole_file ... ok
+test agents::tests::a_registration_written_from_another_path_is_still_recognised_as_ours ... ok
+test agents::tests::another_tools_hook_is_joined_rather_than_replaced ... ok
+test agents::tests::claude_is_asked_about_permissions_broadly_and_questions_narrowly ... ok
+test agents::tests::codex_is_given_its_command_as_one_string_because_a_list_is_refused ... ok
+test agents::tests::registering_twice_changes_nothing_the_second_time ... ok
+test agents::tests::settings_that_have_nothing_to_do_with_us_survive_untouched ... ok
+test agents::tests::setup_preview_backup_retry_and_invalid_config_preserve_owner_files ... ok
+test agents::tests::an_agent_nobody_has_heard_of_is_named_along_with_those_we_know ... ok
+test agents::tests::an_empty_file_is_treated_as_no_file_rather_than_as_broken ... ok
+test agents::tests::an_older_registration_gains_the_event_it_was_missing ... ok
+test board::tests::an_answer_releases_the_waiting_hook_with_the_decision ... ok
+test board::tests::answering_a_question_that_timed_out_reports_the_tap_did_not_count ... ok
+test board::tests::questions_come_off_the_board_oldest_first ... ok
+test board::tests::snapshot_keeps_every_pending_question_and_its_session_identity ... ok
+test board::tests::a_question_carries_its_own_answers_to_the_reader_and_back ... ok
+test board::tests::two_runs_do_not_hand_out_the_same_numbers ... ok
+test deck::tests::all_fifteen_pads_are_accepted_but_a_sixteenth_is_rejected ... ok
+test deck::tests::config_rejects_empty_and_oversized_decks ... ok
+test board::tests::a_hook_nobody_answers_passes_when_its_patience_runs_out ... ok
+test deck::tests::command_results_preserve_status_and_bound_noisy_output ... ok
+test deck::tests::ids_are_stable_and_commands_are_part_of_the_identity ... ok
+test board::tests::a_reader_with_nothing_to_show_gets_none_after_the_wait ... ok
+test deck::tests::malformed_edits_keep_the_last_good_grid_and_surface_the_error ... ok
+test deck::tests::inherited_pipes_remain_subject_to_the_deadline ... ok
+test deck::tests::descendants_ignoring_term_are_killed_after_grace ... ok
+test deck::tests::terminal_escape_sequences_are_removed_from_results ... ok
+test deck::tests::confirmation_busy_result_and_output_tail_are_enforced ... ok
+test hooks::tests::a_codex_shell_request_becomes_an_ask_with_the_command_line ... ok
+test hooks::tests::a_missing_field_reads_as_empty_rather_than_as_the_word_null ... ok
+test hooks::tests::a_multi_select_answer_is_a_list_and_a_single_one_is_not ... ok
+test hooks::tests::a_pass_prints_nothing_so_the_terminal_prompt_takes_over ... ok
+test hooks::tests::a_suggestion_with_no_sensible_wording_is_not_offered ... ok
+test hooks::tests::accepting_edits_for_the_session_says_so_in_those_words ... ok
+test hooks::tests::an_always_allow_line_reads_as_words_rather_than_as_a_rule ... ok
+test hooks::tests::an_answered_question_goes_back_as_the_tools_own_input ... ok
+test deck::tests::timed_out_commands_are_killed_and_reported ... ok
+test hooks::tests::an_edit_shows_the_file_it_touches_rather_than_a_screen_of_json ... ok
+test hooks::tests::both_agents_are_answered_in_the_one_shape_they_share ... ok
+test hooks::tests::an_event_naming_no_tool_still_has_something_to_put_on_the_panel ... ok
+test hooks::tests::integration_choice_retries_and_cancels_without_selecting_everyone ... ok
+test hooks::tests::session_identity_uses_workspace_basename_and_short_session_tail ... ok
+test http::tests::a_body_larger_than_the_cap_is_refused_before_it_is_read ... ok
+test hooks::tests::pressing_an_always_allow_grants_this_one_and_adopts_the_rule ... ok
+test http::tests::a_request_that_never_finishes_its_head_is_refused ... ok
+test http::tests::a_post_with_a_body_parses_into_method_target_and_body ... ok
+test server::tests::a_full_room_turns_connections_away_until_a_seat_frees ... ok
+test http::tests::query_values_come_out_by_name_and_the_path_sheds_them ... ok
+test server::tests::a_question_travels_from_hook_to_reader_and_the_tap_travels_back ... ok
+test server::tests::all_pending_is_a_versioned_snapshot_with_session_identity ... ok
+test server::tests::an_empty_board_long_polls_into_an_empty_object ... ok
+test server::tests::answering_a_question_that_already_left_reports_ok_false ... ok
+test server::tests::an_ignored_question_lets_the_terminal_prompt_have_it ... ok
+test server::tests::the_wrong_pairing_code_sees_nothing_and_answers_nothing ... ok
+test server::tests::deck_routes_share_auth_and_run_only_configured_commands ... ok
+test deck::tests::short_lived_redirected_descendants_finish_before_reporting_success ... ok
+test deck::tests::redirected_descendants_remain_subject_to_the_deadline ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+

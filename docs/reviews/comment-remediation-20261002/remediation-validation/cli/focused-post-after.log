@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized] target(s) in 0.09s
+     Running unittests src/main.rs (/workspace/cobalt-cli-remediation-target/debug/deps/kobo-633ffe8417078497)
+
+running 1 test
+test post::tests::device_account_install_is_private_atomic_and_app_scoped ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 445 filtered out; finished in 0.03s
+

@@ -1,0 +1,69 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index f640b871..67777d3e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1491,6 +1491,7 @@ dependencies = [
+  "kobo-app-store",
+  "kobo-json",
+  "kobo-sdk",
++ "kobo-text",
+ ]
+ 
+ [[package]]
+diff --git a/examples/settings/Cargo.toml b/examples/settings/Cargo.toml
+index 4b78efd7..be638e35 100644
+--- a/examples/settings/Cargo.toml
++++ b/examples/settings/Cargo.toml
+@@ -13,5 +13,8 @@ kobo-json = { path = "../../crates/kobo-json" }
+ # update requests for, so it is the one that turns that feature on.
+ kobo-sdk = { path = "../../crates/kobo-sdk", features = ["runtime-settings"] }
+ 
++[dev-dependencies]
++kobo-text = { path = "../../crates/kobo-text" }
++
+ [lints]
+ workspace = true
+diff --git a/examples/settings/src/list_tests.rs b/examples/settings/src/list_tests.rs
+index 455d47a3..e0fadfed 100644
+--- a/examples/settings/src/list_tests.rs
++++ b/examples/settings/src/list_tests.rs
+@@ -327,7 +327,23 @@ fn enterprise_selection_survives_paging_and_rescan_and_cancel_never_joins() {
+ 
+ #[test]
+ fn enterprise_screen_geometry_at_largest_size() {
++    // The typesetter is process-global. Isolate real font installation from
++    // the existing estimate-based tests so parallel execution stays deterministic.
++    if std::env::var_os("KOBO_SETTINGS_REAL_FONT_TEST").is_none() {
++        let status = std::process::Command::new(std::env::current_exe().unwrap())
++            .args([
++                "--exact",
++                "list_tests::enterprise_screen_geometry_at_largest_size",
++                "--nocapture",
++            ])
++            .env("KOBO_SETTINGS_REAL_FONT_TEST", "1")
++            .status()
++            .unwrap();
++        assert!(status.success());
++        return;
++    }
+     let metrics = *interface_sizes().last().unwrap();
++    kobo_text::install(metrics).unwrap();
+     for app in [
+         Settings {
+             view: View::WifiTrust,
+diff --git a/examples/settings/src/main.rs b/examples/settings/src/main.rs
+index 1a1eb2f8..d72d50e4 100644
+--- a/examples/settings/src/main.rs
++++ b/examples/settings/src/main.rs
+@@ -844,9 +844,8 @@ impl Settings {
+                 ("SHA-256", fingerprint(sha256)),
+             ])
+             .text(
+-                "Only trust this if it matches what your institution publishes, or what \
+-                 your phone trusted for this network. After this, the reader will only \
+-                 send your password to this exact server.",
++                "Verify this fingerprint with your institution or trusted phone. \
++                 Only this exact server will receive your password.",
+             )
+             .primary_button(TRUST, "Trust and join")
+             .button(DISTRUST, "Don't trust")

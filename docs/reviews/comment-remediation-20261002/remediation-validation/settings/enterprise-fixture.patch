@@ -1,0 +1,18 @@
+diff --git a/crates/kobo-policy/src/services.rs b/crates/kobo-policy/src/services.rs
+index f31509d0..709f613d 100644
+--- a/crates/kobo-policy/src/services.rs
++++ b/crates/kobo-policy/src/services.rs
+@@ -583,7 +583,12 @@ impl DeviceServices {
+                 available: true,
+                 enabled: self.wifi_enabled,
+                 connected_ssid: self.connected_ssid.clone(),
+-                networks: Vec::new(),
++                networks: vec![kobo_protocol::WifiNetwork {
++                    ssid: "eduroam".to_owned(),
++                    signal_dbm: -50,
++                    secured: true,
++                    connected: self.connected_ssid.as_deref() == Some("eduroam"),
++                }],
+             },
+             DeviceResult::Denied,
+         )

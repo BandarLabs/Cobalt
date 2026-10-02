@@ -1,0 +1,18 @@
+   Compiling kobo-html v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-html)
+   Compiling kobo-xml v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-xml)
+   Compiling kobo-image v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-image)
+   Compiling kobo-profile v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-profile)
+   Compiling kobo-opds v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-opds)
+   Compiling kobo-doc v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-doc)
+   Compiling kobo-comic v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-comic)
+   Compiling kobo-read v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-read)
+   Compiling kobo-bookview v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-bookview)
+   Compiling cobalt-native-audit-gutenbird v0.1.0 (/tmp/cobalt-gutenbird-native-arlxuhj8)
+    Finished `test` profile [unoptimized] target(s) in 6.11s
+     Running unittests src/lib.rs (/workspace/cobalt-capture-target/debug/deps/cobalt_native_audit_gutenbird-4f090f50dc392f24)
+
+running 1 test
+test tests::native_review_snapshots ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 103 filtered out; finished in 4.09s
+

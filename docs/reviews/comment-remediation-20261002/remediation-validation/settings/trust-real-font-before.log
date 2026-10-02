@@ -1,0 +1,91 @@
+   Compiling find-msvc-tools v0.1.11
+   Compiling shlex v2.0.1
+   Compiling libc v0.2.189
+   Compiling equivalent v1.0.2
+   Compiling allocator-api2 v0.2.21
+   Compiling cc v1.4.4
+   Compiling zeroize v1.9.0
+   Compiling foldhash v0.1.5
+   Compiling cfg-if v1.0.4
+   Compiling hashbrown v0.15.5
+   Compiling rustls-pki-types v1.15.1
+   Compiling untrusted v0.9.0
+   Compiling pkg-config v0.3.34
+   Compiling unicode-segmentation v1.13.3
+   Compiling getrandom v0.2.17
+   Compiling unicode-width v0.2.2
+   Compiling vcpkg v0.2.15
+   Compiling kobo-ui v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-ui)
+   Compiling rustls v0.23.45
+   Compiling httparse v1.10.1
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinyvec v1.12.0
+   Compiling subtle v2.6.1
+   Compiling bytes v1.12.1
+   Compiling ring v0.17.14
+   Compiling libsqlite3-sys v0.35.0
+   Compiling itoa v1.0.18
+   Compiling adler2 v2.0.1
+   Compiling once_cell v1.21.4
+   Compiling miniz_oxide v0.9.1
+   Compiling http v1.5.0
+   Compiling kobo-protocol v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-protocol)
+   Compiling unicode-normalization v0.1.25
+   Compiling hashlink v0.10.0
+   Compiling webpki-roots v1.0.9
+   Compiling rustls-webpki v0.103.15
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling bitflags v2.13.1
+   Compiling httpdate v1.0.3
+   Compiling smallvec v1.16.0
+   Compiling fallible-iterator v0.3.0
+   Compiling kobo-json v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-json)
+   Compiling kobo-dict v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-dict)
+   Compiling kobo-abi v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-abi)
+   Compiling ttf-parser v0.21.1
+   Compiling unicode-linebreak v0.1.5
+   Compiling kobo-state v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-state)
+   Compiling fontdue v0.9.3
+   Compiling kobo-text v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-text)
+   Compiling kobo-net v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-net)
+   Compiling rusqlite v0.37.0
+   Compiling kobo-policy v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-policy)
+   Compiling kobo-sdk v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-sdk)
+   Compiling kobo-app-store v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-app-store)
+   Compiling kobo-settings v0.3.24 (/workspace/cobalt-remediate-273/examples/settings)
+    Finished `test` profile [unoptimized] target(s) in 13.70s
+     Running unittests src/main.rs (/workspace/cobalt-settings-repair-target/debug/deps/kobo_settings-1e783ded1a231df4)
+
+running 1 test
+
+running 1 test
+
+thread 'list_tests::enterprise_screen_geometry_at_largest_size' panicked at examples/settings/src/list_tests.rs:357:9:
+[LayoutIssue { severity: Error, node: Some(NodeId(4)), kind: TextOverflow, rect: Some(Rect { x: 47, y: 754, width: 978, height: 316 }) }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test list_tests::enterprise_screen_geometry_at_largest_size ... FAILED
+
+failures:
+
+failures:
+    list_tests::enterprise_screen_geometry_at_largest_size
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.16s
+
+test list_tests::enterprise_screen_geometry_at_largest_size ... FAILED
+
+failures:
+
+---- list_tests::enterprise_screen_geometry_at_largest_size stdout ----
+
+thread 'list_tests::enterprise_screen_geometry_at_largest_size' panicked at examples/settings/src/list_tests.rs:338:9:
+assertion failed: status.success()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    list_tests::enterprise_screen_geometry_at_largest_size
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p kobo-settings --bin kobo-settings`

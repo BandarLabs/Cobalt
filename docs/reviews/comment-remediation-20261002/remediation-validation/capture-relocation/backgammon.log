@@ -1,0 +1,21 @@
+   Compiling kobo-ui v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-ui)
+   Compiling kobo-json v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-json)
+   Compiling kobo-dict v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-dict)
+   Compiling kobo-abi v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-abi)
+   Compiling kobo-state v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-state)
+   Compiling kobo-image v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-image)
+   Compiling kobo-protocol v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-protocol)
+   Compiling kobo-text v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-text)
+   Compiling kobo-net v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-net)
+   Compiling kobo-policy v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-policy)
+   Compiling kobo-sdk v0.3.24 (/workspace/cobalt-remediate-274/crates/kobo-sdk)
+   Compiling kobo-backgammon v0.1.1 (/tmp/cobalt-review-capture-e1n_5bei/apps/backgammon)
+    Finished `test` profile [unoptimized] target(s) in 6.00s
+     Running unittests src/main.rs (/workspace/cobalt-capture-target/debug/deps/kobo_backgammon-d7b397d8b57f49dc)
+
+running 2 tests
+test review_capture::capture_help_screens ... ok
+test review_capture::capture_review_screens ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 50 filtered out; finished in 0.37s
+

@@ -1,0 +1,13 @@
+{
+  "source": "a2d76b1463574e6eee5fd28e9a910850d41124dd",
+  "cli_sha256": "ba1ee2102b1d6b7ae0eb8317e0837317d6672519327e396a709a68dafb15da6f",
+  "profile": "clara-bw-391",
+  "scale": "170",
+  "runtime_navigation": true,
+  "checks": [
+    "Settings Wi-Fi nested Back remains in Settings beyond host grace; root Back returns launcher",
+    "Enterprise runtime journey unavailable: production simulator Wi-Fi fixture returns no networks; trust/cancel/confirm exercised by AppRunner tests"
+  ],
+  "status": "passed",
+  "hardware": false
+}

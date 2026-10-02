@@ -1,0 +1,20 @@
+   Compiling cobalt-render-review v0.3.24 (/tmp/cobalt-render-8jl5tck3)
+warning: function `save_commands` is never used
+  --> /tmp/cobalt-render-8jl5tck3/capture-support.rs:37:4
+   |
+37 | fn save_commands(
+   |    ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: `cobalt-render-review` (bin "cobalt-render-review" test) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 1.66s
+     Running unittests source/src/ui_review_capture_probe.rs (/workspace/cobalt-capture-target/debug/deps/cobalt_render_review-60f103cb53f32660)
+
+running 1 test
+100-service: 0 issues, errors=false
+170-service: 0 issues, errors=false
+test ui_review_capture::capture ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.63s
+

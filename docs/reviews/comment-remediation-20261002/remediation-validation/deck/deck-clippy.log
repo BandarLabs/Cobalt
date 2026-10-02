@@ -1,0 +1,24 @@
+    Checking libc v0.2.189
+    Checking typenum v1.20.1
+    Checking serde v1.0.229
+    Checking kobo-ui v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-ui)
+    Checking generic-array v0.14.9
+    Checking serde_spanned v0.6.9
+    Checking toml_datetime v0.6.11
+    Checking toml_edit v0.22.27
+    Checking crypto-common v0.1.6
+    Checking block-buffer v0.10.4
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+    Checking kobo-json v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-json)
+    Checking getrandom v0.2.17
+    Checking ring v0.17.14
+    Checking nix v0.27.1
+    Checking command-group v5.0.1
+    Checking toml v0.8.23
+    Checking kobo-protocol v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-protocol)
+    Checking rustls-webpki v0.103.15
+    Checking rustls v0.23.45
+    Checking kobo-net v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-net)
+    Checking kobo-sidekickd v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-sidekickd)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.83s

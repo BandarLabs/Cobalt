@@ -1,0 +1,59 @@
+    Blocking waiting for file lock on build directory
+   Compiling kobo-backgammon v0.1.1 (/workspace/cobalt-remediate-274/apps/backgammon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.20s
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo_backgammon-1bfdf7f9dde5601c)
+
+running 50 tests
+test new_match_tests::back_or_keep_match_preserves_the_exact_game_and_score ... ok
+test new_match_tests::confirmation_clears_the_match_once_and_keeps_the_selected_rules ... ok
+test new_match_tests::confirmation_controls_fit_and_are_tappable_at_every_text_size_and_pose ... ok
+test new_match_tests::the_visible_new_match_action_opens_a_confirmation_without_changing_progress ... ok
+test help_tests::complete_help_and_exit_controls_fit_with_real_fonts_in_every_size_and_pose ... ok
+test tests::a_game_saved_by_the_previous_version_is_carried_forward ... ok
+test tests::a_late_initial_load_cannot_overwrite_local_play ... ok
+test tests::a_no_op_action_does_not_discard_the_pending_initial_load ... ok
+test tests::a_seeded_run_names_its_seed_on_the_match_screen ... ok
+test tests::autosave_round_trips_position_and_match_state ... ok
+test tests::bar_control_selects_and_enters_a_checker ... ok
+test tests::bar_entry_is_mandatory_and_respects_blocks ... ok
+test tests::bearing_off_allows_exact_and_oversize_only_from_farthest_checker ... ok
+test tests::blocked_playing_save_is_normalized_to_a_forced_pass ... ok
+test tests::blocked_points_and_blots_follow_hitting_rules ... ok
+test tests::board_rows_are_contiguous_and_run_in_opposite_directions ... ok
+test tests::board_uses_an_app_owned_picture_and_point_controls ... ok
+test tests::both_dice_and_higher_die_rule_are_enforced ... ok
+test tests::computer_accepts_a_solo_cube_offer_without_owner_input ... ok
+test tests::computer_does_not_play_white_after_an_invalid_opening_black_turn ... ok
+test tests::consumer_board_fits_clara_bw_without_diagnostics ... ok
+test tests::corrupt_autosaves_are_rejected_before_rendering ... ok
+test tests::cube_sequence_and_crawford_restriction_are_correct ... ok
+test tests::a_denied_autosave_is_announced_until_a_write_lands ... ok
+test tests::dice_that_cannot_be_rolled_stop_the_turn_and_say_why ... ok
+test tests::doubles_use_all_four_dice_when_possible ... ok
+test tests::dropping_a_cube_names_the_winner ... ok
+test tests::exact_bear_off_does_not_require_the_farthest_checker ... ok
+test tests::finished_games_score_cube_and_schedule_crawford_at_match_point ... ok
+test tests::finished_turns_are_written_down_in_board_notation_and_survive_a_restart ... ok
+test tests::no_move_turn_switches_sides ... ok
+test tests::numeric_renderer_caps_untrusted_values ... ok
+test tests::off_control_bears_off_a_selected_checker ... ok
+test tests::opening_cannot_double_and_match_length_restarts_everything ... ok
+test tests::opening_position_has_fifteen_checkers_each ... ok
+test tests::opening_roll_rerolls_ties_and_awards_first_turn_to_higher_die ... ok
+test tests::pass_and_play_rotates_the_board_without_breaking_adjacency ... ok
+test tests::cube_stops_at_sixty_four_without_overflowing_the_picture ... ok
+test tests::point_controls_paginate_fifteen_legal_sources_without_hiding_actions ... ok
+test tests::restart_round_trips_pending_cube_offer ... ok
+test tests::restart_round_trips_terminal_game_and_match ... ok
+test tests::seeded_dice_replay_and_two_seeds_differ_while_staying_in_range ... ok
+test tests::selected_source_alone_supplies_destinations_and_markers ... ok
+test tests::solo_black_turn_rejects_direct_human_gameplay_actions ... ok
+test tests::picture_draws_board_checkers_dice_cube_and_legal_markers ... ok
+test tests::turn_entry_requires_all_usable_dice_before_switching_players ... ok
+test tests::undo_is_committed_when_a_pass_and_play_turn_ends ... ok
+test tests::the_board_states_the_turn_the_dice_and_the_cube_at_every_text_size ... ok
+test large_text_tests::rolled_board_picture_leaves_room_for_all_controls ... ok
+test match_history_tests::match_controls_and_complete_history_fit_every_text_size_and_pose ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.63s
+

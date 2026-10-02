@@ -1,0 +1,567 @@
+Renderer snapshot, not an interactive simulator capture.
+metrics: DisplayMetrics { width: 1072, height: 1448, pixels_per_inch: 300, text_scale: Default }
+chrome: Chrome { back: true, status: Some(Status { clock: "00:00", signal: Strong, battery: Some(Percent(50)), charging: false, bluetooth: true }) }
+owns_back: false
+issues: [
+    LayoutIssue {
+        severity: Warning,
+        node: Some(
+            NodeId(
+                6,
+            ),
+        ),
+        kind: OrphanedSection,
+        rect: None,
+    },
+]
+layout: Layout {
+    nodes: [
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 1072,
+                height: 59,
+            },
+            kind: StatusBand,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 0,
+                width: 78,
+                height: 59,
+            },
+            kind: StatusClock,
+            text_lines: [
+                "00:00",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 955,
+                y: 12,
+                width: 70,
+                height: 35,
+            },
+            kind: StatusBattery(
+                Some(
+                    Percent(
+                        50,
+                    ),
+                ),
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 896,
+                y: 12,
+                width: 35,
+                height: 35,
+            },
+            kind: StatusSignal(
+                Strong,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 837,
+                y: 12,
+                width: 35,
+                height: 35,
+            },
+            kind: StatusBluetooth,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 59,
+                width: 1072,
+                height: 100,
+            },
+            kind: TopBar,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 59,
+                width: 100,
+                height: 100,
+            },
+            kind: Back,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 171,
+                y: 86,
+                width: 854,
+                height: 46,
+            },
+            kind: TopBarTitle,
+            text_lines: [
+                "Settings",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 159,
+                width: 1072,
+                height: 4,
+            },
+            kind: Divider,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                2,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 199,
+                width: 978,
+                height: 35,
+            },
+            kind: Section,
+            text_lines: [
+                "Connections",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 258,
+                width: 978,
+                height: 129,
+            },
+            kind: Row(
+                ActionId(
+                    1682838045,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 283,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Bluetooth,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 282,
+                width: 886,
+                height: 46,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Bluetooth",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 328,
+                width: 886,
+                height: 35,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Checking…",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 399,
+                width: 910,
+                height: 4,
+            },
+            kind: RowRule,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 411,
+                width: 978,
+                height: 129,
+            },
+            kind: Row(
+                ActionId(
+                    120087624,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 436,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Wifi,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 435,
+                width: 886,
+                height: 46,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Wi-Fi",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 481,
+                width: 886,
+                height: 35,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Checking…",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                4,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 576,
+                width: 978,
+                height: 35,
+            },
+            kind: Section,
+            text_lines: [
+                "Device",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 635,
+                width: 978,
+                height: 129,
+            },
+            kind: Row(
+                ActionId(
+                    4251585678,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 660,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Battery,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 659,
+                width: 886,
+                height: 46,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Battery",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 705,
+                width: 886,
+                height: 35,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Reading",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 776,
+                width: 910,
+                height: 4,
+            },
+            kind: RowRule,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 788,
+                width: 978,
+                height: 129,
+            },
+            kind: Row(
+                ActionId(
+                    672109684,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 813,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Download,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 812,
+                width: 886,
+                height: 46,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Software update",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 858,
+                width: 886,
+                height: 35,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Cobalt 0.3.24",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 929,
+                width: 910,
+                height: 4,
+            },
+            kind: RowRule,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 941,
+                width: 978,
+                height: 129,
+            },
+            kind: Row(
+                ActionId(
+                    3005452862,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 966,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Reader,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 965,
+                width: 886,
+                height: 46,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "About",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 1011,
+                width: 886,
+                height: 35,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Device code, firmware, resolution",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1106,
+                width: 978,
+                height: 35,
+            },
+            kind: Section,
+            text_lines: [
+                "Cobalt",
+                "0.3.24",
+            ],
+        },
+    ],
+    content: Rect {
+        x: 0,
+        y: 175,
+        width: 1072,
+        height: 1226,
+    },
+    flow_height: 978,
+    page_turns: None,
+    hold: None,
+    context_actions: [],
+    text_hits: [],
+    prose_face: Text,
+}

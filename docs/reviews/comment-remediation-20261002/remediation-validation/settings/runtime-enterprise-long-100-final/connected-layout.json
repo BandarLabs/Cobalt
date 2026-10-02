@@ -1,0 +1,265 @@
+{
+  "paints": 54,
+  "content": {
+    "x": 0,
+    "y": 175,
+    "width": 1072,
+    "height": 1226
+  },
+  "pageTurns": null,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "17:36"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Wi-Fi"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Section",
+      "x": 47,
+      "y": 199,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 216
+      },
+      "action": null,
+      "lines": [
+        "Wi-Fi",
+        "On"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(1076453893), Enabled, Normal)",
+      "x": 377,
+      "y": 258,
+      "width": 317,
+      "height": 118,
+      "centre": {
+        "x": 535,
+        "y": 317
+      },
+      "action": 1076453893,
+      "lines": [
+        "Turn Wi-Fi off"
+      ]
+    },
+    {
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 399,
+      "width": 133,
+      "height": 35,
+      "centre": {
+        "x": 113,
+        "y": 416
+      },
+      "action": null,
+      "lines": [
+        "Connected"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 204,
+      "y": 388,
+      "width": 821,
+      "height": 46,
+      "centre": {
+        "x": 614,
+        "y": 411
+      },
+      "action": null,
+      "lines": [
+        "eduroam"
+      ]
+    },
+    {
+      "kind": "Section",
+      "x": 47,
+      "y": 482,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 499
+      },
+      "action": null,
+      "lines": [
+        "Networks"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(3318388567))",
+      "x": 47,
+      "y": 541,
+      "width": 978,
+      "height": 129,
+      "centre": {
+        "x": 536,
+        "y": 605
+      },
+      "action": 3318388567,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Wifi))",
+      "x": 47,
+      "y": 566,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 588
+      },
+      "action": 3318388567,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 565,
+      "width": 886,
+      "height": 46,
+      "centre": {
+        "x": 558,
+        "y": 588
+      },
+      "action": 3318388567,
+      "lines": [
+        "eduroam"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 611,
+      "width": 886,
+      "height": 35,
+      "centre": {
+        "x": 558,
+        "y": 628
+      },
+      "action": 3318388567,
+      "lines": [
+        "Connected \u00b7 Tap to disconnect \u00b7 -50 dBm"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,212 @@
+{
+  "app": "launcher",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "65381e16b3e072e0bfceb8f15296651bad9a551c6f8fd6366dc607677876d0e0",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "multi-app",
+  "orientation": "portrait",
+  "paints": "3",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.24",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-10-02",
+      "mode": "real",
+      "monotonicMillis": "12714",
+      "unixMillis": "1790962589176",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 2908648,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "7",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "launcher",
+      "hosted": [
+        "launcher",
+        "settings"
+      ],
+      "mode": "multi-app",
+      "processId": 154748
+    },
+    "observation": null,
+    "panel": {
+      "completed": "60",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "12730",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "60",
+      "submittedAtMillis": "12688",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": {
+      "generation": "0",
+      "hardwareValidated": false,
+      "lastRefusal": "None",
+      "lastWake": "None",
+      "mode": "simulated-entry-with-real-sdk-barrier",
+      "reason": "None",
+      "state": "awake",
+      "usbAttached": false
+    },
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 60,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 1377
+      },
+      "raw": {
+        "x": 1377,
+        "y": 535
+      }
+    },
+    "transition": {
+      "dirty": 2908648,
+      "full": false,
+      "refresh": 60,
+      "region": {
+        "height": 1328,
+        "width": 1072,
+        "x": 0,
+        "y": 88
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 48,
+            "width": 264,
+            "x": 48,
+            "y": 88
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 688,
+            "width": 984,
+            "x": 48,
+            "y": 200
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 120,
+            "width": 984,
+            "x": 48,
+            "y": 928
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 24,
+            "width": 984,
+            "x": 48,
+            "y": 1112
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 168,
+            "width": 1072,
+            "x": 0,
+            "y": 1248
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "7fcbe63de63352d9db115aa504957e6948c84ee78335d678d43eda6e850c9f5d",
+    "dirty": true,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "a2d76b1463574e6eee5fd28e9a910850d41124dd"
+  },
+  "version": 1
+}

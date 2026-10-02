@@ -1,0 +1,19 @@
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.33s
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo-41a550cfeb25c44e)
+
+running 1 test
+
+thread 'post::tests::device_account_install_is_private_atomic_and_app_scoped' panicked at crates/kobo-cli/src/post.rs:334:9:
+assertion failed: run(&script).status.success()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test post::tests::device_account_install_is_private_atomic_and_app_scoped ... FAILED
+
+failures:
+
+failures:
+    post::tests::device_account_install_is_private_atomic_and_app_scoped
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 436 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p kobo-cli --bin kobo`

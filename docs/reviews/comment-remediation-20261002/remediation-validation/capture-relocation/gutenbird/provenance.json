@@ -1,0 +1,22 @@
+{
+  "kind": "native-renderer-snapshots-not-interactive-simulator",
+  "app": "gutenbird",
+  "source_revision": "649c3dd8808ae519271e42fc8afc186b5f0aede1",
+  "source_sha256": "82d3b3ef76b6f58b450638ab57946e2a2c066f6595ec64761f742c139e06ed8d",
+  "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+  "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+  "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+  "scenario_sha256": "9f02bd1f5d0ce2f4bf9d173550490c088fa954f28922206904772e5e474dccb3",
+  "images": {
+    "default-book-details.png": "c4400bf54196b397a13b15884a982a31268a42f87cddb7c2f51e8568917ac997",
+    "default-shelf.png": "a5398046ce0dfffe214a61f5ed4e9de340fdd18231e30e68fcd945cd55c84401",
+    "largest-catalogs.png": "f11b38863fe94482bb87cbd2ff05fa178d369dceb54df0fd1adbc288be55e0d6",
+    "largest-shelf.png": "e16b44dcbf9eaf24e4e7cd795b10e05422076763e8c4aa069dc1aafe5c5f1af6",
+    "largest-twenty-catalogs.png": "6d40846992d2bb5d5ad376fe875aa51d7fa3a2866882b0e11e489e3ee2c84db7",
+    "default-saved-shelf.png": "61f1244e27380e21e11692d9eec0c98bfafc7157282dbf31c95a586c8da2ea9f",
+    "largest-book-details.png": "744178e900e64b236d9bb18d063715083eacd0c9b1b412db50dd8bdf3509297a",
+    "default-twenty-catalogs.png": "93a7245a20b1c77da8c0bc092d7a9db2923417c6db329771c07ce8c6956337b3",
+    "default-catalogs.png": "b7a33863ec32d5d2483fc2b4aa3f73117de23e1be56bd51a22c6b1998db89687",
+    "largest-saved-shelf.png": "ae18c9ce689277786d596f3dc76073e483c5be7a4849de5dd162712d7f728d81"
+  }
+}

@@ -1,0 +1,679 @@
+commit 2906c2f959935f4b5a4cf1f1ca27bcd37a7bce04
+Merge: 649c3dd8 e3d173e8
+Author:     Manish Kumar <manish@instavm.io>
+AuthorDate: Fri Oct 2 17:19:31 2026 +0000
+Commit:     Manish Kumar <manish@instavm.io>
+CommitDate: Fri Oct 2 17:19:31 2026 +0000
+
+    Integrate PR236 enterprise Wi-Fi with measured Settings navigation
+
+diff --cc examples/settings/src/list_tests.rs
+index 409db6a8,00000000..455d47a3
+mode 100644,000000..100644
+--- a/examples/settings/src/list_tests.rs
++++ b/examples/settings/src/list_tests.rs
+@@@ -1,271 -1,0 +1,347 @@@
+ +use super::*;
+ +use kobo_sdk::{AppRunner, Chrome, Command, DisplayMetrics, CLARA_BW_METRICS};
+ +
+ +fn interface_sizes() -> Vec<DisplayMetrics> {
+ +    let mut metrics = CLARA_BW_METRICS;
+ +    while let Some(smaller) = metrics.text_scale.smaller() {
+ +        metrics.text_scale = smaller;
+ +    }
+ +    let mut sizes = vec![metrics];
+ +    while let Some(larger) = metrics.text_scale.larger() {
+ +        metrics.text_scale = larger;
+ +        sizes.push(metrics);
+ +    }
+ +    assert_eq!(sizes.len(), 9);
+ +    sizes
+ +}
+ +
+ +fn fixture() -> Settings {
+ +    Settings {
+ +        wifi_state: RadioState::On,
+ +        bluetooth_state: RadioState::On,
+ +        networks: (0..13)
+ +            .map(|index| WifiNetwork {
+ +                ssid: format!("Example network in the library {index}"),
+ +                signal_dbm: -55,
+ +                secured: true,
+ +                connected: false,
+ +            })
+ +            .collect(),
+ +        devices: (0..13)
+ +            .map(|index| BluetoothDevice {
+ +                address: format!("00:00:00:00:00:{index:02}"),
+ +                name: format!("Reader headphones with a long name {index}"),
+ +                kind: kobo_sdk::BluetoothDeviceKind::Audio,
+ +                paired: true,
+ +                connected: false,
+ +            })
+ +            .collect(),
+ +        ..Settings::default()
+ +    }
+ +}
+ +
+ +fn touch(screen: &Screen, metrics: DisplayMetrics, action: ActionId) -> ActionId {
+ +    let chrome = Chrome::measuring(true);
+ +    let diagnostics = screen.diagnostics(&metrics, &chrome);
+ +    assert!(
+ +        !diagnostics.has_errors(),
+ +        "{metrics:?}: {:?}",
+ +        diagnostics.issues
+ +    );
+ +    let layout = screen.layout_with(&metrics, &chrome);
+ +    let rect = layout
+ +        .rect_of_action(action)
+ +        .expect("action must be on screen");
+ +    assert!(rect.height >= metrics.touch_target_minimum());
+ +    let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
+ +    assert_eq!(hit, Some(action));
+ +    hit.unwrap()
+ +}
+ +
+ +#[test]
+ +fn every_home_destination_is_reachable_at_all_sizes_and_both_poses() {
+ +    for pose in [(1072, 1448), (1448, 1072)] {
+ +        for size in interface_sizes() {
+ +            let metrics = DisplayMetrics {
+ +                width: pose.0,
+ +                height: pose.1,
+ +                ..size
+ +            };
+ +            let runner = AppRunner::with_metrics(Settings::default(), metrics);
+ +            let mut context = runner.context();
+ +            let mut app = fixture();
+ +            let rows = app.home_rows();
+ +            let pages = app.home_pages(&context);
+ +            assert_eq!(
+ +                pages.iter().flatten().copied().collect::<Vec<_>>(),
+ +                (0..rows.len()).collect::<Vec<_>>()
+ +            );
+ +            for (page, indices) in pages.iter().enumerate() {
+ +                app.home_page = page;
+ +                for &index in indices {
+ +                    let action = touch(
+ +                        &app.home_for(&context),
+ +                        metrics,
+ +                        action_id(&rows[index].action),
+ +                    );
+ +                    app.on_action(&mut context, action);
+ +                    assert_ne!(app.view, View::Home);
+ +                    app.on_action(&mut context, ActionId::BACK);
+ +                    assert_eq!(app.view, View::Home);
+ +                    assert_eq!(app.home_page, page);
+ +                }
+ +            }
+ +        }
+ +    }
+ +}
+ +
+ +#[test]
+ +fn every_measured_radio_row_targets_its_own_identity_on_later_pages() {
+ +    for pose in [(1072, 1448), (1448, 1072)] {
+ +        for size in interface_sizes() {
+ +            let metrics = DisplayMetrics {
+ +                width: pose.0,
+ +                height: pose.1,
+ +                ..size
+ +            };
+ +            let runner = AppRunner::with_metrics(Settings::default(), metrics);
+ +            let mut context = runner.context();
+ +            let mut app = fixture();
+ +            app.view = View::Wifi;
+ +            let pages = app.wifi_pages(&context);
+ +            assert_eq!(
+ +                pages.iter().flatten().copied().collect::<Vec<_>>(),
+ +                (0..13).collect::<Vec<_>>()
+ +            );
+ +            for (page, indices) in pages.iter().enumerate() {
+ +                app.wifi_page = page;
+ +                for &index in indices {
+ +                    let expected = app.networks[index].ssid.clone();
+ +                    let action = touch(
+ +                        &app.wifi_for(&context),
+ +                        metrics,
+ +                        action_id(&network_action(&app.networks[index].ssid)),
+ +                    );
+ +                    app.on_action(&mut context, action);
+ +                    assert_eq!(app.view, View::WifiPassword);
+ +                    assert_eq!(app.selected_ssid.as_deref(), Some(expected.as_str()));
+ +                    assert!(!context.take_commands().iter().any(|command| matches!(
+ +                        command,
+ +                        Command::Device(DeviceRequest::JoinWifi { .. })
+ +                    )));
+ +                    app.on_action(&mut context, ActionId::BACK);
+ +                    assert_eq!(app.view, View::Wifi);
+ +                }
+ +            }
+ +            app.view = View::Bluetooth;
+ +            let pages = app.bluetooth_pages(&context);
+ +            assert_eq!(
+ +                pages.iter().flatten().copied().collect::<Vec<_>>(),
+ +                (0..13).collect::<Vec<_>>()
+ +            );
+ +            for (page, indices) in pages.iter().enumerate() {
+ +                app.bluetooth_page = page;
+ +                for &index in indices {
+ +                    let expected = app.devices[index].address.clone();
+ +                    let screen = app.bluetooth_for(&context);
+ +                    let action = touch(
+ +                        &screen,
+ +                        metrics,
+ +                        action_id(&bluetooth_action(&app.devices[index].address)),
+ +                    );
+ +                    touch(&screen, metrics, action_id(RESCAN));
+ +                    let _ = context.take_commands();
+ +                    app.on_action(&mut context, action);
+ +                    assert!(context.take_commands().iter().any(|command| matches!(command,Command::Device(DeviceRequest::ConnectBluetooth {address}) if address == &expected)));
+ +                }
+ +            }
+ +        }
+ +    }
+ +}
+ +
+ +#[test]
+ +fn radio_notices_and_connected_status_are_included_in_the_page_budget() {
+ +    let metrics = *interface_sizes().last().unwrap();
+ +    let runner = AppRunner::with_metrics(Settings::default(), metrics);
+ +    let context = runner.context();
+ +    for trouble in [false, true] {
+ +        let mut app = fixture();
+ +        app.connected_ssid = Some("Library Wi-Fi".into());
+ +        if trouble {
+ +            app.trouble = Some((Topic::Wifi, "The scan did not finish. Try again.".into()));
+ +        }
+ +        for page in 0..app.wifi_pages(&context).len() {
+ +            app.wifi_page = page;
+ +            let screen = app.wifi_for(&context);
+ +            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+ +            assert!(
+ +                !diagnostics.has_errors(),
+ +                "{trouble} page {page}: {:?}",
+ +                diagnostics.issues
+ +            );
+ +        }
+ +        app.trouble = trouble.then(|| {
+ +            (
+ +                Topic::Bluetooth,
+ +                "The device did not connect. Try again.".into(),
+ +            )
+ +        });
+ +        app.restart_on_exit = !trouble;
+ +        for page in 0..app.bluetooth_pages(&context).len() {
+ +            app.bluetooth_page = page;
+ +            let screen = app.bluetooth_for(&context);
+ +            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+ +            assert!(
+ +                !diagnostics.has_errors(),
+ +                "{trouble} page {page}: {:?}",
+ +                diagnostics.issues
+ +            );
+ +            touch(&screen, metrics, action_id(RESCAN));
+ +        }
+ +    }
+ +}
+ +
+ +#[test]
+ +fn refreshed_lists_and_repeated_page_turns_clamp_without_wrapping() {
+ +    let metrics = *interface_sizes().last().unwrap();
+ +    let runner = AppRunner::with_metrics(Settings::default(), metrics);
+ +    let mut context = runner.context();
+ +    let mut app = fixture();
+ +    app.view = View::Wifi;
+ +    for _ in 0..20 {
+ +        app.on_page_turn(&mut context, true);
+ +    }
+ +    assert_eq!(app.wifi_page, app.wifi_pages(&context).len() - 1);
+ +    app.on_device_result(
+ +        &mut context,
+ +        DeviceRequest::ScanWifi,
+ +        DeviceResult::Wifi {
+ +            available: true,
+ +            enabled: true,
+ +            connected_ssid: None,
+ +            networks: vec![WifiNetwork {
+ +                ssid: "Only network".into(),
+ +                signal_dbm: -50,
+ +                secured: true,
+ +                connected: false,
+ +            }],
+ +        },
+ +    );
+ +    assert_eq!(app.wifi_page, 0);
+ +    for _ in 0..20 {
+ +        app.on_page_turn(&mut context, false);
+ +    }
+ +    assert_eq!(app.wifi_page, 0);
+ +    let screen = app.wifi_for(&context);
+ +    touch(&screen, metrics, action_id(&network_action("Only network")));
+ +    app.on_action(&mut context, action_id(&network_action("Only network")));
+ +    assert_eq!(app.selected_ssid.as_deref(), Some("Only network"));
+ +}
+ +
+ +#[test]
+ +fn a_rescan_reordering_rows_does_not_retarget_an_already_drawn_tap() {
+ +    let _runner = AppRunner::new(Settings::default());
+ +    let mut context = Context::default();
+ +    let mut app = fixture();
+ +    app.view = View::Wifi;
+ +    let ssid = app.networks[1].ssid.clone();
+ +    let selected = action_id(&network_action(&ssid));
+ +    app.networks.reverse();
+ +    app.on_action(&mut context, selected);
+ +    assert_eq!(app.selected_ssid.as_deref(), Some(ssid.as_str()));
+ +    app.on_action(&mut context, ActionId::BACK);
+ +    app.networks.retain(|network| network.ssid != ssid);
+ +    let _ = context.take_commands();
+ +    app.on_action(&mut context, selected);
+ +    assert_eq!(app.view, View::Wifi);
+ +    assert!(!context
+ +        .take_commands()
+ +        .iter()
+ +        .any(|command| matches!(command, Command::Device(DeviceRequest::JoinWifi { .. }))));
+ +    app.view = View::Bluetooth;
+ +    let address = app.devices[1].address.clone();
+ +    let selected = action_id(&bluetooth_action(&address));
+ +    app.devices.reverse();
+ +    let _ = context.take_commands();
+ +    app.on_action(&mut context, selected);
+ +    assert!(context.take_commands().iter().any(|command| matches!(command, Command::Device(DeviceRequest::ConnectBluetooth { address: found }) if found == &address)));
+ +    app.devices.retain(|device| device.address != address);
+ +    app.on_action(&mut context, selected);
+ +    assert!(context.take_commands().is_empty());
+ +}
+++
+++#[test]
+++fn enterprise_selection_survives_paging_and_rescan_and_cancel_never_joins() {
+++    for metrics in [CLARA_BW_METRICS, *interface_sizes().last().unwrap()] {
+++        let mut app = fixture();
+++        app.view = View::Wifi;
+++        app.networks[12].ssid = "eduroam".into();
+++        let mut runner = AppRunner::with_metrics(app, metrics);
+++        let context = runner.context();
+++        let pages = runner.app().wifi_pages(&context);
+++        let page = pages
+++            .iter()
+++            .position(|indices| indices.contains(&12))
+++            .unwrap();
+++        assert!(page > 0);
+++        runner.app_mut().wifi_page = page;
+++        let selected = touch(
+++            &runner.app().wifi_for(&context),
+++            metrics,
+++            action_id(&network_action("eduroam")),
+++        );
+++        runner.app_mut().networks.reverse();
+++        runner.action(selected);
+++        assert_eq!(runner.app().view, View::WifiUsername);
+++        assert_eq!(runner.app().selected_ssid.as_deref(), Some("eduroam"));
+++        runner.app_mut().username = Keyboard::with_text("reader@example.org");
+++        runner.action(action_id("kb.enter"));
+++        runner.app_mut().password = Keyboard::with_text("test-password");
+++        let commands = runner.action(action_id("kb.enter"));
+++        assert!(
+++            commands.iter().any(|command| matches!(command,
+++            Command::Device(DeviceRequest::ProbeEnterpriseWifi { ssid, .. }) if ssid == "eduroam"))
+++        );
+++        assert!(!commands.iter().any(|command| matches!(
+++            command,
+++            Command::Device(
+++                DeviceRequest::JoinEnterpriseWifi { .. } | DeviceRequest::JoinWifi { .. }
+++            )
+++        )));
+++        let mut context = runner.context();
+++        runner.app_mut().on_page_turn(&mut context, true);
+++        assert_eq!(runner.app().view, View::WifiTrust);
+++        assert!(context.take_commands().is_empty());
+++        let commands = runner.action(ActionId::BACK);
+++        assert_eq!(runner.app().view, View::Wifi);
+++        assert!(runner.app().enterprise_password.is_none());
+++        assert!(runner.app().username.text().is_empty());
+++        assert!(!commands.iter().any(|command| matches!(
+++            command,
+++            Command::Device(
+++                DeviceRequest::JoinEnterpriseWifi { .. } | DeviceRequest::JoinWifi { .. }
+++            )
+++        )));
+++    }
+++}
+++
+++#[test]
+++fn enterprise_screen_geometry_at_largest_size() {
+++    let metrics = *interface_sizes().last().unwrap();
+++    for app in [
+++        Settings {
+++            view: View::WifiTrust,
+++            selected_ssid: Some("eduroam".into()),
+++            certificate: Some(("/CN=radius.example.ac.uk".into(), [0xab; 32])),
+++            ..Settings::default()
+++        },
+++        Settings {
+++            view: View::WifiTrust,
+++            ..Settings::default()
+++        },
+++    ] {
+++        let screen = app.wifi_trust();
+++        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+++        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+++    }
+++}
+diff --cc examples/settings/src/main.rs
+index c86d30ce,37e1624a..1a1eb2f8
+--- a/examples/settings/src/main.rs
++++ b/examples/settings/src/main.rs
+@@@ -24,8 -24,18 +24,10 @@@ const BETA_UPDATES: &str = "beta-update
+  const CONFIRM_CHANNEL: &str = "confirm-channel";
+  const CANCEL_CHANNEL: &str = "cancel-channel";
+  const RESCAN: &str = "rescan";
++ const TRUST: &str = "trust-server";
++ const DISTRUST: &str = "distrust-server";
+  const MORE: &str = "more";
+  const PREVIOUS: &str = "previous";
+ -const PAGE_SIZE: usize = 4;
+ -const DEVICE_ACTIONS: [&str; 10] = [
+ -    "bt-0", "bt-1", "bt-2", "bt-3", "bt-4", "bt-5", "bt-6", "bt-7", "bt-8", "bt-9",
+ -];
+ -const NETWORK_ACTIONS: [&str; 10] = [
+ -    "wifi-0", "wifi-1", "wifi-2", "wifi-3", "wifi-4", "wifi-5", "wifi-6", "wifi-7", "wifi-8",
+ -    "wifi-9",
+ -];
+  
+  /// The version this binary was compiled as, which is the version installed:
+  /// the binaries and the installer travel together.
+@@@ -253,12 -278,13 +271,14 @@@ struct Settings 
+  impl Settings {
+      fn show(&mut self, context: &mut Context) {
+          self.keep_scanning(context);
+ +        self.clamp_page(context);
+          let screen = match self.view {
+ -            View::Home => self.home(),
+ -            View::Bluetooth => self.bluetooth(),
+ -            View::Wifi => self.wifi(),
+ +            View::Home => self.home_for(context),
+ +            View::Bluetooth => self.bluetooth_for(context),
+ +            View::Wifi => self.wifi_for(context),
++             View::WifiUsername => self.wifi_username(),
+              View::WifiPassword => self.wifi_password(),
++             View::WifiTrust => self.wifi_trust(),
+              View::Battery => self.battery(),
+              View::About => self.about(),
+              View::Update => self.update(),
+@@@ -776,11 -746,58 +796,63 @@@
+          screen.build()
+      }
+  
+ +    #[cfg(test)]
+ +    fn wifi(&self) -> Screen {
+ +        self.wifi_for(&Context::default())
+ +    }
+ +
++     fn wifi_username(&self) -> Screen {
++         let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
++             trouble
++         } else if self.username.text().is_empty() {
++             "Type your username exactly as your institution gives it.".to_owned()
++         } else {
++             format!("Username: {}", self.username.text())
++         };
++         ScreenBuilder::new("settings-wifi-username")
++             .top_bar("Join Wi-Fi")
++             .owns_back(true)
++             .heading(self.selected_ssid.as_deref().unwrap_or("Network"))
++             .text(guidance)
++             .keyboard(&self.username, "Next")
++             .build()
++     }
++ 
++     /// Shows the server certificate and asks whether to trust it. Nothing
++     /// secret has left the reader yet: the probe sent only the anonymous
++     /// outer identity.
++     fn wifi_trust(&self) -> Screen {
++         let screen = ScreenBuilder::new("settings-wifi-trust")
++             .top_bar("Check the network")
++             .owns_back(true)
++             .heading(self.selected_ssid.as_deref().unwrap_or("Network"));
++         if let Some(trouble) = self.banner_for(Topic::Wifi) {
++             return screen
++                 .text(trouble)
++                 .button(DISTRUST, "Back to networks")
++                 .build();
++         }
++         let Some((subject, sha256)) = &self.certificate else {
++             return screen
++                 .text("Asking the network for its certificate. No password has been sent.")
++                 .button(DISTRUST, "Cancel")
++                 .build();
++         };
++         screen
++             .facts([
++                 ("Server", common_name(subject).to_owned()),
++                 ("SHA-256", fingerprint(sha256)),
++             ])
++             .text(
++                 "Only trust this if it matches what your institution publishes, or what \
++                  your phone trusted for this network. After this, the reader will only \
++                  send your password to this exact server.",
++             )
++             .primary_button(TRUST, "Trust and join")
++             .button(DISTRUST, "Don't trust")
++             .build()
++     }
++ 
+      fn wifi_password(&self) -> Screen {
+          let count = self.password.text().chars().count();
+          let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
+@@@ -1236,17 -1343,16 +1399,23 @@@ impl KoboApp for Settings 
+          self.show(context);
+      }
+  
+ +    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+ +        if matches!(self.view, View::Home | View::Bluetooth | View::Wifi) {
+ +            self.turn_page(context, forward);
+ +            self.show(context);
+ +        }
+ +    }
+ +
++     #[allow(
++         clippy::too_many_lines,
++         reason = "one explicit dispatch table for every screen"
++     )]
+      fn on_action(&mut self, context: &mut Context, action: ActionId) {
+-         if self.view == View::WifiPassword {
+-             self.password_action(context, action);
+-             return;
++         match self.view {
++             View::WifiPassword => return self.password_action(context, action),
++             View::WifiUsername => return self.username_action(context, action),
++             View::WifiTrust => return self.trust_action(context, action),
++             _ => {}
+          }
+          if self.update_channel_action(context, action) {
+              return;
+@@@ -2099,6 -2212,182 +2321,182 @@@ mod tests 
+          assert!(layout.rect_of_action(action_id(RESCAN)).is_none());
+      }
+  
++     fn eduroam_on_the_list() -> Settings {
++         Settings {
++             view: View::Wifi,
++             wifi_state: RadioState::On,
++             networks: vec![
++                 WifiNetwork {
++                     ssid: "eduroam".to_owned(),
++                     signal_dbm: -50,
++                     secured: true,
++                     connected: false,
++                 },
++                 WifiNetwork {
++                     ssid: "Home".to_owned(),
++                     signal_dbm: -60,
++                     secured: true,
++                     connected: false,
++                 },
++             ],
++             ..Settings::default()
++         }
++     }
++ 
++     fn sent(commands: &[kobo_sdk::Command]) -> Vec<DeviceRequest> {
++         commands
++             .iter()
++             .filter_map(|command| match command {
++                 kobo_sdk::Command::Device(request) => Some(request.clone()),
++                 _ => None,
++             })
++             .collect()
++     }
++ 
++     /// Walks eduroam from the list to a pinned join, checking at each step
++     /// that the password has not gone anywhere before the server is trusted.
++     #[test]
++     fn eduroam_asks_for_a_username_and_sends_the_password_only_after_trust() {
++         use kobo_sdk::keyboard::Keyboard;
++         use kobo_sdk::AppRunner;
++         let mut runner = AppRunner::new(eduroam_on_the_list());
+ -        runner.action(action_id(NETWORK_ACTIONS[0]));
+++        runner.action(action_id(&super::network_action("eduroam")));
++         assert_eq!(runner.app().view, View::WifiUsername);
++ 
++         runner.app_mut().username = Keyboard::with_text("s1234567@example.ac.uk");
++         runner.action(action_id("kb.enter"));
++         assert_eq!(runner.app().view, View::WifiPassword);
++ 
++         runner.app_mut().password = Keyboard::with_text("hunter2");
++         let probe = sent(&runner.action(action_id("kb.enter")));
++         assert_eq!(runner.app().view, View::WifiTrust);
++         assert!(
++             probe.contains(&DeviceRequest::ProbeEnterpriseWifi {
++                 ssid: "eduroam".to_owned(),
++                 identity: "s1234567@example.ac.uk".to_owned(),
++             }),
++             "{probe:?}"
++         );
++         assert!(
++             !format!("{probe:?}").contains("hunter2"),
++             "sent before trust"
++         );
++ 
++         let waiting = text_of(&runner.app().wifi_trust());
++         assert!(waiting.contains("No password has been sent"), "{waiting}");
++ 
++         let mut context = runner.context();
++         kobo_sdk::KoboApp::on_device_result(
++             runner.app_mut(),
++             &mut context,
++             DeviceRequest::ProbeEnterpriseWifi {
++                 ssid: "eduroam".to_owned(),
++                 identity: "s1234567@example.ac.uk".to_owned(),
++             },
++             DeviceResult::WifiCertificate {
++                 subject: "/C=GB/O=University/CN=radius.example.ac.uk".to_owned(),
++                 sha256: [0x5e; 32],
++             },
++         );
++         let trust = format!("{:?}", runner.app().wifi_trust());
++         assert!(trust.contains("radius.example.ac.uk"), "{trust}");
++         assert!(trust.contains("5E5E5E5E"), "{trust}");
++ 
++         let join = sent(&runner.action(action_id(super::TRUST)));
++         assert!(
++             join.contains(&DeviceRequest::JoinEnterpriseWifi {
++                 ssid: "eduroam".to_owned(),
++                 identity: "s1234567@example.ac.uk".to_owned(),
++                 password: "hunter2".to_owned(),
++                 server_sha256: [0x5e; 32],
++             }),
++             "{join:?}"
++         );
++         let app = runner.app();
++         assert_eq!(app.view, View::Wifi);
++         assert!(app.enterprise_password.is_none());
++         assert!(app.username.text().is_empty());
++         assert!(app.certificate.is_none());
++     }
++ 
++     #[test]
++     fn refusing_the_server_sends_nothing_and_forgets_the_password() {
++         use kobo_sdk::keyboard::Keyboard;
++         use kobo_sdk::AppRunner;
++         let mut runner = AppRunner::new(Settings {
++             view: View::WifiTrust,
++             selected_ssid: Some("eduroam".to_owned()),
++             enterprise: true,
++             username: Keyboard::with_text("s1@example.ac.uk"),
++             enterprise_password: Some("hunter2".to_owned()),
++             certificate: Some(("/CN=evil".to_owned(), [1; 32])),
++             ..Settings::default()
++         });
++         let commands = sent(&runner.action(action_id(super::DISTRUST)));
++         assert!(
++             !commands
++                 .iter()
++                 .any(|request| matches!(request, DeviceRequest::JoinEnterpriseWifi { .. })),
++             "{commands:?}"
++         );
++         assert!(runner.app().enterprise_password.is_none());
++         assert_eq!(runner.app().view, View::Wifi);
++     }
++ 
++     #[test]
++     fn a_home_network_still_asks_for_one_shared_password() {
++         use kobo_sdk::AppRunner;
++         let mut runner = AppRunner::new(eduroam_on_the_list());
+ -        runner.action(action_id(NETWORK_ACTIONS[1]));
+++        runner.action(action_id(&super::network_action("Home")));
++         assert_eq!(runner.app().view, View::WifiPassword);
++         assert!(!runner.app().enterprise);
++     }
++ 
++     #[test]
++     fn the_enterprise_screens_fit_the_panel() {
++         use kobo_sdk::keyboard::Keyboard;
++         let trust = Settings {
++             view: View::WifiTrust,
++             selected_ssid: Some("eduroam".to_owned()),
++             certificate: Some((
++                 "/C=GB/O=Example University/CN=a-rather-long-radius-server-name.is.example.ac.uk"
++                     .to_owned(),
++                 [0xab; 32],
++             )),
++             ..Settings::default()
++         };
++         for screen in [
++             trust.wifi_trust(),
++             Settings {
++                 view: View::WifiTrust,
++                 ..Settings::default()
++             }
++             .wifi_trust(),
++             Settings {
++                 view: View::WifiUsername,
++                 selected_ssid: Some("eduroam".to_owned()),
++                 username: Keyboard::with_text("s1234567@example.ac.uk"),
++                 ..Settings::default()
++             }
++             .wifi_username(),
++         ] {
++             let issues = screen.validate(&CLARA_BW_METRICS);
++             assert!(issues.is_empty(), "{issues:?}");
++         }
++     }
++ 
++     #[test]
++     fn certificates_are_shown_by_name_and_grouped_digest() {
++         assert_eq!(
++             super::common_name("/C=GB/O=Uni/CN=radius.example.ac.uk"),
++             "radius.example.ac.uk"
++         );
++         assert_eq!(super::common_name("/O=No name"), "/O=No name");
++         assert_eq!(super::fingerprint(&[0xab; 32]), ["ABABABAB"; 8].join(" "));
++         assert!(super::is_enterprise_ssid("Eduroam"));
++         assert!(!super::is_enterprise_ssid("eduroam-guest"));
++     }
++ 
+      fn text_of(screen: &kobo_sdk::Screen) -> String {
+          screen
+              .nodes

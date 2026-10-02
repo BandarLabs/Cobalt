@@ -1,0 +1,48 @@
+    Checking cfg-if v1.0.4
+    Checking libc v0.2.189
+    Checking serde_core v1.0.229
+    Checking typenum v1.20.1
+    Checking zeroize v1.9.0
+    Checking rustls-pki-types v1.15.1
+    Checking untrusted v0.9.0
+    Checking hashbrown v0.17.1
+    Checking generic-array v0.14.9
+    Checking equivalent v1.0.2
+    Checking unicode-segmentation v1.13.3
+    Checking unicode-width v0.2.2
+    Checking indexmap v2.14.2
+    Checking kobo-ui v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-ui)
+    Checking serde v1.0.229
+    Checking serde_spanned v0.6.9
+    Checking toml_datetime v0.6.11
+    Checking getrandom v0.2.17
+    Checking block-buffer v0.10.4
+    Checking crypto-common v0.1.6
+    Checking once_cell v1.21.4
+    Checking adler2 v2.0.1
+    Checking ring v0.17.14
+    Checking subtle v2.6.1
+    Checking bytes v1.12.1
+    Checking winnow v0.7.15
+    Checking itoa v1.0.18
+    Checking bitflags v2.13.1
+    Checking toml_write v0.1.2
+    Checking nix v0.27.1
+    Checking kobo-protocol v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-protocol)
+    Checking rustls-webpki v0.103.15
+    Checking toml_edit v0.22.27
+    Checking rustls v0.23.45
+    Checking http v1.5.0
+    Checking miniz_oxide v0.9.1
+    Checking digest v0.10.7
+    Checking httparse v1.10.1
+    Checking webpki-roots v1.0.9
+    Checking httpdate v1.0.3
+    Checking cpufeatures v0.2.17
+    Checking sha2 v0.10.9
+    Checking toml v0.8.23
+    Checking command-group v5.0.1
+    Checking kobo-json v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-json)
+    Checking kobo-net v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-net)
+    Checking kobo-sidekickd v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-sidekickd)
+    Finished `dev` profile [unoptimized] target(s) in 8.97s

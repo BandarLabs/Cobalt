@@ -1,0 +1,4 @@
+    Checking kobo-hal v0.3.24 (/workspace/cobalt-settings-union/crates/kobo-hal)
+    Checking kobo-settings v0.3.24 (/workspace/cobalt-settings-union/examples/settings)
+    Checking kobod v0.3.24 (/workspace/cobalt-settings-union/crates/kobod)
+    Finished `dev` profile [unoptimized] target(s) in 3.92s

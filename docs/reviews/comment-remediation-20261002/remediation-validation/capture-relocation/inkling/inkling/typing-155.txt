@@ -1,0 +1,3172 @@
+Capture: genuine app screen builder + Cobalt renderer; NOT a live simulator capture.
+Scenario: typing
+App source SHA-256: 9ccc21abc47c2f2af2a691924559c88ba9c4b7e685410b62092b4f8150191655
+Shell: synthetic measuring status strip, runtime ensure_way_back
+Font: "AtkinsonHyperlegible-Regular.ttf"
+Font roles: Some([("interface", "AtkinsonHyperlegible-Regular.ttf"), ("display-title", "AtkinsonHyperlegible-Bold.ttf"), ("display-heading", "AtkinsonHyperlegible-Bold.ttf"), ("display-bold", "AtkinsonHyperlegible-Bold.ttf"), ("reading", "AtkinsonHyperlegible-Regular.ttf"), ("mono", "DejaVuSansMono.ttf")])
+Metrics: DisplayMetrics { width: 1072, height: 1448, pixels_per_inch: 300, text_scale: Huge }
+Screen: Screen {
+    id: 2050583463,
+    top_bar: Some(
+        TopBar {
+            id: NodeId(
+                1,
+            ),
+            title: "Inkling",
+            actions: [],
+        },
+    ),
+    auto_hide_top_bar: false,
+    nodes: [
+        Text {
+            id: NodeId(
+                2,
+            ),
+            text: "cra",
+            links: [],
+        },
+        Text {
+            id: NodeId(
+                3,
+            ),
+            text: "No letters known yet.",
+            links: [],
+        },
+        Flex {
+            id: NodeId(
+                4,
+            ),
+        },
+        Grid {
+            id: NodeId(
+                5,
+            ),
+            columns: 10,
+            square: false,
+            cells: [
+                Cell {
+                    action: ActionId(
+                        2767543275,
+                    ),
+                    label: "q",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2750765656,
+                    ),
+                    label: "w",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2801098513,
+                    ),
+                    label: "e",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2784320894,
+                    ),
+                    label: "r",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2834653751,
+                    ),
+                    label: "t",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2817876132,
+                    ),
+                    label: "y",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2868208989,
+                    ),
+                    label: "u",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2851431370,
+                    ),
+                    label: "i",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2633322323,
+                    ),
+                    label: "o",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        2616544704,
+                    ),
+                    label: "p",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+            ],
+        },
+        Grid {
+            id: NodeId(
+                6,
+            ),
+            columns: 9,
+            square: false,
+            cells: [
+                Cell {
+                    action: ActionId(
+                        4291637440,
+                    ),
+                    label: "a",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        13447763,
+                    ),
+                    label: "s",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        30225382,
+                    ),
+                    label: "d",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        47003001,
+                    ),
+                    label: "f",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        63780620,
+                    ),
+                    label: "g",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        80558239,
+                    ),
+                    label: "h",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        97335858,
+                    ),
+                    label: "j",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        114113477,
+                    ),
+                    label: "k",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        130891096,
+                    ),
+                    label: "l",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+            ],
+        },
+        Grid {
+            id: NodeId(
+                7,
+            ),
+            columns: 9,
+            square: false,
+            cells: [
+                Cell {
+                    action: ActionId(
+                        1219519130,
+                    ),
+                    label: "Shift",
+                    glyph: Some(
+                        Shift,
+                    ),
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        169492125,
+                    ),
+                    label: "z",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        152714506,
+                    ),
+                    label: "x",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        135936887,
+                    ),
+                    label: "c",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        119159268,
+                    ),
+                    label: "v",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        102381649,
+                    ),
+                    label: "b",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        85604030,
+                    ),
+                    label: "n",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        68826411,
+                    ),
+                    label: "m",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        813938145,
+                    ),
+                    label: "Delete character",
+                    glyph: Some(
+                        Backspace,
+                    ),
+                    selected: false,
+                    corner: None,
+                },
+            ],
+        },
+        Grid {
+            id: NodeId(
+                8,
+            ),
+            columns: 3,
+            square: false,
+            cells: [
+                Cell {
+                    action: ActionId(
+                        1922032271,
+                    ),
+                    label: "?123",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        1455907596,
+                    ),
+                    label: "space",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+                Cell {
+                    action: ActionId(
+                        3671068948,
+                    ),
+                    label: "Guess",
+                    glyph: None,
+                    selected: false,
+                    corner: None,
+                },
+            ],
+        },
+    ],
+    nav_bar: None,
+    bottom_action: Some(
+        BottomAction {
+            id: NodeId(
+                9,
+            ),
+            action: BarAction {
+                action: ActionId(
+                    107912219,
+                ),
+                label: "Cancel",
+                glyph: None,
+            },
+        },
+    ),
+    page_turns: None,
+    owns_back: true,
+    reading: false,
+    legacy_typography: false,
+    reading_font: None,
+    text_scale: None,
+    hold: None,
+    overlay: None,
+}
+Layout: Layout {
+    nodes: [
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 1072,
+                height: 59,
+            },
+            kind: StatusBand,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 0,
+                width: 125,
+                height: 59,
+            },
+            kind: StatusClock,
+            text_lines: [
+                "00:00",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 955,
+                y: 12,
+                width: 70,
+                height: 35,
+            },
+            kind: StatusBattery(
+                Some(
+                    Percent(
+                        50,
+                    ),
+                ),
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 896,
+                y: 12,
+                width: 35,
+                height: 35,
+            },
+            kind: StatusSignal(
+                Strong,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 837,
+                y: 12,
+                width: 35,
+                height: 35,
+            },
+            kind: StatusBluetooth,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 59,
+                width: 1072,
+                height: 100,
+            },
+            kind: TopBar,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 59,
+                width: 100,
+                height: 100,
+            },
+            kind: Back,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 171,
+                y: 73,
+                width: 854,
+                height: 71,
+            },
+            kind: TopBarTitle,
+            text_lines: [
+                "Inkling",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 159,
+                width: 1072,
+                height: 4,
+            },
+            kind: Divider,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                2,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 175,
+                width: 978,
+                height: 71,
+            },
+            kind: Text,
+            text_lines: [
+                "cra",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 258,
+                width: 978,
+                height: 71,
+            },
+            kind: Text,
+            text_lines: [
+                "No letters known yet.",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 786,
+                width: 978,
+                height: 118,
+            },
+            kind: Spacer,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2767543275,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "q",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 146,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2750765656,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 146,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "w",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 245,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2801098513,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 245,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "e",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 344,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2784320894,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 344,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "r",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 443,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2834653751,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 443,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "t",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 542,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2817876132,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 542,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "y",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 641,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2868208989,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 641,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "u",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 740,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2851431370,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 740,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "i",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 839,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2633322323,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 839,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "o",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 938,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    2616544704,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 938,
+                y: 786,
+                width: 87,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "p",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 916,
+                width: 978,
+                height: 118,
+            },
+            kind: Spacer,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    4291637440,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "a",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 157,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    13447763,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 157,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "s",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 267,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    30225382,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 267,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "d",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 377,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    47003001,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 377,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "f",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 487,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    63780620,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 487,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "g",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 597,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    80558239,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 597,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "h",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 707,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    97335858,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 707,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "j",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 817,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    114113477,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 817,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "k",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 927,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    130891096,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 927,
+                y: 916,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "l",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1046,
+                width: 978,
+                height: 118,
+            },
+            kind: Spacer,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    1219519130,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 67,
+                y: 1076,
+                width: 58,
+                height: 58,
+            },
+            kind: InlineGlyph(
+                Shift,
+                false,
+            ),
+            text_lines: [
+                "Shift",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 157,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    169492125,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 157,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "z",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 267,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    152714506,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 267,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "x",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 377,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    135936887,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 377,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "c",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 487,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    119159268,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 487,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "v",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 597,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    102381649,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 597,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "b",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 707,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    85604030,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 707,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "n",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 817,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    68826411,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 817,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "m",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 927,
+                y: 1046,
+                width: 98,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    813938145,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                7,
+            ),
+            rect: Rect {
+                x: 947,
+                y: 1076,
+                width: 58,
+                height: 58,
+            },
+            kind: InlineGlyph(
+                Backspace,
+                false,
+            ),
+            text_lines: [
+                "Delete character",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1176,
+                width: 978,
+                height: 118,
+            },
+            kind: Spacer,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1176,
+                width: 318,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    1922032271,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1176,
+                width: 318,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "?123",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 377,
+                y: 1176,
+                width: 318,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    1455907596,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 377,
+                y: 1176,
+                width: 318,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "space",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 707,
+                y: 1176,
+                width: 318,
+                height: 118,
+            },
+            kind: Cell(
+                ActionId(
+                    3671068948,
+                ),
+                Key,
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                8,
+            ),
+            rect: Rect {
+                x: 707,
+                y: 1176,
+                width: 318,
+                height: 118,
+            },
+            kind: CellLabel(
+                false,
+            ),
+            text_lines: [
+                "Guess",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                9,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 1306,
+                width: 1072,
+                height: 142,
+            },
+            kind: Spacer,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                9,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 1306,
+                width: 1072,
+                height: 4,
+            },
+            kind: Divider,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                9,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1320,
+                width: 978,
+                height: 118,
+            },
+            kind: Button(
+                ActionId(
+                    107912219,
+                ),
+                Enabled,
+                Normal,
+            ),
+            text_lines: [
+                "Cancel",
+            ],
+        },
+    ],
+    content: Rect {
+        x: 0,
+        y: 175,
+        width: 1072,
+        height: 1131,
+    },
+    flow_height: 1119,
+    page_turns: None,
+    hold: None,
+    context_actions: [],
+    text_hits: [],
+    prose_face: Text,
+}
+Diagnostics: LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1072,
+                    height: 59,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 0,
+                    width: 125,
+                    height: 59,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 955,
+                    y: 12,
+                    width: 70,
+                    height: 35,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 896,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 837,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 59,
+                    width: 1072,
+                    height: 100,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 59,
+                    width: 100,
+                    height: 100,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 171,
+                    y: 73,
+                    width: 854,
+                    height: 71,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Inkling",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 159,
+                    width: 1072,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 175,
+                    width: 978,
+                    height: 71,
+                },
+                kind: Text,
+                text_lines: [
+                    "cra",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 258,
+                    width: 978,
+                    height: 71,
+                },
+                kind: Text,
+                text_lines: [
+                    "No letters known yet.",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 786,
+                    width: 978,
+                    height: 118,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2767543275,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "q",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 146,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2750765656,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 146,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "w",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 245,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2801098513,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 245,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "e",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 344,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2784320894,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 344,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "r",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 443,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2834653751,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 443,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "t",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 542,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2817876132,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 542,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "y",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 641,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2868208989,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 641,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "u",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 740,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2851431370,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 740,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "i",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 839,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2633322323,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 839,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "o",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 938,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        2616544704,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 938,
+                    y: 786,
+                    width: 87,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "p",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 916,
+                    width: 978,
+                    height: 118,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        4291637440,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "a",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 157,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        13447763,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 157,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "s",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 267,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        30225382,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 267,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "d",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 377,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        47003001,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 377,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "f",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 487,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        63780620,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 487,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "g",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 597,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        80558239,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 597,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "h",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 707,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        97335858,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 707,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "j",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 817,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        114113477,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 817,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "k",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 927,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        130891096,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 927,
+                    y: 916,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "l",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1046,
+                    width: 978,
+                    height: 118,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        1219519130,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 67,
+                    y: 1076,
+                    width: 58,
+                    height: 58,
+                },
+                kind: InlineGlyph(
+                    Shift,
+                    false,
+                ),
+                text_lines: [
+                    "Shift",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 157,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        169492125,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 157,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "z",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 267,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        152714506,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 267,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "x",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 377,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        135936887,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 377,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "c",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 487,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        119159268,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 487,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "v",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 597,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        102381649,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 597,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "b",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 707,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        85604030,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 707,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "n",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 817,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        68826411,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 817,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "m",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 927,
+                    y: 1046,
+                    width: 98,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        813938145,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    7,
+                ),
+                rect: Rect {
+                    x: 947,
+                    y: 1076,
+                    width: 58,
+                    height: 58,
+                },
+                kind: InlineGlyph(
+                    Backspace,
+                    false,
+                ),
+                text_lines: [
+                    "Delete character",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1176,
+                    width: 978,
+                    height: 118,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1176,
+                    width: 318,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        1922032271,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1176,
+                    width: 318,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "?123",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 377,
+                    y: 1176,
+                    width: 318,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        1455907596,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 377,
+                    y: 1176,
+                    width: 318,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "space",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 707,
+                    y: 1176,
+                    width: 318,
+                    height: 118,
+                },
+                kind: Cell(
+                    ActionId(
+                        3671068948,
+                    ),
+                    Key,
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    8,
+                ),
+                rect: Rect {
+                    x: 707,
+                    y: 1176,
+                    width: 318,
+                    height: 118,
+                },
+                kind: CellLabel(
+                    false,
+                ),
+                text_lines: [
+                    "Guess",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    9,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1306,
+                    width: 1072,
+                    height: 142,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    9,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1306,
+                    width: 1072,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    9,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1320,
+                    width: 978,
+                    height: 118,
+                },
+                kind: Button(
+                    ActionId(
+                        107912219,
+                    ),
+                    Enabled,
+                    Normal,
+                ),
+                text_lines: [
+                    "Cancel",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 175,
+            width: 1072,
+            height: 1131,
+        },
+        flow_height: 1119,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

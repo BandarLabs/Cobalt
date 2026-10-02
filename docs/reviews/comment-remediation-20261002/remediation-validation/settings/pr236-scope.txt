@@ -1,0 +1,7 @@
+ crates/kobo-hal/src/wifi.rs        | 396 ++++++++++++++++++++++++++++++++++-
+ crates/kobo-policy/src/services.rs |  34 +++
+ crates/kobo-protocol/src/lib.rs    | 191 +++++++++++++++++
+ crates/kobo-sdk/src/lib.rs         |  49 +++++
+ crates/kobod/src/device.rs         |  27 +++
+ examples/settings/src/main.rs      | 414 ++++++++++++++++++++++++++++++++++++-
+ 6 files changed, 1102 insertions(+), 9 deletions(-)

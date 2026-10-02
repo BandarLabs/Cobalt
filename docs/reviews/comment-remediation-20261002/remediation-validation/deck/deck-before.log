@@ -1,0 +1,49 @@
+    Blocking waiting for file lock on build directory
+   Compiling proc-macro2 v1.0.107
+   Compiling libc v0.2.189
+   Compiling quote v1.0.47
+   Compiling generic-array v0.14.9
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.6
+   Compiling digest v0.10.7
+   Compiling syn v3.0.4
+   Compiling sha2 v0.10.9
+   Compiling getrandom v0.2.17
+   Compiling nix v0.27.1
+   Compiling ring v0.17.14
+   Compiling serde_derive v1.0.229
+   Compiling command-group v5.0.1
+   Compiling rustls-webpki v0.103.15
+   Compiling rustls v0.23.45
+   Compiling serde v1.0.229
+   Compiling serde_spanned v0.6.9
+   Compiling toml_datetime v0.6.11
+   Compiling toml_edit v0.22.27
+   Compiling kobo-net v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-net)
+   Compiling toml v0.8.23
+   Compiling kobo-sidekickd v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-sidekickd)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.64s
+     Running unittests src/main.rs (/workspace/cobalt-fixes/target/debug/deps/kobo_sidekickd-206206e692381191)
+
+running 2 tests
+
+thread 'deck::tests::short_lived_redirected_descendants_finish_before_reporting_success' panicked at crates/kobo-sidekickd/src/deck.rs:600:9:
+reported success while descendant was still running
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test deck::tests::short_lived_redirected_descendants_finish_before_reporting_success ... FAILED
+
+thread 'deck::tests::redirected_descendants_remain_subject_to_the_deadline' panicked at crates/kobo-sidekickd/src/deck.rs:579:9:
+assertion `left == right` failed
+  left: "ok"
+ right: "failed"
+test deck::tests::redirected_descendants_remain_subject_to_the_deadline ... FAILED
+
+failures:
+
+failures:
+    deck::tests::redirected_descendants_remain_subject_to_the_deadline
+    deck::tests::short_lived_redirected_descendants_finish_before_reporting_success
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.91s
+
+error: test failed, to rerun pass `-p kobo-sidekickd --bin kobo-sidekickd`

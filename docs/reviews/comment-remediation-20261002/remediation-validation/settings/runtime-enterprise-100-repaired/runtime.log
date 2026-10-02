@@ -1,0 +1,30 @@
+Building 2 apps for runtime simulation…
+Kobo runtime simulator: http://127.0.0.1:35571
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+layout warning: node 6: a section header falls at the fold with its content on the next page
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+layout warning: node 6: a section header falls at the fold with its content on the next page
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/settings-home.png
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/settings-wifi.png
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/enterprise-trust-cancel.png
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/enterprise-cancelled.png
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/enterprise-trust-confirm.png
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/enterprise-connected.png
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+layout warning: node 6: a section header falls at the fold with its content on the next page
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired/launcher-returned.png
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-100-repaired

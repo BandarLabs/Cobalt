@@ -1,0 +1,10 @@
+Building 2 apps for runtime simulation…
+Kobo runtime simulator: http://127.0.0.1:39241
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-170
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-170
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-170
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-170/settings-home.png
+shot /workspace/cobalt-remediation-results/settings/runtime-enterprise-170/settings-wifi.png
+drive: every step passed; screenshots in /workspace/cobalt-remediation-results/settings/runtime-enterprise-170
+kobo: line 6: tap-id kb.enter: the renderer refused this screen: node 4: text does not fit its rectangle (screen at /workspace/cobalt-remediation-results/settings/runtime-enterprise-170/failed-line-6.png)

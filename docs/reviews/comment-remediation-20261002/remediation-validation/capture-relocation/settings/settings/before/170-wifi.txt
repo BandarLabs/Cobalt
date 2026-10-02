@@ -1,0 +1,471 @@
+Renderer snapshot, not an interactive simulator capture.
+metrics: DisplayMetrics { width: 1072, height: 1448, pixels_per_inch: 300, text_scale: Largest }
+chrome: Chrome { back: true, status: Some(Status { clock: "00:00", signal: Strong, battery: Some(Percent(50)), charging: false, bluetooth: true }) }
+owns_back: true
+issues: []
+layout: Layout {
+    nodes: [
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 1072,
+                height: 59,
+            },
+            kind: StatusBand,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 0,
+                width: 134,
+                height: 59,
+            },
+            kind: StatusClock,
+            text_lines: [
+                "00:00",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 955,
+                y: 12,
+                width: 70,
+                height: 35,
+            },
+            kind: StatusBattery(
+                Some(
+                    Percent(
+                        50,
+                    ),
+                ),
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 896,
+                y: 12,
+                width: 35,
+                height: 35,
+            },
+            kind: StatusSignal(
+                Strong,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 837,
+                y: 12,
+                width: 35,
+                height: 35,
+            },
+            kind: StatusBluetooth,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 59,
+                width: 1072,
+                height: 100,
+            },
+            kind: TopBar,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 59,
+                width: 100,
+                height: 100,
+            },
+            kind: Back,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 171,
+                y: 69,
+                width: 854,
+                height: 79,
+            },
+            kind: TopBarTitle,
+            text_lines: [
+                "Wi-Fi",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 159,
+                width: 1072,
+                height: 4,
+            },
+            kind: Divider,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                2,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 199,
+                width: 978,
+                height: 60,
+            },
+            kind: Section,
+            text_lines: [
+                "Wi-Fi",
+                "On",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 299,
+                y: 283,
+                width: 474,
+                height: 118,
+            },
+            kind: Button(
+                ActionId(
+                    1076453893,
+                ),
+                Enabled,
+                Normal,
+            ),
+            text_lines: [
+                "Turn Wi-Fi off",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                4,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 437,
+                width: 978,
+                height: 60,
+            },
+            kind: Section,
+            text_lines: [
+                "Networks",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 521,
+                width: 978,
+                height: 266,
+            },
+            kind: Row(
+                ActionId(
+                    1662672577,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 562,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Wifi,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 545,
+                width: 886,
+                height: 158,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Example network in the library",
+                "0",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 703,
+                width: 886,
+                height: 60,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Secured · -55 dBm",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 799,
+                width: 910,
+                height: 4,
+            },
+            kind: RowRule,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 811,
+                width: 978,
+                height: 187,
+            },
+            kind: Row(
+                ActionId(
+                    1645894958,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 852,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Wifi,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 835,
+                width: 886,
+                height: 79,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Example network in the library 1",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 914,
+                width: 886,
+                height: 60,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Secured · -55 dBm",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 1010,
+                width: 910,
+                height: 4,
+            },
+            kind: RowRule,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1022,
+                width: 978,
+                height: 266,
+            },
+            kind: Row(
+                ActionId(
+                    1629117339,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1063,
+                width: 44,
+                height: 44,
+            },
+            kind: RowLead(
+                Icon(
+                    Wifi,
+                ),
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 1046,
+                width: 886,
+                height: 158,
+            },
+            kind: RowTitle,
+            text_lines: [
+                "Example network in the library",
+                "2",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 115,
+                y: 1204,
+                width: 886,
+                height: 60,
+            },
+            kind: RowSummary,
+            text_lines: [
+                "Secured · -55 dBm",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 47,
+                y: 1318,
+                width: 978,
+                height: 83,
+            },
+            kind: PagePosition,
+            text_lines: [
+                "1 of 4",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 907,
+                y: 1318,
+                width: 118,
+                height: 83,
+            },
+            kind: PageNext(
+                ActionId(
+                    3897901536,
+                ),
+            ),
+            text_lines: [],
+        },
+    ],
+    content: Rect {
+        x: 0,
+        y: 175,
+        width: 1072,
+        height: 1143,
+    },
+    flow_height: 1113,
+    page_turns: Declared(
+        PageTurns {
+            previous: ActionId(
+                4099663144,
+            ),
+            next: ActionId(
+                3897901536,
+            ),
+            menu: None,
+            position: Some(
+                (
+                    1,
+                    4,
+                ),
+            ),
+        },
+    ),
+    hold: None,
+    context_actions: [],
+    text_hits: [],
+    prose_face: Text,
+}

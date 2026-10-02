@@ -1,0 +1,91 @@
+unknown build package kobo-not-registered
+✔ accepts an unchanged app at the published version (11.389179ms)
+✔ does not release unchanged apps for a policy-derived minimum bump (7.66789ms)
+✔ requires a version bump when code or a dependency changes (0.685766ms)
+✔ requires a version bump when public metadata changes (0.252131ms)
+✔ accepts changed content with a new version and meaningful notes (0.273273ms)
+✔ rejects downgraded and nonnumeric release versions (0.214504ms)
+✔ requires release notes only for a new or changed release (0.392934ms)
+✔ release note quality rejects placeholders (0.12544ms)
+✔ matches runtime numeric version ordering (0.260624ms)
+✔ selective builds include changed binaries manifests and new apps only (26.731824ms)
+✔ catalog removal still requires publication without a build (4.98887ms)
+✔ a new app is version-checked only against a catalog that already lists it (0.412053ms)
+✔ changing an app ID to a different Cargo package is a release input (0.360755ms)
+✔ rejects a minimum Cobalt release older than the package protocol (0.330519ms)
+✔ accepts the first Cobalt release supporting the package protocol (0.091839ms)
+✔ bounds command output above Cargo's default metadata limit (0.101573ms)
+✔ manifest-only rebuilds must meet the current protocol minimum (0.13287ms)
+✔ new packages must meet the current protocol minimum (0.176316ms)
+✔ the intended Gallery and Zotero build selection passes final validation (3.345326ms)
+✔ fallback expansion rejects a legacy app with an obsolete platform minimum (0.176577ms)
+✔ fallback expansion rejects rebuilding an unchanged legacy app version (7.790144ms)
+✔ apps workflow validates the final package matrix after fallback expansion (0.533687ms)
+✔ the flags the apps workflow sends are ones the tool actually accepts (342.799658ms)
+✔ release inputs ignore exclusively dev-only dependency edges (0.258361ms)
+✔ release input discovery includes deleted paths (0.101233ms)
+✔ standalone app metadata is compared as a manifest, not a binary input (0.070436ms)
+✔ a drive script next to an application is not a release input (0.194043ms)
+✔ prose beside an application is not a release input (0.093822ms)
+✔ every drive script an application grows is still not a release input (0.120042ms)
+✔ no drive script in this tree counts as a release input (2.19668ms)
+✔ an app drawing a board the runtime learned late says which release it needs (49.981835ms)
+✔ drive scripts do not count as unpublished Store catalog inputs (0.455738ms)
+✔ workspace version and member additions do not change existing app release inputs (0.576091ms)
+✔ replacing explicit app members with the equivalent app glob is not a release input (0.147003ms)
+✔ workspace configuration changes still affect every app (0.103717ms)
+✔ path dependency version-only manifest edits are not app release inputs (1.073102ms)
+✔ only exact reviewed compatible blobs are excluded from app release inputs (0.486415ms)
+✖ active protocol compatible-change entries name the exact current files (53.343034ms)
+✔ responsive SDK release isolation covers only exact reviewed inputs (0.56211ms)
+✔ Gutenbird test-only changes are isolated by exact reviewed blobs (0.238851ms)
+✔ Lichess runtime prerequisites are isolated by exact reviewed blobs (0.241826ms)
+✔ new lockfile package blocks do not change existing app release inputs (19.789871ms)
+✔ Cargo.lock changes are isolated only after exact compatible review (0.433375ms)
+✔ an app-local lock change affects that app and its true dependents only (0.532044ms)
+✔ adding a package outside every Store app closure affects no app (0.255606ms)
+✔ a shared dependency lock change affects every consuming Store app (0.27143ms)
+✔ a changed shared workspace crate affects only its Store consumers (0.152381ms)
+✔ a changed dependency version does not affect consumers of another version (0.179261ms)
+✔ a lock change with no identifiable current package fails closed (0.190568ms)
+✔ workspace package version-only lock changes affect no Store app (0.141474ms)
+✔ non-build paths affect no Store package (126.928156ms)
+✔ the previous complete-set artifact is still excluded from per-app reuse (0.21876ms)
+✔ the standalone importer is isolated without changing device workspace inputs (126.241768ms)
+✔ the Flashcards test-only exemption refuses a changed production blob (0.713678ms)
+✔ both catalog gates share package-root exclusions without hiding nested source (0.249347ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 54
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1097.189943
+
+✖ failing tests:
+
+test at tools/check-app-versions.test.mjs:787:1
+✖ active protocol compatible-change entries name the exact current files (53.343034ms)
+  AssertionError [ERR_ASSERTION]: Cargo.lock resolves differently than when it was reviewed
+  + actual - expected
+  
+  + [
+  +   '["kobo-sidekickd","<workspace-version>",""]'
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///workspace/cobalt-remediate-272/tools/check-app-versions.test.mjs:830:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ '["kobo-sidekickd","<workspace-version>",""]' ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

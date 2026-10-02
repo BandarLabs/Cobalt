@@ -1,0 +1,14 @@
+   Compiling miniz_oxide v0.9.1
+   Compiling kobo-net v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-net)
+   Compiling kobo-policy v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-policy)
+   Compiling kobo-app-store v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-app-store)
+   Compiling kobo-sdk v0.3.24 (/workspace/cobalt-remediate-273/crates/kobo-sdk)
+   Compiling kobo-settings-ui-review v0.3.24 (/tmp/cobalt-settings-review-_ogorxs5)
+    Finished `test` profile [unoptimized] target(s) in 3.82s
+     Running unittests src/main.rs (/workspace/cobalt-capture-target/debug/deps/kobo_settings_ui_review-4a81759eb787b91a)
+
+running 1 test
+test review_capture::capture_review_screens ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 1.96s
+

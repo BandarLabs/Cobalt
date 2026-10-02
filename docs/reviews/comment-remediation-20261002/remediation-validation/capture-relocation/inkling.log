@@ -1,0 +1,9 @@
+   Compiling kobo-inkling v0.2.0 (/tmp/cobalt-inkling-capture-haotzm7b/apps/inkling)
+    Finished `test` profile [unoptimized] target(s) in 1.53s
+     Running unittests src/main.rs (/workspace/cobalt-capture-target/debug/deps/kobo_inkling-8fbd3ff5317d5d04)
+
+running 1 test
+test review_capture::capture_review_baselines ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 12.87s
+

@@ -1,0 +1,24 @@
+Diff in /workspace/cobalt-remediate-273/apps/parlor/src/main.rs:2218:
+ #[cfg(test)]
+ mod navigation_tests;
+ 
+-
+ #[cfg(test)]
+ mod large_text_tests {
+     use super::*;
+Diff in /workspace/cobalt-remediate-273/apps/parser/src/main.rs:1496:
+     }
+ }
+ 
+-
+ #[cfg(test)]
+ mod navigation_tests;
+ 
+Diff in /workspace/cobalt-remediate-273/apps/pubquiz/src/main.rs:1916:
+     }
+ }
+ 
+-
+ #[cfg(test)]
+ mod setup_tests;
+ 

@@ -1,0 +1,12 @@
+   Compiling kobo-cli v0.3.24 (/workspace/cobalt-remediate-272/crates/kobo-cli)
+    Finished `test` profile [unoptimized] target(s) in 11.84s
+     Running unittests src/main.rs (/workspace/cobalt-cli-remediation-target/debug/deps/kobo-633ffe8417078497)
+
+running 4 tests
+test readlater::tests::flag_like_hosts_fail_before_input_or_network ... ok
+test vault::tests::flag_like_hosts_fail_before_input_or_network ... ok
+test needles::tests::flag_like_hosts_fail_before_input_or_network ... ok
+test post::tests::flag_like_hosts_fail_before_input_or_network ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 442 filtered out; finished in 0.00s
+
