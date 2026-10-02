@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches-ignore: [validation/app-consolidation-20261002]
   pull_request:
 
 permissions:

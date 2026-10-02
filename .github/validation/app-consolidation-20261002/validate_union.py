@@ -181,7 +181,8 @@ def run_specialized(root, out, env, scale, report, download_score):
             result.update(status='unavailable', error=score_error,
                           coverage='specialized score journey unavailable; committed route runs in profile sweep')
         else:
-            command = [sys.executable, str(root / 'scripts/quality' / script_name),
+            command = [sys.executable, str(Path(__file__).with_name('specialized_adapter.py')),
+                       str(root / 'scripts/quality' / script_name),
                        '--output', str(dest), '--scale', scale]
             if app == 'musicstand':
                 command.extend(['--score', str(score)])
@@ -221,6 +222,8 @@ def main(argv=None):
     parser.add_argument('--download-music-score', action='store_true')
     parser.add_argument('--timeout', type=int, default=240)
     args = parser.parse_args(argv)
+    if args.timeout < 1:
+        parser.error('--timeout must be positive')
     root, out = args.root.resolve(), args.out.resolve()
     if out == root or out.is_relative_to(root):
         parser.error('--out must be outside the tested checkout')
