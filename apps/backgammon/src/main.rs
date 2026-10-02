@@ -1576,11 +1576,27 @@ fn screen_for(game: &Game, picture: Option<TilePicture>, context: &Context) -> S
             ))
             .primary_button("new-match", "New match")
             .build(),
-        Phase::Playing => playing_screen(game, picture),
+        Phase::Playing => fitted_playing_screen(game, picture, context),
     }
 }
 
-fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+fn fitted_playing_screen(game: &Game, picture: Option<TilePicture>, context: &Context) -> Screen {
+    let metrics = context.metrics();
+    // Preserve every control and fact. The decorative board picture gives up
+    // only the space the measured text and touch targets actually need.
+    for height in (20..=52).rev() {
+        let candidate = playing_screen(game, picture, height);
+        if !candidate
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            return candidate;
+        }
+    }
+    playing_screen(game, picture, 20)
+}
+
+fn playing_screen(game: &Game, picture: Option<TilePicture>, height: u16) -> Screen {
     let mut screen = ScreenBuilder::new("backgammon")
         .top_bar("Backgammon")
         .top_bar_action("match", "Match")
@@ -1595,7 +1611,7 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
             &game.message
         });
     if let Some(picture) = picture {
-        screen = screen.unframed_picture(picture, 52);
+        screen = screen.unframed_picture(picture, height);
     }
     // The dice and the cube in words as well as pips. The board draws both,
     // but it is drawn 52 mm wide on a six inch panel, and a number that small
@@ -3043,3 +3059,53 @@ mod review_capture;
 
 #[cfg(test)]
 mod match_history_tests;
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+
+    fn panels() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)]
+            .into_iter()
+            .flat_map(|(width, height, pixels_per_inch)| {
+                [kobo_ui::TextScale::Default, kobo_ui::TextScale::Largest]
+                    .into_iter()
+                    .map(move |text_scale| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    })
+            })
+    }
+    fn fits(screen: &Screen, metrics: kobo_sdk::DisplayMetrics) {
+        let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{metrics:?}: {:#?}",
+            diagnostics.issues
+        );
+    }
+
+    #[test]
+    fn rolled_board_picture_leaves_room_for_all_controls() {
+        for metrics in panels() {
+            let mut game = Game {
+                dice_source: Dice::scripted([(5, 3)]),
+                ..Game::default()
+            };
+            game.roll();
+            let runner = kobo_sdk::AppRunner::with_metrics(game, metrics);
+            let screen = screen_for(
+                runner.app(),
+                Some(TilePicture::new(BOARD_PICTURE, BOARD_WIDTH, BOARD_HEIGHT)),
+                &runner.context(),
+            );
+            fits(&screen, metrics);
+            let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+            for name in ["roll", "double", "undo"] {
+                assert!(layout.rect_of_action(action_id(name)).is_some());
+            }
+        }
+    }
+}
