@@ -1,0 +1,19 @@
+{
+  "provenance": {
+    "source_revision": "07a6dc49d02e2a941d8bd18b9f2d50b3494c7afe",
+    "tracked_changes": false,
+    "cli_sha256": "246e148b6292f954f240a7cc255a42d793f21a569e87dd0da262122aa490bf2e",
+    "toolchain": "1.85.1"
+  },
+  "scale": "155",
+  "profile": "libra-colour-390-4.46.23836",
+  "pinned_day": "2026-09-01",
+  "checks": [
+    {
+      "name": "inkling journey",
+      "detail": "real date title, help, first-guess empty knowledge, typing letter knowledge, uppercase shape-marked solve, statistics with distribution, export received byte-for-byte by CLI, no overwrite, archive solve with statistics untouched, daily game and statistics proven across a restart",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

@@ -1,0 +1,4 @@
+Native in-process Kobo renderer snapshot; NOT an interactive simulator capture.
+Profile: Clara BW 1072x1448, text 100%. Synthetic status strip: 00:00 / 50% / connected.
+Original app screen and shared renderer.
+Diagnostics: []

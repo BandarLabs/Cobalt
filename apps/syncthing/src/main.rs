@@ -125,7 +125,9 @@ impl Sync {
             View::Folders => folders_screen(),
             View::About => about_screen(),
         };
-        context.set_screen(screen);
+        // Supporting pages must receive the runtime Back event before it can
+        // leave the app; the status screen remains the root exit.
+        context.set_screen(screen.with_own_back(self.view != View::Status));
     }
 
     fn status_facts(&self) -> Vec<(String, String)> {
@@ -363,26 +365,25 @@ const EPOCH: Snapshot = Snapshot {
 fn guide_screen() -> Screen {
     ScreenBuilder::new("syncthing")
         .top_bar("Set up Sync")
-        .heading("Pair one computer folder")
-        .text("1. Install Syncthing on the computer with its package manager.")
-        .text("2. Wake the reader on Wi-Fi, then on the computer run:")
+        .section("Pair one computer folder")
+        .secondary("1. Install Syncthing on the computer with its package manager.")
+        .secondary("2. Wake the reader on Wi-Fi, then on the computer run:")
         .text("kobo sync setup ~/Documents/notes --folder vault --device <address>")
-        .text("3. Resume Sync here. The first window runs within the cadence you choose; vault, frame and books arrive receive-only, so originals on the reader stay protected.")
+        .secondary("3. Resume Sync here. The first window runs within the cadence you choose; vault, frame and books arrive receive-only, so originals on the reader stay protected.")
         .secondary("Folders are fixed: sync/vault, sync/frame and sync/books arrive; sync/out leaves. Transferred packages import into Vault and Frame after each window.")
-        .button("back", "Back")
         .build()
 }
 
 fn folders_screen() -> Screen {
     ScreenBuilder::new("syncthing")
         .top_bar("Sync folders")
+        .top_bar_action("about", "About")
         .rows(
             FOLDERS
                 .into_iter()
                 .map(|(path, direction)| (path, path, direction, Glyph::Folder)),
         )
         .secondary("Folder set is fixed. Receive-only folders protect the owner’s originals. Vault and Frame packages import onto their shelves; books stay files.")
-        .action_bar([("back", "Back"), ("about", "About")])
         .build()
 }
 
@@ -392,7 +393,6 @@ fn about_screen() -> Screen {
         .heading("Syncthing")
         .text("Syncthing keeps selected Kobo folders in sync while protecting receive-only originals. Syncthing is available under the MPL-2.0 license.")
         .secondary("Sync requires a Cobalt platform build that includes the pinned Syncthing engine; pair a computer with kobo sync setup.")
-        .button("back", "Back")
         .build()
 }
 
@@ -593,3 +593,6 @@ mod tests {
         assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MB");
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

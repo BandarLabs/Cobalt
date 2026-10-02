@@ -1,0 +1,111 @@
+   Compiling subtle v2.6.1
+   Compiling simd-adler32 v0.3.10
+   Compiling libc v0.2.189
+   Compiling typenum v1.20.1
+   Compiling miniz_oxide v0.9.1
+   Compiling const-oid v0.9.6
+   Compiling base64ct v1.8.3
+   Compiling memchr v2.8.3
+   Compiling generic-array v0.14.9
+   Compiling pem-rfc7468 v0.7.0
+   Compiling getrandom v0.2.17
+   Compiling ring v0.17.14
+   Compiling rand_core v0.6.4
+   Compiling der v0.7.10
+   Compiling crypto-common v0.1.6
+   Compiling block-buffer v0.10.4
+   Compiling kobo-abi v0.3.24 (/workspace/Cobalt/crates/kobo-abi)
+   Compiling digest v0.10.7
+   Compiling hmac v0.12.1
+   Compiling crc32fast v1.5.1
+   Compiling rusqlite v0.37.0
+   Compiling spki v0.7.3
+   Compiling rustls-webpki v0.103.15
+   Compiling pkcs8 v0.10.2
+   Compiling flate2 v1.1.10
+   Compiling ff v0.13.1
+   Compiling rustls v0.23.45
+   Compiling arrayvec v0.7.8
+   Compiling base16ct v0.2.0
+   Compiling sec1 v0.7.3
+   Compiling group v0.13.0
+   Compiling num-traits v0.2.19
+   Compiling hkdf v0.12.4
+   Compiling crypto-bigint v0.5.5
+   Compiling miniz_oxide v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling quick-error v2.0.1
+   Compiling zune-core v0.4.12
+   Compiling color_quant v1.1.0
+   Compiling pxfm v0.1.30
+   Compiling weezl v0.1.12
+   Compiling byteorder-lite v0.1.0
+   Compiling image-webp v0.2.4
+   Compiling gif v0.13.3
+   Compiling elliptic-curve v0.13.8
+   Compiling png v0.18.1
+   Compiling kobo-net v0.3.24 (/workspace/Cobalt/crates/kobo-net)
+   Compiling kobo-policy v0.3.24 (/workspace/Cobalt/crates/kobo-policy)
+   Compiling moxcms v0.7.11
+   Compiling zune-jpeg v0.4.21
+   Compiling pulldown-cmark-escape v0.11.0
+   Compiling bytemuck v1.25.2
+   Compiling unicase v2.9.0
+   Compiling thiserror v1.0.69
+   Compiling minimp3-sys v0.3.2
+   Compiling rfc6979 v0.4.0
+   Compiling pulldown-cmark v0.13.4
+   Compiling signature v2.2.0
+   Compiling slice-ring-buffer v0.3.4
+   Compiling constant_time_eq v0.4.2
+   Compiling kobo-html v0.3.24 (/workspace/Cobalt/crates/kobo-html)
+   Compiling cpufeatures v0.2.17
+   Compiling cpufeatures v0.3.1
+   Compiling blake3 v1.8.7
+   Compiling sha2 v0.10.9
+   Compiling minimp3 v0.5.2
+   Compiling ecdsa v0.16.9
+   Compiling kobo-doc v0.3.24 (/workspace/Cobalt/crates/kobo-doc)
+   Compiling primeorder v0.13.6
+   Compiling kobo-profile v0.3.24 (/workspace/Cobalt/crates/kobo-profile)
+   Compiling hashbrown v0.17.1
+   Compiling kobo-catalog v0.3.24 (/workspace/Cobalt/crates/kobo-catalog)
+   Compiling indexmap v2.14.2
+   Compiling kobo-hal v0.3.24 (/workspace/Cobalt/crates/kobo-hal)
+   Compiling image v0.25.8
+   Compiling p256 v0.13.2
+   Compiling kobo-app-store v0.3.24 (/workspace/Cobalt/crates/kobo-app-store)
+   Compiling kobo-shell v0.3.24 (/workspace/Cobalt/crates/kobo-shell)
+   Compiling vte v0.15.0
+   Compiling kobo-wifi-trace v0.3.24 (/workspace/Cobalt/crates/kobo-wifi-trace)
+   Compiling kobo-image v0.3.24 (/workspace/Cobalt/crates/kobo-image)
+   Compiling base64 v0.22.1
+   Compiling kobo-xml v0.3.24 (/workspace/Cobalt/crates/kobo-xml)
+   Compiling kobod v0.3.24 (/workspace/Cobalt/crates/kobod)
+   Compiling vt100 v0.16.2
+   Compiling serde_core v1.0.229
+   Compiling zip v4.6.1
+   Compiling zmij v1.0.23
+   Compiling kobo-sdk v0.3.24 (/workspace/Cobalt/crates/kobo-sdk)
+   Compiling serde_json v1.0.151
+   Compiling kobo-sim v0.3.24 (/workspace/Cobalt/crates/kobo-sim)
+   Compiling kobo-comic v0.3.24 (/workspace/Cobalt/crates/kobo-comic)
+   Compiling kobo-stream v0.3.24 (/workspace/Cobalt/crates/kobo-stream)
+   Compiling kobo-opml v0.3.24 (/workspace/Cobalt/crates/kobo-opml)
+   Compiling kobo-music-host v0.3.24 (/workspace/Cobalt/crates/kobo-music-host)
+   Compiling kobo-frame-host v0.3.24 (/workspace/Cobalt/crates/kobo-frame-host)
+   Compiling kobo-vault-host v0.3.24 (/workspace/Cobalt/crates/kobo-vault-host)
+   Compiling kobo-zstory v0.3.24 (/workspace/Cobalt/crates/kobo-zstory)
+   Compiling kobo-cli v0.3.24 (/workspace/Cobalt/crates/kobo-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 27.37s
+     Running unittests src/main.rs (target/debug/deps/kobo-c1fa1094948415e1)
+
+running 6 tests
+test exports::tests::inkling_refuses_missing_invalid_and_oversized_result_fixtures ... ok
+test exports::tests::other_apps_still_require_a_verified_offer ... ok
+test exports::tests::inkling_receives_the_apps_plain_state_export_without_an_offer ... ok
+test exports::tests::command_requires_a_single_explicit_destination_and_known_app_identity ... ok
+test exports::tests::receive_keeps_existing_files_and_reuses_a_complete_identical_copy ... ok
+test exports::tests::symlinks_and_overlong_sources_are_refused_before_receiving ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 426 filtered out; finished in 0.00s

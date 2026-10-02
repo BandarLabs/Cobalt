@@ -1,0 +1,15 @@
+{
+  "capture_mode": "in-process original app screen builders, callbacks, and actual Kobo renderer; not an interactive simulator",
+  "baseline_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "baseline_source_sha256": "5ab40fd3576a1276ccd3721b676c6e4930554609e6692939b46158431a9e33d9",
+  "display": "CLARA_BW_METRICS 1072x1448; installed interface face; default text size",
+  "chrome": "synthetic status strip and runtime-equivalent Back",
+  "scenario": "Open the setup guide while Sync is paused, then return through runtime Back without enabling Sync",
+  "before": "Guide/Folders/About emitted owns_back=false, so shared runtime Back policy leaves the app before the existing handler is offered the event",
+  "after": "Supporting pages own Back; root Status releases it; redundant Back controls removed to resolve the SDK AmbiguousBack warning",
+  "image_sha256": {
+    "guide-before.png": "5f45c253fcce28750b57912f791b40d548791c008c2cf249880612a108eaf5c9",
+    "guide-after.png": "0950c52830123f99a81980f776d131679c2ecb98591c5457308f8f32dd61eb6d",
+    "status-after-back.png": "e64b95b6a866bd5485ad4830b6a0d6a07cc1711d30c95c1c24da604015062868"
+  }
+}
