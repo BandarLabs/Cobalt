@@ -1,0 +1,4104 @@
+{
+  "app": "pubquiz",
+  "PR": 242,
+  "pr_url": "https://github.com/BandarLabs/Cobalt/pull/242",
+  "before_source": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "final_after_source": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+  "capture_kind": "Full Cobalt simulator, bundled fonts, actual hit targets, ideal frame capture",
+  "profiles": 9,
+  "font_percentages_tested": [
+    100
+  ],
+  "orientation": "portrait",
+  "selected_scene": "setup",
+  "after_route_result": "9/9 passed",
+  "before_route_nonpasses": [],
+  "limits": [
+    "Simulator fixture services; no physical hardware or live service certification",
+    "Default 100% text and portrait captures here; this packet does not claim new large-font or landscape coverage",
+    "One representative scene per profile; complete route frames are in the linked workflow artifacts"
+  ],
+  "source_equivalence": null,
+  "pages": [
+    {
+      "page": 1,
+      "profile": "clara-bw-391",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "8669b3d843dd035b87eca5b9ac30766f1120b69fd65cb283981e1d2ec9c438cf",
+        "pixel_sha256": "34a5209feca222367ee407ceb0772f3b6e09b46a5b620e7ace92faed45e746c7",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "34a5209feca222367ee407ceb0772f3b6e09b46a5b620e7ace92faed45e746c7",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "6240",
+              "unixMillis": "1790897095686",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 620984,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2407",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2372",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-391",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 620984,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1208,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 472,
+                    "x": 48,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 448,
+                    "width": 992,
+                    "x": 40,
+                    "y": 272
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 72,
+                    "width": 384,
+                    "x": 48,
+                    "y": 752
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 864
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 248,
+                    "x": 48,
+                    "y": 904
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 992,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1304
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 616,
+                    "x": 216,
+                    "y": 1360
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "1bc94a84576fc6ef47f34607445a15527ed575a88dd1bc7e511021e50a93d62a",
+        "pixel_sha256": "254d7cb84cc636d3bc47af4547be4bc6050031038fd570d0eeeab95c9db5b129",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "254d7cb84cc636d3bc47af4547be4bc6050031038fd570d0eeeab95c9db5b129",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7751",
+              "unixMillis": "1790900258653",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 522261,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2389",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2346",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-391",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 522261,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1256,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 992,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 224,
+                    "width": 984,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1248
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "clara-bw-391",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "clara-bw-391",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 2,
+      "profile": "clara-bw-395",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "44fe157c88265e9b8a12b05fa00c9090f9e0a88d0a6b4e77a11816599d000522",
+        "pixel_sha256": "236f258678f0ee2d2e672e088069eb033e942a11f52770e67da0d3a854b6d096",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "236f258678f0ee2d2e672e088069eb033e942a11f52770e67da0d3a854b6d096",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "6905",
+              "unixMillis": "1790896942272",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 620984,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2673",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2637",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-395",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 620984,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1208,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 472,
+                    "x": 48,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 448,
+                    "width": 992,
+                    "x": 40,
+                    "y": 272
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 72,
+                    "width": 384,
+                    "x": 48,
+                    "y": 752
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 864
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 248,
+                    "x": 48,
+                    "y": 904
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 992,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1304
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 616,
+                    "x": 216,
+                    "y": 1360
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "1bc94a84576fc6ef47f34607445a15527ed575a88dd1bc7e511021e50a93d62a",
+        "pixel_sha256": "254d7cb84cc636d3bc47af4547be4bc6050031038fd570d0eeeab95c9db5b129",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "254d7cb84cc636d3bc47af4547be4bc6050031038fd570d0eeeab95c9db5b129",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8922",
+              "unixMillis": "1790900269743",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 522261,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2609",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2553",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-395",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 522261,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1256,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 992,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 224,
+                    "width": 984,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1248
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "clara-bw-395",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "clara-bw-395",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 3,
+      "profile": "clara-hd-376",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "5dc8107b8cb92504a863be49ac9fa84b4b265a4693e0f50790f5a04e85b5b3f4",
+        "pixel_sha256": "37f0a4cc59ce59dd26cb08539d194aab0ba57fdee91aaf73912660cbd42e7f6f",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "37f0a4cc59ce59dd26cb08539d194aab0ba57fdee91aaf73912660cbd42e7f6f",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "6410",
+              "unixMillis": "1790898438706",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 620984,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2536",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2501",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-hd-376",
+              "model": "Kobo Clara HD",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 620984,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1208,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 472,
+                    "x": 48,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 448,
+                    "width": 992,
+                    "x": 40,
+                    "y": 272
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 72,
+                    "width": 384,
+                    "x": 48,
+                    "y": 752
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 864
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 248,
+                    "x": 48,
+                    "y": 904
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 992,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1304
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 616,
+                    "x": 216,
+                    "y": 1360
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "877f3b9b1689b17bc9e5826f710c85ae44820550b6b97555f07f62da6d1020b2",
+        "pixel_sha256": "e9963ac05faa779b4ad29dd546606e374cce05dd27a72bfcbfa381b5ab803a0d",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "e9963ac05faa779b4ad29dd546606e374cce05dd27a72bfcbfa381b5ab803a0d",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7340",
+              "unixMillis": "1790900482495",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 522261,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2257",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2213",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-hd-376",
+              "model": "Kobo Clara HD",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 522261,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1256,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 992,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 224,
+                    "width": 984,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1248
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "clara-hd-376",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "clara-hd-376",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 4,
+      "profile": "clara-colour-393",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "a117653455bb9c39eb3a942298875ba1ea947a463b3746d399bc44154ec846f8",
+        "pixel_sha256": "380b713cfa4532dffea9e3c01c354abc815a72af61873cb34dd3a3928a9adba7",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "380b713cfa4532dffea9e3c01c354abc815a72af61873cb34dd3a3928a9adba7",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "5215",
+              "unixMillis": "1790898842623",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 620984,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2054",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2035",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1448,
+              "id": "clara-colour-393",
+              "model": "Kobo Clara Colour",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 620984,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1208,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 472,
+                    "x": 48,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 448,
+                    "width": 992,
+                    "x": 40,
+                    "y": 272
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 72,
+                    "width": 384,
+                    "x": 48,
+                    "y": 752
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 864
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 248,
+                    "x": 48,
+                    "y": 904
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 992,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1304
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 616,
+                    "x": 216,
+                    "y": 1360
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "ced99645adada3eacf3c345ccd1ee0f10fab757a8b39db45ba72ddcace5b84d2",
+        "pixel_sha256": "bc4c196318c3a4bfc13e19864b80af8f1698988910a4f385cb5b61e9cebd98ae",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "bc4c196318c3a4bfc13e19864b80af8f1698988910a4f385cb5b61e9cebd98ae",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8585",
+              "unixMillis": "1790900536436",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 522261,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2538",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2484",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1448,
+              "id": "clara-colour-393",
+              "model": "Kobo Clara Colour",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 536,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 535
+              }
+            },
+            "transition": {
+              "dirty": 522261,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1256,
+                "width": 1072,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 992,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 224,
+                    "width": 984,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1072,
+                    "x": 0,
+                    "y": 1248
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "clara-colour-393",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "clara-colour-393",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 5,
+      "profile": "elipsa-2e-389",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "c3b368f4a6939e95fe239f1297e24096331655bf1fe25968c03548ce8985359d",
+        "pixel_sha256": "d18231f788564f23e8bb17b869cefac16b35473978ce2697e9a1b643ed78e523",
+        "width": 1404,
+        "height": 1872,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "d18231f788564f23e8bb17b869cefac16b35473978ce2697e9a1b643ed78e523",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "6188",
+              "unixMillis": "1790899254233",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 494389,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2452",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2420",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1872,
+              "id": "elipsa-2e-389",
+              "model": "Kobo Elipsa 2E",
+              "pixelsPerInch": 227,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1872,
+                "xMin": 0,
+                "yMax": 1404,
+                "yMin": 0
+              },
+              "width": 1404
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 702,
+                "y": 282
+              },
+              "raw": {
+                "x": 1590,
+                "y": 703
+              }
+            },
+            "transition": {
+              "dirty": 494389,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1696,
+                "width": 1404,
+                "x": 0,
+                "y": 136
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 608,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 136
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 768
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1404,
+                    "x": 0,
+                    "y": 1760
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 24,
+                    "width": 768,
+                    "x": 312,
+                    "y": 1808
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "77dcc0f4d6e8f0e5e53869440ecdb2af0354530e2da3812f8b086e09afb9d930",
+        "pixel_sha256": "9c8cacb3cc3edb349b420a2f813a9f78448b3df0a3cc1bbd1853b7324171d0ff",
+        "width": 1404,
+        "height": 1872,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "9c8cacb3cc3edb349b420a2f813a9f78448b3df0a3cc1bbd1853b7324171d0ff",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8824",
+              "unixMillis": "1790900725669",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 436090,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2820",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2743",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1872,
+              "id": "elipsa-2e-389",
+              "model": "Kobo Elipsa 2E",
+              "pixelsPerInch": 227,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1872,
+                "xMin": 0,
+                "yMax": 1404,
+                "yMin": 0
+              },
+              "width": 1404
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 702,
+                "y": 282
+              },
+              "raw": {
+                "x": 1590,
+                "y": 703
+              }
+            },
+            "transition": {
+              "dirty": 436090,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1728,
+                "width": 1404,
+                "x": 0,
+                "y": 136
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 520,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 136
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 752,
+                    "width": 1072,
+                    "x": 168,
+                    "y": 680
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 104,
+                    "width": 1404,
+                    "x": 0,
+                    "y": 1760
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "elipsa-2e-389",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "elipsa-2e-389",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 6,
+      "profile": "libra-2-388",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "b9c69a0c3469f2cb2f9e29a6feb2411b58c230ba7c59ab90d5758781ecdf8506",
+        "pixel_sha256": "93451e4c8882130dd2f720b3d2ee63d9a759dcb8e7611b84328ebcab8cd24136",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "93451e4c8882130dd2f720b3d2ee63d9a759dcb8e7611b84328ebcab8cd24136",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "6567",
+              "unixMillis": "1790899448563",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 717131,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2604",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2547",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-2-388",
+              "model": "Kobo Libra 2",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 633
+              }
+            },
+            "transition": {
+              "dirty": 717131,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1440,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 800,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1536
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 712,
+                    "x": 264,
+                    "y": 1592
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "2f08771b20251e7743a673789da28214b49152158cf7dd5c3d33457507c3c0a6",
+        "pixel_sha256": "af7a7bf972744854d6aba34948903531bf3f97aa598bef186624be9f70625e6b",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "af7a7bf972744854d6aba34948903531bf3f97aa598bef186624be9f70625e6b",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "9259",
+              "unixMillis": "1790900804482",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 612311,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2983",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2897",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-2-388",
+              "model": "Kobo Libra 2",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 633
+              }
+            },
+            "transition": {
+              "dirty": 612311,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1488,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 528,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1480
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "libra-2-388",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "libra-2-388",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 7,
+      "profile": "libra-colour-390",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "5cb7155ddf22cae1a0d718e46409e72083769c4ae8f9bcc47dc82b9129d6246e",
+        "pixel_sha256": "73dc781c9ee68e70008b0ef5fe97505276518b9dbdfe88f712b5159e5b078a25",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "73dc781c9ee68e70008b0ef5fe97505276518b9dbdfe88f712b5159e5b078a25",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "6410",
+              "unixMillis": "1790899712705",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 717131,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2603",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2546",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 1307,
+                "y": 633
+              }
+            },
+            "transition": {
+              "dirty": 717131,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1440,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 800,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1536
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 712,
+                    "x": 264,
+                    "y": 1592
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "a0d1a12848ac6b99dc839f992d6d7f8282b0c62a714bf733a17d328fc3aa14e5",
+        "pixel_sha256": "3e596c0471cc97d2a5e50b85bf4e7a6279e9444229372f97baa512b1acb37ca3",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "3e596c0471cc97d2a5e50b85bf4e7a6279e9444229372f97baa512b1acb37ca3",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "9136",
+              "unixMillis": "1790900998000",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 612311,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2870",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2784",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 1307,
+                "y": 633
+              }
+            },
+            "transition": {
+              "dirty": 612311,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1488,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 528,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1480
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "libra-colour-390",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "libra-colour-390",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 8,
+      "profile": "libra-colour-390-4.46.23836",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "74684c1e5d170840122ea0d6465ebca576d066551552dda01bb287ef70d90bee",
+        "pixel_sha256": "773d7bee72b9ae7bb03e69a9380b098c3a8e6ca89bef4adc094383ab4321318a",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "773d7bee72b9ae7bb03e69a9380b098c3a8e6ca89bef4adc094383ab4321318a",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "6530",
+              "unixMillis": "1790899896576",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 717131,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2695",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2637",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390-4.46.23836",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 1307,
+                "y": 633
+              }
+            },
+            "transition": {
+              "dirty": 717131,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1440,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 800,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1536
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 712,
+                    "x": 264,
+                    "y": 1592
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "880d09d176f6a22077b5fa554f32f21a4309f9ed75c0a0627561744ce8d2f699",
+        "pixel_sha256": "20e6860be7764d2784a4cf971769df1db5aa59a973ecad3a85833acd38d2773f",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "20e6860be7764d2784a4cf971769df1db5aa59a973ecad3a85833acd38d2773f",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7795",
+              "unixMillis": "1790901068000",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 612311,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2474",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2424",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390-4.46.23836",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 1307,
+                "y": 633
+              }
+            },
+            "transition": {
+              "dirty": 612311,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1488,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 528,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1480
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "libra-colour-390-4.46.23836",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "libra-colour-390-4.46.23836",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    },
+    {
+      "page": 9,
+      "profile": "libra-h2o-384",
+      "before": {
+        "filename": "setup.png",
+        "sha256": "08ad303c9accb3f4d78c9249191258bba722fc9bce3b209788717483bb9a7167",
+        "pixel_sha256": "ca6156ff2d15a4972667adf12a161ef9bdbf65ae41afbca1b32d87bc8dc2668a",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "ca6156ff2d15a4972667adf12a161ef9bdbf65ae41afbca1b32d87bc8dc2668a",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7116",
+              "unixMillis": "1790900175266",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 717131,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2810",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2751",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-h2o-384",
+              "model": "Kobo Libra H2O",
+              "pixelsPerInch": 300,
+              "rotation": 0,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1679,
+                "xMin": 0,
+                "yMax": 1263,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 631
+              }
+            },
+            "transition": {
+              "dirty": 717131,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1440,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 800,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 128,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 1016
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1536
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 712,
+                    "x": 264,
+                    "y": 1592
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "19b8611f6a860ba11a976273e0ca53cd621e0405cb5f7b33d80308a72f92f7d8",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        }
+      },
+      "after": {
+        "filename": "setup.png",
+        "sha256": "a550b0fa667ee8301daae92c455e191ce33b6e9bd093c383c8a45127259b071f",
+        "pixel_sha256": "9c996aa6dd71781aea3232e0c7091a7613c7d59c20de11aefec8b11c3bd94ab1",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "pubquiz",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "9c996aa6dd71781aea3232e0c7091a7613c7d59c20de11aefec8b11c3bd94ab1",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "4",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8607",
+              "unixMillis": "1790901269581",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 612311,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "21",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "pubquiz",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "4",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2677",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "4",
+              "submittedAtMillis": "2595",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-h2o-384",
+              "model": "Kobo Libra H2O",
+              "pixelsPerInch": 300,
+              "rotation": 0,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1679,
+                "xMin": 0,
+                "yMax": 1263,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 4,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 632,
+                "y": 373
+              },
+              "raw": {
+                "x": 373,
+                "y": 631
+              }
+            },
+            "transition": {
+              "dirty": 612311,
+              "full": false,
+              "refresh": 4,
+              "region": {
+                "height": 1488,
+                "width": 1264,
+                "x": 0,
+                "y": 184
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 632,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 184
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 848
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 528,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 896
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 192,
+                    "width": 1264,
+                    "x": 0,
+                    "y": 1480
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "e3b1273c8cb4a065438f1d84c9db5c6bf39318260f7ff82230dcb2ec028b6238",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "297731d1f01556f5845a0f4c0abf5aaf84861016"
+          },
+          "version": 1
+        }
+      },
+      "before_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+        "pr": 242,
+        "profile": "libra-h2o-384",
+        "phase": "before",
+        "app_source_tree": "e821909d701c693a8a8d12aeda9d1587da44e45e",
+        "production_source_tree": "ee0700a14414d07ff26dd9d1514facc3edf54185",
+        "route_sha256": "d249a55a2f90eac9f2f069a97bae8c846d71c142257c09cdac432935891f2d15",
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "after_route_result": {
+        "app": "pubquiz",
+        "launched": true,
+        "status": "pass",
+        "route": "apps/pubquiz/drive.kobo",
+        "exit_code": 0,
+        "source_sha": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+        "pr": 242,
+        "profile": "libra-h2o-384",
+        "phase": "after",
+        "app_source_tree": "b179636622c95b8d7934849139716f3b7de2ecbc",
+        "production_source_tree": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+        "route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "committed_route_sha256": "6d5c46ff48370bef403c66a91367421fca363a6e394147ef21aac21f2882e88c",
+        "review_route": null,
+        "capture_route": "pubquiz/profile-route.kobo",
+        "capture_scope": "committed route plus final screenshot"
+      },
+      "before_run": 36939992697,
+      "after_run": 36945124902
+    }
+  ],
+  "pdf_sha256": "86bdc3ac57ed67fe03d5c57c722527b3d4f90575819ae98fb12aadac1e336dd8",
+  "pdf_bytes": 635577,
+  "verified_embedded_pixels": true
+}
