@@ -1,0 +1,760 @@
+Native renderer snapshot, not interactive simulator.
+Owns runtime Back: false
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1072,
+                    height: 59,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 0,
+                    width: 78,
+                    height: 59,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 955,
+                    y: 12,
+                    width: 70,
+                    height: 35,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 896,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 837,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 59,
+                    width: 1072,
+                    height: 100,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 59,
+                    width: 100,
+                    height: 100,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 925,
+                    y: 59,
+                    width: 100,
+                    height: 100,
+                },
+                kind: BarGlyph(
+                    ActionId(
+                        1540317526,
+                    ),
+                    Plus,
+                ),
+                text_lines: [
+                    "Add a catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 171,
+                    y: 86,
+                    width: 730,
+                    height: 46,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Catalogs",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 159,
+                    width: 1072,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 175,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3386184589,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 200,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 199,
+                    width: 795,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 1",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 245,
+                    width: 795,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-0.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 934,
+                    y: 199,
+                    width: 67,
+                    height: 35,
+                },
+                kind: RowTrailing,
+                text_lines: [
+                    "Open",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 316,
+                    width: 910,
+                    height: 4,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 328,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3369406970,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 353,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 352,
+                    width: 886,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 2",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 398,
+                    width: 886,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-1.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 469,
+                    width: 910,
+                    height: 4,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 481,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3352629351,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 506,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 505,
+                    width: 886,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 3",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 551,
+                    width: 886,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-2.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 622,
+                    width: 910,
+                    height: 4,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 634,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3335851732,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 659,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 658,
+                    width: 886,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 4",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 704,
+                    width: 886,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-3.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 775,
+                    width: 910,
+                    height: 4,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 787,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3319074113,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 812,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 811,
+                    width: 886,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 5",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 857,
+                    width: 886,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-4.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 928,
+                    width: 910,
+                    height: 4,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 940,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3302296494,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 965,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 964,
+                    width: 886,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 6",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 1010,
+                    width: 886,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-5.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 1081,
+                    width: 910,
+                    height: 4,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1093,
+                    width: 978,
+                    height: 129,
+                },
+                kind: Row(
+                    ActionId(
+                        3285518875,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1118,
+                    width: 44,
+                    height: 44,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 1117,
+                    width: 886,
+                    height: 46,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Library 7",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 115,
+                    y: 1163,
+                    width: 886,
+                    height: 35,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://library-6.example/catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1318,
+                    width: 978,
+                    height: 83,
+                },
+                kind: PagePosition,
+                text_lines: [
+                    "1 of 3",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 907,
+                    y: 1318,
+                    width: 118,
+                    height: 83,
+                },
+                kind: PageNext(
+                    ActionId(
+                        2722233933,
+                    ),
+                ),
+                text_lines: [],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 175,
+            width: 1072,
+            height: 1143,
+        },
+        flow_height: 1047,
+        page_turns: Declared(
+            PageTurns {
+                previous: ActionId(
+                    388706537,
+                ),
+                next: ActionId(
+                    2722233933,
+                ),
+                menu: None,
+                position: Some(
+                    (
+                        1,
+                        3,
+                    ),
+                ),
+            },
+        ),
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

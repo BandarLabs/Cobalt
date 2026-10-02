@@ -1,0 +1,28 @@
+{
+  "source": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+  "kind": "native app renderer and callbacks, not runtime navigation or hardware",
+  "profiles": [
+    "clara-bw-391",
+    "clara-bw-395",
+    "clara-hd-376",
+    "clara-colour-393",
+    "elipsa-2e-389",
+    "libra-2-388",
+    "libra-colour-390",
+    "libra-colour-390-4.46.23836",
+    "libra-h2o-384"
+  ],
+  "scales": [
+    100,
+    170
+  ],
+  "phase": "before",
+  "apps": {
+    "chat": "d0e84f4f05748b9acf2efcba434f130317abebdf",
+    "kitchencard": "d1182a65814b374edcff8b432b61168e7ce529bd",
+    "readlater": "631046848a98a7d4fce734a270ee3b5be04a4f3e",
+    "parser": "5b2c53110cfed52dfc25e79910889a0ea4f0f2a5",
+    "gutenbird": "83b2276974974022e6d74498bdaac541a890f185"
+  },
+  "sha256": {}
+}

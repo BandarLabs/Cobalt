@@ -1,0 +1,9 @@
+   Compiling cobalt-native-audit-gutenbird v0.1.0 (/tmp/cobalt-gutenbird-native-zeg58bmu)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.41s
+     Running unittests src/lib.rs (target/debug/deps/cobalt_native_audit_gutenbird-f4ab89a36a49d68f)
+
+running 1 test
+test tests::native_review_snapshots ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 103 filtered out; finished in 5.54s
+

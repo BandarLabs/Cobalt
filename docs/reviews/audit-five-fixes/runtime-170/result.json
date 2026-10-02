@@ -1,0 +1,16 @@
+{
+  "source": "5643712166a10ef66ff0e7bffac149b07d0beb7c",
+  "cli_sha256": "6fd7e6074f75a8f02ab15470ff303d2c5473d7a12883662465f0b3a31ad155cb",
+  "profile": "clara-bw-391",
+  "scale": "170",
+  "runtime_navigation": true,
+  "checks": [
+    "chat all long-turn pages, overlay close, service Back, root exit",
+    "kitchen settings owns exactly runtime Back, root exits",
+    "readlater settings Back and root exit",
+    "parser tutorial resume, library Back and root exit; race covered separately by callback test",
+    "gutenbird catalog detour and root exit"
+  ],
+  "status": "passed",
+  "hardware": false
+}

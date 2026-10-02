@@ -1,0 +1,479 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1404,
+                    height: 45,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 0,
+                    width: 104,
+                    height: 45,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1314,
+                    y: 9,
+                    width: 54,
+                    height: 27,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1269,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1224,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 45,
+                    width: 1404,
+                    height: 76,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 45,
+                    width: 76,
+                    height: 76,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 1292,
+                    y: 45,
+                    width: 76,
+                    height: 76,
+                },
+                kind: BarGlyph(
+                    ActionId(
+                        1540317526,
+                    ),
+                    Plus,
+                ),
+                text_lines: [
+                    "Add a catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 130,
+                    y: 53,
+                    width: 1144,
+                    height: 59,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Catalogs",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 121,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 133,
+                    width: 1072,
+                    height: 141,
+                },
+                kind: Row(
+                    ActionId(
+                        3386184589,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 164,
+                    width: 33,
+                    height: 33,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 151,
+                    width: 897,
+                    height: 59,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Project Gutenberg",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 210,
+                    width: 897,
+                    height: 46,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://www.gutenberg.org/ebooks.opds/",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 1132,
+                    y: 151,
+                    width: 88,
+                    height: 46,
+                },
+                kind: RowTrailing,
+                text_lines: [
+                    "Open",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 283,
+                    width: 1021,
+                    height: 3,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 292,
+                    width: 1072,
+                    height: 141,
+                },
+                kind: Row(
+                    ActionId(
+                        3369406970,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 323,
+                    width: 33,
+                    height: 33,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 310,
+                    width: 1003,
+                    height: 59,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Standard Ebooks",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 369,
+                    width: 1003,
+                    height: 46,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://standardebooks.org/feeds/atom/new-releases",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 442,
+                    width: 1021,
+                    height: 3,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 451,
+                    width: 1072,
+                    height: 141,
+                },
+                kind: Row(
+                    ActionId(
+                        3352629351,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 482,
+                    width: 33,
+                    height: 33,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 469,
+                    width: 1003,
+                    height: 59,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "Open Library",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 528,
+                    width: 1003,
+                    height: 46,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://openlibrary.org/opds",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 601,
+                    width: 1021,
+                    height: 3,
+                },
+                kind: RowRule,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 610,
+                    width: 1072,
+                    height: 141,
+                },
+                kind: Row(
+                    ActionId(
+                        3335851732,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 641,
+                    width: 33,
+                    height: 33,
+                },
+                kind: RowLead(
+                    Icon(
+                        Book,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 628,
+                    width: 1003,
+                    height: 59,
+                },
+                kind: RowTitle,
+                text_lines: [
+                    "OPDS 2.0 Test Catalog",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 217,
+                    y: 687,
+                    width: 1003,
+                    height: 46,
+                },
+                kind: RowSummary,
+                text_lines: [
+                    "https://test.opds.io/2.0/home.json",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 133,
+            width: 1404,
+            height: 1703,
+        },
+        flow_height: 618,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

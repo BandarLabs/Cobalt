@@ -1,0 +1,232 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1404,
+                    height: 45,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 0,
+                    width: 60,
+                    height: 45,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1314,
+                    y: 9,
+                    width: 54,
+                    height: 27,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1269,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1224,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 45,
+                    width: 1404,
+                    height: 76,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 45,
+                    width: 76,
+                    height: 76,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 130,
+                    y: 65,
+                    width: 1238,
+                    height: 35,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Kitchen Card settings",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 121,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 133,
+                    width: 1072,
+                    height: 89,
+                },
+                kind: Field(
+                    ActionId(
+                        1085029842,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 184,
+                    y: 160,
+                    width: 1036,
+                    height: 35,
+                },
+                kind: FieldValue(
+                    false,
+                ),
+                text_lines: [
+                    "https://mealie.example",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 166,
+                    y: 231,
+                    width: 1072,
+                    height: 89,
+                },
+                kind: Field(
+                    ActionId(
+                        2806832120,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 184,
+                    y: 258,
+                    width: 1036,
+                    height: 35,
+                },
+                kind: FieldValue(
+                    false,
+                ),
+                text_lines: [
+                    "mealie",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 233,
+                    y: 329,
+                    width: 938,
+                    height: 27,
+                },
+                kind: Secondary,
+                text_lines: [
+                    "On your computer run `kobo secret set mealie` with a Mealie API token, then sync here.",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 133,
+            width: 1404,
+            height: 1703,
+        },
+        flow_height: 223,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}
