@@ -108,7 +108,7 @@ def main():
                 drive("tap-at 536 724", "wait-for Zoom in", "tap Zoom in", "wait 2000")
                 capture("musicstand-zoom-staff")
                 drive("tap-at 536 724", "tap-id mark", "wait 800")
-                drive("tap-at 536 724", "wait-for Library", "tap Library", "wait-for Library", "wait-for marked")
+                drive("tap-at 536 724", "wait-for-id library", "tap-id library", "wait-for Library", "wait-for marked")
                 capture("musicstand-library-marked")
                 drive("tap Setlists", "wait-for Setlists",
                       "tap-id new-list", "wait-for Setlist 1")
