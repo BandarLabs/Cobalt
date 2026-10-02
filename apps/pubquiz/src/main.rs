@@ -1917,7 +1917,4 @@ mod help_layout_tests {
 }
 
 #[cfg(test)]
-mod review_capture;
-
-#[cfg(test)]
 mod setup_tests;

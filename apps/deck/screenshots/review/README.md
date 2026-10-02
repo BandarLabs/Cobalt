@@ -1,24 +1,5 @@
-# Deck command-output review
+# Archived review evidence
 
-These are in-process app/renderer captures, not interactive simulator screenshots.
-The before image uses the unchanged app screen builder. All images use Clara BW
-metrics, the installed interface face, and synthetic runtime status/Back chrome.
+[Browse the original images, diagnostics, provenance, and reproduction notes](https://github.com/BandarLabs/Cobalt/tree/e0eda8264d57111aaae2fc3a0bab0f5a17d4fbf8/docs/reviews/comment-remediation-20261002/pr-273/apps/deck/screenshots/review). The immutable archive preserves this review packet byte for byte; it is historical evidence for its recorded source revisions, not proof for later edits.
 
-A command result within the daemon's 2 KB output limit overflowed a single screen.
-The fixed result is paginated using the SDK's measured prose path. The command
-heading and exit status occupy page one; continuation pages carry the command name
-in the top bar. Output line boundaries are kept, and page arrows/position remain
-reachable. Runtime Back now returns from a result to the deck, preserving its
-last-result acknowledgement.
-
-```sh
-COBALT_REVIEW_OUT=/tmp/deck-review cargo test -p kobo-deck capture_review_pages_when_requested
-```
-
-Regression tests verify every output word and page at all nine text sizes,
-reachable page targets, repeated turns, no command dispatch while paging, empty
-and missing output, and the Back transition. The existing command confirmation,
-preview safety and polling tests remain intact.
-
-The executor blocks the simulator's Unix-domain socket bind with EPERM. No
-interactive simulator, actual computer command, or physical Kobo success is claimed.
+Reusable capture drivers now live in [tools/review-captures](../../../../tools/review-captures/README.md), outside production app sources. Their commands use relocated script/scenario paths; ordinary regression tests remain with the app.

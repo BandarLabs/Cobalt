@@ -2219,9 +2219,6 @@ mod tests {
 mod navigation_tests;
 
 #[cfg(test)]
-mod review_capture;
-
-#[cfg(test)]
 mod large_text_tests {
     use super::*;
 

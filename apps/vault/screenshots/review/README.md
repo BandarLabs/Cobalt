@@ -1,26 +1,5 @@
-# Vault list and import-report review
+# Archived review evidence
 
-These are in-process app/renderer captures, not interactive-simulator screenshots.
-The original implementation produced the before images. Captures use Clara BW
-metrics, the installed interface face, and synthetic runtime status/Back chrome.
+[Browse the original images, diagnostics, provenance, and reproduction notes](https://github.com/BandarLabs/Cobalt/tree/e0eda8264d57111aaae2fc3a0bab0f5a17d4fbf8/docs/reviews/comment-remediation-20261002/pr-273/apps/vault/screenshots/review). The immutable archive preserves this review packet byte for byte; it is historical evidence for its recorded source revisions, not proof for later edits.
 
-The original import report clipped a 12-file failure list. Measured pages now keep
-all failures and the About guidance reachable. A failure row opens its full filename
-and reason, which also page when long. Back returns to the same report page.
-
-A callback journey also reproduced a list-navigation defect: 50 Next actions at a
-three-page list left the internal cursor at 50. One Previous changed it to 49 while
-the screen remained on page 3. The stored cursor now clamps with the displayed page,
-so one Previous immediately returns to page 2. List arrows and position occupy the
-reserved page strip rather than unconditionally active in-flow buttons.
-
-```sh
-COBALT_REVIEW_OUT=/tmp/vault-review cargo test -p kobo-vault capture_review_pages_when_requested
-```
-
-Regression tests cover Browse, Tags, tagged notes, Recent, Search, Backlinks and the
-import report at all nine text sizes, every row target, every word of long failure
-explanations, repeated page turns, opening a failure and returning with Back.
-
-Interactive simulation is blocked here by Unix socket bind EPERM. No simulator,
-live shelf transfer or physical-device success is claimed.
+Reusable capture drivers now live in [tools/review-captures](../../../../tools/review-captures/README.md), outside production app sources. Their commands use relocated script/scenario paths; ordinary regression tests remain with the app.

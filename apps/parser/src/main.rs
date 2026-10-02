@@ -1497,7 +1497,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod review_capture;
-
-#[cfg(test)]
 mod navigation_tests;
