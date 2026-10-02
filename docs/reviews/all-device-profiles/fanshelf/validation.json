@@ -1,0 +1,4508 @@
+{
+  "app": "fanshelf",
+  "PR": 263,
+  "pr_url": "https://github.com/BandarLabs/Cobalt/pull/263",
+  "before_source": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "final_original_pr_head": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+  "capture_kind": "Full Cobalt simulator; ideal grey8 frames",
+  "profiles": 9,
+  "interface_scale_percent": 100,
+  "reading_scale_percent": 100,
+  "orientation": "portrait",
+  "selected_scene": "shelf",
+  "limits": [
+    "Simulator captures with fixture services; no physical hardware or live-service certification.",
+    "interface 100% / reading 100% in portrait only; no 170% completion claim.",
+    "One representative scene per profile; complete routes remain in source artifacts.",
+    "Capture revisions are retained separately from original PR and consolidated source heads."
+  ],
+  "source_equivalence": {
+    "da6a787c9fefffc287c3b0c71f2eabab03729102": {
+      "capture_head": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+      "final_original_pr_head": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+      "original_source_objects": [
+        {
+          "path": "apps/fanshelf/src",
+          "capture_object": "5f7b0653a003dcca6f1b081fc65e715861aaca16",
+          "final_object": "5f7b0653a003dcca6f1b081fc65e715861aaca16",
+          "same": true
+        },
+        {
+          "path": "apps/fanshelf/Cargo.toml",
+          "capture_object": "ca92d9e9c58d6b7d9a13a6fe53725babf5f811f2",
+          "final_object": "ca92d9e9c58d6b7d9a13a6fe53725babf5f811f2",
+          "same": true
+        },
+        {
+          "path": "Cargo.toml",
+          "capture_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+          "final_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+          "same": true
+        },
+        {
+          "path": "assets",
+          "capture_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "final_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "capture_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "final_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "capture_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "final_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "capture_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "final_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "same": true
+        },
+        {
+          "path": "crates/kobod",
+          "capture_object": "e4456264379a102a84ad300c329156bf58a09993",
+          "final_object": "e4456264379a102a84ad300c329156bf58a09993",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "capture_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "final_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-tap",
+          "capture_object": "456651dc09d52a50f10907b438438095cf0c976a",
+          "final_object": "456651dc09d52a50f10907b438438095cf0c976a",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-hal",
+          "capture_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+          "final_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "capture_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "final_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "capture_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "final_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "capture_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "final_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "same": true
+        }
+      ],
+      "consolidated_source_match": {
+        "pr": 273,
+        "head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+        "objects": [
+          {
+            "path": "apps/fanshelf/src",
+            "original_object": "5f7b0653a003dcca6f1b081fc65e715861aaca16",
+            "consolidated_object": "5f7b0653a003dcca6f1b081fc65e715861aaca16",
+            "same": true
+          },
+          {
+            "path": "apps/fanshelf/Cargo.toml",
+            "original_object": "ca92d9e9c58d6b7d9a13a6fe53725babf5f811f2",
+            "consolidated_object": "ca92d9e9c58d6b7d9a13a6fe53725babf5f811f2",
+            "same": true
+          },
+          {
+            "path": "Cargo.toml",
+            "original_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+            "consolidated_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+            "same": true
+          },
+          {
+            "path": "assets",
+            "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+            "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-sdk",
+            "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+            "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-sim",
+            "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+            "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-ui",
+            "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+            "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+            "same": true
+          },
+          {
+            "path": "crates/kobod",
+            "original_object": "e4456264379a102a84ad300c329156bf58a09993",
+            "consolidated_object": "e4456264379a102a84ad300c329156bf58a09993",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-shell",
+            "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+            "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-tap",
+            "original_object": "456651dc09d52a50f10907b438438095cf0c976a",
+            "consolidated_object": "456651dc09d52a50f10907b438438095cf0c976a",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-hal",
+            "original_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+            "consolidated_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-profile",
+            "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+            "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-abi",
+            "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+            "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-text",
+            "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+            "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+            "same": true
+          }
+        ],
+        "Cargo.lock": {
+          "capture_object": "111555e17b40e944616529ba53047543c6195052",
+          "original_object": "111555e17b40e944616529ba53047543c6195052",
+          "consolidated_object": "3ed4cff98d2ff639c2b89aae9d724b305e1af94e",
+          "same": false
+        }
+      },
+      "scope": "Source-object equivalence only; not a new capture or full-build identity. Cargo.lock differs on consolidated head and is recorded separately."
+    }
+  },
+  "pages": [
+    {
+      "page": 1,
+      "profile": "clara-bw-391",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/clara-bw-391/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "f0ce37a0f0a01ec12eef890d0d809a7251443f8a3f3c9ab3b3c195dd097c979a",
+        "pixel_sha256": "1b8c71e47e478439456db1f8edbec9029279f597614774c0eb7f2ba736f623db",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "1b8c71e47e478439456db1f8edbec9029279f597614774c0eb7f2ba736f623db",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "7999",
+              "unixMillis": "1790897323291",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "729",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "721",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-391",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "clara-bw-391",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "clara-bw-391",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11199738335,
+        "archive_sha256": "sha256:2f2316e3b85323428d22437d50c7881919bcba65481297382f1210684c599583",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/clara-bw-391/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "20a88503ed8a998c00973e0a76f802f8843703ee3abe0592ab4dac83684f2c7c",
+        "pixel_sha256": "d4ad3f19d49d49fe778dfa859a515652debb98d7fc2dc3f08eb582f29ae87f64",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "d4ad3f19d49d49fe778dfa859a515652debb98d7fc2dc3f08eb582f29ae87f64",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "11697",
+              "unixMillis": "1790890613030",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "729",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "721",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-391",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 440
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 576
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 616
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 728
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 768
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "clara-bw-391",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11195218156,
+        "archive_sha256": "sha256:2a4f66f6f4dd1b15fe867e9d365d53616212d30f182946414edf84094dbd6666",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 2,
+      "profile": "clara-bw-395",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/clara-bw-395/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "e5ad8b988fa1e9f637884880c0a05046e9e29d049cd6b6f62626672c1198aeb5",
+        "pixel_sha256": "b6675e4d66859c696642522d24efda5897dfd50ea42899c311853bc0eb8184a0",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "b6675e4d66859c696642522d24efda5897dfd50ea42899c311853bc0eb8184a0",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "8683",
+              "unixMillis": "1790897187083",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "800",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "791",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-395",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "clara-bw-395",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "clara-bw-395",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11199703260,
+        "archive_sha256": "sha256:a86a10312792ec07fc199a0ea6b4664640ffc609bd75c72ebebbb9658dd73bd2",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/clara-bw-395/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "f4b210193de5bbcea6404de3aedf10fb07fa8ab785691803ad126b435e4cdec3",
+        "pixel_sha256": "d7acc8f2ce5ea0e71d7b924528b177755e06ed0a9870c5f15f9f7915cf20eaa6",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "d7acc8f2ce5ea0e71d7b924528b177755e06ed0a9870c5f15f9f7915cf20eaa6",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "11464",
+              "unixMillis": "1790890675917",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "743",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "736",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-395",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 440
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 576
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 616
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 728
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 768
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "clara-bw-395",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11194889202,
+        "archive_sha256": "sha256:35967e3e0a8edbb33bf725077487f4e1d913f3ad7f32a7957f54e8342b714b11",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 3,
+      "profile": "clara-hd-376",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/clara-hd-376/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "a872e6265181bea0950dc9f145e61a8420c4922e91c453bc0b6ce88cf80f8926",
+        "pixel_sha256": "d19e7451668793ca11cab15038c2413601425d289a68837f9dee565445b3b9b1",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "d19e7451668793ca11cab15038c2413601425d289a68837f9dee565445b3b9b1",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "8007",
+              "unixMillis": "1790898668878",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "740",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "732",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-hd-376",
+              "model": "Kobo Clara HD",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "clara-hd-376",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "clara-hd-376",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11200399423,
+        "archive_sha256": "sha256:d5327758085d03000cd4ededefefe654e57ae9f29046ea75323a0b4858f17204",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/clara-hd-376/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "e11212939b445c42723df10e143dc1e51110176ee3ad4f686aabe6419ecd57d1",
+        "pixel_sha256": "b6414042fd57cff983bb5aa4a03a421849598338ceebf41cabdf15bf1cdc9360",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "b6414042fd57cff983bb5aa4a03a421849598338ceebf41cabdf15bf1cdc9360",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "12756",
+              "unixMillis": "1790891549260",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "799",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "792",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-hd-376",
+              "model": "Kobo Clara HD",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 440
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 576
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 616
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 728
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 768
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "clara-hd-376",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11196003718,
+        "archive_sha256": "sha256:6cabf588e671734c3167d2d3ad0c839c4b1db5f8ab18bd3f31f75e9418313f40",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 4,
+      "profile": "clara-colour-393",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/clara-colour-393/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "f643b5db0e9f8e9c41a6feba7c88e52302d23a23c8fd6308c306d85e8a8b835d",
+        "pixel_sha256": "2c9caa63ac42757c5ea1d786ccfb60e8d7aa79636b35682d7fd91614966e23d7",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "2c9caa63ac42757c5ea1d786ccfb60e8d7aa79636b35682d7fd91614966e23d7",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "6259",
+              "unixMillis": "1790899024699",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "528",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "523",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1448,
+              "id": "clara-colour-393",
+              "model": "Kobo Clara Colour",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 920,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "clara-colour-393",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "clara-colour-393",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11200524449,
+        "archive_sha256": "sha256:046f90a31fcc58f184b8581328fccf812a1570da26191c6eb0b04d357d27f479",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/clara-colour-393/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "e11212939b445c42723df10e143dc1e51110176ee3ad4f686aabe6419ecd57d1",
+        "pixel_sha256": "b6414042fd57cff983bb5aa4a03a421849598338ceebf41cabdf15bf1cdc9360",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "b6414042fd57cff983bb5aa4a03a421849598338ceebf41cabdf15bf1cdc9360",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "10669",
+              "unixMillis": "1790891547010",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 31875,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "619",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "614",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1448,
+              "id": "clara-colour-393",
+              "model": "Kobo Clara Colour",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 31875,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 984,
+                "x": 48,
+                "y": 440
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 576
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 616
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 920,
+                    "x": 112,
+                    "y": 728
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 768
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "clara-colour-393",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11195948760,
+        "archive_sha256": "sha256:83722c3e4423b2db9c994546ecc0b5bbd9abc25d2fdbe7f06bdc3cf58e04c9d8",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 5,
+      "profile": "elipsa-2e-389",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/elipsa-2e-389/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "32cf724d701bb31a7249f089c43d6175adca20f49056c8e7d49c0deda8d78b92",
+        "pixel_sha256": "9967091122f18745b3476c40f3cea3704b81927b1e6dd6a0f1c65e8ac7f4ed34",
+        "width": 1404,
+        "height": 1872,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "9967091122f18745b3476c40f3cea3704b81927b1e6dd6a0f1c65e8ac7f4ed34",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7177",
+              "unixMillis": "1790899484218",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 21706,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "667",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "663",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1872,
+              "id": "elipsa-2e-389",
+              "model": "Kobo Elipsa 2E",
+              "pixelsPerInch": 227,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1872,
+                "xMin": 0,
+                "yMax": 1404,
+                "yMin": 0
+              },
+              "width": 1404
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 21706,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 312,
+                "width": 1072,
+                "x": 168,
+                "y": 232
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 328,
+                    "x": 168,
+                    "y": 232
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1024,
+                    "x": 216,
+                    "y": 336
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 384,
+                    "x": 168,
+                    "y": 368
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1024,
+                    "x": 216,
+                    "y": 448
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 440,
+                    "x": 168,
+                    "y": 480
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "elipsa-2e-389",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "elipsa-2e-389",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201297456,
+        "archive_sha256": "sha256:fa77375570472e96319f52f01ab0a16f0d052ee09cf1902b91be673bda323630",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/elipsa-2e-389/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "4d228f956367989e112ba7143f498fb8a3097e92456e58f724e4b9d13e5bb6d3",
+        "pixel_sha256": "3088bdf125a9fa95f7508142961cf9791bab7aef3b50488eb93b7a193ae5c179",
+        "width": 1404,
+        "height": 1872,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "3088bdf125a9fa95f7508142961cf9791bab7aef3b50488eb93b7a193ae5c179",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "9470",
+              "unixMillis": "1790892339826",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 21706,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "555",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "552",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1872,
+              "id": "elipsa-2e-389",
+              "model": "Kobo Elipsa 2E",
+              "pixelsPerInch": 227,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1872,
+                "xMin": 0,
+                "yMax": 1404,
+                "yMin": 0
+              },
+              "width": 1404
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 21706,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 312,
+                "width": 1072,
+                "x": 168,
+                "y": 232
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 328,
+                    "x": 168,
+                    "y": 232
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 8,
+                    "width": 1024,
+                    "x": 216,
+                    "y": 336
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 384,
+                    "x": 168,
+                    "y": 368
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1024,
+                    "x": 216,
+                    "y": 448
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 64,
+                    "width": 440,
+                    "x": 168,
+                    "y": 480
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "elipsa-2e-389",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11196668140,
+        "archive_sha256": "sha256:ae4e4a63b3b52e129ac7d4eaebb65413d6baf7ac310dc867a90a9d9e7dffaafd",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 6,
+      "profile": "libra-2-388",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/libra-2-388/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "131cc956988ce00bc5642ef4c76810e65550e65e75eff266d5e4eef0707a833d",
+        "pixel_sha256": "3b6379e5db802a89fc0ee9ac1b80a57e9458f49daf4f30cb39eb2921ff490be8",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "3b6379e5db802a89fc0ee9ac1b80a57e9458f49daf4f30cb39eb2921ff490be8",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8107",
+              "unixMillis": "1790899699010",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "772",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "763",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-2-388",
+              "model": "Kobo Libra 2",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "libra-2-388",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "libra-2-388",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11200928201,
+        "archive_sha256": "sha256:b3e09b7db10700a3cc78ca924352224418699a61f1736cf9bbd7fc35a589e6eb",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/libra-2-388/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "ddd913737a79330791a0b43bcecd80f796f7c9251ffaa417f7416a3b34af8a51",
+        "pixel_sha256": "5e7e3d010840cdb00d1fc24c182818c8542ca82ba76591854d4b4760b3414961",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "5e7e3d010840cdb00d1fc24c182818c8542ca82ba76591854d4b4760b3414961",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "11544",
+              "unixMillis": "1790892503312",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "768",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "760",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-2-388",
+              "model": "Kobo Libra 2",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "libra-2-388",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11196428484,
+        "archive_sha256": "sha256:3a4d578901508cb65bb7a8affb7ba35f6ef92741455a2d7332e066c230f8bd02",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 7,
+      "profile": "libra-colour-390",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/libra-colour-390/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "4ad4685e363d0a994f55d6d23978a44b2dc25fa33538bf3b34ee6730480fa85c",
+        "pixel_sha256": "33a1e124bb8e00cfd990f07534f83decf57461d3d2c0da75f53ae6fce88ad509",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "33a1e124bb8e00cfd990f07534f83decf57461d3d2c0da75f53ae6fce88ad509",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7968",
+              "unixMillis": "1790899959465",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "768",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "759",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "libra-colour-390",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "libra-colour-390",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201870946,
+        "archive_sha256": "sha256:901041d70efb268bf2e47a5b12a5454128fdbb24f674036033f291d5dfef7aee",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/libra-colour-390/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "9d2fa3343bbaff659216feddc6faf24ab63adad9efd062b90d70c6a78596b432",
+        "pixel_sha256": "9bb9f3c7f7134e4d98ecf73d436f3e26c47f4fad2ad06c7705485da2caccbd1b",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "9bb9f3c7f7134e4d98ecf73d436f3e26c47f4fad2ad06c7705485da2caccbd1b",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "11413",
+              "unixMillis": "1790893230777",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "766",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "758",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "libra-colour-390",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11198000205,
+        "archive_sha256": "sha256:d0a25f832551f568a7b84015ba7a6aeaaac7acd6ec5a475dbec0fbdbb0e0818d",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 8,
+      "profile": "libra-colour-390-4.46.23836",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/libra-colour-390-4.46.23836/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "9731469a6b8b4ab3da7c4ba05824b002881d6e72d685763b69f6227a1704f602",
+        "pixel_sha256": "cbf2e255cca29455db8d2b8bd171324abf326b6fcf73a5e5363f9b95a4997ec1",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "cbf2e255cca29455db8d2b8bd171324abf326b6fcf73a5e5363f9b95a4997ec1",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "7950",
+              "unixMillis": "1790900142085",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "764",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "755",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390-4.46.23836",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "libra-colour-390-4.46.23836",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "libra-colour-390-4.46.23836",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201946003,
+        "archive_sha256": "sha256:99a74ecbadfef1cda914db4d198ebb99794fb627945fe19642b01acaaedba369",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/libra-colour-390-4.46.23836/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "e132bcfc7ca178099b803490d0fc2154db70a9aaed6ae6cc0bdcd270296ae281",
+        "pixel_sha256": "964c953964da2c304ed37ea9d8381b12635e24c5e5b5cf08dd06bf0759dcc773",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "964c953964da2c304ed37ea9d8381b12635e24c5e5b5cf08dd06bf0759dcc773",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "12129",
+              "unixMillis": "1790893461719",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "849",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "840",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390-4.46.23836",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "libra-colour-390-4.46.23836",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11197408487,
+        "archive_sha256": "sha256:e1e6f75aafe400ebc816ebd11671c79438f4e9d2af3f68e99417b8605f887525",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 9,
+      "profile": "libra-h2o-384",
+      "before": {
+        "filename": "shelf.png",
+        "archive_path": "before/libra-h2o-384/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "e6f288b987b2e344b194212725384dfbdd0b5857eb3cd7b966dbb828700b5eb9",
+        "pixel_sha256": "922136f55a0303d04c28f7c223a821e4a4b95b66f169d75f05722d242d69b4c7",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "922136f55a0303d04c28f7c223a821e4a4b95b66f169d75f05722d242d69b4c7",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8665",
+              "unixMillis": "1790900439691",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "852",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "843",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-h2o-384",
+              "model": "Kobo Libra H2O",
+              "pixelsPerInch": 300,
+              "rotation": 0,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1679,
+                "xMin": 0,
+                "yMax": 1263,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "89fcaf1a5e1cd32136951c6dd58701ddb712729cafc58ddf620de08f218025c7",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 263,
+              "profile": "libra-h2o-384",
+              "phase": "before",
+              "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+              "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+              "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+              "capture_route": "fanshelf/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 263,
+            "profile": "libra-h2o-384",
+            "phase": "before",
+            "app_source_tree": "73ed35dbce287798d974a96e09e12f4a5bdc80f4",
+            "production_source_tree": "f573823ce1b9bd57ace5987f8553a4ada4c59f3b",
+            "route_sha256": "68c7f3ad4d07cfece786082a3e38a045af9e728290e8c7a1c16ff2e931abaf42",
+            "capture_route": "fanshelf/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201184409,
+        "archive_sha256": "sha256:fb91604bcd1fd9ea980a12bc7c577b59b06a51544d43b86474d45728704bdff1",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "shelf.png",
+        "archive_path": "after/libra-h2o-384/fanshelf/fanshelf-shots/shelf.png",
+        "sha256": "03a86e768a709fede369324d0c3cadde9fb416f05ef44c328771b584dc7b0eb3",
+        "pixel_sha256": "6422f295e1ba14ccf66b15ac41b13d599638642c94280dc24a43c2dae5f75406",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "fanshelf",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "6422f295e1ba14ccf66b15ac41b13d599638642c94280dc24a43c2dae5f75406",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "2",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "11487",
+              "unixMillis": "1790894169696",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 33411,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "0",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "fanshelf",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "2",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "774",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "2",
+              "submittedAtMillis": "765",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-h2o-384",
+              "model": "Kobo Libra H2O",
+              "pixelsPerInch": 300,
+              "rotation": 0,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1679,
+                "xMin": 0,
+                "yMax": 1263,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 2,
+            "scenario": "normal",
+            "touch": null,
+            "transition": {
+              "dirty": 33411,
+              "full": false,
+              "refresh": 2,
+              "region": {
+                "height": 408,
+                "width": 1176,
+                "x": 48,
+                "y": 312
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 96,
+                    "width": 432,
+                    "x": 48,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 440
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 512,
+                    "x": 48,
+                    "y": 488
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 16,
+                    "width": 1112,
+                    "x": 112,
+                    "y": 592
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 80,
+                    "width": 584,
+                    "x": 48,
+                    "y": 640
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "1b93b189781783935b79b975a88f7320e33de069d3422fb1f342e75d2f08e113",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "da6a787c9fefffc287c3b0c71f2eabab03729102"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+          "dirty": false,
+          "results": [
+            {
+              "app": "fanshelf",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/fanshelf/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "fanshelf",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/fanshelf/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+            "pr": 263,
+            "profile": "libra-h2o-384",
+            "phase": "after",
+            "app_source_tree": "d088a0724aace5303565df2e8df5ee70fb4a5c6e"
+          }
+        },
+        "artifact_id": 11198387350,
+        "archive_sha256": "sha256:1657140e91771e86378ec28a027d0fadfce481dd5207403d7c0f0ab9e42e3711",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    }
+  ],
+  "pdf_verification": {
+    "pages": 9,
+    "embedded_image_pixel_checks": 18,
+    "passed": true,
+    "font": "embedded DejaVu Sans",
+    "pdf_sha256": "7a32b851268535066c3b7da8c3e91f7329a8c94d6e34dba0448406c63ab1857d",
+    "preview_sha256": "99b48961dd869205101d15a674d32a2250afdd1d81f48c457f65b7c5747b980c"
+  },
+  "visual_review": {
+    "rendered_page_contact_sheet": "All nine pages inspected for layout, image placement, labels and selected scenes.",
+    "preview": "Rendered first-page preview inspected.",
+    "result": "pass",
+    "scope": "Document presentation review; preserves capture content and supplied caveats."
+  }
+}

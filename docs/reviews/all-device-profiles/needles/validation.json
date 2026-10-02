@@ -1,0 +1,4364 @@
+{
+  "app": "needles",
+  "PR": 261,
+  "pr_url": "https://github.com/BandarLabs/Cobalt/pull/261",
+  "before_source": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "final_original_pr_head": "1f17e4b04da895b8c6177f7dc348235f960483fb",
+  "capture_kind": "Full Cobalt simulator; ideal grey8 frames",
+  "profiles": 9,
+  "interface_scale_percent": 100,
+  "reading_scale_percent": 100,
+  "orientation": "portrait",
+  "selected_scene": "projects",
+  "limits": [
+    "Simulator captures with fixture services; no physical hardware or live-service certification.",
+    "interface 100% / reading 100% in portrait only; no 170% completion claim.",
+    "One representative scene per profile; complete routes remain in source artifacts.",
+    "Capture revisions are retained separately from original PR and consolidated source heads."
+  ],
+  "source_equivalence": {
+    "8d0c1f929a1f0297033571db9d06ce4c2b4698ca": {
+      "capture_head": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+      "final_original_pr_head": "1f17e4b04da895b8c6177f7dc348235f960483fb",
+      "original_source_objects": [
+        {
+          "path": "apps/needles/src",
+          "capture_object": "98f1e752d6a5ea99439d81742fcc9f77681a2f41",
+          "final_object": "98f1e752d6a5ea99439d81742fcc9f77681a2f41",
+          "same": true
+        },
+        {
+          "path": "apps/needles/Cargo.toml",
+          "capture_object": "237cb7833d82746dc9ea4c57a0e2b3a36f4844df",
+          "final_object": "237cb7833d82746dc9ea4c57a0e2b3a36f4844df",
+          "same": true
+        },
+        {
+          "path": "Cargo.toml",
+          "capture_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+          "final_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+          "same": true
+        },
+        {
+          "path": "assets",
+          "capture_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "final_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "capture_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "final_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "capture_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "final_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "capture_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "final_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "same": true
+        },
+        {
+          "path": "crates/kobod",
+          "capture_object": "e4456264379a102a84ad300c329156bf58a09993",
+          "final_object": "e4456264379a102a84ad300c329156bf58a09993",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "capture_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "final_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-tap",
+          "capture_object": "456651dc09d52a50f10907b438438095cf0c976a",
+          "final_object": "456651dc09d52a50f10907b438438095cf0c976a",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-hal",
+          "capture_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+          "final_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "capture_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "final_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "capture_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "final_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "same": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "capture_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "final_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "same": true
+        }
+      ],
+      "consolidated_source_match": {
+        "pr": 273,
+        "head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+        "objects": [
+          {
+            "path": "apps/needles/src",
+            "original_object": "98f1e752d6a5ea99439d81742fcc9f77681a2f41",
+            "consolidated_object": "98f1e752d6a5ea99439d81742fcc9f77681a2f41",
+            "same": true
+          },
+          {
+            "path": "apps/needles/Cargo.toml",
+            "original_object": "237cb7833d82746dc9ea4c57a0e2b3a36f4844df",
+            "consolidated_object": "237cb7833d82746dc9ea4c57a0e2b3a36f4844df",
+            "same": true
+          },
+          {
+            "path": "Cargo.toml",
+            "original_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+            "consolidated_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+            "same": true
+          },
+          {
+            "path": "assets",
+            "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+            "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-sdk",
+            "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+            "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-sim",
+            "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+            "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-ui",
+            "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+            "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+            "same": true
+          },
+          {
+            "path": "crates/kobod",
+            "original_object": "e4456264379a102a84ad300c329156bf58a09993",
+            "consolidated_object": "e4456264379a102a84ad300c329156bf58a09993",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-shell",
+            "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+            "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-tap",
+            "original_object": "456651dc09d52a50f10907b438438095cf0c976a",
+            "consolidated_object": "456651dc09d52a50f10907b438438095cf0c976a",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-hal",
+            "original_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+            "consolidated_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-profile",
+            "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+            "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-abi",
+            "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+            "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+            "same": true
+          },
+          {
+            "path": "crates/kobo-text",
+            "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+            "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+            "same": true
+          }
+        ],
+        "Cargo.lock": {
+          "capture_object": "111555e17b40e944616529ba53047543c6195052",
+          "original_object": "111555e17b40e944616529ba53047543c6195052",
+          "consolidated_object": "3ed4cff98d2ff639c2b89aae9d724b305e1af94e",
+          "same": false
+        }
+      },
+      "scope": "Source-object equivalence only; not a new capture or full-build identity. Cargo.lock differs on consolidated head and is recorded separately."
+    }
+  },
+  "pages": [
+    {
+      "page": 1,
+      "profile": "clara-bw-391",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/clara-bw-391/needles/needles-shots/projects.png",
+        "sha256": "1a2b6164d5299957bf924fd2f6b877a2f082b3b4e7887e75bb6ed44682000777",
+        "pixel_sha256": "27b6c099f9ba361e7be39668f490b7a4058bfd7554ec836c92f7eec95dca4b11",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "27b6c099f9ba361e7be39668f490b7a4058bfd7554ec836c92f7eec95dca4b11",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "9566",
+              "unixMillis": "1790897298473",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2629",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2588",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-391",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "clara-bw-391",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "clara-bw-391",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11199738335,
+        "archive_sha256": "sha256:2f2316e3b85323428d22437d50c7881919bcba65481297382f1210684c599583",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/clara-bw-391/needles/needles-shots/projects.png",
+        "sha256": "80cf09ebd98b8a9cf0aa2e087f09e28e0475cd6b8b1be1f6488547cecf632f43",
+        "pixel_sha256": "1fb526cfece15fd82fc0509246a52b00752c2e0003d8245cb025e230eb89315c",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "1fb526cfece15fd82fc0509246a52b00752c2e0003d8245cb025e230eb89315c",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "13316",
+              "unixMillis": "1790890549599",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2731",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2690",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-391",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "clara-bw-391",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11195218156,
+        "archive_sha256": "sha256:2a4f66f6f4dd1b15fe867e9d365d53616212d30f182946414edf84094dbd6666",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 2,
+      "profile": "clara-bw-395",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/clara-bw-395/needles/needles-shots/projects.png",
+        "sha256": "383c5d1f65ccc761c92dbce43033b3e90f34729c040a7f18fbea81e2bc180c43",
+        "pixel_sha256": "50bf200e84c7d2e765757102158a743356469282488ac8554cf9f254c2227351",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "50bf200e84c7d2e765757102158a743356469282488ac8554cf9f254c2227351",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "10409",
+              "unixMillis": "1790897160441",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84829,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2733",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2690",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-395",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84829,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "clara-bw-395",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "clara-bw-395",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11199703260,
+        "archive_sha256": "sha256:a86a10312792ec07fc199a0ea6b4664640ffc609bd75c72ebebbb9658dd73bd2",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/clara-bw-395/needles/needles-shots/projects.png",
+        "sha256": "b3abcc32ea6fcabf19445ff595f234f00dbad27fca4458c7b8d98fb7068978ef",
+        "pixel_sha256": "093b5c6d7513ba50fcb9f78eb0695dcdcd3ff4435e147ff426cb3bab8be5d8df",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "093b5c6d7513ba50fcb9f78eb0695dcdcd3ff4435e147ff426cb3bab8be5d8df",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "13112",
+              "unixMillis": "1790890614477",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2717",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2676",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-bw-395",
+              "model": "Kobo Clara BW",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "clara-bw-395",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11194889202,
+        "archive_sha256": "sha256:35967e3e0a8edbb33bf725077487f4e1d913f3ad7f32a7957f54e8342b714b11",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 3,
+      "profile": "clara-hd-376",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/clara-hd-376/needles/needles-shots/projects.png",
+        "sha256": "6d13eaacdbde80af5f39ed3b521952d570a2d34ea40f4c0b8a9ddf7bc5dcd632",
+        "pixel_sha256": "700afcb5f7d64e2a75e6ef5edaaecae05c186bc0bb0cabbd6f10235e2e8124f6",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "700afcb5f7d64e2a75e6ef5edaaecae05c186bc0bb0cabbd6f10235e2e8124f6",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "9719",
+              "unixMillis": "1790898643941",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2628",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2587",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-hd-376",
+              "model": "Kobo Clara HD",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "clara-hd-376",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "clara-hd-376",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11200399423,
+        "archive_sha256": "sha256:d5327758085d03000cd4ededefefe654e57ae9f29046ea75323a0b4858f17204",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/clara-hd-376/needles/needles-shots/projects.png",
+        "sha256": "223da6036e5813cced810573befc8a107a9a02481a1db2b3e814a35c9aa2de2d",
+        "pixel_sha256": "e0201316bfc09509e15773b7b3e4795ed957ef25d22b3dc73ef4bb73c69bf681",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "e0201316bfc09509e15773b7b3e4795ed957ef25d22b3dc73ef4bb73c69bf681",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "13950",
+              "unixMillis": "1790891484592",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2795",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2753",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1448,
+              "id": "clara-hd-376",
+              "model": "Kobo Clara HD",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "clara-hd-376",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11196003718,
+        "archive_sha256": "sha256:6cabf588e671734c3167d2d3ad0c839c4b1db5f8ab18bd3f31f75e9418313f40",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 4,
+      "profile": "clara-colour-393",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/clara-colour-393/needles/needles-shots/projects.png",
+        "sha256": "7b5e47cfbbfca50f20b664af3f8cba41e21ba6a09b414ccd9b381d64c29b5b2e",
+        "pixel_sha256": "a8594c55faf6e44c7afd0081720ba2c8e36f021180a99d47d2d96326de14aecb",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "a8594c55faf6e44c7afd0081720ba2c8e36f021180a99d47d2d96326de14aecb",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "7884",
+              "unixMillis": "1790899004857",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2334",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2310",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1448,
+              "id": "clara-colour-393",
+              "model": "Kobo Clara Colour",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "clara-colour-393",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "clara-colour-393",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11200524449,
+        "archive_sha256": "sha256:046f90a31fcc58f184b8581328fccf812a1570da26191c6eb0b04d357d27f479",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/clara-colour-393/needles/needles-shots/projects.png",
+        "sha256": "223da6036e5813cced810573befc8a107a9a02481a1db2b3e814a35c9aa2de2d",
+        "pixel_sha256": "e0201316bfc09509e15773b7b3e4795ed957ef25d22b3dc73ef4bb73c69bf681",
+        "width": 1072,
+        "height": 1448,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "e0201316bfc09509e15773b7b3e4795ed957ef25d22b3dc73ef4bb73c69bf681",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "12162",
+              "unixMillis": "1790891487528",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 84671,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2299",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2272",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1448,
+              "id": "clara-colour-393",
+              "model": "Kobo Clara Colour",
+              "pixelsPerInch": 300,
+              "rotation": 3,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1447,
+                "xMin": 0,
+                "yMax": 1071,
+                "yMin": 0
+              },
+              "width": 1072
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 786,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 285
+              }
+            },
+            "transition": {
+              "dirty": 84671,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 992,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 984,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 992,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "clara-colour-393",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11195948760,
+        "archive_sha256": "sha256:83722c3e4423b2db9c994546ecc0b5bbd9abc25d2fdbe7f06bdc3cf58e04c9d8",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 5,
+      "profile": "elipsa-2e-389",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/elipsa-2e-389/needles/needles-shots/projects.png",
+        "sha256": "fe24532384ed5919b4e78d71b37455fdd3497482164a200dc2a384d4e29e629c",
+        "pixel_sha256": "e66f1c52cc1ae0791a61ebdb8c46adefa2b1a677e63e4f32ba7fef50f209b112",
+        "width": 1404,
+        "height": 1872,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "e66f1c52cc1ae0791a61ebdb8c46adefa2b1a677e63e4f32ba7fef50f209b112",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "8849",
+              "unixMillis": "1790899460337",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 54535,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2742",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2717",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1872,
+              "id": "elipsa-2e-389",
+              "model": "Kobo Elipsa 2E",
+              "pixelsPerInch": 227,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1872,
+                "xMin": 0,
+                "yMax": 1404,
+                "yMin": 0
+              },
+              "width": 1404
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 974,
+                "y": 629
+              },
+              "raw": {
+                "x": 1243,
+                "y": 975
+              }
+            },
+            "transition": {
+              "dirty": 54535,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 704,
+                "width": 1112,
+                "x": 128,
+                "y": 72
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 96,
+                    "x": 128,
+                    "y": 72
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 144,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 152
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 288,
+                    "x": 232,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 416,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 360
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "elipsa-2e-389",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "elipsa-2e-389",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201297456,
+        "archive_sha256": "sha256:fa77375570472e96319f52f01ab0a16f0d052ee09cf1902b91be673bda323630",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/elipsa-2e-389/needles/needles-shots/projects.png",
+        "sha256": "fb88068fa903d1673192aee7c80d2b4c536b734835174ead0e16f3cf69b8afdc",
+        "pixel_sha256": "3e6ff76ea574ce8a9943f3705b32388d255621c8f6f8957ed579c98118ba075e",
+        "width": 1404,
+        "height": 1872,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "3e6ff76ea574ce8a9943f3705b32388d255621c8f6f8957ed579c98118ba075e",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "11332",
+              "unixMillis": "1790892286758",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 54535,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2800",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2782",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1872,
+              "id": "elipsa-2e-389",
+              "model": "Kobo Elipsa 2E",
+              "pixelsPerInch": 227,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1872,
+                "xMin": 0,
+                "yMax": 1404,
+                "yMin": 0
+              },
+              "width": 1404
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 974,
+                "y": 629
+              },
+              "raw": {
+                "x": 1243,
+                "y": 975
+              }
+            },
+            "transition": {
+              "dirty": 54535,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 704,
+                "width": 1112,
+                "x": 128,
+                "y": 72
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 96,
+                    "x": 128,
+                    "y": 72
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 144,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 152
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 32,
+                    "width": 288,
+                    "x": 232,
+                    "y": 312
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 416,
+                    "width": 1080,
+                    "x": 160,
+                    "y": 360
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "elipsa-2e-389",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11196668140,
+        "archive_sha256": "sha256:ae4e4a63b3b52e129ac7d4eaebb65413d6baf7ac310dc867a90a9d9e7dffaafd",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 6,
+      "profile": "libra-2-388",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/libra-2-388/needles/needles-shots/projects.png",
+        "sha256": "435bd0e1dd69d13a1495ccd17196688cb2066f7ddccf934e8ee5ff6924a6d572",
+        "pixel_sha256": "b7adbfc0d4ceee8dabf03f34b3c2fad4212816c0a0517fea285d10257b3b9538",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "b7adbfc0d4ceee8dabf03f34b3c2fad4212816c0a0517fea285d10257b3b9538",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "10411",
+              "unixMillis": "1790899672649",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2780",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2732",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-2-388",
+              "model": "Kobo Libra 2",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 931
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "libra-2-388",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "libra-2-388",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11200928201,
+        "archive_sha256": "sha256:b3e09b7db10700a3cc78ca924352224418699a61f1736cf9bbd7fc35a589e6eb",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/libra-2-388/needles/needles-shots/projects.png",
+        "sha256": "45047d7e7f406455d6e64339957ac7b2b110ea33eb9946aa92d95941cbe0f70c",
+        "pixel_sha256": "50c8f30e171a7a9958b2a97082175c0b225b79ad97e6e4cb703081a54216ad15",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "50c8f30e171a7a9958b2a97082175c0b225b79ad97e6e4cb703081a54216ad15",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "14215",
+              "unixMillis": "1790892440188",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2782",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2734",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-2-388",
+              "model": "Kobo Libra 2",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 931
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "libra-2-388",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11196428484,
+        "archive_sha256": "sha256:3a4d578901508cb65bb7a8affb7ba35f6ef92741455a2d7332e066c230f8bd02",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 7,
+      "profile": "libra-colour-390",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/libra-colour-390/needles/needles-shots/projects.png",
+        "sha256": "c0d2958ca67eb7f419bdd8b5ce76acf896e3010d399b010f5448b1f6cc6510e6",
+        "pixel_sha256": "c18fa0def7b5fbbe31f90a49a83ad0c354dacd341637b3a0e7684764e8435bc7",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "c18fa0def7b5fbbe31f90a49a83ad0c354dacd341637b3a0e7684764e8435bc7",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "9663",
+              "unixMillis": "1790899933699",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2763",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2715",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 847,
+                "y": 931
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "libra-colour-390",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "libra-colour-390",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201870946,
+        "archive_sha256": "sha256:901041d70efb268bf2e47a5b12a5454128fdbb24f674036033f291d5dfef7aee",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/libra-colour-390/needles/needles-shots/projects.png",
+        "sha256": "e7b90db7788a099eb88c06e6f63439e56664d9a7c49779e21e5b3c2edc114e80",
+        "pixel_sha256": "011869d426f09193e14645b3c639824eba7eff547ec6dd0e01d926a698adb642",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "011869d426f09193e14645b3c639824eba7eff547ec6dd0e01d926a698adb642",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "13023",
+              "unixMillis": "1790893169055",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2764",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2715",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 847,
+                "y": 931
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "libra-colour-390",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11198000205,
+        "archive_sha256": "sha256:d0a25f832551f568a7b84015ba7a6aeaaac7acd6ec5a475dbec0fbdbb0e0818d",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 8,
+      "profile": "libra-colour-390-4.46.23836",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/libra-colour-390-4.46.23836/needles/needles-shots/projects.png",
+        "sha256": "d7356d2b5099d9ccd8ccd44f842dd7bbb65217fc6682ab99f621fd2b117d1254",
+        "pixel_sha256": "e9ebede444a8c6e79b5cc94592708f9d9112e9d916159d8f71f418436023251d",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "e9ebede444a8c6e79b5cc94592708f9d9112e9d916159d8f71f418436023251d",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "9794",
+              "unixMillis": "1790900116539",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2861",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2812",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390-4.46.23836",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 847,
+                "y": 931
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "libra-colour-390-4.46.23836",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "libra-colour-390-4.46.23836",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201946003,
+        "archive_sha256": "sha256:99a74ecbadfef1cda914db4d198ebb99794fb627945fe19642b01acaaedba369",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/libra-colour-390-4.46.23836/needles/needles-shots/projects.png",
+        "sha256": "715df288f67ac114bec84e1b87e96b7e8eaeeb2c41b5dc5dfe58fc9be2614194",
+        "pixel_sha256": "26192f011a7fbb1e3e35d6aad509d9adbd435ac4c68287b7e72d519debaf7c91",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "26192f011a7fbb1e3e35d6aad509d9adbd435ac4c68287b7e72d519debaf7c91",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "14177",
+              "unixMillis": "1790893396155",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "3113",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "3063",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": true,
+              "height": 1680,
+              "id": "libra-colour-390-4.46.23836",
+              "model": "Kobo Libra Colour",
+              "pixelsPerInch": 300,
+              "rotation": 1,
+              "touch": {
+                "name": "Elan Touchscreen",
+                "xMax": 1680,
+                "xMin": 0,
+                "yMax": 1264,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 847,
+                "y": 931
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "libra-colour-390-4.46.23836",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11197408487,
+        "archive_sha256": "sha256:e1e6f75aafe400ebc816ebd11671c79438f4e9d2af3f68e99417b8605f887525",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    },
+    {
+      "page": 9,
+      "profile": "libra-h2o-384",
+      "before": {
+        "filename": "projects.png",
+        "archive_path": "before/libra-h2o-384/needles/needles-shots/projects.png",
+        "sha256": "f7d0fde29f9a418dfb79a3b6ccbf7c8929acf81857aec23cc325b5d426913a5b",
+        "pixel_sha256": "9fc731e6f604e85340e5f9cac898a9d48930a08d4a3490e706349bb67efa5372",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "9fc731e6f604e85340e5f9cac898a9d48930a08d4a3490e706349bb67efa5372",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-02",
+              "mode": "real",
+              "monotonicMillis": "11054",
+              "unixMillis": "1790900412121",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "3016",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2965",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-h2o-384",
+              "model": "Kobo Libra H2O",
+              "pixelsPerInch": 300,
+              "rotation": 0,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1679,
+                "xMin": 0,
+                "yMax": 1263,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 333
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "f96a6330247c4067f275a25a9fa8c7e499a5176580f1875866abc92dfef8e29d",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0,
+              "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+              "pr": 261,
+              "profile": "libra-h2o-384",
+              "phase": "before",
+              "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+              "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+              "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+              "capture_route": "needles/profile-route.kobo",
+              "capture_scope": "committed route plus final screenshot"
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+            "pr": 261,
+            "profile": "libra-h2o-384",
+            "phase": "before",
+            "app_source_tree": "3ff73727cd1fa0d0ed050506f92bc2ba042d53fa",
+            "production_source_tree": "9b7170a15f517a6e97156bc3e504c42cd7162c0a",
+            "route_sha256": "185640f952ef3a5d970cd056505be83a588bee174a19bb6a80e08552e6d50437",
+            "capture_route": "needles/profile-route.kobo",
+            "capture_scope": "committed route plus final screenshot"
+          }
+        },
+        "artifact_id": 11201184409,
+        "archive_sha256": "sha256:fb91604bcd1fd9ea980a12bc7c577b59b06a51544d43b86474d45728704bdff1",
+        "run_id": 36939992697,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36939992697",
+        "workflow_head": "52db8403d9d2599944c10ed6ab290b36eaafb1ad"
+      },
+      "after": {
+        "filename": "projects.png",
+        "archive_path": "after/libra-h2o-384/needles/needles-shots/projects.png",
+        "sha256": "edbd59bf3b4c1ee9bf5658a4ea4bbf467e90a11da0a620c07a5db0fd97df5d5b",
+        "pixel_sha256": "8b9befed57058c33bf40ea758af99e1239e6dd8cc5e336e483188717b3071d03",
+        "width": 1264,
+        "height": 1680,
+        "mode": "L",
+        "metadata": {
+          "app": "needles",
+          "fonts": [
+            {
+              "role": "interface",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "display-title",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-heading",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "display-bold",
+              "source": "AtkinsonHyperlegible-Bold.ttf"
+            },
+            {
+              "role": "reading",
+              "source": "AtkinsonHyperlegible-Regular.ttf"
+            },
+            {
+              "role": "mono",
+              "source": "DejaVuSansMono.ttf"
+            }
+          ],
+          "frame": {
+            "colourAppearance": "luminance",
+            "format": "grey8",
+            "sha256": "8b9befed57058c33bf40ea758af99e1239e6dd8cc5e336e483188717b3071d03",
+            "view": "ideal"
+          },
+          "interfaceScalePercent": 100,
+          "mode": "single-app",
+          "orientation": "portrait",
+          "paints": "6",
+          "publisherFontHandle": null,
+          "readingScalePercent": 100,
+          "runtimeVersion": "0.3.24",
+          "schema": "cobalt.simulator-capture",
+          "simulation": {
+            "appStore": {
+              "mode": "catalog-preview",
+              "signedTransactions": false
+            },
+            "backends": [
+              "network",
+              "battery-read",
+              "frontlight-control",
+              "wifi-control",
+              "library",
+              "cover-sensor"
+            ],
+            "clock": {
+              "date": "2026-10-01",
+              "mode": "real",
+              "monotonicMillis": "13238",
+              "unixMillis": "1790894106936",
+              "utcOffsetMinutes": 0
+            },
+            "dirtyPixelsSinceClean": 87575,
+            "hardware": {
+              "batteryPercent": 72,
+              "charging": false,
+              "coverClosed": false,
+              "frontlightAppearanceCalibrated": false,
+              "frontlightPercent": 20,
+              "orientation": "portrait",
+              "orientationControl": "display-composition"
+            },
+            "input": {
+              "forwardKey": 194,
+              "needsResynchronization": false,
+              "quiescent": true,
+              "rawEvents": "35",
+              "source": "synthetic evdev replay"
+            },
+            "lifecycle": "foreground",
+            "navigation": {
+              "app": "needles",
+              "hosted": [],
+              "mode": "single-app",
+              "processId": null
+            },
+            "observation": null,
+            "panel": {
+              "completed": "6",
+              "contentsKnown": true,
+              "failures": "0",
+              "finishedAtMillis": "2902",
+              "mode": "automatic",
+              "queued": false,
+              "status": "idle",
+              "submissionMarker": null,
+              "submitted": "6",
+              "submittedAtMillis": "2854",
+              "timing": "host control observations; not hardware calibration",
+              "visibleFrame": "last confirmed completion with approximate residue"
+            },
+            "panelApproximation": true,
+            "power": null,
+            "profile": {
+              "colourPanel": false,
+              "height": 1680,
+              "id": "libra-h2o-384",
+              "model": "Kobo Libra H2O",
+              "pixelsPerInch": 300,
+              "rotation": 0,
+              "touch": {
+                "name": "cyttsp5_mt",
+                "xMax": 1679,
+                "xMin": 0,
+                "yMax": 1263,
+                "yMin": 0
+              },
+              "width": 1264
+            },
+            "refreshCount": 6,
+            "scenario": "normal",
+            "touch": {
+              "display": {
+                "x": 930,
+                "y": 833
+              },
+              "raw": {
+                "x": 833,
+                "y": 333
+              }
+            },
+            "transition": {
+              "dirty": 87575,
+              "full": false,
+              "refresh": 6,
+              "region": {
+                "height": 936,
+                "width": 1184,
+                "x": 40,
+                "y": 88
+              },
+              "regions": [
+                {
+                  "region": {
+                    "height": 40,
+                    "width": 120,
+                    "x": 168,
+                    "y": 88
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 256,
+                    "width": 1176,
+                    "x": 48,
+                    "y": 200
+                  },
+                  "waveform": "GL16"
+                },
+                {
+                  "region": {
+                    "height": 552,
+                    "width": 1184,
+                    "x": 40,
+                    "y": 472
+                  },
+                  "waveform": "GL16"
+                }
+              ],
+              "waveform": "GL16"
+            }
+          },
+          "source": {
+            "binarySha256": "32a2e9e21aec6620a6503e2c84c0e90e6d1162c374f7b719248a6db93e2848f5",
+            "dirty": false,
+            "fixture": null,
+            "requestedSeed": null,
+            "revision": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
+          },
+          "version": 1
+        },
+        "result": {
+          "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+          "dirty": false,
+          "results": [
+            {
+              "app": "needles",
+              "launched": true,
+              "status": "pass",
+              "route": "apps/needles/drive.kobo",
+              "exit_code": 0
+            }
+          ],
+          "profile_result": {
+            "app": "needles",
+            "launched": true,
+            "status": "pass",
+            "route": "apps/needles/drive.kobo",
+            "exit_code": 0,
+            "source_sha": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+            "pr": 261,
+            "profile": "libra-h2o-384",
+            "phase": "after",
+            "app_source_tree": "f0374886ee1e374e1d804d17190df6a421373a37"
+          }
+        },
+        "artifact_id": 11198387350,
+        "archive_sha256": "sha256:1657140e91771e86378ec28a027d0fadfce481dd5207403d7c0f0ab9e42e3711",
+        "run_id": 36921083042,
+        "run_url": "https://github.com/BandarLabs/Cobalt/actions/runs/36921083042",
+        "workflow_head": "d6840d79e3d0c8e0a64d0ef4bc78cec1881e853c"
+      }
+    }
+  ],
+  "pdf_verification": {
+    "pages": 9,
+    "embedded_image_pixel_checks": 18,
+    "passed": true,
+    "font": "embedded DejaVu Sans",
+    "pdf_sha256": "2136f97aa744f28ee289b22149570196eb2d4c85672120c9f0b01560b1efb25c",
+    "preview_sha256": "b5278b3ac675105eb940a10326d35bc956255ddae779779c11cf7c03c0646975"
+  },
+  "visual_review": {
+    "rendered_page_contact_sheet": "All nine pages inspected for layout, image placement, labels and selected scenes.",
+    "preview": "Rendered first-page preview inspected.",
+    "result": "pass",
+    "scope": "Document presentation review; preserves capture content and supplied caveats."
+  }
+}
