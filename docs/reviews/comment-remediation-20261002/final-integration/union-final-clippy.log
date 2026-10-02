@@ -1,0 +1,6 @@
+   Compiling kobo-catalog v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-catalog)
+    Checking kobo-settings v0.3.24 (/workspace/cobalt-remediation-union/examples/settings)
+    Checking kobo-sim v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-sim)
+    Checking kobo-store v0.3.24 (/workspace/cobalt-remediation-union/examples/store)
+    Checking kobo-cli v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-cli)
+    Finished `dev` profile [unoptimized] target(s) in 7.55s

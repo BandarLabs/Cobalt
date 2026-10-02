@@ -1,0 +1,178 @@
+   Compiling libc v0.2.189
+   Compiling subtle v2.6.1
+   Compiling miniz_oxide v0.9.1
+   Compiling rusqlite v0.37.0
+   Compiling getrandom v0.2.17
+   Compiling kobo-abi v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-abi)
+   Compiling ring v0.17.14
+   Compiling rustls-webpki v0.103.15
+   Compiling rustls v0.23.45
+   Compiling kobo-net v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-net)
+   Compiling kobo-policy v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-policy)
+   Compiling kobo-app-store v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-app-store)
+   Compiling kobo-sdk v0.3.24 (/workspace/cobalt-remediation-union/crates/kobo-sdk)
+   Compiling kobo-settings v0.3.24 (/workspace/cobalt-remediation-union/examples/settings)
+    Finished `test` profile [unoptimized] target(s) in 6.89s
+     Running unittests src/main.rs (/workspace/cobalt-remediation-union-target/debug/deps/kobo_settings-1e783ded1a231df4)
+
+running 49 tests
+
+running 1 test
+test list_tests::a_rescan_reordering_rows_does_not_retarget_an_already_drawn_tap ... ok
+test list_tests::enterprise_selection_survives_paging_and_rescan_and_cancel_never_joins ... ok
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.09s
+
+
+running 1 test
+test list_tests::radio_notices_and_connected_status_are_included_in_the_page_budget ... ok
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.09s
+
+
+running 1 test
+test list_tests::refreshed_lists_and_repeated_page_turns_clamp_without_wrapping ... ok
+test tests::a_completed_update_has_a_checkmark_and_a_primary_way_to_close ... ok
+test tests::a_failed_bluetooth_read_leaves_hardware_state_unknown_not_absent ... ok
+test tests::a_failure_is_filed_under_the_request_that_produced_it ... ok
+test tests::a_failure_is_reported_by_the_row_that_caused_it_and_by_nothing_else ... ok
+test tests::a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense ... ok
+test tests::a_full_bluetooth_scan_keeps_every_drawn_action_on_the_panel ... ok
+test tests::a_full_wifi_scan_keeps_every_drawn_action_on_the_panel ... ok
+test tests::a_gauge_that_publishes_almost_nothing_says_so_rather_than_showing_zeroes ... ok
+test tests::a_gauge_that_publishes_everything_still_fits_the_panel ... ok
+test tests::a_home_network_still_asks_for_one_shared_password ... ok
+test tests::a_radio_that_merely_failed_once_is_still_worth_reading_again ... ok
+test tests::a_radio_the_runtime_cannot_read_stops_saying_it_is_being_checked ... ok
+test tests::a_radio_with_no_answer_yet_is_not_claimed_absent ... ok
+test tests::a_reader_with_no_bluetooth_hardware_is_told_so_without_a_dead_end_toggle ... ok
+test tests::a_reader_with_no_wifi_hardware_is_told_so_without_a_dead_end_toggle ... ok
+test tests::a_refused_bluetooth_reading_settles_the_row_through_the_runtime ... ok
+test tests::a_release_is_read_down_to_the_signed_metadata_urls_this_reader_needs ... ok
+test tests::a_release_without_signed_metadata_is_not_offered ... ok
+test tests::an_available_update_has_a_clear_status_versions_and_primary_action ... ok
+test tests::an_empty_wifi_list_says_whether_it_is_still_looking ... ok
+test tests::an_installed_beta_ahead_of_stable_is_not_reported_as_the_stable_version ... ok
+test tests::auto_update_trouble_belongs_to_the_update_screen ... ok
+test tests::beta_release_selection_orders_versions_and_excludes_other_releases ... ok
+test tests::certificates_are_shown_by_name_and_grouped_digest ... ok
+test tests::changing_channels_clears_only_status_from_the_previous_channel ... ok
+test tests::changing_update_channels_has_an_explicit_confirmation_screen ... ok
+test tests::eduroam_asks_for_a_username_and_sends_the_password_only_after_trust ... ok
+test tests::every_stop_on_the_update_journey_fits_the_panel ... ok
+test tests::only_a_release_that_is_ready_offers_the_install_button ... ok
+test tests::readings_are_formatted_the_way_somebody_standing_up_would_read_them ... ok
+test tests::refusing_the_server_sends_nothing_and_forgets_the_password ... ok
+test tests::the_about_page_names_the_reader_it_is_drawn_on ... ok
+test tests::the_beta_feed_asks_for_few_enough_releases_to_stay_inside_its_window ... ok
+test tests::the_enterprise_screens_fit_the_panel ... ok
+test tests::the_installed_release_and_an_unreadable_tag_are_both_not_newer ... ok
+test tests::the_last_page_of_networks_offers_only_the_way_back ... ok
+test tests::the_password_keyboard_and_validation_message_fit_the_panel ... ok
+test tests::the_release_archive_name_is_device_neutral ... ok
+test tests::the_switches_wait_for_the_runtime_to_answer_before_being_drawn ... ok
+test tests::the_update_screen_offers_both_automatic_update_switches ... ok
+test tests::verified_metadata_binds_the_version_and_device_archive_digest ... ok
+test tests::wear_and_time_remaining_come_from_the_readings_and_not_from_guesses ... ok
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.06s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.14s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.15s
+
+
+running 1 test
+test list_tests::every_home_destination_is_reachable_at_all_sizes_and_both_poses ... ok
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.17s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.11s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.09s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.09s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.05s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.24s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.08s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.03s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.05s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.05s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.03s
+
+
+running 1 test
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.03s
+
+
+running 1 test
+test list_tests::every_measured_radio_row_targets_its_own_identity_on_later_pages ... ok
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 1.07s
+
+test list_tests::enterprise_screen_geometry_at_largest_size ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.68s
+

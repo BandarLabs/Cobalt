@@ -1,0 +1,41 @@
+[
+  {
+    "pr": 272,
+    "before": {
+      "paths": 6,
+      "png": 0,
+      "png_bytes": 0
+    },
+    "after": {
+      "paths": 10,
+      "png": 0,
+      "png_bytes": 0
+    }
+  },
+  {
+    "pr": 273,
+    "before": {
+      "paths": 1329,
+      "png": 556,
+      "png_bytes": 42305927
+    },
+    "after": {
+      "paths": 212,
+      "png": 0,
+      "png_bytes": 0
+    }
+  },
+  {
+    "pr": 274,
+    "before": {
+      "paths": 805,
+      "png": 236,
+      "png_bytes": 11397186
+    },
+    "after": {
+      "paths": 82,
+      "png": 0,
+      "png_bytes": 0
+    }
+  }
+]
