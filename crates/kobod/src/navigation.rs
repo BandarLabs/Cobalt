@@ -26,11 +26,13 @@ pub enum BackRoute {
     Leave,
 }
 
+/// Overlays receive Back even over a root screen, so their close control can
+/// reach the application. Every offer retains the same bounded response window.
 #[must_use]
-pub const fn route(is_back: bool, owns_back: bool) -> BackRoute {
+pub const fn route(is_back: bool, owns_back: bool, has_overlay: bool) -> BackRoute {
     if !is_back {
         BackRoute::Deliver
-    } else if owns_back {
+    } else if owns_back || has_overlay {
         BackRoute::Offer
     } else {
         BackRoute::Leave
@@ -83,9 +85,9 @@ mod tests {
     use super::*;
     #[test]
     fn back_ownership_and_deadline_cannot_be_extended_by_repeated_taps() {
-        assert_eq!(route(false, false), BackRoute::Deliver);
-        assert_eq!(route(true, false), BackRoute::Leave);
-        assert_eq!(route(true, true), BackRoute::Offer);
+        assert_eq!(route(false, false, false), BackRoute::Deliver);
+        assert_eq!(route(true, false, false), BackRoute::Leave);
+        assert_eq!(route(true, true, false), BackRoute::Offer);
         let mut offer = BackOffer::default();
         offer.offer(1, 100);
         offer.offer(1, 1_000);
@@ -100,6 +102,16 @@ mod tests {
         offer.offer(1, 10_000);
         assert!(!offer.take_expired(2, 12_000));
         assert_eq!(offer.remaining(12_000), None);
+    }
+
+    #[test]
+    fn overlays_offer_back_without_changing_root_ownership() {
+        for owns_back in [false, true] {
+            assert_eq!(route(false, owns_back, true), BackRoute::Deliver);
+            assert_eq!(route(true, owns_back, true), BackRoute::Offer);
+        }
+        assert_eq!(route(true, false, false), BackRoute::Leave);
+        assert_eq!(route(true, true, false), BackRoute::Offer);
     }
 
     #[test]
