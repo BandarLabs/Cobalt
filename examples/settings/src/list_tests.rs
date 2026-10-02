@@ -327,7 +327,23 @@ fn enterprise_selection_survives_paging_and_rescan_and_cancel_never_joins() {
 
 #[test]
 fn enterprise_screen_geometry_at_largest_size() {
+    // The typesetter is process-global. Isolate real font installation from
+    // the existing estimate-based tests so parallel execution stays deterministic.
+    if std::env::var_os("KOBO_SETTINGS_REAL_FONT_TEST").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "list_tests::enterprise_screen_geometry_at_largest_size",
+                "--nocapture",
+            ])
+            .env("KOBO_SETTINGS_REAL_FONT_TEST", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
     let metrics = *interface_sizes().last().unwrap();
+    kobo_text::install(metrics).unwrap();
     for app in [
         Settings {
             view: View::WifiTrust,

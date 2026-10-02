@@ -844,9 +844,8 @@ impl Settings {
                 ("SHA-256", fingerprint(sha256)),
             ])
             .text(
-                "Only trust this if it matches what your institution publishes, or what \
-                 your phone trusted for this network. After this, the reader will only \
-                 send your password to this exact server.",
+                "Verify this fingerprint with your institution or trusted phone. \
+                 Only this exact server will receive your password.",
             )
             .primary_button(TRUST, "Trust and join")
             .button(DISTRUST, "Don't trust")
