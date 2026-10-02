@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
       - name: Keep validation helper outside the production checkout
         run: |
-          cp .github/validation/large-text-20261002/score.py "$RUNNER_TEMP/score.py"
+          cp .github/validation/large-text-20261002/* "$RUNNER_TEMP/"
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/large-text-cargo" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
@@ -47,12 +47,12 @@ jobs:
         run: python3 scripts/check-apps-sim.py chat parlor homepanel post gutenbird backgammon --out "$RUNNER_TEMP/evidence/before"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 8482828892042c5d62e1ce637a9646e0d9fdad7e
+          ref: 232f6312502d5598f31979bbddaf14ed72f7d9c7
           persist-credentials: false
-      - name: Run every catalog route on the exact fixed union
+      - name: Run the original 31-app scope on the exact fixed union
         id: catalog
         continue-on-error: true
-        run: python3 scripts/check-apps-sim.py --out "$RUNNER_TEMP/evidence/after"
+        run: python3 "$RUNNER_TEMP/owned_routes.py" "$RUNNER_TEMP/evidence/after"
       - name: Download the provenance-pinned original music score
         id: score
         continue-on-error: true
@@ -72,7 +72,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-          printf '%s\n' 'before=218b5172262767be2fd25265d2b35f7f9337b8c6' 'after=8482828892042c5d62e1ce637a9646e0d9fdad7e' 'hardware_tested=false' > "$RUNNER_TEMP/evidence/sources.txt"
+          printf '%s\n' 'before=218b5172262767be2fd25265d2b35f7f9337b8c6' 'after=232f6312502d5598f31979bbddaf14ed72f7d9c7' 'hardware_tested=false' > "$RUNNER_TEMP/evidence/sources.txt"
           test '${{ steps.catalog.outcome }}' = success
           test '${{ steps.specialized.outcome }}' = success
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

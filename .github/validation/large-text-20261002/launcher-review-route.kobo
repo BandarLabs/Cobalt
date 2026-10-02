@@ -1,0 +1,16 @@
+# Review-only route. The committed legacy route assumes two pages.
+# tap-paged uses the actual hit targets and adapts to each device profile.
+expect Cobalt
+clean
+shot launcher-home
+tap-paged Terminal
+expect Starting
+expect File changes can survive a reboot.
+clean
+shot launcher-terminal-warning
+tap Back
+expect Cobalt
+tap-paged Terminal
+expect File changes can survive a reboot.
+tap Back
+expect Cobalt
