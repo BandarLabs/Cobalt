@@ -72,6 +72,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/cobalt-post-before-after.zip" "$RUNNER_TEMP/evidence/"
           printf '%s\n' 'before=218b5172262767be2fd25265d2b35f7f9337b8c6' 'after=232f6312502d5598f31979bbddaf14ed72f7d9c7' 'hardware_tested=false' > "$RUNNER_TEMP/evidence/sources.txt"
           test '${{ steps.catalog.outcome }}' = success
           test '${{ steps.specialized.outcome }}' = success
