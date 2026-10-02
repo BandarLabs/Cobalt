@@ -1,0 +1,119 @@
+name: Validate consolidated app simulators
+
+on:
+  push:
+    branches: [validation/app-consolidation-20261002]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-consolidation-validation-20261002
+  cancel-in-progress: false
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "2"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  profiles:
+    name: Nine-profile app sweep (${{ matrix.batch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - batch: clara-monochrome
+            profiles: clara-bw-391 clara-bw-395 clara-hd-376
+          - batch: colour-and-large
+            profiles: clara-colour-393 elipsa-2e-389 libra-2-388
+          - batch: libra-variants
+            profiles: libra-colour-390 libra-colour-390-4.46.23836 libra-h2o-384
+    steps:
+      - name: Read validation-only harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned as current CI
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Save harness outside the tested checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/consolidation-harness"
+          cp .github/validation/app-consolidation-20261002/* "$RUNNER_TEMP/consolidation-harness/"
+      - name: Check out exact production union
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 218b5172262767be2fd25265d2b35f7f9337b8c6
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - name: Drive every reviewed app on three profiles
+        env:
+          PROFILE_BATCH: ${{ matrix.profiles }}
+        run: |
+          set -eu
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/consolidation-cargo"
+          python3 -B "$RUNNER_TEMP/consolidation-harness/validate_union.py" \
+            --root "$GITHUB_WORKSPACE" \
+            --out "$RUNNER_TEMP/profile-results" \
+            --timeout 240 \
+            --profiles $PROFILE_BATCH
+      - name: Confirm no production-tree edits
+        if: always()
+        run: |
+          test "$(git rev-parse HEAD)" = 218b5172262767be2fd25265d2b35f7f9337b8c6
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  specialized:
+    name: Companion journeys (${{ matrix.scale }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        scale: [default, "170"]
+    steps:
+      - name: Read validation-only harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Save harness outside the tested checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/consolidation-harness"
+          cp .github/validation/app-consolidation-20261002/* "$RUNNER_TEMP/consolidation-harness/"
+      - name: Check out exact production union
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 218b5172262767be2fd25265d2b35f7f9337b8c6
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - name: Install the genuine-score PDF reader
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+      - name: Run all six committed companion journeys
+        env:
+          TEXT_SCALE: ${{ matrix.scale }}
+        run: |
+          set -eu
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/consolidation-cargo"
+          python3 -B "$RUNNER_TEMP/consolidation-harness/validate_union.py" \
+            --root "$GITHUB_WORKSPACE" \
+            --out "$RUNNER_TEMP/specialized-results" \
+            --specialized-scale "$TEXT_SCALE" \
+            --download-music-score
+      - name: Confirm no production-tree edits
+        if: always()
+        run: |
+          test "$(git rev-parse HEAD)" = 218b5172262767be2fd25265d2b35f7f9337b8c6
+          test -z "$(git status --porcelain --untracked-files=all)"
