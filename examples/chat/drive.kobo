@@ -30,9 +30,12 @@ shot export-ready
 tap Back
 expect question 3
 tap Service
-expect OpenAI (gpt-4o-mini)
-expect Anthropic (claude-3-5-haiku-latest)
-expect Google Gemini (gemini-3.6-flash)
+expect OpenAI
+expect gpt-4o-mini
+expect Anthropic
+expect claude-3-5-haiku-latest
+expect Google Gemini
+expect gemini-3.6-flash
 clean
 shot service
 tap Conversation

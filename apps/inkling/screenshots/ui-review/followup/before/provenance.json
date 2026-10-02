@@ -1,0 +1,18 @@
+{
+  "type": "full simulator SDK IPC and native renderer; hardware untested",
+  "source_revision": "bbe18c0d2d7fec6b625f29efdae865d8cb239064",
+  "app_source_sha256": "66b0aa84f38c23ee8660ffb7cf3d447c19091787fc235d94e44b74e1a9f68486",
+  "cli_sha256": "79b49479dd5939fe7bdcfb19a48f788f2efb4375c7a75fef8e4f0321a617899d",
+  "scale": 155,
+  "profiles": [
+    "clara-bw-391",
+    "clara-bw-395",
+    "clara-hd-376",
+    "clara-colour-393",
+    "elipsa-2e-389",
+    "libra-2-388",
+    "libra-colour-390",
+    "libra-colour-390-4.46.23836",
+    "libra-h2o-384"
+  ]
+}

@@ -1,0 +1,594 @@
+Capture: genuine app screen builder + Cobalt renderer; NOT a live simulator capture.
+Scenario: help
+App source SHA-256: 66b0aa84f38c23ee8660ffb7cf3d447c19091787fc235d94e44b74e1a9f68486
+Shell: synthetic measuring status strip, runtime ensure_way_back
+Font: "AtkinsonHyperlegible-Regular.ttf"
+Font roles: Some([("interface", "AtkinsonHyperlegible-Regular.ttf"), ("display-title", "AtkinsonHyperlegible-Bold.ttf"), ("display-heading", "AtkinsonHyperlegible-Bold.ttf"), ("display-bold", "AtkinsonHyperlegible-Bold.ttf"), ("reading", "AtkinsonHyperlegible-Regular.ttf"), ("mono", "DejaVuSansMono.ttf")])
+Metrics: DisplayMetrics { width: 758, height: 1024, pixels_per_inch: 212, text_scale: Huge }
+Screen: Screen {
+    id: 3669104097,
+    top_bar: Some(
+        TopBar {
+            id: NodeId(
+                1,
+            ),
+            title: "How to play",
+            actions: [],
+        },
+    ),
+    auto_hide_top_bar: false,
+    nodes: [
+        Heading {
+            id: NodeId(
+                2,
+            ),
+            text: "Find the five-letter word",
+            level: 1,
+        },
+        Text {
+            id: NodeId(
+                3,
+            ),
+            text: "You have six guesses. Type five letters, then tap Guess.",
+            links: [],
+        },
+        Text {
+            id: NodeId(
+                4,
+            ),
+            text: "[A] is in the right spot. (A) is elsewhere in the word. A× is absent.",
+            links: [],
+        },
+        Text {
+            id: NodeId(
+                5,
+            ),
+            text: "Known letters show while you type. Hard mode reuses placed letters.",
+            links: [],
+        },
+    ],
+    nav_bar: None,
+    bottom_action: Some(
+        BottomAction {
+            id: NodeId(
+                6,
+            ),
+            action: BarAction {
+                action: ActionId(
+                    3588247949,
+                ),
+                label: "Play",
+                glyph: None,
+            },
+        },
+    ),
+    page_turns: None,
+    owns_back: true,
+    reading: false,
+    legacy_typography: false,
+    reading_font: None,
+    text_scale: None,
+    hold: None,
+    overlay: None,
+}
+Layout: Layout {
+    nodes: [
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 758,
+                height: 42,
+            },
+            kind: StatusBand,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 0,
+                width: 86,
+                height: 42,
+            },
+            kind: StatusClock,
+            text_lines: [
+                "00:00",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 673,
+                y: 8,
+                width: 52,
+                height: 26,
+            },
+            kind: StatusBattery(
+                Some(
+                    Percent(
+                        50,
+                    ),
+                ),
+                false,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 630,
+                y: 8,
+                width: 26,
+                height: 26,
+            },
+            kind: StatusSignal(
+                Strong,
+            ),
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                0,
+            ),
+            rect: Rect {
+                x: 587,
+                y: 8,
+                width: 26,
+                height: 26,
+            },
+            kind: StatusBluetooth,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 42,
+                width: 758,
+                height: 71,
+            },
+            kind: TopBar,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 42,
+                width: 71,
+                height: 71,
+            },
+            kind: Back,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 121,
+                y: 52,
+                width: 604,
+                height: 50,
+            },
+            kind: TopBarTitle,
+            text_lines: [
+                "How to play",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                1,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 113,
+                width: 758,
+                height: 3,
+            },
+            kind: Divider,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                2,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 124,
+                width: 692,
+                height: 174,
+            },
+            kind: Heading(
+                1,
+            ),
+            text_lines: [
+                "Find the five-letter",
+                "word",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                3,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 306,
+                width: 692,
+                height: 100,
+            },
+            kind: Text,
+            text_lines: [
+                "You have six guesses. Type five letters,",
+                "then tap Guess.",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                4,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 414,
+                width: 692,
+                height: 100,
+            },
+            kind: Text,
+            text_lines: [
+                "[A] is in the right spot. (A) is elsewhere",
+                "in the word. A× is absent.",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                5,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 522,
+                width: 692,
+                height: 100,
+            },
+            kind: Text,
+            text_lines: [
+                "Known letters show while you type.",
+                "Hard mode reuses placed letters.",
+            ],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 924,
+                width: 758,
+                height: 100,
+            },
+            kind: Spacer,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 0,
+                y: 924,
+                width: 758,
+                height: 3,
+            },
+            kind: Divider,
+            text_lines: [],
+        },
+        LayoutNode {
+            id: NodeId(
+                6,
+            ),
+            rect: Rect {
+                x: 33,
+                y: 934,
+                width: 692,
+                height: 83,
+            },
+            kind: Button(
+                ActionId(
+                    3588247949,
+                ),
+                Enabled,
+                Normal,
+            ),
+            text_lines: [
+                "Play",
+            ],
+        },
+    ],
+    content: Rect {
+        x: 0,
+        y: 124,
+        width: 758,
+        height: 800,
+    },
+    flow_height: 498,
+    page_turns: None,
+    hold: None,
+    context_actions: [],
+    text_hits: [],
+    prose_face: Text,
+}
+Diagnostics: LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 758,
+                    height: 42,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 0,
+                    width: 86,
+                    height: 42,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 673,
+                    y: 8,
+                    width: 52,
+                    height: 26,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 630,
+                    y: 8,
+                    width: 26,
+                    height: 26,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 587,
+                    y: 8,
+                    width: 26,
+                    height: 26,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 42,
+                    width: 758,
+                    height: 71,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 42,
+                    width: 71,
+                    height: 71,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 121,
+                    y: 52,
+                    width: 604,
+                    height: 50,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "How to play",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 113,
+                    width: 758,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 124,
+                    width: 692,
+                    height: 174,
+                },
+                kind: Heading(
+                    1,
+                ),
+                text_lines: [
+                    "Find the five-letter",
+                    "word",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 306,
+                    width: 692,
+                    height: 100,
+                },
+                kind: Text,
+                text_lines: [
+                    "You have six guesses. Type five letters,",
+                    "then tap Guess.",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 414,
+                    width: 692,
+                    height: 100,
+                },
+                kind: Text,
+                text_lines: [
+                    "[A] is in the right spot. (A) is elsewhere",
+                    "in the word. A× is absent.",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    5,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 522,
+                    width: 692,
+                    height: 100,
+                },
+                kind: Text,
+                text_lines: [
+                    "Known letters show while you type.",
+                    "Hard mode reuses placed letters.",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 924,
+                    width: 758,
+                    height: 100,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 924,
+                    width: 758,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    6,
+                ),
+                rect: Rect {
+                    x: 33,
+                    y: 934,
+                    width: 692,
+                    height: 83,
+                },
+                kind: Button(
+                    ActionId(
+                        3588247949,
+                    ),
+                    Enabled,
+                    Normal,
+                ),
+                text_lines: [
+                    "Play",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 124,
+            width: 758,
+            height: 800,
+        },
+        flow_height: 498,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

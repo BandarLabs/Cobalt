@@ -1,0 +1,36 @@
+{
+  "evidence_type": "app-renderer and SDK callbacks; no live simulator or device",
+  "source_base": "97153048",
+  "panel": {
+    "width": 1072,
+    "height": 1448,
+    "ppi": 300,
+    "text_scale_percent": 140
+  },
+  "status_strip": "synthetic measuring chrome: 00:00,50%,strong Wi-Fi,Bluetooth",
+  "source_sha256": {
+    "apps/inkling/src/main.rs": "6a092da9e3c4db5e5fdb4b0248dbf142a0a13b40a84caa9af5d938bc4b49f5fa",
+    "apps/inkling/src/review_capture.rs": "660bc1301646901738177e26c88ccc8d8da5dad22ff760efa40cf96b6a5f2bd7",
+    "apps/inkling/screenshots/ui-review/capture.py": "9d29a3524bcab2d6aef73f7bc365677041762f3836ae0f39ff1df81aaa287f33"
+  },
+  "captures_sha256": {
+    "before-typing-back.png": "e08cf00ae4252c5cf7acb42f468fda372b31efcb2a258e49ff061a6c80eeb737",
+    "after-export-failed.png": "fcd7751a36d1aeab891836b0bcdf552647537ceb5ce00aa10a97f46197a7fc56",
+    "after-typing-back.png": "9b41c3fdef37bbf1fe11457e4df24f7fce2222e514856c57eda90b6a89b25dcd",
+    "after-export-saved.png": "630fe0d0677420e26ce7db4a461020c5881a87586b47991d5c438dccf562b07a",
+    "before-export.png": "f4d33b179c370290f42ddf11717c5d51cfb7a333b35b72bdb759f40b29762955"
+  },
+  "isolated_capture_verification": {
+    "normal_app_tests": 25,
+    "capture_tests": 1,
+    "node_tests": 105,
+    "committed_after_images_byte_identical": [
+      "after-export-failed.png",
+      "after-typing-back.png",
+      "after-export-saved.png"
+    ],
+    "full_capture_set_byte_identical_count": 30,
+    "full_capture_set_count": 30,
+    "release_cargo_manifest_and_lock": "byte-identical to beta97153048"
+  }
+}

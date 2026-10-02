@@ -3,10 +3,10 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "A question says which terminal on which computer is asking, two arriving at once are both on the board, and an answer that came too late is not reported as a decision."
+  "release_notes": "Long requests, answer choices and waiting terminals paginate without hiding decision controls. Page turns retain selected answers, and incomplete pairing codes stay editable."
 }

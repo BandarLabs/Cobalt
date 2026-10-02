@@ -6,8 +6,8 @@ mod ha;
 use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, Heartbeat, KoboApp, Screen, ScreenBuilder,
-    Space, StoreResult, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, Heartbeat, KoboApp, Position, Screen,
+    ScreenBuilder, Space, StoreResult, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -56,6 +56,8 @@ struct HomePanel {
     last_ok: Option<(i64, String)>,
     pending: Option<(String, String)>,
     edit_page: usize,
+    grid_page: usize,
+    picker_page: usize,
     poll_failed: bool,
 }
 
@@ -77,6 +79,8 @@ impl Default for HomePanel {
             last_ok: None,
             pending: None,
             edit_page: 0,
+            grid_page: 0,
+            picker_page: 0,
             poll_failed: false,
         }
     }
@@ -243,11 +247,11 @@ impl HomePanel {
                 .activity("Opening", None)
                 .build(),
             View::Setup => self.setup(),
-            View::Grid => self.grid(),
+            View::Grid => self.grid(context),
             View::Settings => self.settings(),
             View::Edit => self.edit(),
             View::Tile(index) => self.tile(*index),
-            View::Add => self.add(),
+            View::Add => self.add(context),
             View::Search => self.search(),
             View::Climate(id) => self.climate_screen(id),
             View::Detail(id) => self.detail_screen(id),
@@ -280,33 +284,93 @@ impl HomePanel {
             .build()
     }
 
-    fn grid(&self) -> Screen {
-        let mut s = ScreenBuilder::new("homepanel-grid")
+    fn grid_prefix(&self) -> ScreenBuilder {
+        let mut screen = ScreenBuilder::new("homepanel-grid")
             .top_bar("Home Panel")
             .top_bar_glyph(SETTINGS, "Settings", Glyph::Settings)
             .top_bar_glyph(ADD, "Add tile", Glyph::Plus);
-        s = if self.tiles.is_empty() {
-            s.splash(
-                Some(Glyph::Light),
-                "No tiles",
-                "Add a Home Assistant device.",
-            )
-        } else {
-            if let Some(freshness) = self.freshness() {
-                s = s.secondary(freshness);
-            }
-            s.grid(
-                if self.wall { 1 } else { 2 },
-                false,
-                self.tiles
-                    .iter()
-                    .map(|id| (format!("tile.{id}"), self.tile_label(id))),
-            )
-        };
-        if let Some(b) = &self.banner {
-            s = s.banner(BannerLevel::Attention, b);
+        if let Some(freshness) = self.freshness() {
+            screen = screen.secondary(freshness);
         }
-        s.build()
+        if let Some(banner) = &self.banner {
+            screen = screen.banner(BannerLevel::Attention, banner);
+        }
+        screen
+    }
+
+    fn page_controls(screen: ScreenBuilder, page: usize, pages: usize) -> ScreenBuilder {
+        if pages <= 1 {
+            return screen;
+        }
+        screen
+            .page_turns("page-previous", "page-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages).unwrap_or(u16::MAX),
+            )
+    }
+
+    fn grid_slice(&self, indices: &[usize], page: usize, pages: usize) -> Screen {
+        let screen = self.grid_prefix().grid(
+            if self.wall { 1 } else { 2 },
+            false,
+            indices.iter().filter_map(|&index| {
+                let id = self.tiles.get(index)?;
+                Some((format!("tile.{id}"), self.tile_label(id)))
+            }),
+        );
+        Self::page_controls(screen, page, pages).build()
+    }
+
+    fn grid_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let all: Vec<usize> = (0..self.tiles.len()).collect();
+        if self
+            .grid_slice(&all, 0, 1)
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .issues
+            .is_empty()
+        {
+            return vec![all];
+        }
+        // A control grid has a different measure from a list of rows. Ask the
+        // real layout whether each next tile fits, with page controls reserved.
+        // There are at most twelve tiles, so this stays small even on a wall panel.
+        let mut pages = Vec::new();
+        let mut page = Vec::new();
+        for index in all {
+            page.push(index);
+            if page.len() > 1
+                && !self
+                    .grid_slice(&page, 0, 2)
+                    .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+                    .issues
+                    .is_empty()
+            {
+                page.pop();
+                pages.push(std::mem::take(&mut page));
+                page.push(index);
+            }
+        }
+        if !page.is_empty() {
+            pages.push(page);
+        }
+        pages
+    }
+
+    fn grid(&self, context: &Context) -> Screen {
+        if self.tiles.is_empty() {
+            return self
+                .grid_prefix()
+                .splash(
+                    Some(Glyph::Light),
+                    "No tiles",
+                    "Add a Home Assistant device.",
+                )
+                .build();
+        }
+        let pages = self.grid_pages(context);
+        let page = self.grid_page.min(pages.len().saturating_sub(1));
+        self.grid_slice(&pages[page], page, pages.len())
     }
 
     fn settings(&self) -> Screen {
@@ -431,16 +495,17 @@ impl HomePanel {
         s.build()
     }
 
-    fn add(&self) -> Screen {
-        let mut s = ScreenBuilder::new("homepanel-add")
+    fn picker_prefix(&self) -> ScreenBuilder {
+        let mut screen = ScreenBuilder::new("homepanel-add")
             .top_bar("Add a tile")
             .top_bar_glyph(SEARCH, "Search", Glyph::Search);
-        if let Some(b) = &self.banner {
-            s = s.banner(BannerLevel::Attention, b);
+        if let Some(banner) = &self.banner {
+            screen = screen.banner(BannerLevel::Attention, banner);
         }
-        if self.task.is_some_and(|(_, kind)| kind == "entities") {
-            return s.activity("Finding devices", None).build();
-        }
+        screen
+    }
+
+    fn picker_rows(&self) -> Vec<(String, String, String, Glyph)> {
         let words = self.query.to_ascii_lowercase();
         let mut rows = self
             .entities
@@ -451,7 +516,6 @@ impl HomePanel {
                     || entity.id.to_ascii_lowercase().contains(&words)
             })
             .filter(|entity| !self.tiles.contains(&entity.id))
-            .take(40)
             .map(|entity| {
                 (
                     format!("entity.{}", entity.id),
@@ -469,24 +533,54 @@ impl HomePanel {
                 entity_glyph(&self.query),
             ));
         }
-        if rows.is_empty() {
-            s.splash(
-                Some(Glyph::Search),
-                if self.query.is_empty() {
-                    "No devices found"
-                } else {
-                    "No matches"
-                },
-                if self.query.is_empty() {
-                    "Check Home Assistant and try again."
-                } else {
-                    "Try a different name."
-                },
-            )
-            .build()
-        } else {
-            s.rows(rows).build()
+        rows
+    }
+
+    fn picker_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.picker_rows();
+        let borrowed = rows
+            .iter()
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        context.paginate_rows_under(
+            &borrowed,
+            false,
+            Position::AtTheFoot,
+            &self.picker_prefix().build(),
+        )
+    }
+
+    fn add(&self, context: &Context) -> Screen {
+        let screen = self.picker_prefix();
+        if self.task.is_some_and(|(_, kind)| kind == "entities") {
+            return screen.activity("Finding devices", None).build();
         }
+        let rows = self.picker_rows();
+        if rows.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::Search),
+                    if self.query.is_empty() {
+                        "No devices found"
+                    } else {
+                        "No matches"
+                    },
+                    if self.query.is_empty() {
+                        "Check Home Assistant and try again."
+                    } else {
+                        "Try a different name."
+                    },
+                )
+                .build();
+        }
+        let pages = self.picker_pages(context);
+        let page = self.picker_page.min(pages.len().saturating_sub(1));
+        Self::page_controls(
+            screen.rows(pages[page].iter().map(|&index| rows[index].clone())),
+            page,
+            pages.len(),
+        )
+        .build()
     }
 
     fn search(&self) -> Screen {
@@ -566,6 +660,7 @@ impl HomePanel {
     fn load_entities(&mut self, context: &mut Context) {
         self.view = View::Add;
         self.query.clear();
+        self.picker_page = 0;
         self.banner = None;
         if let Some(id) = context.spawn(ha::entities(&self.base)) {
             self.task = Some((id, "entities"));
@@ -643,6 +738,7 @@ impl HomePanel {
             self.show(context);
         } else if action == action_id("wall") {
             self.wall = !self.wall;
+            self.grid_page = 0;
             self.save_settings(context);
             self.show(context);
         } else if action == action_id("edit") {
@@ -854,12 +950,34 @@ impl KoboApp for HomePanel {
                         }
                     } else {
                         self.query = text;
+                        self.picker_page = 0;
                         self.view = View::Add;
                         self.show(context);
                     }
                 }
                 return;
             }
+        }
+        if action == action_id("page-previous") || action == action_id("page-next") {
+            let (page, count) = match self.view {
+                View::Grid => (self.grid_page, self.grid_pages(context).len()),
+                View::Add => (self.picker_page, self.picker_pages(context).len()),
+                _ => return,
+            };
+            let last = count.saturating_sub(1);
+            let page = page.min(last);
+            let next = if action == action_id("page-next") {
+                page.saturating_add(1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            if self.view == View::Grid {
+                self.grid_page = next;
+            } else {
+                self.picker_page = next;
+            }
+            self.show(context);
+            return;
         }
         if self.act_chrome(context, action) {
             return;
@@ -881,12 +999,15 @@ impl KoboApp for HomePanel {
             }
             return;
         }
-        let Some((known, kind)) = self.task.take() else {
+        let Some((known, kind)) = self.task else {
             return;
         };
         if known != task {
             return;
         }
+        // A newer request may supersede the tracked UI operation while the
+        // earlier request is still running. Its reply must not consume this one.
+        self.task = None;
         match (kind, outcome) {
             ("test", TaskOutcome::Completed(_)) => {
                 self.banner = None;
@@ -978,6 +1099,10 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    fn test_context() -> Context {
+        kobo_sdk::AppRunner::new(HomePanel::default()).context()
+    }
+
     fn panel() -> HomePanel {
         HomePanel {
             view: View::Grid,
@@ -1010,7 +1135,7 @@ mod tests {
             tiles: (0..12).map(|n| format!("light.{n}")).collect(),
             ..Default::default()
         };
-        assert!(!app.grid().layout().nodes.is_empty());
+        assert!(!app.grid(&test_context()).layout().nodes.is_empty());
     }
 
     #[test]
@@ -1068,13 +1193,13 @@ mod tests {
     fn wall_panel_is_one_column() {
         let mut app = panel();
         app.wall = true;
-        let debug = format!("{:?}", app.grid());
+        let debug = format!("{:?}", app.grid(&test_context()));
         assert!(debug.contains("columns: 1"), "{debug}");
     }
 
     #[test]
     fn empty_grid_offers_add_and_settings_as_header_icons() {
-        let debug = format!("{:?}", HomePanel::default().grid());
+        let debug = format!("{:?}", HomePanel::default().grid(&test_context()));
         assert!(debug.contains("Plus"), "{debug}");
         assert!(debug.contains("Settings"), "{debug}");
         assert!(!debug.contains("Refresh now"), "{debug}");
@@ -1099,7 +1224,7 @@ mod tests {
             ],
             ..HomePanel::default()
         };
-        let debug = format!("{:?}", app.add());
+        let debug = format!("{:?}", app.add(&test_context()));
         assert!(debug.contains("Ceiling lights"), "{debug}");
         assert!(!debug.contains("Office temperature"), "{debug}");
     }
@@ -1111,9 +1236,12 @@ mod tests {
             query: "light.kitchen".into(),
             ..HomePanel::default()
         };
-        let debug = format!("{:?}", app.add());
+        let debug = format!("{:?}", app.add(&test_context()));
         assert!(debug.contains("Add anyway"), "{debug}");
         assert!(valid_entity_id("light.kitchen"));
         assert!(!valid_entity_id("Kitchen light"));
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

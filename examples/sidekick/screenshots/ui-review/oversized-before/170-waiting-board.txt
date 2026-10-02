@@ -1,0 +1,44 @@
+Native in-process Kobo renderer snapshot; NOT an interactive simulator capture.
+Profile: Clara BW 1072x1448, text 170%. Synthetic status strip: 00:00 / 50% / connected.
+App screen and shared renderer.
+Diagnostics: [
+    LayoutIssue {
+        severity: Error,
+        node: Some(
+            NodeId(
+                4,
+            ),
+        ),
+        kind: Clipped,
+        rect: Some(
+            Rect {
+                x: 47,
+                y: 1431,
+                width: 44,
+                height: 44,
+            },
+        ),
+    },
+    LayoutIssue {
+        severity: Error,
+        node: Some(
+            NodeId(
+                4,
+            ),
+        ),
+        kind: InteractiveOffscreen,
+        rect: None,
+    },
+    LayoutIssue {
+        severity: Error,
+        node: Some(
+            NodeId(
+                3,
+            ),
+        ),
+        kind: ContentOverflow {
+            hidden_nodes: 1,
+        },
+        rect: None,
+    },
+]

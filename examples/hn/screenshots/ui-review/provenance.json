@@ -1,0 +1,56 @@
+{
+  "before": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "hn",
+    "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+    "source_sha256": "106d074bae52d23bd50ba150c6333efe640a46d52f62c69fa2ca3a7f0ec2d826",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "0de693990c5ce814824b4f001e798be37f280edcdb190b89b11240373bbbdfc0",
+    "images": {
+      "default-discussion.png": "7fedb15a70f43e4734aa1293bfb64cf9cae437159e773a02ae427d1f5f203975",
+      "largest-dismissed-menu.png": "3fc10a6c7a5151f6decaa817272f9cfc2258ce25cb911d5d3c6acb2167499185",
+      "largest-saved-error.png": "9212397b7464c95654c0fe0e0cfc9c184be8d5df9294eda42b9787cc98c1d787",
+      "default-saved-menu.png": "1062d92f4809fe22641d1b4f80ce02e1cb2aa8f8eeb259a535d6fc1db3d44599",
+      "largest-saved-menu.png": "27f1cf8166f85d0d8e9cf2fa8393751049549e675054b8f5888cff27cdb06d92",
+      "largest-stories.png": "01527fb409ddb977119da1369857ecd41c5660d86bc8f3fa0b7d59d557a6923e",
+      "default-saved-error.png": "2451828eeb48a9c573001da01c3690665144268cab586d1af5feff2e2dc7269c",
+      "default-dismissed-menu.png": "5ce1ad096dfb610a0b1229aa38389277fe744488d97da089c3d86cd5f470f207",
+      "default-stories.png": "ba857196917ff62c704beb74b178bf39b38d90e8016bf43449c2686fdacd77bd",
+      "largest-discussion.png": "74603bdfbe8708edf5800fe3027f6bd0d615fe6e22d7c26b2a29d51d0697a8fa"
+    }
+  },
+  "after": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "hn",
+    "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+    "source_sha256": "adad207fd673a178719a14b04bb767b17f712fc0ceb6b171fed5f1ab0c892132",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "0de693990c5ce814824b4f001e798be37f280edcdb190b89b11240373bbbdfc0",
+    "images": {
+      "default-discussion.png": "7fedb15a70f43e4734aa1293bfb64cf9cae437159e773a02ae427d1f5f203975",
+      "largest-dismissed-menu.png": "3fc10a6c7a5151f6decaa817272f9cfc2258ce25cb911d5d3c6acb2167499185",
+      "largest-saved-error.png": "9212397b7464c95654c0fe0e0cfc9c184be8d5df9294eda42b9787cc98c1d787",
+      "default-saved-menu.png": "1062d92f4809fe22641d1b4f80ce02e1cb2aa8f8eeb259a535d6fc1db3d44599",
+      "largest-saved-menu.png": "27f1cf8166f85d0d8e9cf2fa8393751049549e675054b8f5888cff27cdb06d92",
+      "largest-stories.png": "01527fb409ddb977119da1369857ecd41c5660d86bc8f3fa0b7d59d557a6923e",
+      "default-saved-error.png": "2451828eeb48a9c573001da01c3690665144268cab586d1af5feff2e2dc7269c",
+      "default-dismissed-menu.png": "5ce1ad096dfb610a0b1229aa38389277fe744488d97da089c3d86cd5f470f207",
+      "default-stories.png": "ba857196917ff62c704beb74b178bf39b38d90e8016bf43449c2686fdacd77bd",
+      "largest-discussion.png": "74603bdfbe8708edf5800fe3027f6bd0d615fe6e22d7c26b2a29d51d0697a8fa"
+    }
+  },
+  "committed_images": {
+    "after-dismissed-menu.png": "5ce1ad096dfb610a0b1229aa38389277fe744488d97da089c3d86cd5f470f207",
+    "before-open-menu.png": "1062d92f4809fe22641d1b4f80ce02e1cb2aa8f8eeb259a535d6fc1db3d44599",
+    "after-open-menu.png": "1062d92f4809fe22641d1b4f80ce02e1cb2aa8f8eeb259a535d6fc1db3d44599"
+  },
+  "back_ownership": {
+    "before_open_menu": false,
+    "after_open_menu": true,
+    "after_dismissal": false
+  }
+}

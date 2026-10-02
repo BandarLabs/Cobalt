@@ -1,0 +1,60 @@
+{
+  "before-native": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "rss-miniflux",
+    "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+    "source_sha256": "e02d32bac1f7874b8fd9169fae4c7dede29f38a7ae34ff5eca6ff3f1b97deb7a",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "3b9263f27f72f9160bd1b66bbf51ab3f5cf80a46fa0c2295008824f98dfb6138",
+    "images": {
+      "default-next-page.png": "63ee282276a8edb97b665f2257811b2257d5ccfe11d4b80643dfa61126835563",
+      "default-setup.png": "0d566f23c6ed4031d3444af3b1c349c009855f827e42cd8e2821484d26cea04c",
+      "largest-next-page.png": "a8b1d7a1669c24d073d0b97392ed4647059c84630ba23dd9226ac3ddbbeb5b63",
+      "largest-setup.png": "a48075bf2ef45894a0d5f26151c8ccc0bcb5f1f3eb9f2b8609423ceecd38c155",
+      "largest-settings.png": "5c332f9707b66729e7ab1f6f105a128922a2e2887ba3e1a58a141480218c9aa9",
+      "default-settings.png": "1bb38e8947f02c5916f27b12a43a786cb0a1c928f49b1f0a158f5bec9823709d",
+      "default-unread.png": "95153a159d025c6d4181f156cb2ad2d9fbb983afe3253137900917a28df0ed6e",
+      "default-back-from-directory.png": "0d566f23c6ed4031d3444af3b1c349c009855f827e42cd8e2821484d26cea04c",
+      "largest-back-from-directory.png": "a48075bf2ef45894a0d5f26151c8ccc0bcb5f1f3eb9f2b8609423ceecd38c155",
+      "default-back-from-settings.png": "95153a159d025c6d4181f156cb2ad2d9fbb983afe3253137900917a28df0ed6e",
+      "largest-back-from-settings.png": "91b9c9283d44bddc887bbb42d361040bbd637e2f86b9cafc8b0611eec699130a",
+      "largest-unread.png": "91b9c9283d44bddc887bbb42d361040bbd637e2f86b9cafc8b0611eec699130a",
+      "largest-directory.png": "47c4f9b32f6c129c178d2005f259e1ccd00018d96448537b5c3154a093425f13",
+      "default-directory.png": "cf63180bf85599a6c473199b40b16b260729d173e8ab6a45dbd601c773802834"
+    }
+  },
+  "after-native": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "rss-miniflux",
+    "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+    "source_sha256": "862f73961095705b9ae3cda4e9835713cb6bf255f27bcfa2d2178f9fe253451f",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "3b9263f27f72f9160bd1b66bbf51ab3f5cf80a46fa0c2295008824f98dfb6138",
+    "images": {
+      "default-next-page.png": "63ee282276a8edb97b665f2257811b2257d5ccfe11d4b80643dfa61126835563",
+      "default-setup.png": "0d566f23c6ed4031d3444af3b1c349c009855f827e42cd8e2821484d26cea04c",
+      "largest-next-page.png": "a8b1d7a1669c24d073d0b97392ed4647059c84630ba23dd9226ac3ddbbeb5b63",
+      "largest-setup.png": "a48075bf2ef45894a0d5f26151c8ccc0bcb5f1f3eb9f2b8609423ceecd38c155",
+      "largest-settings.png": "49192c1f7800d1030d662b787c0e72d83d3c9e16d5aba87f1d3517cbf7aa0218",
+      "default-settings.png": "04f28cf3e39455a768fafb06ea909cfeffdca770b56485e66b247247a9da02d2",
+      "default-unread.png": "95153a159d025c6d4181f156cb2ad2d9fbb983afe3253137900917a28df0ed6e",
+      "default-back-from-directory.png": "04f28cf3e39455a768fafb06ea909cfeffdca770b56485e66b247247a9da02d2",
+      "largest-back-from-directory.png": "49192c1f7800d1030d662b787c0e72d83d3c9e16d5aba87f1d3517cbf7aa0218",
+      "default-back-from-settings.png": "63ee282276a8edb97b665f2257811b2257d5ccfe11d4b80643dfa61126835563",
+      "largest-back-from-settings.png": "a8b1d7a1669c24d073d0b97392ed4647059c84630ba23dd9226ac3ddbbeb5b63",
+      "largest-unread.png": "91b9c9283d44bddc887bbb42d361040bbd637e2f86b9cafc8b0611eec699130a",
+      "largest-directory.png": "3e2b2dbcd66012f6cb7676a3b29281ea2701f229038152d81a111b00ec78ef38",
+      "default-directory.png": "91164e8ea4dff542066980f24b05ff338e1d680eee20e60302c1fd3d16276c58"
+    }
+  },
+  "committed_images": {
+    "before-directory-back.png": "0d566f23c6ed4031d3444af3b1c349c009855f827e42cd8e2821484d26cea04c",
+    "after-list-return.png": "63ee282276a8edb97b665f2257811b2257d5ccfe11d4b80643dfa61126835563",
+    "after-directory-back.png": "04f28cf3e39455a768fafb06ea909cfeffdca770b56485e66b247247a9da02d2",
+    "before-list-return.png": "95153a159d025c6d4181f156cb2ad2d9fbb983afe3253137900917a28df0ed6e"
+  }
+}

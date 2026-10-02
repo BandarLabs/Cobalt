@@ -1,0 +1,11 @@
+{
+  "capture_kind": "native app renderer snapshot; not interactive simulator",
+  "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "source_file": "examples/launcher/src/main.rs",
+  "profile": "Clara BW 1072x1448",
+  "status": "synthetic 00:00, 50% battery, connected radios",
+  "hardware_tested": false,
+  "simulator_tested": false,
+  "source_sha256": "6ab95a415e68a06719b2ac7ea66be95b145f002ae0a3d0270cf8b503871dbcb3",
+  "source_file_modified": false
+}

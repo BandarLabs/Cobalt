@@ -287,27 +287,19 @@ impl Chat {
         ScreenBuilder::new("chat-service")
             .top_bar("Service")
             .nav_bar(2, DESTINATIONS)
-            .text(
-                "Each service answers with its own model. Install a key once \
-                 from your computer, for example `kobo secret set openai`, \
-                 then choose the service here.",
-            )
-            .section("Talk to")
-            .choose(
-                "",
-                PROVIDERS.iter().enumerate().map(|(index, provider)| {
-                    (
-                        CHOICES[index],
-                        format!("{} ({})", provider.label(), provider.model()),
-                    )
-                }),
-            )
-            .chosen(
-                PROVIDERS
-                    .iter()
-                    .position(|provider| *provider == self.provider)
-                    .unwrap_or(0),
-            )
+            .secondary("Add a service key from your computer, for example kobo secret set openai.")
+            .rows(PROVIDERS.iter().enumerate().map(|(index, provider)| {
+                (
+                    CHOICES[index],
+                    provider.label(),
+                    provider.model(),
+                    if *provider == self.provider {
+                        Glyph::Check
+                    } else {
+                        Glyph::Circle
+                    },
+                )
+            }))
             .build()
     }
 
@@ -774,6 +766,7 @@ mod tests {
         transcript_pages, Chat, View, CHOICES, CHOSEN, COLUMNS, EARLIER, OPTIONS, SERVICE, TALK,
         TRANSCRIPT_LINES, TYPE,
     };
+    use super::{Glyph, PROVIDERS};
     use kobo_sdk::keyboard::Keyboard;
     use kobo_sdk::{
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
@@ -1501,19 +1494,21 @@ mod tests {
         act(&mut chat, CHOICES[1]);
         act(&mut chat, SERVICE);
         let screen = chat.screen();
-        let [.., kobo_sdk::Node::Choice {
-            options, selected, ..
-        }] = &screen.nodes[..]
-        else {
-            unreachable!("the chooser ends in a choice")
+        let [.., kobo_sdk::Node::Rows { rows, .. }] = &screen.nodes[..] else {
+            unreachable!("the chooser ends in service rows")
         };
-        assert_eq!(*selected, Some(1));
-        for option in options {
-            assert!(
-                option.label.is_ascii(),
-                "a label carries a symbol the installed face may not have: {}",
-                option.label
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(row.title, PROVIDERS[index].label());
+            assert_eq!(row.summary, PROVIDERS[index].model());
+            assert_eq!(
+                row.lead,
+                kobo_sdk::RowLead::from(if index == 1 {
+                    Glyph::Check
+                } else {
+                    Glyph::Circle
+                })
             );
+            assert!(row.title.is_ascii());
         }
     }
 
@@ -1573,5 +1568,56 @@ mod tests {
                 .push(Role::Assistant, "A reasonably long answer. ".repeat(6));
         }
         assert_eq!(bar(&chat), empty, "the bar moved as the transcript grew");
+    }
+    #[test]
+    fn service_rows_fit_and_select_their_provider_at_every_text_size() {
+        // Exercise the 300ppi panel geometries in portrait and logical landscape.
+        // The Elipsa 227ppi profile is verified in its own native-renderer
+        // process: an installed real-font typesetter retains its initial PPI.
+        for (width, height, pixels_per_inch) in [
+            (1072, 1448, 300),
+            (1448, 1072, 300),
+            (1264, 1680, 300),
+            (1680, 1264, 300),
+        ] {
+            for scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale: scale,
+                    width,
+                    height,
+                    pixels_per_inch,
+                };
+                let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
+                for (index, provider) in PROVIDERS.iter().enumerate() {
+                    runner.app_mut().view = View::Choosing;
+                    let screen = runner.app().screen().with_own_back(true);
+                    let chrome = kobo_ui::Chrome::for_screen(
+                        &screen,
+                        false,
+                        kobo_ui::Chrome::measuring(true).status,
+                    );
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        !diagnostics.has_errors(),
+                        "{width}x{height} {pixels_per_inch}ppi {scale:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    let action = action_id(CHOICES[index]);
+                    let rect = diagnostics
+                        .layout
+                        .rect_of_action(action)
+                        .expect("provider row");
+                    assert_eq!(
+                        diagnostics
+                            .layout
+                            .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                        Some(action)
+                    );
+                    let commands = runner.action(action);
+                    assert_eq!(runner.app().provider, *provider);
+                    assert!(commands.iter().any(|command| matches!(command,Command::Store(StoreRequest::Save{key,value}) if key==CHOSEN && value==provider.key().as_bytes())));
+                }
+            }
+        }
     }
 }

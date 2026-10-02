@@ -141,39 +141,41 @@ struct Audiobook {
 
 impl Audiobook {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.stage {
             Stage::Library => self.library_screen(),
             Stage::Compose => {
-                let mut screen =
-                    ScreenBuilder::new("audiobook-compose").top_bar("Create an audiobook");
+                let mut screen = ScreenBuilder::new("audiobook-compose")
+                    .top_bar("Create an audiobook")
+                    .owns_back(true);
                 if self.has_books() {
                     screen = screen.top_bar_glyph(SHELF, "Audiobooks", Glyph::Headphones);
                 }
-                let mut screen = screen
-                    .heading("What should it be about?")
-                    .text("It is researched from current sources, written as an original spoken script, and narrated aloud. The finished audiobook stays on this reader and plays with the network off.");
-                if let Some(checkpoint) = &self.checkpoint {
-                    let label = if checkpoint.title.is_empty() {
-                        "Resume the interrupted audiobook".to_owned()
-                    } else {
-                        format!(
-                            "Resume '{}' (part {} of {})",
-                            checkpoint.title,
-                            checkpoint.next_part + 1,
-                            checkpoint.parts.len().max(1)
-                        )
-                    };
-                    screen = screen.button(RESUME, label);
+                if self.checkpoint.is_some() {
+                    screen = screen.top_bar_action(RESUME, "Resume");
                 }
-                // Rendered where the person is looking when they are told
-                // to change it. Without this the Create button simply does
-                // nothing for a topic that is too short.
+                let mut screen = screen.heading("Your topic");
                 if let Some(hint) = self.hint {
                     screen = screen.secondary(hint);
+                } else if let Some(checkpoint) = &self.checkpoint {
+                    let title = if checkpoint.title.is_empty() {
+                        "Interrupted audiobook"
+                    } else {
+                        &checkpoint.title
+                    };
+                    screen = screen.secondary(context.one_line_row(
+                        &format!(
+                            "Resume part {} of {}: {title}",
+                            checkpoint.next_part + 1,
+                            checkpoint.parts.len().max(1)
+                        ),
+                        false,
+                    ));
+                } else {
+                    screen = screen.secondary("Saved here to play offline.");
                 }
                 screen
                     .section("Language")
@@ -546,7 +548,7 @@ impl Audiobook {
     fn begin(&mut self, context: &mut Context) {
         let topic = self.topic.text().trim();
         if topic.len() < 3 {
-            self.hint = Some("That is too short. Type a few words about the topic.");
+            self.hint = Some("That is too short. Add a few words.");
             self.show(context);
             return;
         }
@@ -774,6 +776,13 @@ impl KoboApp for Audiobook {
     }
 
     fn on_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+        if self.stage == Stage::Compose
+            && (action == kobo_sdk::ActionId::BACK || action == action_id(SHELF))
+        {
+            // Navigation does not discard an unsubmitted topic or language.
+            self.open_library(context);
+            return;
+        }
         if self.stage == Stage::Player
             && self
                 .player
@@ -867,6 +876,7 @@ impl KoboApp for Audiobook {
                 if pressed == Pressed::Submitted {
                     self.begin(context);
                 } else {
+                    self.hint = None;
                     self.show(context);
                 }
             }
@@ -1223,6 +1233,7 @@ mod tests {
         write_checkpoint, Audiobook, Checkpoint, Saved, Stage, SAMPLE_NAME, SAMPLE_TITLE,
     };
     use crate::pipeline;
+    use kobo_sdk::Context;
     use kobo_sdk::{action_id, Failure, StandardState, CLARA_BW_METRICS, MAX_ROWS};
 
     #[test]
@@ -1242,7 +1253,9 @@ mod tests {
                 StandardState::Error,
                 "The provider could not complete this request.".to_owned(),
             ));
-            let issues = app.screen().validate(&CLARA_BW_METRICS);
+            let issues = app
+                .screen(&kobo_sdk::Context::default())
+                .validate(&CLARA_BW_METRICS);
             assert!(issues.is_empty(), "{stage:?}: {issues:?}");
         }
     }
@@ -1255,13 +1268,16 @@ mod tests {
     fn a_short_topic_puts_a_visible_hint_on_the_compose_screen() {
         let app = Audiobook {
             stage: Stage::Compose,
-            hint: Some("That is too short. Type a few words about the topic."),
+            hint: Some("That is too short. Add a few words."),
             ..Audiobook::default()
         };
-        let screen = app.screen();
+        let screen = app.screen(&kobo_sdk::Context::default());
         let drawn = format!("{screen:?}");
         assert!(drawn.contains("That is too short"), "{drawn}");
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
     }
 
     /// Every stage the library can be in has to fit, including a shelf with
@@ -1271,9 +1287,15 @@ mod tests {
         let runner = kobo_sdk::AppRunner::new(Audiobook::default());
         let context = runner.context();
         let mut app = Audiobook::default();
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
         app.library = Some(Vec::new());
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
         let blobs = (0..40)
             .map(|index| (format!("book-{index}.mp3z"), 9_400_000))
             .collect::<Vec<_>>();
@@ -1290,7 +1312,9 @@ mod tests {
         assert!(app.pages.len() > 1, "40 audiobooks are more than one page");
         for page in 0..app.pages.len() {
             app.page = page;
-            let issues = app.screen().validate(&CLARA_BW_METRICS);
+            let issues = app
+                .screen(&kobo_sdk::Context::default())
+                .validate(&CLARA_BW_METRICS);
             assert!(issues.is_empty(), "page {page}: {issues:?}");
         }
     }
@@ -1396,7 +1420,10 @@ mod tests {
         app.begin(&mut context);
         assert_eq!(app.stage, Stage::Setup);
         assert!(app.task.is_none(), "nothing is spent during the check");
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
     }
 
     /// The preflight answer names every missing account at once, while the
@@ -1420,7 +1447,10 @@ mod tests {
         assert!(advice.contains("exa"), "{advice}");
         assert!(advice.contains("elevenlabs"), "{advice}");
         assert!(app.task.is_none(), "nothing was spent");
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
     }
 
     /// A runtime that cannot answer the check leaves the flow to find a
@@ -1530,13 +1560,16 @@ mod tests {
             trouble: Some((StandardState::Error, "The request failed.".to_owned())),
             ..Audiobook::default()
         };
-        let drawn = format!("{:?}", app.screen());
+        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
         assert!(!drawn.contains("Resume"), "{drawn}");
         app.parts = vec!["one".to_owned()];
-        let drawn = format!("{:?}", app.screen());
+        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
         assert!(drawn.contains("Resume"), "{drawn}");
         assert!(drawn.contains("Start over"), "{drawn}");
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
     }
 
     /// An empty shelf is the moment the sample is for: no accounts, no
@@ -1547,9 +1580,12 @@ mod tests {
             library: Some(Vec::new()),
             ..Audiobook::default()
         };
-        let drawn = format!("{:?}", app.screen());
+        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
         assert!(drawn.contains("Play the sample"), "{drawn}");
-        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+        assert!(app
+            .screen(&Context::default())
+            .validate(&CLARA_BW_METRICS)
+            .is_empty());
         // A shelf with books on it does not need the offer; the sample is
         // there once saved, listed like any other book.
         app.titles = vec![(SAMPLE_NAME.to_owned(), SAMPLE_TITLE.to_owned())];
@@ -1557,7 +1593,7 @@ mod tests {
             &kobo_sdk::AppRunner::new(Audiobook::default()).context(),
             &[(SAMPLE_NAME.to_owned(), 900_000)],
         );
-        let drawn = format!("{:?}", app.screen());
+        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
         assert!(drawn.contains(SAMPLE_TITLE), "{drawn}");
     }
 
@@ -1603,3 +1639,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod compose_tests;

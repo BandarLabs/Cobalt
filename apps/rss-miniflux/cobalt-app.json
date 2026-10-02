@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.3",
-  "release_notes": "Renamed from RSS Reader - Miniflux to Digest, so the app carries its own name rather than the name of the server it talks to.",
+  "version": "0.1.4",
+  "release_notes": "Suggested feeds returns to the screen it was opened from. Leaving settings keeps your place in the article list, with one consistent Back control.",
   "glyph": "rss",
   "capabilities": [
     "network"

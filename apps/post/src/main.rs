@@ -137,32 +137,54 @@ impl Post {
             .build()
     }
 
-    fn letter(&self, c: &mut Context) -> Screen {
-        let Some(letter) = self.letters.get(self.open) else {
-            return self.inbox();
-        };
-        let pages = c.paginate_reading(&letter.body, true);
-        let index = letter_page(&pages, self.place(&letter.id));
-        let mut page = ScreenBuilder::new("post-letter")
+    fn letter_prefix(&self, letter: &Letter) -> ScreenBuilder {
+        let mut screen = ScreenBuilder::new("post-letter")
             .top_bar(&letter.title)
             .reading(true)
-            .page_position(
-                u16::try_from(index + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len()).unwrap_or(u16::MAX),
-            );
+            .owns_back(true);
         if let Some(reply) = self
             .outbox
             .iter()
             .find(|reply| reply.letter_id == letter.id)
         {
-            page = page.text(format!("Your reply: {}.", reply.state.label()));
+            screen = screen.text(format!("Your reply: {}.", reply.state.label()));
         }
         if let Some(notice) = &self.notice {
-            page = page.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(BannerLevel::Attention, notice);
         }
+        screen
+    }
+
+    fn letter_pages(&self, context: &Context, letter: &Letter) -> Vec<Vec<String>> {
+        let metrics = context.metrics();
+        kobo_ui::with_text_scale(metrics.text_scale, || {
+            kobo_ui::with_reading_scale(metrics.text_scale, || {
+                let prefix = self.letter_prefix(letter).build();
+                let chrome = kobo_sdk::Chrome::for_screen(&prefix, false, None);
+                let used = prefix.layout_with(&metrics, &chrome).content_used();
+                let mut area = metrics.prose_area_in(true, true, kobo_ui::Face::Reading);
+                // The reply action has a reserved bottom band. Status text and
+                // errors above the letter take their measured space, too.
+                area.height = area
+                    .height
+                    .saturating_sub(metrics.page_position_band())
+                    .saturating_sub(used.saturating_add(area.gap))
+                    .max(1);
+                kobo_ui::paginate(&letter.body, area)
+            })
+        })
+    }
+
+    fn letter(&self, context: &mut Context) -> Screen {
+        let Some(letter) = self.letters.get(self.open) else {
+            return self.inbox();
+        };
+        let pages = self.letter_pages(context, letter);
+        let index = letter_page(&pages, self.place(&letter.id));
+        let mut screen = self.letter_prefix(letter);
         if let Some(paragraphs) = pages.get(index) {
             for paragraph in paragraphs {
-                page = page.text(paragraph);
+                screen = screen.text(paragraph);
             }
         }
         let write = if self
@@ -176,14 +198,15 @@ impl Post {
         } else {
             "Write a reply"
         };
-        page.spacer(Space::Small)
-            .button(REPLY, write)
-            .action_bar([
-                ("previous-page", "Previous"),
-                ("back", "Inbox"),
-                ("next-page", "Next"),
-            ])
-            .build()
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("previous-page", "next-page")
+                .page_position(
+                    u16::try_from(index + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.bottom_action(REPLY, write).build()
     }
 
     fn compose(&self) -> Screen {
@@ -568,7 +591,7 @@ impl KoboApp for Post {
             && (a == action_id("previous-page") || a == action_id("next-page"))
         {
             if let Some(letter) = self.letters.get(self.open) {
-                let pages = c.paginate_reading(&letter.body, true);
+                let pages = self.letter_pages(c, letter);
                 let current = letter_page(&pages, self.place(&letter.id));
                 let next = if a == action_id("next-page") {
                     (current + 1).min(pages.len().saturating_sub(1))
@@ -638,13 +661,13 @@ mod tests {
             }],
             ..Default::default()
         };
-        let pages = c.paginate_reading(&body, true);
+        let pages = app.letter_pages(&c, &app.letters[0]);
         assert!(pages.len() > 1);
         app.on_action(&mut c, action_id("next-page"));
         let place = app.place("long");
         assert!(place > 0);
         // A reflow at a different size still lands on the same words.
-        let changed = Context::default().paginate_reading(&body, true);
+        let changed = app.letter_pages(&Context::default(), &app.letters[0]);
         let offset = page_words(&pages[0]);
         let target = letter_page(&changed, offset);
         let start: usize = changed.iter().take(target).map(|p| page_words(p)).sum();
@@ -716,3 +739,6 @@ mod tests {
         assert_eq!(app.outbox[0].id, reply.id);
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

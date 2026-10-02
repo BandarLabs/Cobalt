@@ -1,0 +1,100 @@
+    Blocking waiting for file lock on build directory
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+   Compiling allocator-api2 v0.2.21
+   Compiling cc v1.4.4
+   Compiling zeroize v1.9.0
+   Compiling equivalent v1.0.2
+   Compiling foldhash v0.1.5
+   Compiling rustls-pki-types v1.15.1
+   Compiling hashbrown v0.15.5
+   Compiling pkg-config v0.3.34
+   Compiling unicode-width v0.2.2
+   Compiling getrandom v0.2.17
+   Compiling vcpkg v0.2.15
+   Compiling untrusted v0.9.0
+   Compiling unicode-segmentation v1.13.3
+   Compiling rustls v0.23.45
+   Compiling tinyvec_macros v0.1.1
+   Compiling httparse v1.10.1
+   Compiling ring v0.17.14
+   Compiling kobo-ui v0.3.24 (/workspace/Cobalt/crates/kobo-ui)
+   Compiling tinyvec v1.12.0
+   Compiling libsqlite3-sys v0.35.0
+   Compiling itoa v1.0.18
+   Compiling bytes v1.12.1
+   Compiling subtle v2.6.1
+   Compiling adler2 v2.0.1
+   Compiling once_cell v1.21.4
+   Compiling miniz_oxide v0.9.1
+   Compiling kobo-protocol v0.3.24 (/workspace/Cobalt/crates/kobo-protocol)
+   Compiling rustls-webpki v0.103.15
+   Compiling http v1.5.0
+   Compiling unicode-normalization v0.1.25
+   Compiling hashlink v0.10.0
+   Compiling webpki-roots v1.0.9
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling httpdate v1.0.3
+   Compiling smallvec v1.16.0
+   Compiling fallible-iterator v0.3.0
+   Compiling bitflags v2.13.1
+   Compiling kobo-json v0.3.24 (/workspace/Cobalt/crates/kobo-json)
+   Compiling ttf-parser v0.21.1
+   Compiling kobo-dict v0.3.24 (/workspace/Cobalt/crates/kobo-dict)
+   Compiling kobo-abi v0.3.24 (/workspace/Cobalt/crates/kobo-abi)
+   Compiling rusqlite v0.37.0
+   Compiling kobo-net v0.3.24 (/workspace/Cobalt/crates/kobo-net)
+   Compiling fontdue v0.9.3
+   Compiling unicode-linebreak v0.1.5
+   Compiling kobo-text v0.3.24 (/workspace/Cobalt/crates/kobo-text)
+   Compiling kobo-policy v0.3.24 (/workspace/Cobalt/crates/kobo-policy)
+   Compiling kobo-state v0.3.24 (/workspace/Cobalt/crates/kobo-state)
+   Compiling kobo-sdk v0.3.24 (/workspace/Cobalt/crates/kobo-sdk)
+   Compiling kobo-inkling v0.2.0 (/workspace/Cobalt/apps/inkling)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 35.45s
+     Running unittests src/main.rs (target/debug/deps/kobo_inkling-c8d167cc128dde97)
+
+running 25 tests
+test feedback_tests::an_unrelated_game_save_cannot_settle_the_export ... ok
+test help_layout_tests::help_fits_supported_text_scales_and_geometries ... FAILED
+test feedback_tests::typing_back_preserves_the_draft_without_consuming_a_guess ... ok
+test persistence_tests::saved_daily_game_and_statistics_survive_relaunch ... ok
+test feedback_tests::export_acknowledgements_are_visible_and_only_one_write_is_pending ... ok
+test tests::archive_and_stats_and_typing_layouts_are_clean ... ok
+test tests::archive_games_never_touch_statistics ... ok
+test tests::civil_and_days_round_trip ... ok
+test tests::clara_layout_is_clean ... ok
+test tests::corrupt_guesses_are_rejected_before_they_reach_scoring ... ok
+test tests::dates_are_deterministic ... ok
+test tests::dates_display_as_real_dates ... ok
+test tests::duplicate_letters_are_scored_once ... ok
+test tests::export_text_carries_the_board_and_statistics ... ok
+test tests::hard_mode_reuses_present_letters_and_fixed_positions ... ok
+test tests::knowledge_is_empty_before_guesses ... ok
+test tests::how_to_play_is_short_and_reachable ... ok
+test tests::knowledge_lists_known_letters ... ok
+test tests::losses_count_as_played_without_a_distribution_slot ... ok
+test tests::statistics_count_daily_games_with_distribution ... ok
+test tests::unix_days_format_as_real_calendar_dates ... ok
+test tests::version_one_saves_migrate_without_distribution ... ok
+test tests::word_lists_are_audited ... ok
+test persistence_tests::input_waits_for_saved_state_and_duplicate_load_cannot_erase_edits ... ok
+test feedback_tests::full_statistics_and_export_feedback_fit_every_clara_text_size ... ok
+
+failures:
+
+---- help_layout_tests::help_fits_supported_text_scales_and_geometries stdout ----
+
+thread 'help_layout_tests::help_fits_supported_text_scales_and_geometries' panicked at apps/inkling/src/main.rs:1393:21:
+DisplayMetrics { width: 758, height: 1024, pixels_per_inch: 212, text_scale: Huge }: [LayoutIssue { severity: Error, node: Some(NodeId(5)), kind: TextOverflow, rect: Some(Rect { x: 33, y: 749, width: 692, height: 142 }) }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    help_layout_tests::help_fits_supported_text_scales_and_geometries
+
+test result: FAILED. 24 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.71s
+
+error: test failed, to rerun pass `-p kobo-inkling --bin kobo-inkling`

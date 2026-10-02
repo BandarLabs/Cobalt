@@ -110,7 +110,7 @@ def main():
                 drive("tap-at 536 724", "wait-for Library", "tap Library", "wait-for Library", "wait-for marked")
                 capture("musicstand-library-marked")
                 drive("tap Setlists", "wait-for Setlists",
-                      "tap New setlist from the library", "wait-for Setlist 1")
+                      "tap New setlist", "wait-for Setlist 1")
                 capture("musicstand-setlists")
                 drive("tap Setlist 1", "wait-for resume at page")
                 capture("musicstand-setlist")
