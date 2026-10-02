@@ -3055,9 +3055,6 @@ mod new_match_tests;
 mod help_tests;
 
 #[cfg(test)]
-mod review_capture;
-
-#[cfg(test)]
 mod match_history_tests;
 
 #[cfg(test)]
