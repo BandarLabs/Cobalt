@@ -5,7 +5,7 @@
   "summary": "Read and reply to letters from Hermes.",
   "page_description": "Read and reply to letters from your own Hermes Agent. The inbox and your drafts stay readable offline, and replies are sent when the gateway is back.",
   "version": "0.2.4",
-  "release_notes": "Read long letters without clipped lines, with page controls and a reply action that stay in place even when a delivery notice is shown.",
+  "release_notes": "Read complete letters with fixed page and reply controls, including delivery notices. Inbox rows use measured display pages independently of gateway batches. Setup keeps the login instructions visible at large text sizes.",
   "glyph": "chat",
   "capabilities": [
     "network"

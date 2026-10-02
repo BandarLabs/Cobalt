@@ -9,5 +9,5 @@
   "capabilities": [
     "network"
   ],
-  "release_notes": "Service selection keeps provider names and complete model names readable at large text sizes, with a clear mark for the current service."
+  "release_notes": "Service selection keeps complete provider and model names readable, with a clear current-service mark. Transcript pages measure notices, offers and navigation on the current panel."
 }

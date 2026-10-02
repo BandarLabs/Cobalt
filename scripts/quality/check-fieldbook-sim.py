@@ -27,6 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scale", default="default")
+    parser.add_argument("--profile", default="clara-bw-391")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -38,7 +39,7 @@ def main():
         env = dict(os.environ, TMPDIR=str(private), RUSTUP_TOOLCHAIN="1.85.1",
                    CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_DEBUG="0",
                    CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="1",
-                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391")
+                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE=args.profile)
         env.pop("KOBO_SIM_OFFLINE", None)
 
         shelf = private / "cobalt-sim-data" / "fieldbook"
@@ -47,7 +48,7 @@ def main():
 
         process = None
         address = None
-        result = dict(provenance=provenance, scale=args.scale,
+        result = dict(provenance=provenance, scale=args.scale, profile=args.profile,
                       shelf_fixture="format fixture; companion CLI lands on the "
                                     "companion branch (MISSINGCLI-02)",
                       checks=[])
@@ -108,7 +109,7 @@ def main():
                 capture("fieldbook-detail")
 
                 # Start an outing: name the place on the keyboard.
-                drive("tap Back", "wait-for Fieldbook", "tap Start an outing",
+                drive("tap Back", "wait-for Fieldbook", "tap-id new-outing",
                       "wait-for Name this place")
                 drive("type lake merced", "tap Save", "wait-for lake merced")
                 capture("fieldbook-outing")
@@ -119,7 +120,7 @@ def main():
                 capture("fieldbook-tally")
 
                 # Review, delete, undo.
-                drive("tap Review sightings", "wait-for American Robin ×2")
+                drive("tap-id sightings", "wait-for American Robin ×2")
                 capture("fieldbook-sightings")
                 drive("tap American Robin ×2", "wait-for Delete sighting?",
                       "tap Keep sighting", "wait-for American Robin ×2")
@@ -135,20 +136,20 @@ def main():
                 drive("type bufflehead", "tap Find", "wait-for Bufflehead")
                 drive("tap Bufflehead", "wait-for Bucephala albeola")
                 capture("fieldbook-search-detail")
-                drive("tap Log in the open outing", "wait-for 2 species, 3 birds")
+                drive("tap-id log-detail", "wait-for 2 species, 3 birds")
                 capture("fieldbook-log-from-search")
 
                 # The logged bird is on the outing and in the export.
-                drive("tap Review sightings", "wait-for Bufflehead")
+                drive("tap-id sightings", "wait-for Bufflehead")
                 capture("fieldbook-search-sighting")
 
                 # Finish the outing; the life list keeps the species.
-                drive("tap back", "tap Finish outing", "wait-for Fieldbook")
+                drive("tap back", "tap-id finish", "wait-for Fieldbook")
                 drive("tap Life list", "wait-for AMRO", "wait-for 2 birds")
                 capture("fieldbook-life")
 
                 # Export the eBird Checklist Format CSV and read it back.
-                drive("tap Export", "wait-for 1 outing", "tap Write checklist file",
+                drive("tap Export", "wait-for 1 outing", "tap-id write-export",
                       "wait 1500")
                 capture("fieldbook-export")
                 exported = list(private.rglob("export-checklist.csv"))

@@ -4,6 +4,7 @@ paging, reply delivery with idempotent retry, rejection, draft recovery and
 restart - through the actual simulator with real taps."""
 import argparse
 import http.server
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = 'fixture-token'
@@ -95,6 +97,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scale', default='default')
+    parser.add_argument('--profile', default='clara-bw-391')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -106,21 +109,25 @@ def main():
         private = Path(temporary)
         env = dict(os.environ, TMPDIR=str(private), CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
-                   KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,
+                   KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_CLOCK_MILLIS='1767265860000')
         env.pop('KOBO_SIM_OFFLINE', None)
-        config = private / 'config'
-        env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config / 'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
-                       env=env, check=True, capture_output=True, timeout=60)
+        spec = importlib.util.spec_from_file_location('audiobook_fixture',
+            ROOT / 'scripts/quality/check-audiobook-sim.py')
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        host = 'hermes.example.test'
+        trust = fixture.certificate(private, [host])
+        env['KOBO_SIM_TRUST_DIR'] = str(trust)
 
         gateway = Gateway()
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler_for(gateway))
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(config / 'stream/cert.pem', config / 'stream/key.pem')
+        tls.load_cert_chain(private / f'{host}.pem', private / f'{host}.key')
         server.socket = tls.wrap_socket(server.socket, server_side=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        origin = f'https://127.0.0.1:{server.server_port}'
+        origin = f'https://{host}'
+        env['KOBO_SIM_HTTP_FIXTURE'] = f'{host}=127.0.0.1:{server.server_port}'
 
         # The token, pinned to this gateway, installed the way the companion
         # CLI installs it; it never reaches the application.
@@ -168,6 +175,22 @@ def main():
                 subprocess.run(command, cwd=ROOT, env=env, stdout=log, stderr=log,
                                check=True, timeout=timeout)
 
+            def open_letter(index):
+                # Find a stable row identity across measured display pages.
+                action = 2166136261
+                for byte in f'letter.{index}'.encode():
+                    action = ((action ^ byte) * 16777619) & 0xffffffff
+                for _ in range(12):
+                    drive('tap-id newer')
+                for _ in range(12):
+                    with urllib.request.urlopen(f'http://{ADDRESS}/layout') as response:
+                        layout = json.load(response)
+                    if any(node.get('action') == action for node in layout['nodes']):
+                        drive(f'tap-id letter.{index}')
+                        return
+                    drive('tap-id older', 'wait-idle')
+                raise AssertionError(f'Letter {index} is unreachable')
+
             def capture(name):
                 drive('clean', 'shot ' + name)
 
@@ -179,15 +202,24 @@ def main():
                     name='first page of the inbox', status='passed',
                     detail='the first paginated fetch showed the newest letters'))
 
-                drive('tap Older', 'wait-for Second page letter 9',
-                      'wait-idle', timeout=300)
+                # Display pages depend on the renderer, not gateway batch size.
+                for _ in range(12):
+                    dump = subprocess.check_output([str(cli), 'drive', '--address', ADDRESS,
+                        '--step', 'dump'], env=env, text=True)
+                    if 'Second page letter 9' in dump:
+                        break
+                    drive('tap-id older', 'wait-idle', timeout=300)
+                drive('wait-for Second page letter 9')
                 capture('post-inbox-page-2')
-                drive('tap Newer', 'wait-for A long letter', timeout=300)
+                for _ in range(12):
+                    drive('tap-id newer')
+                drive('wait-for A long letter', timeout=300)
                 result['checks'].append(dict(
                     name='inbox pagination', status='passed',
                     detail='Older fetched page two from the gateway and Newer returned'))
 
-                drive('tap A long letter', 'wait-for The kettle takes its time',
+                open_letter(0)
+                drive('wait-for The kettle takes its time',
                       'wait-idle', timeout=300)
                 drive('tap-id next-page', 'wait 600', 'wait-idle')
                 capture('post-letter-page-2')
@@ -196,7 +228,8 @@ def main():
                     detail='the long letter paged forward inside the panel'))
 
                 drive('tap back', 'wait-for Tea notes')
-                drive('tap Tea notes', 'wait-for First flush')
+                open_letter(1)
+                drive('wait-for First flush')
                 drive('tap Write a reply', 'type Kettle on and book open',
                       'tap Send letter', 'wait-for Sent to Hermes.', 'wait-idle',
                       timeout=300)
@@ -206,7 +239,9 @@ def main():
                     name='reply delivered', status='passed',
                     detail='the reply reached the gateway and shows Delivered'))
 
-                drive('tap back', 'tap Flaky line', 'wait-for drops once')
+                drive('tap back')
+                open_letter(2)
+                drive('wait-for drops once')
                 drive('tap Write a reply', 'type Sending this twice would be wrong',
                       'tap Send letter', 'wait-for Reply still queued', timeout=300)
                 drive('tap back', 'tap Check', 'wait-for Sent to Hermes.',
@@ -218,7 +253,8 @@ def main():
                     detail='the first attempt failed at the gateway; the retry reused the '
                            'same reply key and the gateway holds exactly one copy'))
 
-                drive('tap Ghost letter', 'wait-for forgets this letter')
+                open_letter(3)
+                drive('wait-for forgets this letter')
                 drive('tap Write a reply', 'type Anybody there',
                       'tap Send letter', 'wait-for no longer exists on the gateway',
                       'wait-idle', timeout=300)
@@ -227,12 +263,15 @@ def main():
                     name='rejection is distinct', status='passed',
                     detail='a 404 marks the reply Rejected instead of retrying forever'))
 
-                drive('tap back', 'tap Tea notes', 'tap Write a reply', timeout=300)
+                drive('tap back')
+                open_letter(1)
+                drive('tap Write a reply', timeout=300)
                 drive('type Adding biscuits', 'tap back')
                 stop()
                 ADDRESS = start()
                 drive('wait-for Tea notes', timeout=300)
-                drive('tap Tea notes', 'tap Continue your reply',
+                open_letter(1)
+                drive('tap Continue your reply',
                       'wait-for Adding biscuits', 'wait-idle', timeout=300)
                 capture('post-draft-restored')
                 result['checks'].append(dict(

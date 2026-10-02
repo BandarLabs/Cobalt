@@ -4,8 +4,7 @@
 use kobo_sdk::{Credential, Task};
 
 pub const SECRET: &str = "hermes-post";
-// Five rows leave room for the notice, the pending count and the More
-// button on the smallest panel.
+// Gateway batch size. Display pages are measured independently of fetch batches.
 pub const PER_PAGE: usize = 5;
 const MAX_REPLY: usize = 32 * 1024;
 

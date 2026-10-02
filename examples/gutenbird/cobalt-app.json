@@ -9,5 +9,5 @@
     "network",
     "frontlight-control"
   ],
-  "release_notes": "Added catalogs stay reachable through measured pages, including at large text sizes and after a catalog error. Returning from a shelf keeps your place in the catalog list."
+  "release_notes": "Added catalogs remain reachable on measured pages, including after errors. Returning from a shelf keeps the catalog page. Loading placeholders fit the available room at large text sizes."
 }
