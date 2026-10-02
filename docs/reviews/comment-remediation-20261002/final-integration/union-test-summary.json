@@ -1,7 +1,10 @@
 {
   "source": "638ae3d9d4578dca05f3c7263ed6c50cd817e7ce",
-  "passed": 4111,
+  "passed": 4110,
   "failed": 3,
   "ignored": 3,
-  "binaries": 113
+  "binaries": 112,
+  "nested_passed_executions": 1,
+  "result_summaries": 113,
+  "accounting_note": "passed counts unique top-level tests; binaries counts Cargo Running entries. The Settings real-font test launches itself, producing one additional successful nested execution and result summary."
 }
