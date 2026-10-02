@@ -61,7 +61,9 @@ def review_app(work, item, source_sha, helper, env, out, args):
     committed_route = next((directory / name for name in ('drive.kobo', 'drive.txt')
                             if (directory / name).is_file()), None)
     # Preserve committed interactions and append a screenshot outside source.
-    content = committed_route.read_text() if committed_route else 'dump\n'
+    original_content = committed_route.read_text() if committed_route else 'dump\n'
+    review_route = item.get('review_route') if args.phase == 'after' else None
+    content = (ROOT / review_route).read_text() if review_route else original_content
     route = dest / 'profile-route.kobo'
     route.write_text(content.rstrip() + '\nclean\nshot profile-final\n')
     result = helper.run_app(app, Path(env['CARGO_TARGET_DIR']) / 'debug/kobo', dest,
@@ -71,8 +73,11 @@ def review_app(work, item, source_sha, helper, env, out, args):
                   production_source_tree=source_tree(work, directory / 'src'),
                   route=str(committed_route.relative_to(work)) if committed_route else None,
                   route_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                  committed_route_sha256=hashlib.sha256(original_content.encode()).hexdigest(),
+                  review_route=review_route,
                   capture_route=str(route.relative_to(out)),
-                  capture_scope='committed route plus final screenshot' if committed_route
+                  capture_scope='review route plus final screenshot' if review_route
+                                else 'committed route plus final screenshot' if committed_route
                                 else 'first-screen smoke and screenshot')
     (dest / 'results.json').write_text(json.dumps({'source_sha': source_sha, 'results': [result]}, indent=2) + '\n')
     return result

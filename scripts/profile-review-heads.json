@@ -19,17 +19,19 @@
       "branch": "ui/launcher-accurate-terminal-warning",
       "local_commit": "bf15ff1da8388b0ccb668a880111a42cc7986b94",
       "tree": "d8f38796bf0cf5e7da21eca2d05321a35687ac35",
-      "draft": true
+      "draft": true,
+      "review_route": "scripts/profile-routes/launcher.kobo"
     },
     {
       "app": "readlater",
       "url": "https://github.com/BandarLabs/Cobalt/pull/240",
       "number": 240,
-      "head": "f7031357f39f031f818b44482e9c32110e2ff154",
+      "head": "a21b33b02fb4603a80abce4f0d38b457f9357c9b",
       "branch": "dot/readlater-reachable-reading-list",
       "local_commit": "8870addb3609a4b940fda69aa31ff39ac0a94156",
       "tree": "fdc2c1bd65216699b176675efe2aa852866d57a8",
-      "draft": true
+      "draft": true,
+      "previous_capture_head": "f7031357f39f031f818b44482e9c32110e2ff154"
     },
     {
       "app": "chat",
@@ -118,21 +120,23 @@
       "app": "deck",
       "url": "https://github.com/BandarLabs/Cobalt/pull/249",
       "number": 249,
-      "head": "c98f449b142c0d6be70a4d69d88c6d70b9dc203c",
+      "head": "c9450285baf6d887a497f6bec36b58686e5e7329",
       "branch": "ui-review/deck-result-pagination",
       "local_commit": "18066228748d238cdf7ba65c0ad116ef482ddb35",
       "tree": "c573890836bb95e57ac0542e4a520472e90b9b28",
-      "draft": true
+      "draft": true,
+      "previous_capture_head": "c98f449b142c0d6be70a4d69d88c6d70b9dc203c"
     },
     {
       "app": "post",
       "url": "https://github.com/BandarLabs/Cobalt/pull/250",
       "number": 250,
-      "head": "6a065a94f1623e9b3be8b51a8c8002b2811066e9",
+      "head": "a8b498664d93e518a22bf375834c380b102f1f68",
       "branch": "ui-review/post-letter-pagination",
       "local_commit": "aa2d48d0ef43540e45ff3c72a64437931c8b64a6",
       "tree": "b01dc7b674a1e7b05a1d761317aef904d09d6ccd",
-      "draft": true
+      "draft": true,
+      "previous_capture_head": "6a065a94f1623e9b3be8b51a8c8002b2811066e9"
     },
     {
       "app": "habits",
@@ -148,11 +152,12 @@
       "app": "vault",
       "url": "https://github.com/BandarLabs/Cobalt/pull/252",
       "number": 252,
-      "head": "7141997332bd156beece283da343769cd33b95e3",
+      "head": "7f48d07e337a13a8ffe037236bba292cfe61a742",
       "branch": "ui-review/vault-report-pagination",
       "local_commit": "eadcba6e79047f05d6302fb9bd669e00cab0b223",
       "tree": "8bc7ede73685e2aa62ac95a8440000d1edfd3d4b",
-      "draft": true
+      "draft": true,
+      "previous_capture_head": "7141997332bd156beece283da343769cd33b95e3"
     },
     {
       "app": "syncthing",
@@ -218,11 +223,12 @@
       "app": "inkling",
       "url": "https://github.com/BandarLabs/Cobalt/pull/259",
       "number": 259,
-      "head": "5037033f45fe6d1f4672bb6878c6a1f44bb5d3dd",
+      "head": "0eb30afffed2e060d868cfeac516ef17ea8eb8a8",
       "branch": "fix/inkling-export-feedback-back",
       "local_commit": "a941b9b4d70d55ed0b51bb288c00170a1d1a382d",
       "tree": "cfdd97d5597fd1987c75f9f8ae3f71074b3a858a",
-      "draft": true
+      "draft": true,
+      "previous_capture_head": "5037033f45fe6d1f4672bb6878c6a1f44bb5d3dd"
     },
     {
       "app": "arxiv",
@@ -238,11 +244,12 @@
       "app": "needles",
       "url": "https://github.com/BandarLabs/Cobalt/pull/261",
       "number": 261,
-      "head": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca",
+      "head": "1f17e4b04da895b8c6177f7dc348235f960483fb",
       "branch": "fix/needles-reachable-collections",
       "local_commit": "a8e368ae2b152de6fb8951c2764fc2ac89f5b61d",
       "tree": "945d87046bb0dc13e905569a844f4843408d3b49",
-      "draft": true
+      "draft": true,
+      "previous_capture_head": "8d0c1f929a1f0297033571db9d06ce4c2b4698ca"
     },
     {
       "app": "verses",
@@ -321,7 +328,8 @@
     "pubquiz",
     "backgammon",
     "zotero-reader",
-    "parser"
+    "parser",
+    "inkling"
   ],
   "repair_after_by_profile": {
     "libra-colour-390-4.46.23836": [

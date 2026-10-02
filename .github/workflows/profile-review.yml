@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        phase: [before]
+        phase: [after]
         profile: [clara-bw-391, clara-bw-395, clara-hd-376, clara-colour-393, elipsa-2e-389, libra-2-388, libra-colour-390, libra-colour-390-4.46.23836, libra-h2o-384]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
