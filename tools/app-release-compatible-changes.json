@@ -358,12 +358,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Deck also gives host-only kobo-sidekickd a direct edge to the already resolved nix 0.27.1 for process-group liveness checks. That changes only the sidekickd dependency identity, with no resolved package version, Store app dependency, or protocol change.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "452c14ab3110b0b7ac41b3caa8b0edfa5d969f60"
+     "compatible_blob": "32aff0b8e07f0f920fbbc3edf4d32fbef721a7c6"
     }
    ]
   },
