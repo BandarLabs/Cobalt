@@ -1,12 +1,18 @@
-# post all device profile comparison
+# post: refreshed nine-profile evidence
 
-[Open the nine-page full-resolution BEFORE/AFTER evidence PDF](all-nine-profiles-before-after.pdf). Each page contains untouched original-resolution screenshots for one supported device profile. [Exact commits, image hashes, and validation details](validation.json).
+[Original beta BEFORE / final default AFTER](all-nine-profiles-before-after.pdf) · [Final 170% captures](all-nine-profiles-final-170.pdf) · [Validation and provenance](validation.json) · [Durable full captures and results](capture-evidence.zip)
 
-![Before and after preview](preview.png)
+![Default BEFORE and AFTER preview](preview.png)
 
-These are real native Cobalt app-renderer captures with bundled fonts and runtime chrome, not full interactive simulator captures or physical hardware photographs. Profile PPI is initialized in separate processes. Full-simulator CI is tracked independently.
+Primary comparison: original beta `9715304831eae95566758fd0aa6b8e6fc87ee3ee` at 100% interface versus final combined runtime `232f6312502d5598f31979bbddaf14ed72f7d9c7` at 100% interface. Scene: `post-setup`. The separate 170% PDF contains actual final-runtime captures with interface and reading scales printed independently. Both PDFs preserve full-resolution image pixels.
 
-Before source: `9715304831eae95566758fd0aa6b8e6fc87ee3ee`. Independent PR after source: `6a065a94f1623e9b3be8b51a8c8002b2811066e9`.
+All 18 final app routes (nine profiles × default/170%) passed. Specialized results, when available, are retained with their original scope and fixture caveats in the durable archive.
+
+Supplemental matrix BEFORE captures use `218b5172262767be2fd25265d2b35f7f9337b8c6`, not the original beta baseline. Capture-to-consolidated source bindings are documented in the consolidated PR comments and verified source objects are recorded here.
+
+Source runs: [original beta](https://github.com/BandarLabs/Cobalt/actions/runs/36939992697), [final matrix](https://github.com/BandarLabs/Cobalt/actions/runs/37008549549). CI artifacts expire; the capture archive above preserves these app images, metadata and results in Git.
+
+Simulator and fixture evidence only; no physical hardware or live-service certification.
 
 ## Profile index
 
@@ -20,13 +26,8 @@ Before source: `9715304831eae95566758fd0aa6b8e6fc87ee3ee`. Independent PR after 
 - Page 8: libra-colour-390-4.46.23836
 - Page 9: libra-h2o-384
 
-## Validation boundaries
+## Supplemental Post repair comparison
 
-- AF_UNIX denied; no full simulator socket/rendering loop used
-- Network/device service outcomes supplied by fixtures; no live service, radio or touch-controller validation
-- Logical landscape stress does not certify physical device rotations
-- Baseline errors are preserved and labeled, not counted as successful changed-flow fixes
+[18-case supplemental comparison](supplemental-post-before-after.pdf) · [Unmodified supplied archive](supplemental-post-original-archive.zip)
 
-## Final companion CLI verification
-
-The final PR head is `a8b498664d93e518a22bf375834c380b102f1f68`. The captures retain their original source commit, while app source, renderer, simulator, font assets and lockfile hashes are unchanged. The final commit only changes `crates/kobo-cli/src/post.rs`; object hashes and changed paths are recorded in validation.json. Final-head CI is green.
+This compares pre-repair `218b5172262767be2fd25265d2b35f7f9337b8c6` with final `232f6312502d5598f31979bbddaf14ed72f7d9c7`; the supplemental baseline is not the original beta. The original archive contains 84 clean BEFORE captures and 108 historical FINAL captures marked `dirty: true`. Their pixel hashes verify, but they are not clean-source proof. The supplemental PDF instead uses the new matrix’s clean final frames. Baseline route failures remain labeled as failures; all 18 new final specialized Post routes passed.

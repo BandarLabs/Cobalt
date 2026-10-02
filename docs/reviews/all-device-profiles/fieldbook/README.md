@@ -1,12 +1,14 @@
-# chat: refreshed nine-profile evidence
+# fieldbook: refreshed nine-profile evidence
 
 [Original beta BEFORE / final default AFTER](all-nine-profiles-before-after.pdf) · [Final 170% captures](all-nine-profiles-final-170.pdf) · [Validation and provenance](validation.json) · [Durable full captures and results](capture-evidence.zip)
 
 ![Default BEFORE and AFTER preview](preview.png)
 
-Primary comparison: original beta `9715304831eae95566758fd0aa6b8e6fc87ee3ee` at 100% interface versus final combined runtime `232f6312502d5598f31979bbddaf14ed72f7d9c7` at 100% interface. Scene: `service`. The separate 170% PDF contains actual final-runtime captures with interface and reading scales printed independently. Both PDFs preserve full-resolution image pixels.
+Primary comparison: original beta `9715304831eae95566758fd0aa6b8e6fc87ee3ee` at 100% interface versus final combined runtime `232f6312502d5598f31979bbddaf14ed72f7d9c7` at 100% interface. Scene: `home`. The separate 170% PDF contains actual final-runtime captures with interface and reading scales printed independently. Both PDFs preserve full-resolution image pixels.
 
 All 18 final app routes (nine profiles × default/170%) passed. Specialized results, when available, are retained with their original scope and fixture caveats in the durable archive.
+
+Fieldbook dates: the four Clara profiles compare October 1 BEFORE with October 2 AFTER; Elipsa and Libra profiles use October 2 in both phases.
 
 Supplemental matrix BEFORE captures use `218b5172262767be2fd25265d2b35f7f9337b8c6`, not the original beta baseline. Capture-to-consolidated source bindings are documented in the consolidated PR comments and verified source objects are recorded here.
 

@@ -1,10 +1,10 @@
-# chat: refreshed nine-profile evidence
+# backgammon: refreshed nine-profile evidence
 
 [Original beta BEFORE / final default AFTER](all-nine-profiles-before-after.pdf) · [Final 170% captures](all-nine-profiles-final-170.pdf) · [Validation and provenance](validation.json) · [Durable full captures and results](capture-evidence.zip)
 
 ![Default BEFORE and AFTER preview](preview.png)
 
-Primary comparison: original beta `9715304831eae95566758fd0aa6b8e6fc87ee3ee` at 100% interface versus final combined runtime `232f6312502d5598f31979bbddaf14ed72f7d9c7` at 100% interface. Scene: `service`. The separate 170% PDF contains actual final-runtime captures with interface and reading scales printed independently. Both PDFs preserve full-resolution image pixels.
+Primary comparison: original beta `9715304831eae95566758fd0aa6b8e6fc87ee3ee` at 100% interface versus final combined runtime `232f6312502d5598f31979bbddaf14ed72f7d9c7` at 100% interface. Scene: `backgammon-help`. The separate 170% PDF contains actual final-runtime captures with interface and reading scales printed independently. Both PDFs preserve full-resolution image pixels.
 
 All 18 final app routes (nine profiles × default/170%) passed. Specialized results, when available, are retained with their original scope and fixture caveats in the durable archive.
 

@@ -1,43 +1,27 @@
-# homepanel: all nine device profiles
+# homepanel: refreshed nine-profile evidence
 
-These are genuine native Cobalt app-renderer snapshots with actual app screen builders, callbacks, hit tests, bundled fonts, and runtime chrome. They are **not full interactive simulator captures or hardware photographs**. Each profile starts in a separate process so Elipsa uses its real 227 PPI font metrics.
+[Original beta BEFORE / final default AFTER](all-nine-profiles-before-after.pdf) · [Final 170% captures](all-nine-profiles-final-170.pdf) · [Validation and provenance](validation.json) · [Durable full captures and results](capture-evidence.zip)
 
-Before: `9715304831eae95566758fd0aa6b8e6fc87ee3ee`. After: independent PR #247 head `35edc1a101f728283a29f21c864568fd9b57fb3a` (source tree `6ee71bd7cf8d068f9dea147b2f77ab6ea91df09d`). No combined-integration source was substituted.
+![Default BEFORE and AFTER preview](preview.png)
 
-## Verification
+Primary comparison: original beta `9715304831eae95566758fd0aa6b8e6fc87ee3ee` at 100% interface versus final combined runtime `232f6312502d5598f31979bbddaf14ed72f7d9c7` at 100% interface. Scene: `homepanel-setup`. The separate 170% PDF contains actual final-runtime captures with interface and reading scales printed independently. Both PDFs preserve full-resolution image pixels.
 
-- Nine supported profile identities; portrait at 80%, 100%, and 170% text
-- Additional swapped logical framebuffer landscape stress at the same sizes; this does not verify physical rotation, touch transforms, or firmware
-- 54 native cases per phase; all after functional case runs pass; no after assertion failures and no after layout-error images
-- 0 after images carry non-error diagnostics; these are not reported as errors or hidden
-- Total generated evidence: 270 before and 324 after snapshots; representative default portrait and largest landscape pairs are published here
-- Full simulator baseline profile run: [GitHub Actions](https://github.com/BandarLabs/Cobalt/actions/runs/36914679526), pending when this evidence was prepared
-- Exact provenance, SHA-256 hashes, and counts: [validation.json](validation.json)
+All 18 final app routes (nine profiles × default/170%) passed. Specialized results, when available, are retained with their original scope and fixture caveats in the durable archive.
 
-## Matched portrait comparisons, 100% text
+Supplemental matrix BEFORE captures use `218b5172262767be2fd25265d2b35f7f9337b8c6`, not the original beta baseline. Capture-to-consolidated source bindings are documented in the consolidated PR comments and verified source objects are recorded here.
 
-| Profile | Before | After |
-| --- | --- | --- |
-| clara-bw-391 | ![Before](clara-bw-391/before-portrait-100.png) | ![After](clara-bw-391/after-portrait-100.png) |
-| clara-bw-395 | ![Before](clara-bw-395/before-portrait-100.png) | ![After](clara-bw-395/after-portrait-100.png) |
-| clara-hd-376 | ![Before](clara-hd-376/before-portrait-100.png) | ![After](clara-hd-376/after-portrait-100.png) |
-| clara-colour-393 | ![Before](clara-colour-393/before-portrait-100.png) | ![After](clara-colour-393/after-portrait-100.png) |
-| elipsa-2e-389 | ![Before](elipsa-2e-389/before-portrait-100.png) | ![After](elipsa-2e-389/after-portrait-100.png) |
-| libra-2-388 | ![Before](libra-2-388/before-portrait-100.png) | ![After](libra-2-388/after-portrait-100.png) |
-| libra-colour-390 | ![Before](libra-colour-390/before-portrait-100.png) | ![After](libra-colour-390/after-portrait-100.png) |
-| libra-colour-390-4.46.23836 | ![Before](libra-colour-390-4.46.23836/before-portrait-100.png) | ![After](libra-colour-390-4.46.23836/after-portrait-100.png) |
-| libra-h2o-384 | ![Before](libra-h2o-384/before-portrait-100.png) | ![After](libra-h2o-384/after-portrait-100.png) |
+Source runs: [original beta](https://github.com/BandarLabs/Cobalt/actions/runs/36939992697), [final matrix](https://github.com/BandarLabs/Cobalt/actions/runs/37008549549). CI artifacts expire; the capture archive above preserves these app images, metadata and results in Git.
 
-## Additional largest-text logical landscape stress
+Simulator and fixture evidence only; no physical hardware or live-service certification.
 
-| Profile | Before | After |
-| --- | --- | --- |
-| clara-bw-391 | [Before](clara-bw-391/before-landscape-stress-170.png) | [After](clara-bw-391/after-landscape-stress-170.png) |
-| clara-bw-395 | [Before](clara-bw-395/before-landscape-stress-170.png) | [After](clara-bw-395/after-landscape-stress-170.png) |
-| clara-hd-376 | [Before](clara-hd-376/before-landscape-stress-170.png) | [After](clara-hd-376/after-landscape-stress-170.png) |
-| clara-colour-393 | [Before](clara-colour-393/before-landscape-stress-170.png) | [After](clara-colour-393/after-landscape-stress-170.png) |
-| elipsa-2e-389 | [Before](elipsa-2e-389/before-landscape-stress-170.png) | [After](elipsa-2e-389/after-landscape-stress-170.png) |
-| libra-2-388 | [Before](libra-2-388/before-landscape-stress-170.png) | [After](libra-2-388/after-landscape-stress-170.png) |
-| libra-colour-390 | [Before](libra-colour-390/before-landscape-stress-170.png) | [After](libra-colour-390/after-landscape-stress-170.png) |
-| libra-colour-390-4.46.23836 | [Before](libra-colour-390-4.46.23836/before-landscape-stress-170.png) | [After](libra-colour-390-4.46.23836/after-landscape-stress-170.png) |
-| libra-h2o-384 | [Before](libra-h2o-384/before-landscape-stress-170.png) | [After](libra-h2o-384/after-landscape-stress-170.png) |
+## Profile index
+
+- Page 1: clara-bw-391
+- Page 2: clara-bw-395
+- Page 3: clara-hd-376
+- Page 4: clara-colour-393
+- Page 5: elipsa-2e-389
+- Page 6: libra-2-388
+- Page 7: libra-colour-390
+- Page 8: libra-colour-390-4.46.23836
+- Page 9: libra-h2o-384
