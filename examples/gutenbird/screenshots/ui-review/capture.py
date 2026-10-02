@@ -22,6 +22,15 @@ fn audit_context(context: &kobo_sdk::Context, name: &str) {
 }
 '''
 
+def insert_test_scenario(source, scenario):
+    """Insert inside the named tests module, regardless of later modules/braces."""
+    matches = list(re.finditer(r"(?m)^mod tests\s*\{", source))
+    if len(matches) != 1:
+        raise ValueError("Expected exactly one top-level tests module")
+    start = matches[0].end()
+    return source[:start] + "\n" + scenario + "\n" + source[start:]
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root',type=Path,required=True)
@@ -46,8 +55,7 @@ def main():
         text=re.sub(r'(include_(?:str|bytes)!\(\s*)"([^"]+)"',lambda m:m[1]+json.dumps(str((source.parent/m[2]).resolve())),text)
         scenario = args.scenario.read_text().replace('APP_FIXTURES',str(app/'fixtures'))
         if args.scope_tests:
-            end = text.rfind('}')
-            text = text[:end]+'\n'+scenario+'\n'+text[end:]
+            text = insert_test_scenario(text, scenario)
             scenario = ''
         (harness/'src/lib.rs').write_text(text+'\n'+COMMON+'\n'+scenario)
         subprocess.run(['cargo','test','--offline','--manifest-path',str(harness/'Cargo.toml'),'native_review_snapshots','--','--nocapture'],env=dict(os.environ,CAPTURE_DIR=str(output)),check=True)

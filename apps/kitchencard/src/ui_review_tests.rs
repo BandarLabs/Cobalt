@@ -158,3 +158,39 @@ fn recipe_pages_clamp_and_selection_resets_ingredients() {
     runner.action(ActionId::BACK);
     assert_eq!(runner.app().view, Some(View::Tonight));
 }
+
+#[test]
+fn supporting_views_have_one_back_destination() {
+    for text_scale in [TextScale::Default, TextScale::Largest] {
+        let metrics = DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        for view in [View::Settings, View::Finished] {
+            let runner = AppRunner::with_metrics(kitchen(), metrics);
+            let mut context = runner.context();
+            let mut app = kitchen();
+            app.view = Some(view);
+            app.show(&mut context);
+            let screen = context
+                .commands()
+                .iter()
+                .rev()
+                .find_map(|command| {
+                    if let Command::SetScreen(screen) = command {
+                        Some(screen)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(!diagnostics
+                .issues
+                .iter()
+                .any(|issue| issue.kind == kobo_ui::LayoutIssueKind::AmbiguousBack));
+            app.on_action(&mut context, ActionId::BACK);
+            assert_eq!(app.view, Some(View::Tonight));
+        }
+    }
+}

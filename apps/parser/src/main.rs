@@ -357,6 +357,8 @@ impl Parser {
         };
         self.message = None;
         if self.open_blob.as_ref() == Some(name) && self.machine.is_some() {
+            // A newer selection also cancels any other story being loaded.
+            self.loading = None;
             // The library is a detour, not a restart of the open story.
             self.view = View::Play;
             self.show(context);

@@ -221,3 +221,34 @@ fn every_restore_slot_and_checkpoint_is_reachable_in_both_poses() {
         }
     }
 }
+
+#[test]
+fn audit_latest_story_selection_wins_over_pending_other_download() {
+    let _runner = AppRunner::new(Parser::default());
+    let mut parser = ready_story();
+    parser.stories.push(("story-other.z3".into(), 4096));
+    let mut context = Context::default();
+    parser.on_action(&mut context, ActionId::BACK);
+    parser.on_action(&mut context, action_id("story-1"));
+    assert_eq!(parser.loading.as_ref().unwrap().name(), "story-other.z3");
+    parser.on_action(&mut context, action_id("story-0"));
+    assert_eq!(parser.view, View::Play);
+    let bytes = include_bytes!("../fixtures/lamplight.z3");
+    let size = u32::try_from(bytes.len()).unwrap();
+    for (chunk, data) in bytes.chunks(4096).enumerate() {
+        parser.on_store(
+            &mut context,
+            StoreResult::ShelfRead {
+                name: "story-other.z3".into(),
+                offset: u32::try_from(chunk * 4096).unwrap(),
+                bytes: data.to_vec(),
+                size,
+            },
+        );
+    }
+    assert_eq!(
+        parser.open_blob.as_deref(),
+        Some("story-lamplight.z3"),
+        "late B must not replace selected A"
+    );
+}

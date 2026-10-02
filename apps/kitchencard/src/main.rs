@@ -678,7 +678,7 @@ impl Kitchen {
                     ]);
                 }
                 screen
-                    .buttons([("tonight", "Back to tonight"), ("again", "Cook again")])
+                    .button("again", "Cook again")
                     .build()
             }
             View::Settings => ScreenBuilder::new("kitchencard")
@@ -688,7 +688,6 @@ impl Kitchen {
                 .secondary(
                     "On your computer run `kobo secret set mealie` with a Mealie API token, then sync here.",
                 )
-                .button("back", "Back")
                 .build(),
         }
     }

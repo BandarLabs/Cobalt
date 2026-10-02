@@ -32,23 +32,20 @@ use kobo_sdk::{
     ScreenBuilder, Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
+use unicode_segmentation::UnicodeSegmentation;
 
-/// Roughly how many characters of body text fit on one line of the panel.
-///
-/// The renderer wraps text itself, so this is not used to break lines. It is
-/// used to guess how tall a message will be before it is drawn, which is what
-/// decides how much of the transcript is kept. A guess is enough: being a few
-/// characters out shows one message more or fewer, and measuring properly
-/// would mean laying the screen out twice on every repaint.
+/// Display-only fragments; persisted/provider turns remain unchanged.
+#[derive(Clone)]
+struct TurnPart {
+    turn: usize,
+    text: String,
+}
+
+/// Rough line-width estimate used only to seed measured transcript pages.
 const COLUMNS: usize = 48;
 
-/// How many estimated lines of transcript one page holds.
-///
-/// Conservative on purpose: a page that overflows its panel drops its oldest
-/// turns off the top, which under a promise that every turn stays reachable
-/// is the one failure this budget exists to prevent. The estimate counts a
-/// byline as a line and wraps at fewer columns than the real face sets, and a
-/// test lays the fullest page out at every text scale to prove the margin.
+/// Initial page budget; complete screen measurement refines it and splits
+/// oversized turns without altering stored conversation text.
 const TRANSCRIPT_LINES: usize = 12;
 
 /// The longest option label drawn on a choice row.
@@ -168,32 +165,58 @@ impl Chat {
     }
 
     /// The conversation, newest last, with whatever can be answered by tapping.
-    fn measured_pages(&self, context: &Context) -> Vec<(usize, usize)> {
+    fn measured_pages(&self, context: &Context) -> Vec<Vec<TurnPart>> {
         let turns = self.conversation.turns();
         let metrics = context.metrics();
-        // Measure the complete screen, including offers, notices and navigation.
-        // The estimate is only a starting point; it no longer decides whether
-        // several turns can share a page on this panel.
-        let mut pages = transcript_pages(turns, self.page_budget());
-        loop {
-            let overflow = (0..pages.len()).find(|&page| {
-                let (first, end) = pages[page];
-                end > first + 1
-                    && self
-                        .transcript_page(&pages, pages.len() - 1 - page)
-                        .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
-                        .has_errors()
-            });
-            let Some(page) = overflow else {
-                return pages;
-            };
-            let (first, end) = pages[page];
-            pages[page] = (first + 1, end);
-            pages.insert(page, (first, first + 1));
+        let mut pages: Vec<Vec<TurnPart>> = transcript_pages(turns, self.page_budget())
+            .into_iter()
+            .map(|(first, end)| {
+                (first..end)
+                    .map(|turn| TurnPart {
+                        turn,
+                        text: display_text(&turns[turn]),
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut page = 0;
+        while page < pages.len() {
+            let screen = self.transcript_page(&pages, pages.len() - 1 - page);
+            if screen
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .issues
+                .iter()
+                .any(|issue| {
+                    matches!(
+                        issue.kind,
+                        kobo_sdk::LayoutIssueKind::ContentOverflow { .. }
+                            | kobo_sdk::LayoutIssueKind::Clipped
+                            | kobo_sdk::LayoutIssueKind::InteractiveOffscreen
+                            | kobo_sdk::LayoutIssueKind::TextOverflow
+                    )
+                })
+            {
+                if pages[page].len() > 1 {
+                    let rest = pages[page].split_off(1);
+                    pages.insert(page + 1, rest);
+                    continue;
+                }
+                let part = &mut pages[page][0];
+                if let Some(split) = split_turn_text(&part.text) {
+                    let next = TurnPart {
+                        turn: part.turn,
+                        text: part.text.split_off(split),
+                    };
+                    pages.insert(page + 1, vec![next]);
+                    continue;
+                }
+            }
+            page += 1;
         }
+        pages
     }
 
-    fn transcript_page(&self, pages: &[(usize, usize)], pages_back: usize) -> Screen {
+    fn transcript_page(&self, pages: &[Vec<TurnPart>], pages_back: usize) -> Screen {
         // The keyboard is a destination rather than a button in the flow. A
         // button underneath a transcript moves every time the transcript
         // grows, which on a panel this slow means the control walks out from
@@ -231,12 +254,13 @@ impl Chat {
             );
         }
 
-        let (first, end) = pages.get(page).copied().unwrap_or((0, 0));
-        for (position, turn) in turns[first..end].iter().enumerate() {
-            if position > 0 {
-                screen = screen.spacer(Space::Small);
+        if let Some(parts) = pages.get(page) {
+            for (position, part) in parts.iter().enumerate() {
+                if position > 0 {
+                    screen = screen.spacer(Space::Small);
+                }
+                screen = draw_turn(screen, &turns[part.turn], &part.text, self.provider.label());
             }
-            screen = draw_turn(screen, turn, self.provider.label());
         }
         if pages.len() > 1 {
             screen = screen.page_turns(EARLIER, LATER).page_position(
@@ -481,30 +505,53 @@ impl Chat {
 /// sentence. The reader's own words sat at depth 0 under "You"; the reply sits
 /// one level in under the service that wrote it, which is the only place the
 /// panel says which key answered.
-fn draw_turn(screen: ScreenBuilder, turn: &Turn, assistant: &str) -> ScreenBuilder {
+/// Prefer a nearby word boundary, falling back to a complete grapheme for
+/// long unbroken words. Retain every byte, including boundary whitespace.
+fn split_turn_text(text: &str) -> Option<usize> {
+    let count = text.graphemes(true).count();
+    let (middle, _) = text.grapheme_indices(true).nth(count / 2)?;
+    if middle == 0 {
+        return None;
+    }
+    Some(
+        text.grapheme_indices(true)
+            .take(count / 2)
+            .filter(|(_, grapheme)| grapheme.chars().all(char::is_whitespace))
+            .map(|(offset, grapheme)| offset + grapheme.len())
+            .filter(|offset| *offset >= middle / 2)
+            .last()
+            .unwrap_or(middle),
+    )
+}
+
+fn display_text(turn: &Turn) -> String {
     match turn.role {
-        Role::You => screen.byline(0, "You").quote(0, turn.text.clone()),
+        Role::You => turn.text.clone(),
         Role::Assistant => {
-            let reply = Reply::read(&turn.text);
-            let screen = screen.byline(1, assistant.to_owned());
-            if reply.paragraphs.is_empty() {
-                // A reply that was nothing but an options line still has to
-                // occupy its place, or the transcript appears to skip a turn.
-                return screen.quote(1, "(an answer to tap, below)");
+            let paragraphs = Reply::read(&turn.text).paragraphs;
+            if paragraphs.is_empty() {
+                "(an answer to tap, below)".into()
+            } else {
+                paragraphs.join("\n\n")
             }
-            reply.paragraphs.iter().fold(screen, |screen, paragraph| {
-                screen.quote(1, paragraph.as_str())
-            })
         }
+    }
+}
+
+fn draw_turn(screen: ScreenBuilder, turn: &Turn, text: &str, assistant: &str) -> ScreenBuilder {
+    match turn.role {
+        Role::You => screen.byline(0, "You").quote(0, text),
+        Role::Assistant => text.split("\n\n").fold(
+            screen.byline(1, assistant.to_owned()),
+            |screen, paragraph| screen.quote(1, paragraph),
+        ),
     }
 }
 
 /// The transcript cut into pages that each fit the panel, oldest page first.
 ///
-/// Built from the back so the newest message is never cut away mid-turn: a
-/// page grows until the next-older turn would overflow it, and the newest
-/// turn always lands on the last page even when it alone runs long, because
-/// showing nothing at all would be worse than a message that fills the panel.
+/// Seeded from newest to oldest. Measured pagination then splits oversized
+/// turns into display-only fragments, including the newest turn when needed.
 fn transcript_pages(turns: &[Turn], budget: usize) -> Vec<(usize, usize)> {
     let mut pages = Vec::new();
     let mut end = turns.len();
@@ -1699,13 +1746,138 @@ mod large_text_tests {
             assert_eq!(
                 pages
                     .iter()
-                    .flat_map(|&(first, end)| first..end)
+                    .flatten()
+                    .map(|part| part.turn)
                     .collect::<Vec<_>>(),
                 (0..16).collect::<Vec<_>>()
             );
             for page in 0..pages.len() {
                 fits(&runner.app().transcript_page(&pages, page), metrics);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod long_turn_regression_tests {
+    use super::*;
+    #[test]
+    fn long_single_turn_fits_every_page() {
+        for role in [Role::You, Role::Assistant] {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale: kobo_ui::TextScale::Largest,
+                ..kobo_ui::CLARA_BW_METRICS
+            };
+            let mut app = Chat::default();
+            app.conversation.push(
+                role,
+                "A normal long answer with explanatory prose. ".repeat(40),
+            );
+            let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+            let pages = runner.app().measured_pages(&runner.context());
+            assert!(pages.len() > 1);
+            let expected = display_text(&runner.app().conversation.turns()[0]);
+            let actual: String = pages
+                .iter()
+                .flatten()
+                .map(|part| part.text.as_str())
+                .collect();
+            assert_eq!(
+                actual, expected,
+                "pagination must preserve the entire displayed turn"
+            );
+            let mut offset = 0;
+            let boundaries: Vec<_> = expected
+                .grapheme_indices(true)
+                .map(|(index, _)| index)
+                .chain([expected.len()])
+                .collect();
+            for part in pages.iter().flatten() {
+                assert!(boundaries.contains(&offset));
+                offset += part.text.len();
+            }
+            assert_eq!(offset, expected.len());
+            for page in 0..pages.len() {
+                let screen = runner.app().transcript_page(&pages, page);
+                assert!(
+                    !screen
+                        .diagnostics(&metrics, &kobo_ui::Chrome::measuring(true))
+                        .has_errors(),
+                    "page {page}: {:?}",
+                    screen
+                        .diagnostics(&metrics, &kobo_ui::Chrome::measuring(true))
+                        .issues
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn long_turns_preserve_graphemes_and_latest_controls() {
+        let metrics = kobo_sdk::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        for state in [View::Talking, View::Waiting] {
+            let mut app = Chat {
+                view: state,
+                ..Chat::default()
+            };
+            app.conversation.push(
+                Role::Assistant,
+                format!(
+                    "{}\n{{\"options\":[\"Continue\",\"Explain\"]}}",
+                    "Words and e\u{301} and \u{1f469}\u{1f3fd}\u{200d}\u{1f4bb}. ".repeat(80)
+                ),
+            );
+            let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+            let pages = runner.app().measured_pages(&runner.context());
+            let expected = display_text(&runner.app().conversation.turns()[0]);
+            assert_eq!(
+                pages
+                    .iter()
+                    .flatten()
+                    .map(|part| part.text.as_str())
+                    .collect::<String>(),
+                expected
+            );
+            let boundaries: Vec<_> = expected
+                .grapheme_indices(true)
+                .map(|(index, _)| index)
+                .chain([expected.len()])
+                .collect();
+            let mut offset = 0;
+            for part in pages.iter().flatten() {
+                assert!(boundaries.contains(&offset));
+                offset += part.text.len();
+            }
+            for back in 0..pages.len() {
+                let screen = runner.app().transcript_page(&pages, back);
+                let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::measuring(true));
+                let action = if state == View::Waiting {
+                    CANCEL
+                } else {
+                    OPTIONS[0]
+                };
+                assert_eq!(
+                    layout.rect_of_action(action_id(action)).is_some(),
+                    back == 0
+                );
+                // Unsupported emoji remain explicit renderer diagnostics, not
+                // a reason to split every grapheme into a separate page.
+                assert!(!screen
+                    .diagnostics(&metrics, &kobo_ui::Chrome::measuring(true))
+                    .issues
+                    .iter()
+                    .any(|issue| matches!(
+                        issue.kind,
+                        kobo_sdk::LayoutIssueKind::Clipped
+                            | kobo_sdk::LayoutIssueKind::TextOverflow
+                            | kobo_sdk::LayoutIssueKind::ContentOverflow { .. }
+                            | kobo_sdk::LayoutIssueKind::InteractiveOffscreen
+                    )));
+            }
+            assert!(pages.len() < 80);
         }
     }
 }

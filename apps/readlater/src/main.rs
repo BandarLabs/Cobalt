@@ -137,7 +137,8 @@ struct ReadLater {
     entries: Vec<Entry>,
     entries_origin: Option<String>,
     task_origin: Option<String>,
-    open: Option<usize>,
+    // Article identity survives queue reordering and cache replacement.
+    open: Option<u64>,
     view: Option<View>,
     pending: Vec<OutboxAction>,
     task: Option<(TaskId, PendingTask)>,
@@ -209,6 +210,7 @@ impl ReadLater {
                             }
                         } else {
                             self.entries = entries;
+                            self.reconcile_open();
                             self.entries_origin = Some(self.server());
                         }
                     } else {
@@ -261,7 +263,9 @@ impl ReadLater {
         let screen = match view {
             View::Queue => self.queue_screen(context),
             View::Article => {
-                let entry = self.open.and_then(|i| self.entries.get(i));
+                let entry = self
+                    .open
+                    .and_then(|id| self.entries.iter().find(|entry| entry.id == id));
                 let loading = entry.is_some_and(|entry| {
                     matches!(self.task, Some((_, PendingTask::Article(id))) if id == entry.id)
                         || (self.refreshing && self.resume == Some(PendingTask::Article(entry.id)))
@@ -490,9 +494,27 @@ impl ReadLater {
                 self.entries.push(entry);
             }
         }
+        self.reconcile_open();
         self.entries_origin = Some(origin.to_owned());
         self.notice = Some("Reading list synced.".to_owned());
         self.keep_articles(context);
+    }
+
+    fn open_entry_mut(&mut self) -> Option<&mut Entry> {
+        let id = self.open?;
+        self.entries.iter_mut().find(|entry| entry.id == id)
+    }
+
+    fn reconcile_open(&mut self) {
+        if self
+            .open
+            .is_some_and(|id| !self.entries.iter().any(|entry| entry.id == id))
+        {
+            self.open = None;
+            if self.view == Some(View::Article) {
+                self.view = Some(View::Queue);
+            }
+        }
     }
 
     fn post_outbox(&mut self, context: &mut Context) {
@@ -524,13 +546,13 @@ impl ReadLater {
     /// Archive is optimistic: the article leaves the list now and the server
     /// hears about it from the outbox on the next sync.
     fn archive_open(&mut self, context: &mut Context) {
-        let Some(index) = self.open else { return };
-        let Some(entry) = self.entries.get_mut(index) else {
+        let Some(entry) = self.open_entry_mut() else {
             return;
         };
         entry.archived = true;
+        let id = entry.id;
         self.pending.push(OutboxAction {
-            id: entry.id,
+            id,
             kind: OutboxKind::Archive,
         });
         self.persist_actions(context);
@@ -540,8 +562,7 @@ impl ReadLater {
     }
 
     fn star_open(&mut self, context: &mut Context) {
-        let Some(index) = self.open else { return };
-        let Some(entry) = self.entries.get_mut(index) else {
+        let Some(entry) = self.open_entry_mut() else {
             return;
         };
         entry.starred = !entry.starred;
@@ -589,7 +610,7 @@ impl ReadLater {
         }
     }
     fn open_article(&mut self, context: &mut Context, index: usize) {
-        self.open = Some(index);
+        self.open = self.entries.get(index).map(|entry| entry.id);
         self.view = Some(View::Article);
         if let Some(entry) = self.entries.get(index) {
             if self.refreshing && entry.content.is_empty() {
@@ -830,7 +851,7 @@ impl KoboApp for ReadLater {
         } else if self.view == Some(View::Article)
             && (action == action_id("previous-page") || action == action_id("next-page"))
         {
-            if let Some(entry) = self.open.and_then(|index| self.entries.get_mut(index)) {
+            if let Some(entry) = self.open_entry_mut() {
                 let pages = context.paginate_reading(&entry.content, true);
                 let current = article_page(&pages, entry.position);
                 let next = if action == action_id("next-page") {
@@ -1177,7 +1198,7 @@ mod tests {
         let pages = app.queue_pages(&context, &rows);
         let opened = rows[pages[1][0]].0;
         app.on_action(&mut context, action_id(&format!("entry-{opened}")));
-        assert_eq!(app.open, Some(opened));
+        assert_eq!(app.open, Some(app.entries[opened].id));
         assert!(last_screen(&context).owns_back);
         app.on_action(&mut context, ActionId::BACK);
         assert_eq!(app.view, Some(View::Queue));
@@ -1218,7 +1239,7 @@ mod tests {
             let article = (0..60).map(|n| format!("Paragraph {n}. Walking beside the river, we watched the light change on the water. A narrow path followed the bank beneath the trees.")).collect::<Vec<_>>().join("\n\n");
             let mut app = ReadLater {
                 view: Some(View::Article),
-                open: Some(0),
+                open: Some(7),
                 entries: vec![Entry {
                     id: 7,
                     title: "Walking beside the river".into(),
@@ -1650,7 +1671,7 @@ mod tests {
                 starred: false,
                 archived: false,
             }],
-            open: Some(0),
+            open: Some(1),
             ..ReadLater::default()
         };
         app.pending.push(OutboxAction {
@@ -1929,7 +1950,7 @@ mod independent_review {
                         .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2)
                         .unwrap();
                     let opened = runner.action(action);
-                    assert_eq!(runner.app().open, Some(index));
+                    assert_eq!(runner.app().open, Some(runner.app().entries[index].id));
                     assert_eq!(runner.app().view, Some(View::Article));
                     assert!(latest(&opened).owns_back);
                     runner.action(ActionId::BACK);
@@ -2193,7 +2214,7 @@ mod independent_review {
                 let commands = runner.device_result(DeviceResult::Done);
                 let retried = fetch(&commands);
                 assert_eq!(runner.app().task.unwrap().1, PendingTask::Article(2));
-                assert_eq!(runner.app().open, Some(1));
+                assert_eq!(runner.app().open, Some(2));
                 assert_eq!(runner.app().view, Some(View::Article));
                 runner.task_outcome(
                     retried,
@@ -2203,7 +2224,7 @@ mod independent_review {
                     ),
                 );
                 assert!(runner.app().entries[1].content.contains("Newer body"));
-                assert_eq!(runner.app().open, Some(1));
+                assert_eq!(runner.app().open, Some(2));
                 assert!(!runner.app().refreshing);
             }
         }
@@ -2234,6 +2255,111 @@ mod independent_review {
             assert_eq!(runner.app().view, Some(View::Queue));
             // A later explicit retry is still possible after the terminal error.
             fetch(&runner.action(action_id("sync")));
+        }
+    }
+}
+
+#[cfg(test)]
+mod identity_regression_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Command};
+    #[test]
+    fn refreshed_queue_never_retargets_open_article_actions() {
+        for action in ["archive", "star"] {
+            let app = ReadLater {
+                server: "https://bag.example".into(),
+                entries_origin: Some("https://bag.example".into()),
+                entries: (1..=3)
+                    .map(|id| Entry {
+                        id,
+                        title: format!("Article {id}"),
+                        site: "example.org".into(),
+                        reading_time: 1,
+                        position: 0,
+                        content: format!("Body {id}"),
+                        starred: false,
+                        archived: false,
+                    })
+                    .collect(),
+                ..ReadLater::default()
+            };
+            let mut runner = AppRunner::new(app);
+            let commands = runner.action(action_id("sync"));
+            let task = commands
+                .iter()
+                .find_map(|c| {
+                    if let Command::Spawn { task, .. } = c {
+                        Some(*task)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            runner.action(action_id("entry-1"));
+            runner.task_outcome(
+                task,
+                TaskOutcome::Completed(
+                    br#"{"items":[{"id":2,"title":"Article 2"},{"id":3,"title":"Article 3"}]}"#
+                        .to_vec(),
+                ),
+            );
+            runner.action(action_id(action));
+            assert_eq!(runner.app().pending.last().unwrap().id, 2);
+        }
+    }
+
+    #[test]
+    fn removed_selection_and_replaced_cache_never_target_another_article() {
+        for selected_survives in [false, true] {
+            for from_cache in [false, true] {
+                let mut app = ReadLater {
+                    server: "https://bag.example".into(),
+                    entries_origin: Some("https://bag.example".into()),
+                    open: Some(2),
+                    view: Some(View::Article),
+                    ..ReadLater::default()
+                };
+                let _runner = AppRunner::new(ReadLater::default());
+                let mut context = Context::default();
+                let entries: Vec<_> = (1..=3)
+                    .map(|id| Entry {
+                        id,
+                        title: format!("Article {id}"),
+                        site: "example.org".into(),
+                        reading_time: 1,
+                        position: 0,
+                        content: format!("Body {id}"),
+                        starred: false,
+                        archived: false,
+                    })
+                    .collect();
+                app.entries = entries.clone();
+                let replacement: Vec<_> = entries
+                    .into_iter()
+                    .rev()
+                    .filter(|entry| entry.id != if selected_survives { 1 } else { 2 })
+                    .collect();
+                if from_cache {
+                    app.open_cache(&mut context);
+                    app.snapshot.as_mut().unwrap().bytes = cache::encode(&replacement);
+                    app.cache_event(&mut context, Some(SnapshotEvent::Loaded));
+                } else {
+                    let bytes = if selected_survives {
+                        br#"{"items":[{"id":3,"title":"Three"},{"id":2,"title":"Two"}]}"#.as_slice()
+                    } else {
+                        br#"{"items":[{"id":3,"title":"Three"},{"id":1,"title":"One"}]}"#.as_slice()
+                    };
+                    app.queue_completed(&mut context, "https://bag.example", Tab::Unread, bytes);
+                }
+                assert_eq!(app.open, selected_survives.then_some(2));
+                if !selected_survives {
+                    assert_eq!(app.view, Some(View::Queue));
+                }
+                app.star_open(&mut context);
+                app.archive_open(&mut context);
+                assert_eq!(app.pending.len(), if selected_survives { 2 } else { 0 });
+                assert!(app.pending.iter().all(|action| action.id == 2));
+            }
         }
     }
 }

@@ -912,6 +912,7 @@ dependencies = [
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",
+ "unicode-segmentation",
 ]
 
 [[package]]
