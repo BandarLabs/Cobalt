@@ -15,6 +15,8 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 mod miniflux;
 #[path = "post_credentials.rs"]
 mod post;
+#[path = "readeck_credentials.rs"]
+mod readeck;
 #[path = "credential_servers.rs"]
 pub mod servers;
 use std::path::{Path, PathBuf};
@@ -278,7 +280,9 @@ pub fn allowed_request_with_server(
     server.map_or_else(
         || allowed_request(app, credential, url, usage, body, content_type),
         |server| {
-            if app == "readlater" {
+            if app == "readeck" {
+                readeck::allowed(credential, server, url, usage, body, content_type)
+            } else if app == "readlater" {
                 readlater_server_allowed(credential, server, url, usage, body)
             } else if app == "rss-miniflux" {
                 miniflux::allowed(credential, server, url, usage, body, content_type)
