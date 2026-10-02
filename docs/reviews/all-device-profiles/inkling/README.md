@@ -15,7 +15,7 @@ Full Cobalt simulator screenshots at interface 100% / reading 100%. Scene: `inkl
 
 AFTER routes report pass on all nine profiles. This packet displays one selected scene, not the entire route.
 
-Source-object comparisons record matching app source, manifests, renderer crates and assets against an observed consolidated head; this does not relabel captures or assert full-build identity. The consolidated Cargo.lock differs and is recorded separately. The native coordinator owns binding evidence to replacement PRs.
+Source-object comparisons record matching app source, manifests, renderer crates and assets against an observed consolidated head; this does not relabel captures or assert full-build identity. The consolidated Cargo.lock differs and is recorded separately. Capture-to-consolidated source bindings are documented in the consolidated PR comments.
 
 Sources: [run 36939992697](https://github.com/BandarLabs/Cobalt/actions/runs/36939992697), [run 36945124902](https://github.com/BandarLabs/Cobalt/actions/runs/36945124902).
 
