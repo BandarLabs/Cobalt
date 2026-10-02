@@ -269,3 +269,79 @@ fn a_rescan_reordering_rows_does_not_retarget_an_already_drawn_tap() {
     app.on_action(&mut context, selected);
     assert!(context.take_commands().is_empty());
 }
+
+#[test]
+fn enterprise_selection_survives_paging_and_rescan_and_cancel_never_joins() {
+    for metrics in [CLARA_BW_METRICS, *interface_sizes().last().unwrap()] {
+        let mut app = fixture();
+        app.view = View::Wifi;
+        app.networks[12].ssid = "eduroam".into();
+        let mut runner = AppRunner::with_metrics(app, metrics);
+        let context = runner.context();
+        let pages = runner.app().wifi_pages(&context);
+        let page = pages
+            .iter()
+            .position(|indices| indices.contains(&12))
+            .unwrap();
+        assert!(page > 0);
+        runner.app_mut().wifi_page = page;
+        let selected = touch(
+            &runner.app().wifi_for(&context),
+            metrics,
+            action_id(&network_action("eduroam")),
+        );
+        runner.app_mut().networks.reverse();
+        runner.action(selected);
+        assert_eq!(runner.app().view, View::WifiUsername);
+        assert_eq!(runner.app().selected_ssid.as_deref(), Some("eduroam"));
+        runner.app_mut().username = Keyboard::with_text("reader@example.org");
+        runner.action(action_id("kb.enter"));
+        runner.app_mut().password = Keyboard::with_text("test-password");
+        let commands = runner.action(action_id("kb.enter"));
+        assert!(
+            commands.iter().any(|command| matches!(command,
+            Command::Device(DeviceRequest::ProbeEnterpriseWifi { ssid, .. }) if ssid == "eduroam"))
+        );
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            Command::Device(
+                DeviceRequest::JoinEnterpriseWifi { .. } | DeviceRequest::JoinWifi { .. }
+            )
+        )));
+        let mut context = runner.context();
+        runner.app_mut().on_page_turn(&mut context, true);
+        assert_eq!(runner.app().view, View::WifiTrust);
+        assert!(context.take_commands().is_empty());
+        let commands = runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Wifi);
+        assert!(runner.app().enterprise_password.is_none());
+        assert!(runner.app().username.text().is_empty());
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            Command::Device(
+                DeviceRequest::JoinEnterpriseWifi { .. } | DeviceRequest::JoinWifi { .. }
+            )
+        )));
+    }
+}
+
+#[test]
+fn enterprise_screen_geometry_at_largest_size() {
+    let metrics = *interface_sizes().last().unwrap();
+    for app in [
+        Settings {
+            view: View::WifiTrust,
+            selected_ssid: Some("eduroam".into()),
+            certificate: Some(("/CN=radius.example.ac.uk".into(), [0xab; 32])),
+            ..Settings::default()
+        },
+        Settings {
+            view: View::WifiTrust,
+            ..Settings::default()
+        },
+    ] {
+        let screen = app.wifi_trust();
+        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+    }
+}
