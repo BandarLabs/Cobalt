@@ -318,6 +318,7 @@ impl Post {
         match out {
             TaskOutcome::Completed(bytes) => {
                 if let Some((total, found)) = protocol::page(&bytes) {
+                    let first_new = self.letters.len();
                     self.total = total;
                     if self.fetching_page == 1 {
                         self.letters = found;
@@ -328,13 +329,18 @@ impl Post {
                         self.letters
                             .extend(found.into_iter().filter(|l| !known.contains(&l.id)));
                     }
-                    if self.advance_on_fetch {
-                        self.advance_on_fetch = false;
-                        let last = self.inbox_pages(c).len().saturating_sub(1);
-                        self.page_index = (self.page_index + 1).min(last);
-                    }
                     self.loaded = true;
                     self.notice = None;
+                    if self.advance_on_fetch {
+                        self.advance_on_fetch = false;
+                        let pages = self.inbox_pages(c);
+                        // A new batch can fill the previous display page. Land
+                        // on its first new letter instead of skipping that page.
+                        self.page_index = pages
+                            .iter()
+                            .position(|page| page.contains(&first_new))
+                            .unwrap_or_else(|| pages.len().saturating_sub(1));
+                    }
                     self.save_cache(c);
                 } else {
                     self.notice = Some(
@@ -783,6 +789,39 @@ mod large_text_tests {
             "{metrics:?}: {:#?}",
             diagnostics.issues
         );
+    }
+
+    #[test]
+    fn older_fetch_lands_on_the_first_new_letter_even_when_it_fills_the_current_page() {
+        for metrics in panels() {
+            let runner = kobo_sdk::AppRunner::with_metrics(Post::default(), metrics);
+            let mut context = runner.context();
+            let mut app = Post {
+                total: 10,
+                view: View::Inbox,
+                fetching_page: 2,
+                advance_on_fetch: true,
+                letters: (0..5)
+                    .map(|n| Letter {
+                        id: format!("old-{n}"),
+                        title: format!("Old letter {n}"),
+                        body: "The kettle takes its time.\n\nSteam rises from the spout while the street outside is still. A letter like this is read slowly.".into(),
+                    })
+                    .collect(),
+                ..Post::default()
+            };
+            app.page_index = app.inbox_pages(&context).len() - 1;
+            app.fetch_outcome(&mut context, TaskOutcome::Completed(
+                br#"{"total":10,"items":[{"id":"new-5","title":"First new letter","body":"A newly fetched note."},{"id":"new-6","title":"New letter six","body":"A short note."},{"id":"new-7","title":"New letter seven","body":"A short note."},{"id":"new-8","title":"New letter eight","body":"A short note."},{"id":"new-9","title":"New letter nine","body":"A short note."}]}"#.to_vec()));
+            let pages = app.inbox_pages(&context);
+            assert!(pages[app.page_index].contains(&5));
+            let screen = app.inbox(&context);
+            fits(&screen, metrics);
+            assert!(screen
+                .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .rect_of_action(action_id("letter.5"))
+                .is_some());
+        }
     }
 
     #[test]
