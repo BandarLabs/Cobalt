@@ -171,5 +171,114 @@
     }
   ],
   "pdf_sha256": "474223a5891384c7cb83c421eeaf2f99b77b5b31ff55453eda05bac5828905b4",
-  "pdf_bytes": 558490
+  "pdf_bytes": 558490,
+  "final_after_source": "a8b498664d93e518a22bf375834c380b102f1f68",
+  "source_equivalence": {
+    "app": "post",
+    "pr": 250,
+    "capture_head": "6a065a94f1623e9b3be8b51a8c8002b2811066e9",
+    "final_head": "a8b498664d93e518a22bf375834c380b102f1f68",
+    "objects": [
+      {
+        "path": "apps/post/src",
+        "capture_object": "1507579cdb26a33792dceee2496f9765b55f7eb4",
+        "final_object": "1507579cdb26a33792dceee2496f9765b55f7eb4",
+        "same": true
+      },
+      {
+        "path": "apps/post/Cargo.toml",
+        "capture_object": "725da4f145a3c180198d20105c45384f17691815",
+        "final_object": "725da4f145a3c180198d20105c45384f17691815",
+        "same": true
+      },
+      {
+        "path": "Cargo.toml",
+        "capture_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+        "final_object": "441da44e4c6ab94faf9398d614374580e7e53d2b",
+        "same": true
+      },
+      {
+        "path": "Cargo.lock",
+        "capture_object": "a1a83bd2ceb21730381f10fb6cbe6be05c07665b",
+        "final_object": "a1a83bd2ceb21730381f10fb6cbe6be05c07665b",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-sdk",
+        "capture_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+        "final_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-sim",
+        "capture_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+        "final_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+        "same": true
+      },
+      {
+        "path": "assets",
+        "capture_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+        "final_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-ui",
+        "capture_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+        "final_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+        "same": true
+      },
+      {
+        "path": "crates/kobod",
+        "capture_object": "e4456264379a102a84ad300c329156bf58a09993",
+        "final_object": "e4456264379a102a84ad300c329156bf58a09993",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-shell",
+        "capture_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+        "final_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-tap",
+        "capture_object": "456651dc09d52a50f10907b438438095cf0c976a",
+        "final_object": "456651dc09d52a50f10907b438438095cf0c976a",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-hal",
+        "capture_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+        "final_object": "fdd6a4c2abdc657429e66ab71e94a639d009f288",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-profile",
+        "capture_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+        "final_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-abi",
+        "capture_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+        "final_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+        "same": true
+      },
+      {
+        "path": "crates/kobo-text",
+        "capture_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+        "final_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+        "same": true
+      },
+      {
+        "path": "scripts/check-apps-sim.py",
+        "capture_object": "91a619b0738983cf9b9216859bf5fb9e24103c17",
+        "final_object": "91a619b0738983cf9b9216859bf5fb9e24103c17",
+        "same": true
+      }
+    ],
+    "changed_paths": [
+      "crates/kobo-cli/src/post.rs"
+    ],
+    "visual_source_unchanged": true
+  }
 }
