@@ -120,6 +120,7 @@ const categories = {
   post: "Productivity",
   pubquiz: "Games",
   readlater: "Reading",
+  readeck: "Reading",
   rss: "Reading",
   "rss-miniflux": "Reading",
   sidekick: "Developer",

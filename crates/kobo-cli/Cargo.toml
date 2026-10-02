@@ -31,6 +31,7 @@ kobo-html = { path = "../kobo-html" }
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
+kobo-policy = { path = "../kobo-policy" }
 kobod = { path = "../kobod" }
 kobo-wifi-trace = { path = "../kobo-wifi-trace" }
 ring = "0.17"
