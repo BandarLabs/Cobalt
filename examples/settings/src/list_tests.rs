@@ -329,26 +329,68 @@ fn enterprise_selection_survives_paging_and_rescan_and_cancel_never_joins() {
 fn enterprise_screen_geometry_at_largest_size() {
     // The typesetter is process-global. Isolate real font installation from
     // the existing estimate-based tests so parallel execution stays deterministic.
-    if std::env::var_os("KOBO_SETTINGS_REAL_FONT_TEST").is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "list_tests::enterprise_screen_geometry_at_largest_size",
-                "--nocapture",
-            ])
-            .env("KOBO_SETTINGS_REAL_FONT_TEST", "1")
-            .status()
-            .unwrap();
-        assert!(status.success());
+    const PROFILES: [&str; 9] = [
+        "clara-bw-391",
+        "clara-bw-395",
+        "clara-hd-376",
+        "clara-colour-393",
+        "elipsa-2e-389",
+        "libra-2-388",
+        "libra-colour-390",
+        "libra-colour-390-4.46.23836",
+        "libra-h2o-384",
+    ];
+    let Ok(profile) = std::env::var("KOBO_SETTINGS_REAL_FONT_TEST") else {
+        for profile in PROFILES {
+            for scale in ["100", "170"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "list_tests::enterprise_screen_geometry_at_largest_size",
+                        "--nocapture",
+                    ])
+                    .env("KOBO_SETTINGS_REAL_FONT_TEST", profile)
+                    .env("KOBO_SETTINGS_REAL_FONT_SCALE", scale)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "{profile} at {scale}%");
+            }
+        }
         return;
-    }
-    let metrics = *interface_sizes().last().unwrap();
+    };
+    let (width, height, pixels_per_inch) = if profile.starts_with("elipsa") {
+        (1404, 1872, 227)
+    } else if profile.starts_with("libra") {
+        (1264, 1680, 300)
+    } else {
+        (1072, 1448, 300)
+    };
+    let text_scale = if std::env::var("KOBO_SETTINGS_REAL_FONT_SCALE").unwrap() == "170" {
+        interface_sizes().last().unwrap().text_scale
+    } else {
+        CLARA_BW_METRICS.text_scale
+    };
+    let metrics = DisplayMetrics {
+        width,
+        height,
+        pixels_per_inch,
+        text_scale,
+    };
     kobo_text::install(metrics).unwrap();
     for app in [
         Settings {
             view: View::WifiTrust,
             selected_ssid: Some("eduroam".into()),
-            certificate: Some(("/CN=radius.example.ac.uk".into(), [0xab; 32])),
+            certificate: Some((
+                "/CN=a-rather-long-radius-server-name.is.example.ac.uk".into(),
+                [0xab; 32],
+            )),
+            ..Settings::default()
+        },
+        Settings {
+            view: View::WifiTrust,
+            selected_ssid: Some("govroam".into()),
+            certificate: Some((format!("/CN={}", "W".repeat(253)), [0xab; 32])),
             ..Settings::default()
         },
         Settings {
@@ -356,8 +398,18 @@ fn enterprise_screen_geometry_at_largest_size() {
             ..Settings::default()
         },
     ] {
-        let screen = app.wifi_trust();
+        let runner = AppRunner::with_metrics(app, metrics);
+        let screen = runner.app().wifi_trust_for(&runner.context());
         let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+        if let Some((subject, digest)) = &runner.app().certificate {
+            let shown = format!("{screen:?}");
+            assert!(shown.contains(&fingerprint(digest)));
+            if common_name(subject).len() == 253 {
+                assert!(shown.contains('…'));
+            }
+            touch(&screen, metrics, action_id(TRUST));
+            touch(&screen, metrics, action_id(DISTRUST));
+        }
     }
 }

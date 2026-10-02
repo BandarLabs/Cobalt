@@ -278,7 +278,7 @@ impl Settings {
             View::Wifi => self.wifi_for(context),
             View::WifiUsername => self.wifi_username(),
             View::WifiPassword => self.wifi_password(),
-            View::WifiTrust => self.wifi_trust(),
+            View::WifiTrust => self.wifi_trust_for(context),
             View::Battery => self.battery(),
             View::About => self.about(),
             View::Update => self.update(),
@@ -821,7 +821,7 @@ impl Settings {
     /// Shows the server certificate and asks whether to trust it. Nothing
     /// secret has left the reader yet: the probe sent only the anonymous
     /// outer identity.
-    fn wifi_trust(&self) -> Screen {
+    fn wifi_trust_for(&self, context: &Context) -> Screen {
         let screen = ScreenBuilder::new("settings-wifi-trust")
             .top_bar("Check the network")
             .owns_back(true)
@@ -839,10 +839,11 @@ impl Settings {
                 .build();
         };
         screen
-            .facts([
-                ("Server", common_name(subject).to_owned()),
-                ("SHA-256", fingerprint(sha256)),
-            ])
+            // The fingerprint is the trust anchor and must remain complete.
+            // A server-supplied name may be arbitrarily long; mark its measured
+            // preview with an ellipsis rather than squeezing out the warning.
+            .text(context.one_line_row(&format!("Server: {}", common_name(subject)), false))
+            .facts([("SHA-256", fingerprint(sha256))])
             .text(
                 "Verify this fingerprint with your institution or trusted phone. \
                  Only this exact server will receive your password.",
@@ -850,6 +851,11 @@ impl Settings {
             .primary_button(TRUST, "Trust and join")
             .button(DISTRUST, "Don't trust")
             .build()
+    }
+
+    #[cfg(test)]
+    fn wifi_trust(&self) -> Screen {
+        self.wifi_trust_for(&Context::default())
     }
 
     fn wifi_password(&self) -> Screen {
