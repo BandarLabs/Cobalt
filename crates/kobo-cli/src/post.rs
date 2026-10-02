@@ -55,11 +55,14 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
                 target = Some(Target::Sim);
                 rest = tail;
             }
-            "--device" => {
+            flag if super::is_device_flag(flag) => {
                 if target.is_some() {
                     return Err(USAGE.to_owned());
                 }
                 let (ip, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
+                if !super::valid_device_host(ip) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
                 target = Some(Target::Device(ip.clone()));
                 rest = tail;
             }
@@ -192,7 +195,9 @@ fn login(arguments: &[String]) -> Result<(), String> {
 }
 
 /// Stage the account alongside its final app-scoped path. A failed decoder or
-/// occupied staging file must leave the previous account intact.
+/// interrupted transfer must leave the previous account intact. Each transfer
+/// owns a unique private staging file, so stale or concurrent files cannot
+/// block sign-in or be removed by another transfer.
 fn credential_install_script(credential: &str) -> String {
     let encoded = super::base64_encode(credential.as_bytes());
     format!(
@@ -208,14 +213,14 @@ for directory in "$root/secrets" "$root/secrets/apps" "$root/secrets/apps/post" 
 done
 cd "$root/secrets/apps/post/servers"
 test ! -d '{CREDENTIAL}' || exit 1
-(set -C; : > '.{CREDENTIAL}.writing') || exit 1
-trap 'rm -f .{CREDENTIAL}.writing' EXIT
+partial=$(mktemp './.{CREDENTIAL}.writing.XXXXXX') || exit 1
+trap 'rm -f "$partial"' EXIT
 trap 'exit 1' HUP INT TERM
-base64 -d > '.{CREDENTIAL}.writing' <<'COBALT_POST_ACCOUNT'
+base64 -d > "$partial" <<'COBALT_POST_ACCOUNT'
 {encoded}
 COBALT_POST_ACCOUNT
-chmod 600 '.{CREDENTIAL}.writing'
-mv -f '.{CREDENTIAL}.writing' '{CREDENTIAL}'
+chmod 600 "$partial"
+mv -f "$partial" '{CREDENTIAL}'
 trap - EXIT HUP INT TERM
 "#
     )
@@ -243,6 +248,30 @@ fn remote(host: &str, script: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flag_like_hosts_fail_before_input_or_network() {
+        let base = [
+            "--gateway",
+            "https://letters.example",
+            "--token-file",
+            "/nonexistent",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        for flag in ["--device", "-s"] {
+            for host in ["--sim", "--device", "-s", "-reader", ""] {
+                for first in [false, true] {
+                    let mut arguments = base.clone();
+                    let index = if first { 0 } else { arguments.len() };
+                    arguments.splice(index..index, [flag.to_owned(), host.to_owned()]);
+                    let error = parse_options(&arguments)
+                        .err()
+                        .expect("invalid host rejected");
+                    assert!(error.contains("device host"), "{arguments:?}: {error}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn gateways_reject_unusable_runtime_addresses_before_reading_tokens() {
@@ -314,9 +343,31 @@ mod tests {
         let broken = script.replace("base64 -d", "false");
         assert!(!run(&broken).status.success());
         assert_eq!(fs::read_to_string(&account).unwrap(), record);
-        fs::write(servers.join(".hermes-post.writing"), "occupied").unwrap();
-        assert!(!run(&script).status.success());
+        let interrupted = script.replace("base64 -d", "kill -TERM $$\nbase64 -d");
+        assert!(!run(&interrupted).status.success());
         assert_eq!(fs::read_to_string(&account).unwrap(), record);
+        assert_eq!(fs::read_dir(&servers).unwrap().count(), 1);
+        fs::write(servers.join(".hermes-post.writing"), "occupied").unwrap();
+        fs::write(
+            servers.join(".hermes-post.writing.other"),
+            "another transfer",
+        )
+        .unwrap();
+        assert!(run(&script).status.success());
+        assert_eq!(
+            fs::read_to_string(servers.join(".hermes-post.writing")).unwrap(),
+            "occupied"
+        );
+        assert_eq!(fs::read_to_string(&account).unwrap(), record);
+        assert_eq!(
+            fs::read_dir(&servers).unwrap().count(),
+            3,
+            "own staging cleaned up without removing another transfer"
+        );
+        assert_eq!(
+            fs::read_to_string(servers.join(".hermes-post.writing.other")).unwrap(),
+            "another transfer"
+        );
         fs::rename(&servers, root.join("redirected")).unwrap();
         symlink(root.join("redirected"), &servers).unwrap();
         assert!(!run(&script).status.success());

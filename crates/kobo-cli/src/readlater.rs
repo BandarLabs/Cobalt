@@ -61,11 +61,14 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
                 target = Some(Target::Sim);
                 (None, tail)
             }
-            "--device" => {
+            flag if super::is_device_flag(flag) => {
                 if target.is_some() {
                     return Err(USAGE.to_owned());
                 }
                 let (ip, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
+                if !super::valid_device_host(ip) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
                 target = Some(Target::Device(ip.clone()));
                 (None, tail)
             }
@@ -273,6 +276,34 @@ fn remote(host: &str, script: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flag_like_hosts_fail_before_input_or_network() {
+        let base = [
+            "--server",
+            "https://bag.example",
+            "--client-id",
+            "id",
+            "--username",
+            "user",
+            "--client-secret-file",
+            "/nonexistent",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        for flag in ["--device", "-s"] {
+            for host in ["--sim", "--device", "-s", "-reader", ""] {
+                for first in [false, true] {
+                    let mut arguments = base.clone();
+                    let index = if first { 0 } else { arguments.len() };
+                    arguments.splice(index..index, [flag.to_owned(), host.to_owned()]);
+                    let error = parse_options(&arguments)
+                        .err()
+                        .expect("invalid host rejected");
+                    assert!(error.contains("device host"), "{arguments:?}: {error}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn access_tokens_must_fit_the_runtime_record() {
