@@ -125,7 +125,7 @@ def main():
                     subprocess.run(['cargo','test','--offline','--manifest-path',str(package/'Cargo.toml'),'approved_fix_capture','--','--nocapture'],env=env,stdout=log,stderr=log,check=True)
             manifest['apps'][app] = subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD:'+str(source.relative_to(root))+'/src'],text=True).strip()
             (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    manifest['sha256'] = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest() for path in output.rglob('*') if path.suffix in ['png','txt']}
+    manifest['sha256'] = {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest() for path in output.rglob('*') if path.suffix in ['.png','.txt']}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
 if __name__ == '__main__':
