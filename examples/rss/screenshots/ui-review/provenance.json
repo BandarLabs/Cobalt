@@ -1,0 +1,58 @@
+{
+  "before": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "rss",
+    "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+    "source_sha256": "5a4a9fffd697c397e02dbfa193ce1d087c97d8ca1ff1addae18f1c9e0b3b1c40",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "edfbc8409c43705f075753f559ea89bd145396f35004ecd54f4f577c50b8817d",
+    "images": {
+      "default-articles.png": "0dde29eb695d835df8d55f5e7462a80fc1deedbd785b5ad5185e37e79a1649a0",
+      "default-browse.png": "7cbe1c8c0a34285196921bb6b89d325b6d22aae1ef456c0a35f6e59dadf9c2b9",
+      "largest-empty.png": "1710ecb98fb1f507edbea1f7d628f3954b2cc73a1b07b3b0531e61d87bb05f1d",
+      "largest-browse.png": "b1fc58cdc6a1c441f27e6a2e7494d1cc9ee73c73ea7de856dc11fd3e8d0b28f4",
+      "default-add.png": "bd004ff36cff22a75faf0d9026082a49bdd4c74b69ad2a15509da6cf0009d963",
+      "largest-refresh-error.png": "12e0b31af8bf60ee108d19ae7d689f91cd2281ada78c67831919621a88965415",
+      "default-subscriptions.png": "776f857832749dd9b20347315895192d2f8ad0d98cc0d727970beb65814e3526",
+      "largest-articles.png": "0637e6cde176b3b9d9ae092bae6e413120b9a8eea216cbe489cfe807a37f4585",
+      "default-refresh-error.png": "4b69c5e87fe150159d63ee8531a79abe78b0181193dadd1b31983564008a7e06",
+      "largest-add.png": "f4ff6da4d79ad59af938887675121a02c7f25234078d7b290e82866211cadac6",
+      "largest-subscriptions.png": "1c9644258aa9f27910f234e1e93f5f294bd42d2a4e97e61f1d2bb11b22010827",
+      "default-empty.png": "85a597230bffd83d878db8f1ad06212ad2b9d7d14d9d11f7af301f94557d094b",
+      "largest-save-error.png": "01815498821f25c5a6c923ec8722fd52940439d38a9ef9d2d1566fad27a612fa",
+      "default-save-error.png": "93859f837520d94cb263150a192b813dd67f44ec52ce098767c00d7ca7fdbee7"
+    }
+  },
+  "after": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "rss",
+    "source_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+    "source_sha256": "675f5c35649d7926a5adb6f3193e8d096f4f5fb80f959370404f1047178c85a1",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "edfbc8409c43705f075753f559ea89bd145396f35004ecd54f4f577c50b8817d",
+    "images": {
+      "default-articles.png": "0dde29eb695d835df8d55f5e7462a80fc1deedbd785b5ad5185e37e79a1649a0",
+      "default-browse.png": "7cbe1c8c0a34285196921bb6b89d325b6d22aae1ef456c0a35f6e59dadf9c2b9",
+      "largest-empty.png": "86786d6b3e10000da6d27aa38956ae57e7f1b75e8afb5fd44e9aa79125fc0618",
+      "largest-browse.png": "b1fc58cdc6a1c441f27e6a2e7494d1cc9ee73c73ea7de856dc11fd3e8d0b28f4",
+      "default-add.png": "bd004ff36cff22a75faf0d9026082a49bdd4c74b69ad2a15509da6cf0009d963",
+      "largest-refresh-error.png": "12e0b31af8bf60ee108d19ae7d689f91cd2281ada78c67831919621a88965415",
+      "default-subscriptions.png": "db6c759c3e4325ff120117036db7036c38bf928c81d5004aa49f958f5961c0df",
+      "largest-articles.png": "0637e6cde176b3b9d9ae092bae6e413120b9a8eea216cbe489cfe807a37f4585",
+      "default-refresh-error.png": "4b69c5e87fe150159d63ee8531a79abe78b0181193dadd1b31983564008a7e06",
+      "largest-add.png": "f4ff6da4d79ad59af938887675121a02c7f25234078d7b290e82866211cadac6",
+      "largest-subscriptions.png": "c58734df57544ad845b8d695b1dacc353233cdd5968488ea809dc14fa73e0fa0",
+      "default-empty.png": "1b695b68e7c21b21500d15fd180adb93083c1847671cd927bef0fb8e238abfc1",
+      "largest-save-error.png": "9f6a47151208cd8c1498c7db63a240b2a756ad32d56968cd28bc316c7393906c",
+      "default-save-error.png": "c766e1d14c9fd1ca10dd315370d9447d4417a75a2bf8505786f50d9375b9cdfd"
+    }
+  },
+  "committed_images": {
+    "before-save-error.png": "01815498821f25c5a6c923ec8722fd52940439d38a9ef9d2d1566fad27a612fa",
+    "after-save-error.png": "9f6a47151208cd8c1498c7db63a240b2a756ad32d56968cd28bc316c7393906c"
+  }
+}

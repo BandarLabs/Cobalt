@@ -244,7 +244,7 @@ def main():
                 drive('tap Play the sample', 'wait-for The Quiet Shelf', 'wait 2500')
                 capture('audiobook-sample-player')
                 drive('tap back', 'wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 drive('tap Type any topic', 'type the moon', 'tap Create',
                       'wait-for Account details')
                 capture('audiobook-preflight-missing')
@@ -268,7 +268,7 @@ def main():
                     os.chmod(secrets / name, 0o600)
                 start()
                 drive('wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 providers.exa_delay = 5.0
                 drive('tap Type any topic', 'type the moon', 'tap Create',
                       'wait-for Researching the topic')
@@ -296,7 +296,7 @@ def main():
 
                 # Phase C: a narration call fails; Resume spends only that call.
                 drive('tap back', 'wait-for The Moon Tonight')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 providers.tts_fail_at = providers.total('elevenlabs') + 2
                 drive('tap Type any topic', 'type the tides', 'tap Create',
                       'wait-for Could not create audiobook')
@@ -315,7 +315,7 @@ def main():
                 # Phase D: cancel mid-narration; the checkpoint survives a
                 # simulator restart and resumes the script from the top.
                 drive('tap back', 'wait-for Audiobooks')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 providers.tts_delay = 6.0
                 drive('tap Type any topic', 'type the stars', 'tap Create',
                       'wait-for Narrating part 1 of 3')
@@ -324,7 +324,7 @@ def main():
                 stop()
                 start()
                 drive('wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 capture('audiobook-compose-resume')
                 restart_base = providers.total('elevenlabs')
                 drive('tap Resume', 'wait-for Now playing', 'wait 1500')

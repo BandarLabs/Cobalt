@@ -214,6 +214,7 @@ struct Parlor {
     save_failed: bool,
     history: Vec<Position>,
     record: Vec<String>,
+    record_page: usize,
     undo_pending: bool,
     match_score: [u8; 2],
     scored: bool,
@@ -235,6 +236,7 @@ impl Default for Parlor {
             save_failed: false,
             history: Vec::new(),
             record: Vec::new(),
+            record_page: 0,
             undo_pending: false,
             match_score: [0, 0],
             scored: false,
@@ -260,13 +262,18 @@ fn cell_name(at: usize) -> String {
 }
 
 impl Parlor {
+    #[cfg(test)]
     fn screen(&self) -> Screen {
+        self.screen_for(&Context::default())
+    }
+
+    fn screen_for(&self, context: &Context) -> Screen {
         let screen = match self.view {
             View::Menu => self.menu_screen(),
             View::Setup(title) => self.setup_screen(title),
             View::HowTo(title) => self.how_to_screen(title),
             View::Board => self.board_screen(),
-            View::Record => self.record_screen(),
+            View::Record => self.record_screen(context),
         };
         screen.with_own_back(self.view != View::Menu)
     }
@@ -599,22 +606,49 @@ impl Parlor {
         )
     }
 
-    fn record_screen(&self) -> Screen {
-        let text = if self.record.is_empty() {
+    fn record_text(&self) -> String {
+        if self.record.is_empty() {
             "No moves yet.".to_owned()
         } else {
             self.record
                 .iter()
                 .enumerate()
-                .map(|(i, mv)| format!("{}. {mv}", i + 1))
+                .map(|(index, description)| format!("{}. {description}", index + 1))
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join("\n\n")
+        }
+    }
+
+    fn record_pages(&self, context: &Context) -> Vec<Vec<String>> {
+        context.paginate(&self.record_text(), false)
+    }
+
+    fn record_screen(&self, context: &Context) -> Screen {
+        let pages = self.record_pages(context);
+        let page = self.record_page.min(pages.len().saturating_sub(1));
+        let mut builder = ScreenBuilder::new("parlor-record").top_bar("Game record");
+        for paragraph in &pages[page] {
+            builder = builder.text(paragraph);
+        }
+        if pages.len() > 1 {
+            builder = builder
+                .page_turns("record-previous", "record-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        builder.build()
+    }
+
+    fn turn_record_page(&mut self, context: &Context, forward: bool) {
+        let last = self.record_pages(context).len().saturating_sub(1);
+        let page = self.record_page.min(last);
+        self.record_page = if forward {
+            (page + 1).min(last)
+        } else {
+            page.saturating_sub(1)
         };
-        ScreenBuilder::new("parlor-record")
-            .top_bar("Game record")
-            .text(text)
-            .button("board", "Board")
-            .build()
     }
 
     fn start(&mut self, title: Title) {
@@ -1023,6 +1057,7 @@ impl Parlor {
         } else if action == action_id("undo") {
             self.undo();
         } else if action == action_id("record") {
+            self.record_page = 0;
             self.view = View::Record;
         } else if action == action_id("board") {
             self.view = View::Board;
@@ -1038,6 +1073,7 @@ impl Parlor {
         } else if action == action_id("back") || action == ActionId::BACK {
             self.view = match self.view {
                 View::HowTo(title) => View::Setup(title),
+                View::Record => View::Board,
                 _ => View::Menu,
             };
         } else if let Some(at) = (0..100).find(|at| action == action_id(&cell_name(*at))) {
@@ -1049,18 +1085,18 @@ impl Parlor {
 impl KoboApp for Parlor {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(SAVE);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen_for(context));
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         match &result {
             StoreResult::Denied(_) => {
                 self.save_failed = true;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen_for(context));
                 return;
             }
             StoreResult::Saved { .. } if self.save_failed => {
                 self.save_failed = false;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen_for(context));
                 return;
             }
             _ => {}
@@ -1077,14 +1113,27 @@ impl KoboApp for Parlor {
                     }
                 }
                 self.loaded = true;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen_for(context));
             }
         }
     }
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Record {
+            self.turn_record_page(context, forward);
+            context.set_screen(self.screen_for(context));
+        }
+    }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.view == View::Record
+            && (action == action_id("record-previous") || action == action_id("record-next"))
+        {
+            self.on_page_turn(context, action == action_id("record-next"));
+            return;
+        }
         self.handle_action(action);
         self.save(context);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen_for(context));
     }
 }
 
@@ -1310,6 +1359,7 @@ fn decode(text: &str) -> Option<Parlor> {
         save_failed: false,
         history,
         record,
+        record_page: 0,
         undo_pending: false,
         match_score: settings.match_score,
         scored: settings.scored,
@@ -2168,3 +2218,9 @@ mod tests {
         assert!(issues.is_empty(), "international board: {issues:?}");
     }
 }
+
+#[cfg(test)]
+mod navigation_tests;
+
+#[cfg(test)]
+mod review_capture;

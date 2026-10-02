@@ -1,0 +1,11 @@
+{
+  "capture_kind": "native app renderer snapshot, not interactive simulator",
+  "source_revision": "eb35446fb23c0970cb2a6ecca9e54f3cabd91147",
+  "source_file": "examples/sidekick/src/main.rs",
+  "source_file_modified": true,
+  "source_sha256": "96bcf698d9ab9b04bc63cc505b86ccefb668194016da592397aef46ee941fdaf",
+  "profile": "Clara BW 1072x1448",
+  "status": "synthetic 00:00, 50% battery, connected radios",
+  "hardware_tested": false,
+  "simulator_tested": false
+}

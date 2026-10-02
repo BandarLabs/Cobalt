@@ -1,0 +1,42 @@
+{
+  "kind": "native-renderer-snapshots-not-interactive-simulator",
+  "app": "zotero-reader",
+  "source_revision": "608ea3285533bce4123f75bdd818bd121a7aee05",
+  "source_sha256": "06291aefd1b8badeedffc44f74914d1f1bfd84f1abf0cac12c15b08e3dd8ad52",
+  "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+  "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+  "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+  "scenario_sha256": "577fa0567a74fd474ef975db10f53a3d7af832739823f0f5e7ff34d2a49b0c47",
+  "images": {
+    "default-papers-error.png": "15d0a271658138343e5e2e1a5d12c9be4ae1d8d039313d32399582a5cf75ee77",
+    "default-setup.png": "4a78fa8fb6f5feb6398a082c1e8c67f682a6c5b8a573d05d58698aad5f844775",
+    "default-collections-error.png": "7f209ff225ecc7180b2e5bdbb17bf0df61a98f743abd16508af6185a29b0dc6d",
+    "largest-collections.png": "52147dc7bc62deab8650c41cfeb9612acac859f6dc37bf2f60b2892494da555f",
+    "default-no-results.png": "7e449d79ac336eaf888e9a98d7827a0f6ba2f029539a472edeaf7a7099786008",
+    "largest-setup.png": "0810686d31a9aea030dd00605ae2b434e3d92f6ae88a92f92c2d56ba0310d80d",
+    "largest-no-results.png": "c963f350e397bf70593fecc48ad58b14839fc0f7660e24bb778b07a603a0afb5",
+    "largest-papers-error.png": "36db22b281bde055570ca206e5832333586ba451692156e73c4b6db8661a960c",
+    "largest-edit-query.png": "a648cb880708535015d5ecf1b4edb38deaa1db82077e8068e3e91e9f809534ee",
+    "default-offline-error.png": "6175ae47541198093686b590c87a2244c2afbd8bb18338e60bd84b59bbc2eb41",
+    "largest-detail-error.png": "7578e0bf5ab27cbe85c207e215c9a6293a8b9a283cf3c4462477bb28a4d20540",
+    "default-papers.png": "e7d28420faea99826c70b06224b35667b517454b58a1182d7ea018bd0d4cc9ff",
+    "default-edit-query.png": "001aa5bae9f9dcaa98cc926394c82ab8a43cd1754f7fa7b18eaf18103a31d74d",
+    "largest-offline-error.png": "18fe0d4de68d77b473194ebcb3f27af8942916d81a5de74fb0379379a01a195e",
+    "default-detail-error.png": "152079e03ab5e759e80c11e0fd2aac9a9fe20be1dd9186cc40e7c89d59a659c3",
+    "largest-detail.png": "2d5d048abbf9ab8916bfa687d688a0de5074f7753bafd936747c5e683680772c",
+    "default-detail.png": "37f683b72ecd758349cc0c8a47e7156e132f590b28c9623b37269019432f690c",
+    "largest-papers.png": "a682d795782d1d0b35a6fd3b852f8c0981ec39b43d84dd640915677390436987",
+    "largest-collections-error.png": "0c6abc4935b47216e44d3bf368cba064bd56046ac8ffd1449db1d36996607e95",
+    "largest-setup-error.png": "0fcae72485137ff72f8d6f1f5ab85ca4799624da5437942c6f559a2d4aa471fd",
+    "default-papers-last-opened.png": "5fb3dc7dd19c5df61e0b64221b76897e233a4593121d94e14dc8ed2025156c30",
+    "default-collections.png": "0dd1566b24d77f77c07f5e22c73fcb420567bbe9796ce8fcc7c50aa2f644ac0a",
+    "largest-papers-last-opened.png": "c3c5ecae995621983f0792f7ce466e2e206b26d53b0479bbdd0d3c39a3dcd388",
+    "default-setup-error.png": "26015aec0971fce20f6dbd9f6583a6259690a7af20c600f838745fcdc3f17d70"
+  },
+  "comparison": {
+    "previous_app_commit": "608ea3285533bce4123f75bdd818bd121a7aee05",
+    "pngs_compared": 24,
+    "all_pixels_identical": true,
+    "method": "Exact SHA-256 comparison of lossless PNG files from the same native scenario"
+  }
+}

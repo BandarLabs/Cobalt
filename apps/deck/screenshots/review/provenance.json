@@ -1,0 +1,15 @@
+{
+  "capture_mode": "in-process original app screen builders and shared Kobo renderer, not an interactive simulator",
+  "baseline_revision": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "baseline_source_sha256": "338495a99b03a930c686893081860175e7b48e66fb90a80345b28bf0c8345a8f",
+  "display": "CLARA_BW_METRICS, 1072x1448, default text size",
+  "chrome": "synthetic status strip and runtime-equivalent Back",
+  "scenario": "Run tests, failed with exit 1; 25 output lines of 72 bytes each including newline (1800 bytes total, within the 2 KB daemon output limit)",
+  "before": "original implementation plus capture-only test harness; TextOverflow diagnostic",
+  "after": "ui_review_tests::capture_review_pages_when_requested",
+  "image_sha256": {
+    "result-first-after.png": "d78dc21bf534efe7accd03dfb09e83bcfa68629f6ddd4724af0a1e0ac677c488",
+    "result-before.png": "3f600bef43e20b33e894a55b47207e82349cd574fec843fb1c0834cfca769b3e",
+    "result-last-after.png": "bf6f48a203c6da44f805bda2b4ac54aa386ca8878eb5b77da316f8d18dc9d1c8"
+  }
+}
