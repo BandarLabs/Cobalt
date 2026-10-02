@@ -1,0 +1,1728 @@
+{
+  "observed_at_utc": "2026-10-02T12:43:41.492673+00:00",
+  "baseline": "9715304831eae95566758fd0aa6b8e6fc87ee3ee",
+  "binding_scope": "Exact app-source and rendering-object comparison from original final app heads to observed consolidated heads. Changed app sources require refreshed captures; this comparison alone does not assert a complete 170% interactive pass.",
+  "allowed_apps": [
+    "sidekick",
+    "launcher",
+    "readlater",
+    "pubquiz",
+    "parser",
+    "settings",
+    "kitchencard",
+    "deck",
+    "habits",
+    "vault",
+    "syncthing",
+    "zotero-reader",
+    "rss-miniflux",
+    "rss",
+    "hn",
+    "inkling",
+    "arxiv",
+    "needles",
+    "verses",
+    "fanshelf",
+    "grimoire",
+    "birds"
+  ],
+  "apps": [
+    {
+      "app": "sidekick",
+      "original_pr": 239,
+      "original_final_head": "d7adae18bfa57014acdb9ee694394436f0163159",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "examples/sidekick/src",
+          "original_object": "a33e19b04daa8b4564185f237c7310a35417dc1f",
+          "consolidated_object": "a33e19b04daa8b4564185f237c7310a35417dc1f",
+          "equal": true
+        },
+        {
+          "path": "examples/sidekick/Cargo.toml",
+          "original_object": "1f6e892bf852e53c163cea36f407ca64f47b4b3a",
+          "consolidated_object": "1f6e892bf852e53c163cea36f407ca64f47b4b3a",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "launcher",
+      "original_pr": 238,
+      "original_final_head": "8ae722330b05bffb804809fcf4c509465b1d09cb",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "examples/launcher/src",
+          "original_object": "1f81a369adebb24de5f95660581ef68b87a84d1e",
+          "consolidated_object": "1f81a369adebb24de5f95660581ef68b87a84d1e",
+          "equal": true
+        },
+        {
+          "path": "examples/launcher/Cargo.toml",
+          "original_object": "c3ed1b7962d1317d5e1ff3a5d34b00073b0cac69",
+          "consolidated_object": "c3ed1b7962d1317d5e1ff3a5d34b00073b0cac69",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "readlater",
+      "original_pr": 240,
+      "original_final_head": "a21b33b02fb4603a80abce4f0d38b457f9357c9b",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/readlater/src",
+          "original_object": "631046848a98a7d4fce734a270ee3b5be04a4f3e",
+          "consolidated_object": "631046848a98a7d4fce734a270ee3b5be04a4f3e",
+          "equal": true
+        },
+        {
+          "path": "apps/readlater/Cargo.toml",
+          "original_object": "5ad3479bdef3e096152fbe1bb7cbd99f37631e9a",
+          "consolidated_object": "5ad3479bdef3e096152fbe1bb7cbd99f37631e9a",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "pubquiz",
+      "original_pr": 242,
+      "original_final_head": "297731d1f01556f5845a0f4c0abf5aaf84861016",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/pubquiz/src",
+          "original_object": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+          "consolidated_object": "646509b75a1bd06ffaeacc0512c3c138efd8600f",
+          "equal": true
+        },
+        {
+          "path": "apps/pubquiz/Cargo.toml",
+          "original_object": "9f997ada17c10629b1236f593c73b0f72f762ad7",
+          "consolidated_object": "9f997ada17c10629b1236f593c73b0f72f762ad7",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "parser",
+      "original_pr": 243,
+      "original_final_head": "89d3b26d832b4cc071b85e0288018ec3de2a5875",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/parser/src",
+          "original_object": "5b2c53110cfed52dfc25e79910889a0ea4f0f2a5",
+          "consolidated_object": "5b2c53110cfed52dfc25e79910889a0ea4f0f2a5",
+          "equal": true
+        },
+        {
+          "path": "apps/parser/Cargo.toml",
+          "original_object": "dbfec9165f2ee519d8b4f21e1780554d2175f167",
+          "consolidated_object": "dbfec9165f2ee519d8b4f21e1780554d2175f167",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "settings",
+      "original_pr": 245,
+      "original_final_head": "6b988076524138c48d7ecb5aa2d33a67987bf61a",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "examples/settings/src",
+          "original_object": "8809068505c7d2073b137f614042fcc3a4dfe073",
+          "consolidated_object": "8809068505c7d2073b137f614042fcc3a4dfe073",
+          "equal": true
+        },
+        {
+          "path": "examples/settings/Cargo.toml",
+          "original_object": "4b78efd7c6d2f2655e64fd61f4e580472f25bc4d",
+          "consolidated_object": "4b78efd7c6d2f2655e64fd61f4e580472f25bc4d",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "kitchencard",
+      "original_pr": 248,
+      "original_final_head": "9d71ca5308ed95170b1d1e63ec98ec8c2dbe9a28",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/kitchencard/src",
+          "original_object": "d1182a65814b374edcff8b432b61168e7ce529bd",
+          "consolidated_object": "d1182a65814b374edcff8b432b61168e7ce529bd",
+          "equal": true
+        },
+        {
+          "path": "apps/kitchencard/Cargo.toml",
+          "original_object": "8b20342a352a9a07ba7a76aded06e8f95fb3ffd6",
+          "consolidated_object": "8b20342a352a9a07ba7a76aded06e8f95fb3ffd6",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "deck",
+      "original_pr": 249,
+      "original_final_head": "c9450285baf6d887a497f6bec36b58686e5e7329",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/deck/src",
+          "original_object": "783ef04292e06f3e38ba0f9e546f913d78e247c6",
+          "consolidated_object": "783ef04292e06f3e38ba0f9e546f913d78e247c6",
+          "equal": true
+        },
+        {
+          "path": "apps/deck/Cargo.toml",
+          "original_object": "0906c79949911afb5962bb4cb3eb9146e124782a",
+          "consolidated_object": "0906c79949911afb5962bb4cb3eb9146e124782a",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "habits",
+      "original_pr": 251,
+      "original_final_head": "82ccffd587dcdaeacf797e3f187c6276adccec90",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/habits/src",
+          "original_object": "e57819e45a86176669871f268403cf66705eaecb",
+          "consolidated_object": "e57819e45a86176669871f268403cf66705eaecb",
+          "equal": true
+        },
+        {
+          "path": "apps/habits/Cargo.toml",
+          "original_object": "e0920e6a0e45b8a557a3739891dcba67004df4f0",
+          "consolidated_object": "e0920e6a0e45b8a557a3739891dcba67004df4f0",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "vault",
+      "original_pr": 252,
+      "original_final_head": "7f48d07e337a13a8ffe037236bba292cfe61a742",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/vault/src",
+          "original_object": "8d248ff74418b77f0797bdcc298bf9b0d33dc336",
+          "consolidated_object": "8d248ff74418b77f0797bdcc298bf9b0d33dc336",
+          "equal": true
+        },
+        {
+          "path": "apps/vault/Cargo.toml",
+          "original_object": "370e26735569d1fa5b530c1b80e0ee96b04125ef",
+          "consolidated_object": "370e26735569d1fa5b530c1b80e0ee96b04125ef",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "syncthing",
+      "original_pr": 253,
+      "original_final_head": "415ff1cf2fa32ebbfe4a57d55b186725286dabd7",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/syncthing/src",
+          "original_object": "0fb84846c42a8bfb4647b8bbd8dd8fe9f06b914b",
+          "consolidated_object": "0fb84846c42a8bfb4647b8bbd8dd8fe9f06b914b",
+          "equal": true
+        },
+        {
+          "path": "apps/syncthing/Cargo.toml",
+          "original_object": "bdd0378a3d9ca5abe80ab6a052b96bdcf57a7770",
+          "consolidated_object": "bdd0378a3d9ca5abe80ab6a052b96bdcf57a7770",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "zotero-reader",
+      "original_pr": 254,
+      "original_final_head": "97ef49554e2d49ecf1a71dc42347e6320ef9f6a8",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/zotero-reader/src",
+          "original_object": "faf5f53a44ea3e07a6b775cfd620ead918780b89",
+          "consolidated_object": "faf5f53a44ea3e07a6b775cfd620ead918780b89",
+          "equal": true
+        },
+        {
+          "path": "apps/zotero-reader/Cargo.toml",
+          "original_object": "2926f7debda30e51680cee9c09fa75283033728c",
+          "consolidated_object": "2926f7debda30e51680cee9c09fa75283033728c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "rss-miniflux",
+      "original_pr": 255,
+      "original_final_head": "2e485a2eb9f1a1b1058d8b9f64bb45c4c3ce2a79",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/rss-miniflux/src",
+          "original_object": "cf1c635dc7e9945c5f6451003de0070176f07daa",
+          "consolidated_object": "cf1c635dc7e9945c5f6451003de0070176f07daa",
+          "equal": true
+        },
+        {
+          "path": "apps/rss-miniflux/Cargo.toml",
+          "original_object": "e351f683b7cf40080778dcfe1693c3d5d618b1c2",
+          "consolidated_object": "e351f683b7cf40080778dcfe1693c3d5d618b1c2",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "rss",
+      "original_pr": 257,
+      "original_final_head": "d7abc901ac52fa47501fe4b9c70664ebbc4a95d0",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "examples/rss/src",
+          "original_object": "f878c1eda74ad28fb9c0a6e7b62c9e9227cd5cdd",
+          "consolidated_object": "f878c1eda74ad28fb9c0a6e7b62c9e9227cd5cdd",
+          "equal": true
+        },
+        {
+          "path": "examples/rss/Cargo.toml",
+          "original_object": "ead8028f62e8a7980a6843b9ce4004ac570b8ad0",
+          "consolidated_object": "ead8028f62e8a7980a6843b9ce4004ac570b8ad0",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "hn",
+      "original_pr": 258,
+      "original_final_head": "b3b81ca96e338d8aadc541474d2619dc2e1957fc",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "examples/hn/src",
+          "original_object": "a79558cd23469014c78ffe0811a63ce68534fdb9",
+          "consolidated_object": "a79558cd23469014c78ffe0811a63ce68534fdb9",
+          "equal": true
+        },
+        {
+          "path": "examples/hn/Cargo.toml",
+          "original_object": "5d4b03aa88ac08d30dc93d817a8c46d8e805ee63",
+          "consolidated_object": "5d4b03aa88ac08d30dc93d817a8c46d8e805ee63",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "inkling",
+      "original_pr": 259,
+      "original_final_head": "0eb30afffed2e060d868cfeac516ef17ea8eb8a8",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/inkling/src",
+          "original_object": "7e64102065dab07489a75b3c72cdf2a407da237e",
+          "consolidated_object": "7e64102065dab07489a75b3c72cdf2a407da237e",
+          "equal": true
+        },
+        {
+          "path": "apps/inkling/Cargo.toml",
+          "original_object": "f511459517c9b33502fc647de99f99953da56698",
+          "consolidated_object": "f511459517c9b33502fc647de99f99953da56698",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "arxiv",
+      "original_pr": 260,
+      "original_final_head": "32cea11541bd27d0c163cbd74b9d9cc19651e966",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/arxiv/src",
+          "original_object": "7def349a7b4aad7c27d7f811c27a953de6b62938",
+          "consolidated_object": "7def349a7b4aad7c27d7f811c27a953de6b62938",
+          "equal": true
+        },
+        {
+          "path": "apps/arxiv/Cargo.toml",
+          "original_object": "eb100552af849a6d0960ba6643d457f4fd1eb6a6",
+          "consolidated_object": "eb100552af849a6d0960ba6643d457f4fd1eb6a6",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "needles",
+      "original_pr": 261,
+      "original_final_head": "1f17e4b04da895b8c6177f7dc348235f960483fb",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/needles/src",
+          "original_object": "98f1e752d6a5ea99439d81742fcc9f77681a2f41",
+          "consolidated_object": "98f1e752d6a5ea99439d81742fcc9f77681a2f41",
+          "equal": true
+        },
+        {
+          "path": "apps/needles/Cargo.toml",
+          "original_object": "237cb7833d82746dc9ea4c57a0e2b3a36f4844df",
+          "consolidated_object": "237cb7833d82746dc9ea4c57a0e2b3a36f4844df",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "verses",
+      "original_pr": 262,
+      "original_final_head": "cea14f594003ccce447a64fcb9a5f02c9602f3d9",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/verses/src",
+          "original_object": "05b98c3d5ebe8e74e0bccdbcf6d7b7e0e383281c",
+          "consolidated_object": "05b98c3d5ebe8e74e0bccdbcf6d7b7e0e383281c",
+          "equal": true
+        },
+        {
+          "path": "apps/verses/Cargo.toml",
+          "original_object": "ac9089d0d8e7d256f78f77e22e076122e1ecf569",
+          "consolidated_object": "ac9089d0d8e7d256f78f77e22e076122e1ecf569",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "fanshelf",
+      "original_pr": 263,
+      "original_final_head": "da6a787c9fefffc287c3b0c71f2eabab03729102",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/fanshelf/src",
+          "original_object": "5f7b0653a003dcca6f1b081fc65e715861aaca16",
+          "consolidated_object": "5f7b0653a003dcca6f1b081fc65e715861aaca16",
+          "equal": true
+        },
+        {
+          "path": "apps/fanshelf/Cargo.toml",
+          "original_object": "ca92d9e9c58d6b7d9a13a6fe53725babf5f811f2",
+          "consolidated_object": "ca92d9e9c58d6b7d9a13a6fe53725babf5f811f2",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "grimoire",
+      "original_pr": 265,
+      "original_final_head": "b04e05dbbdee2a175ea1a1ca89a10c57d89f4526",
+      "consolidated_pr": 273,
+      "consolidated_head": "822d01840d24f3826cf4fcfb82172d95a51e720f",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/grimoire/src",
+          "original_object": "f40bb885c1a60bfc12f5cef0bf2e8ab7b117b539",
+          "consolidated_object": "f40bb885c1a60bfc12f5cef0bf2e8ab7b117b539",
+          "equal": true
+        },
+        {
+          "path": "apps/grimoire/Cargo.toml",
+          "original_object": "0246c873545d606a18ab99bafa359f4b152cb055",
+          "consolidated_object": "0246c873545d606a18ab99bafa359f4b152cb055",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    },
+    {
+      "app": "birds",
+      "original_pr": 266,
+      "original_final_head": "207c80d7d09320d20609b73a9ed826dd97c2cbf9",
+      "consolidated_pr": 274,
+      "consolidated_head": "9efb2545eb8cf44cde6e9255d3c27d52318d1e28",
+      "held_for_large_text_followup": false,
+      "source_objects_equal": true,
+      "objects": [
+        {
+          "path": "apps/birds/src",
+          "original_object": "c4cd531a72aac04c49894808dbbf4eab08b460b2",
+          "consolidated_object": "c4cd531a72aac04c49894808dbbf4eab08b460b2",
+          "equal": true
+        },
+        {
+          "path": "apps/birds/Cargo.toml",
+          "original_object": "0e4113e91c4d74288f6a8d5e8f2154f66598a399",
+          "consolidated_object": "0e4113e91c4d74288f6a8d5e8f2154f66598a399",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-ui",
+          "original_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "consolidated_object": "be5241093e3efcdd92b0b57835bbd1511e8d9d21",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sdk",
+          "original_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "consolidated_object": "b823213541a8f179579d82b852f6073b433bbe1c",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-text",
+          "original_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "consolidated_object": "c30fffc6cf9b2ab51f6dd3707cd709bdaf384be3",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-image",
+          "original_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "consolidated_object": "010d5dd987eee6e7268ffd2115a0a8fe3fe9308b",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-sim",
+          "original_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "consolidated_object": "ff5ce3fe14e9ea4ab5ab55b66f701beb679d8795",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-shell",
+          "original_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "consolidated_object": "3f7e298cd33d9fed65863f0967907f504e298143",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-profile",
+          "original_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "consolidated_object": "867de6ba04c1f2424e4a411776b7e651d79eeb32",
+          "equal": true
+        },
+        {
+          "path": "crates/kobo-abi",
+          "original_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "consolidated_object": "87bb19199dcb827d62da0c10c26c90a50f71cd0f",
+          "equal": true
+        },
+        {
+          "path": "assets",
+          "original_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "consolidated_object": "f990dba883f987d2dd028b4120657887f5eb5830",
+          "equal": true
+        }
+      ]
+    }
+  ],
+  "all_22_ready_source_objects_equal": true,
+  "scope_note": "Ready capture bindings only. Nine refreshed app packets remain pending and are excluded. Original capture heads remain recorded in each packet; no full-build identity or complete170% follow-up is asserted."
+}
+
