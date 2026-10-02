@@ -2699,6 +2699,33 @@ fn host_applications(
                                             |wifi| wifi.join(ssid, password),
                                         )
                                     }
+                                    kobo_protocol::DeviceRequest::ProbeEnterpriseWifi {
+                                        ssid,
+                                        identity,
+                                    } => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        |wifi| wifi.probe_enterprise(ssid, identity),
+                                    ),
+                                    kobo_protocol::DeviceRequest::JoinEnterpriseWifi {
+                                        ssid,
+                                        identity,
+                                        password,
+                                        server_sha256,
+                                    } => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        |wifi| {
+                                            wifi.join_enterprise(
+                                                ssid,
+                                                identity,
+                                                password,
+                                                server_sha256,
+                                            )
+                                        },
+                                    ),
                                     kobo_protocol::DeviceRequest::DisconnectWifi => {
                                         wifi.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
@@ -4351,8 +4378,9 @@ enum Tap {
 /// reliable enough to be the way out of anything. A screen may ask for first
 /// refusal on it (see [`Screen::owns_back`]) so that a screen reached from
 /// inside an application goes back to where it was reached from rather than
-/// out of the application. That is a delivery, not a transfer of ownership:
-/// the caller still leaves if no new screen follows.
+/// out of the application. An open overlay also receives Back so the application
+/// can dismiss it even over a root screen. That is a delivery, not a transfer
+/// of ownership: the caller still leaves if no new screen follows.
 #[allow(
     clippy::too_many_arguments,
     reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
@@ -4433,6 +4461,7 @@ fn deliver_touch(
     let route = kobod::navigation::route(
         action == ActionId::BACK,
         current.is_some_and(|screen| screen.owns_back),
+        current.is_some_and(|screen| screen.overlay.is_some()),
     );
     if route == kobod::navigation::BackRoute::Leave {
         return Ok(Tap::Leave);
@@ -6189,6 +6218,65 @@ mod tests {
                 action: ActionId::BACK
             }
         ));
+    }
+
+    #[test]
+    fn overlay_close_is_delivered_before_a_root_back_leaves() {
+        let chrome = Chrome::with_back(true);
+        let root = hello();
+        let covered = root.clone().with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(2),
+            "Settings",
+            vec![],
+        ));
+        let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().unwrap();
+        app.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        for (screen, kind, expected) in [
+            (
+                &covered,
+                kobo_ui::LayoutKind::OverlayClose,
+                Tap::OfferedBack,
+            ),
+            (&root, kobo_ui::LayoutKind::Back, Tap::Leave),
+        ] {
+            let layout = screen.layout_with(&crate::device_metrics(), &chrome);
+            let rect = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kind)
+                .unwrap()
+                .rect;
+            let tap = TouchEvent::Up {
+                x: u32::try_from(rect.x + rect.width / 2).unwrap(),
+                y: u32::try_from(rect.y + rect.height / 2).unwrap(),
+            };
+            assert_eq!(
+                deliver_touch(
+                    &mut runtime,
+                    tap,
+                    Some(screen),
+                    &chrome,
+                    false,
+                    kobo_ui::Orientation::Portrait,
+                    kobo_ui::LandscapeTurn::Clockwise,
+                    kobo_protocol::VERSION,
+                    kobo_ui::TopBarState::Hidden,
+                )
+                .unwrap(),
+                expected,
+            );
+            if expected == Tap::OfferedBack {
+                assert!(matches!(
+                    kobo_protocol::read_from(&mut app).unwrap().message,
+                    Message::Action {
+                        action: ActionId::BACK
+                    }
+                ));
+            } else {
+                assert!(kobo_protocol::read_from(&mut app).is_err());
+            }
+        }
     }
 
     fn catalogue() -> PathBuf {
