@@ -1,0 +1,80 @@
+name: Large-text regression matrix
+on:
+  push:
+    branches: [validation/large-text-matrix-20261002]
+permissions:
+  contents: read
+jobs:
+  profiles:
+    name: ${{ matrix.profile }} at ${{ matrix.scale }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        profile: [clara-bw-391, clara-bw-395, clara-hd-376, clara-colour-393, elipsa-2e-389, libra-2-388, libra-colour-390, libra-colour-390-4.46.23836, libra-h2o-384]
+        scale: [default, '170']
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      PYTHONDONTWRITEBYTECODE: '1'
+      KOBO_SIM_PROFILE: ${{ matrix.profile }}
+      KOBO_TEXT_SCALE: ${{ matrix.scale }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Keep validation helper outside the production checkout
+        run: |
+          cp .github/validation/large-text-20261002/score.py "$RUNNER_TEMP/score.py"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/large-text-cargo" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - name: Install the original-score PDF reader
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 218b5172262767be2fd25265d2b35f7f9337b8c6
+          persist-credentials: false
+      - name: Capture original behavior of the six affected layouts
+        continue-on-error: true
+        run: python3 scripts/check-apps-sim.py chat parlor homepanel post gutenbird backgammon --out "$RUNNER_TEMP/evidence/before"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 8239f9b57259c29682da0c0bf1d53a20b3424cc9
+          persist-credentials: false
+      - name: Run every catalog route on the exact fixed union
+        id: catalog
+        continue-on-error: true
+        run: python3 scripts/check-apps-sim.py --out "$RUNNER_TEMP/evidence/after"
+      - name: Download the provenance-pinned original music score
+        id: score
+        continue-on-error: true
+        run: python3 "$RUNNER_TEMP/score.py" "$RUNNER_TEMP/score"
+      - name: Run complete specialized journeys
+        id: specialized
+        continue-on-error: true
+        run: |
+          failed=0
+          for name in post fieldbook audiobook musicstand-shelf; do
+            args=()
+            if [ "$name" = musicstand-shelf ]; then args=(--score "$RUNNER_TEMP/score/Cello Suite No. 1 - Prelude.pdf"); fi
+            python3 "scripts/quality/check-$name-sim.py" --scale "$KOBO_TEXT_SCALE" --profile "$KOBO_SIM_PROFILE" --output "$RUNNER_TEMP/evidence/specialized-$name" "${args[@]}" > "$RUNNER_TEMP/evidence/specialized-$name.log" 2>&1 || failed=1
+          done
+          exit "$failed"
+      - name: Record exact source identities and verdict
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          printf '%s\n' 'before=218b5172262767be2fd25265d2b35f7f9337b8c6' 'after=8239f9b57259c29682da0c0bf1d53a20b3424cc9' 'hardware_tested=false' > "$RUNNER_TEMP/evidence/sources.txt"
+          test '${{ steps.catalog.outcome }}' = success
+          test '${{ steps.specialized.outcome }}' = success
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: large-text-${{ matrix.profile }}-${{ matrix.scale }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 7
