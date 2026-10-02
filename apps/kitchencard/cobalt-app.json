@@ -4,8 +4,8 @@
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
   "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
-  "version": "0.1.5",
-  "release_notes": "Clearer description in the Store. No change to how the app works.",
+  "version": "0.1.6",
+  "release_notes": "Page through every recipe and ingredient, and keep your cooking step when switching between Steps and Ingredients.",
   "glyph": "reader",
   "capabilities": [
     "network",

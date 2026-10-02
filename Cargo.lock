@@ -912,6 +912,7 @@ dependencies = [
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -968,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-deck"
-version = "0.2.0"
+version = "0.2.6"
 dependencies = [
  "kobo-image",
  "kobo-json",
@@ -1159,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-homepanel"
-version = "0.2.2"
+version = "0.2.4"
 dependencies = [
  "kobo-json",
  "kobo-sdk",
@@ -1197,7 +1198,7 @@ version = "0.3.24"
 
 [[package]]
 name = "kobo-kitchencard"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "kobo-json",
  "kobo-sdk",
@@ -1381,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-post"
-version = "0.1.0"
+version = "0.2.4"
 dependencies = [
  "kobo-json",
  "kobo-net",
@@ -1490,6 +1491,7 @@ dependencies = [
  "kobo-app-store",
  "kobo-json",
  "kobo-sdk",
+ "kobo-text",
 ]
 
 [[package]]
@@ -1662,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-vault"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "kobo-html",
  "kobo-image",

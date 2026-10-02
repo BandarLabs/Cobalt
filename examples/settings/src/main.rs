@@ -24,16 +24,10 @@ const BETA_UPDATES: &str = "beta-updates";
 const CONFIRM_CHANNEL: &str = "confirm-channel";
 const CANCEL_CHANNEL: &str = "cancel-channel";
 const RESCAN: &str = "rescan";
+const TRUST: &str = "trust-server";
+const DISTRUST: &str = "distrust-server";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
-const PAGE_SIZE: usize = 4;
-const DEVICE_ACTIONS: [&str; 10] = [
-    "bt-0", "bt-1", "bt-2", "bt-3", "bt-4", "bt-5", "bt-6", "bt-7", "bt-8", "bt-9",
-];
-const NETWORK_ACTIONS: [&str; 10] = [
-    "wifi-0", "wifi-1", "wifi-2", "wifi-3", "wifi-4", "wifi-5", "wifi-6", "wifi-7", "wifi-8",
-    "wifi-9",
-];
 
 /// The version this binary was compiled as, which is the version installed:
 /// the binaries and the installer travel together.
@@ -80,7 +74,12 @@ enum View {
     Home,
     Bluetooth,
     Wifi,
+    /// The username step of an enterprise (eduroam) join.
+    WifiUsername,
     WifiPassword,
+    /// The server certificate an enterprise network presented, for the owner
+    /// to trust before any password is sent.
+    WifiTrust,
     Battery,
     About,
     Update,
@@ -201,6 +200,8 @@ impl Topic {
             | DeviceRequest::SetWifi { .. }
             | DeviceRequest::ScanWifi
             | DeviceRequest::JoinWifi { .. }
+            | DeviceRequest::ProbeEnterpriseWifi { .. }
+            | DeviceRequest::JoinEnterpriseWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
             DeviceRequest::ReadIdentity => Some(Self::About),
@@ -227,6 +228,7 @@ fn update_screen_owns(request: &DeviceRequest) -> bool {
 #[derive(Default)]
 struct Settings {
     view: View,
+    home_page: usize,
     bluetooth_state: RadioState,
     devices: Vec<BluetoothDevice>,
     bluetooth_page: usize,
@@ -243,6 +245,15 @@ struct Settings {
     scanning: bool,
     selected_ssid: Option<String>,
     password: Keyboard,
+    /// Set while the selected network signs in with a username (802.1X)
+    /// rather than a shared key.
+    enterprise: bool,
+    username: Keyboard,
+    /// Held only between typing it and the owner deciding whether to trust
+    /// the server; cleared on every way off the trust screen.
+    enterprise_password: Option<String>,
+    /// What the network's server presented: subject and SHA-256.
+    certificate: Option<(String, [u8; 32])>,
     battery: Option<BatteryDetail>,
     identity: Option<DeviceIdentity>,
     update: UpdateFlow,
@@ -260,17 +271,41 @@ struct Settings {
 impl Settings {
     fn show(&mut self, context: &mut Context) {
         self.keep_scanning(context);
+        self.clamp_page(context);
         let screen = match self.view {
-            View::Home => self.home(),
-            View::Bluetooth => self.bluetooth(),
-            View::Wifi => self.wifi(),
+            View::Home => self.home_for(context),
+            View::Bluetooth => self.bluetooth_for(context),
+            View::Wifi => self.wifi_for(context),
+            View::WifiUsername => self.wifi_username(),
             View::WifiPassword => self.wifi_password(),
+            View::WifiTrust => self.wifi_trust_for(context),
             View::Battery => self.battery(),
             View::About => self.about(),
             View::Update => self.update(),
             View::UpdateChannelConfirm => self.update_channel_confirmation(),
         };
         context.set_screen(screen);
+    }
+
+    fn clamp_page(&mut self, context: &Context) {
+        match self.view {
+            View::Home => {
+                self.home_page = self
+                    .home_page
+                    .min(self.home_pages(context).len().saturating_sub(1));
+            }
+            View::Bluetooth => {
+                self.bluetooth_page = self
+                    .bluetooth_page
+                    .min(self.bluetooth_pages(context).len().saturating_sub(1));
+            }
+            View::Wifi => {
+                self.wifi_page = self
+                    .wifi_page
+                    .min(self.wifi_pages(context).len().saturating_sub(1));
+            }
+            _ => {}
+        }
     }
 
     /// Keeps the radio looking for as long as the Wi-Fi list is the thing on
@@ -293,7 +328,7 @@ impl Settings {
         }
     }
 
-    fn home(&self) -> Screen {
+    fn home_rows(&self) -> Vec<SettingsRow> {
         let bluetooth = match self.bluetooth_state {
             RadioState::Unknown => "Checking…".to_owned(),
             RadioState::Unavailable => "Not available on this device".to_owned(),
@@ -316,48 +351,81 @@ impl Settings {
             (RadioState::On, None) => "On · Not connected".to_owned(),
             (RadioState::Off, _) => "Off".to_owned(),
         };
-        let screen = ScreenBuilder::new("settings")
+        vec![
+            SettingsRow::new(
+                Some("Connections"),
+                BLUETOOTH,
+                "Bluetooth",
+                bluetooth,
+                Glyph::Bluetooth,
+            ),
+            SettingsRow::new(None, WIFI, "Wi-Fi", wifi, Glyph::Wifi),
+            SettingsRow::new(
+                Some("Device"),
+                BATTERY,
+                "Battery",
+                self.battery_summary(),
+                Glyph::Battery,
+            ),
+            SettingsRow::new(
+                None,
+                UPDATE,
+                "Software update",
+                self.update_summary(),
+                Glyph::Download,
+            ),
+            SettingsRow::new(
+                None,
+                ABOUT,
+                "About",
+                "Device code, firmware, resolution",
+                Glyph::Reader,
+            ),
+        ]
+    }
+
+    fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.home_rows();
+        let measured: Vec<_> = rows
+            .iter()
+            .map(|row| (row.section, row.title.as_str(), row.summary.as_str()))
+            .collect();
+        let around = ScreenBuilder::new("settings")
             .top_bar("Settings")
-            // A section, like the "Device" group under it. As a heading it was
-            // set larger than the app's own name in the bar above, and one
-            // screen was labelling two groups of the same kind in two
-            // different ways.
-            .section("Connections")
-            .rows([
-                (
-                    BLUETOOTH,
-                    "Bluetooth",
-                    bluetooth,
-                    RowLead::from(Glyph::Bluetooth),
-                ),
-                (WIFI, "Wi-Fi", wifi, RowLead::from(Glyph::Wifi)),
-            ])
-            .section("Device")
-            .rows([
-                (
-                    BATTERY,
-                    "Battery",
-                    self.battery_summary(),
-                    RowLead::from(Glyph::Battery),
-                ),
-                (
-                    UPDATE,
-                    "Software update",
-                    self.update_summary(),
-                    RowLead::from(Glyph::Download),
-                ),
-                (
-                    ABOUT,
-                    "About",
-                    "Device code, firmware, resolution".to_owned(),
-                    RowLead::from(Glyph::Reader),
-                ),
-            ])
-            // The installed build's own version, baked in at compile time.
-            // The binaries and the installer travel together, so what this
-            // binary was compiled as is what is installed.
-            .section_with_value("Cobalt", VERSION);
-        screen.build()
+            .section_with_value("Cobalt", VERSION)
+            .build();
+        context.paginate_rows_in_sections_under(
+            &measured,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &around,
+        )
+    }
+
+    fn home_for(&self, context: &Context) -> Screen {
+        let rows = self.home_rows();
+        let pages = self.home_pages(context);
+        let page = self.home_page.min(pages.len().saturating_sub(1));
+        let mut screen = ScreenBuilder::new("settings").top_bar("Settings");
+        let mut remaining = pages[page].as_slice();
+        while let Some((&first, rest)) = remaining.split_first() {
+            if let Some(section) = rows[first].section {
+                screen = screen.section(section);
+            }
+            let count = rest
+                .iter()
+                .position(|&index| rows[index].section.is_some())
+                .map_or(remaining.len(), |position| position + 1);
+            screen = screen.rows(remaining[..count].iter().map(|&index| rows[index].as_row()));
+            remaining = &remaining[count..];
+        }
+        screen = screen.section_with_value("Cobalt", VERSION);
+        page_controls(screen, page, pages.len()).build()
+    }
+
+    #[cfg(test)]
+    fn home(&self) -> Screen {
+        self.home_for(&Context::default())
     }
 
     /// One line for the home row: where the update journey stands, or an
@@ -530,24 +598,7 @@ impl Settings {
             .build()
     }
 
-    fn bluetooth(&self) -> Screen {
-        // No radio was found on this hardware. A toggle that only fails once
-        // tapped is worse than no toggle: it invites the exact action that
-        // cannot succeed. Say so plainly instead and stop there.
-        if matches!(
-            self.bluetooth_state,
-            RadioState::Unavailable | RadioState::Unsupported
-        ) {
-            return ScreenBuilder::new("settings-bluetooth")
-                .top_bar("Bluetooth")
-                .owns_back(true)
-                .text(if self.bluetooth_state == RadioState::Unavailable {
-                    "This device has no Bluetooth hardware."
-                } else {
-                    "This runtime cannot use Bluetooth on this hardware."
-                })
-                .build();
-        }
+    fn bluetooth_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("settings-bluetooth")
             .top_bar("Bluetooth")
             .owns_back(true)
@@ -570,78 +621,85 @@ impl Settings {
         if let Some(trouble) = self.banner_for(Topic::Bluetooth) {
             screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         } else if self.restart_on_exit {
-            screen = screen.banner(
-                kobo_sdk::BannerLevel::Info,
-                "Bluetooth shares one radio with Wi-Fi on this reader, and it can only start once per boot. Your reader will restart itself when you leave this app. Nothing you have saved is lost.",
-            );
+            screen = screen.banner(kobo_sdk::BannerLevel::Info,
+                "Bluetooth shares Wi-Fi and starts once per boot. Leaving Settings restarts the reader. Saved content is kept.");
         }
+        screen
+    }
+
+    fn bluetooth_rows(&self, context: &Context) -> Vec<SettingsRow> {
+        self.devices
+            .iter()
+            .map(|device| {
+                SettingsRow::new(
+                    None,
+                    bluetooth_action(&device.address),
+                    context.clamped_row(&device.name, 2, true),
+                    if device.connected {
+                        "Connected"
+                    } else if device.paired {
+                        "Paired · Tap to connect"
+                    } else {
+                        "Available · Tap to pair"
+                    },
+                    if device.connected {
+                        Glyph::Check
+                    } else {
+                        Glyph::Circle
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn bluetooth_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        list_pages(
+            context,
+            &self.bluetooth_rows(context),
+            true,
+            self.bluetooth_prefix().section("Devices"),
+        )
+    }
+
+    fn bluetooth_for(&self, context: &Context) -> Screen {
+        if matches!(
+            self.bluetooth_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
+            return ScreenBuilder::new("settings-bluetooth")
+                .top_bar("Bluetooth")
+                .owns_back(true)
+                .text(if self.bluetooth_state == RadioState::Unavailable {
+                    "This device has no Bluetooth hardware."
+                } else {
+                    "This runtime cannot use Bluetooth on this hardware."
+                })
+                .build();
+        }
+        let mut screen = self.bluetooth_prefix();
         if self.bluetooth_state.enabled() {
             if self.devices.is_empty() {
-                screen = screen
-                    .text(
-                        "No devices found. Put headphones or a keyboard in pairing mode, then rescan.",
-                    )
-                    .button(RESCAN, "Rescan for devices");
+                screen = screen.text("No devices found. Put headphones or a keyboard in pairing mode, then rescan.")
+                    .bottom_action(RESCAN, "Rescan for devices");
             } else {
-                let pages = page_count(self.devices.len());
+                let rows = self.bluetooth_rows(context);
+                let pages = self.bluetooth_pages(context);
+                let page = self.bluetooth_page.min(pages.len().saturating_sub(1));
                 screen = screen
-                    .section_with_value("Devices", format!("{} / {pages}", self.bluetooth_page + 1))
-                    .rows(
-                        self.devices
-                            .iter()
-                            .skip(self.bluetooth_page * PAGE_SIZE)
-                            .take(PAGE_SIZE)
-                            .enumerate()
-                            .map(|(index, device)| {
-                                let state = if device.connected {
-                                    "Connected"
-                                } else if device.paired {
-                                    "Paired · Tap to connect"
-                                } else {
-                                    "Available · Tap to pair"
-                                };
-                                (
-                                    DEVICE_ACTIONS[index],
-                                    device.name.as_str(),
-                                    state,
-                                    RowLead::from(if device.connected {
-                                        Glyph::Check
-                                    } else {
-                                        Glyph::Circle
-                                    }),
-                                )
-                            }),
-                    );
-                screen = screen.controls(
-                    u8::try_from(paging(self.bluetooth_page, pages).len() + 1).unwrap_or(3),
-                    paging(self.bluetooth_page, pages).into_iter().chain([(
-                        RESCAN,
-                        "Rescan",
-                        Glyph::Refresh,
-                    )]),
-                );
+                    .section("Devices")
+                    .rows(pages[page].iter().map(|&index| rows[index].as_row()));
+                screen = page_controls(screen, page, pages.len()).bottom_action(RESCAN, "Rescan");
             }
         }
         screen.build()
     }
 
-    fn wifi(&self) -> Screen {
-        // Same reasoning as the Bluetooth screen: a toggle that can only fail
-        // is worse than no toggle.
-        if matches!(
-            self.wifi_state,
-            RadioState::Unavailable | RadioState::Unsupported
-        ) {
-            return ScreenBuilder::new("settings-wifi")
-                .top_bar("Wi-Fi")
-                .owns_back(true)
-                .text(if self.wifi_state == RadioState::Unavailable {
-                    "This device has no Wi-Fi hardware."
-                } else {
-                    "This runtime cannot use Wi-Fi on this hardware."
-                })
-                .build();
-        }
+    #[cfg(test)]
+    fn bluetooth(&self) -> Screen {
+        self.bluetooth_for(&Context::default())
+    }
+
+    fn wifi_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("settings-wifi")
             .top_bar("Wi-Fi")
             .owns_back(true)
@@ -665,71 +723,147 @@ impl Settings {
             screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         }
         if self.wifi_state.enabled() {
-            // Every verb on this screen is collected and drawn as one row.
-            // Stacked full-width outlines read as a form rather than as a
-            // choice, and this screen had three of them down the left margin.
             if let Some(ssid) = &self.connected_ssid {
-                // A fact rather than a section. A section is a heading over
-                // the rows that belong to it, and what is connected has no
-                // rows: it is one label and one value, which is the shape the
-                // battery screen uses for exactly this.
                 screen = screen.facts([("Connected", ssid.as_str())]);
             }
+        }
+        screen
+    }
+
+    fn wifi_rows(&self, context: &Context) -> Vec<SettingsRow> {
+        self.networks
+            .iter()
+            .map(|network| {
+                let security = if network.secured { "Secured" } else { "Open" };
+                let summary = if network.connected {
+                    format!("Connected · Tap to disconnect · {} dBm", network.signal_dbm)
+                } else {
+                    format!("{security} · {} dBm", network.signal_dbm)
+                };
+                SettingsRow::new(
+                    None,
+                    network_action(&network.ssid),
+                    context.clamped_row(&network.ssid, 2, false),
+                    summary,
+                    Glyph::Wifi,
+                )
+            })
+            .collect()
+    }
+
+    fn wifi_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        list_pages(
+            context,
+            &self.wifi_rows(context),
+            false,
+            self.wifi_prefix().section("Networks"),
+        )
+    }
+
+    fn wifi_for(&self, context: &Context) -> Screen {
+        if matches!(
+            self.wifi_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
+            return ScreenBuilder::new("settings-wifi")
+                .top_bar("Wi-Fi")
+                .owns_back(true)
+                .text(if self.wifi_state == RadioState::Unavailable {
+                    "This device has no Wi-Fi hardware."
+                } else {
+                    "This runtime cannot use Wi-Fi on this hardware."
+                })
+                .build();
+        }
+        let mut screen = self.wifi_prefix();
+        if self.wifi_state.enabled() {
             if self.networks.is_empty() {
-                // This screen scans on its own, so "none found" is only true
-                // once a scan has come back with nothing. Before that it is a
-                // report on a question nobody has asked yet.
                 screen = screen.text(if self.scanning {
                     "Looking for networks…"
                 } else {
                     "No networks found."
                 });
             } else {
-                let pages = page_count(self.networks.len());
+                let rows = self.wifi_rows(context);
+                let pages = self.wifi_pages(context);
+                let page = self.wifi_page.min(pages.len().saturating_sub(1));
                 screen = screen
-                    .section_with_value("Networks", format!("{} / {pages}", self.wifi_page + 1))
-                    .rows(
-                        self.networks
-                            .iter()
-                            .skip(self.wifi_page * PAGE_SIZE)
-                            .take(PAGE_SIZE)
-                            .enumerate()
-                            .map(|(index, network)| {
-                                let security = if network.secured { "Secured" } else { "Open" };
-                                // Leaving a network is done where joining one
-                                // is done, which is what the Bluetooth screen
-                                // beside it already says on every row. A verb
-                                // at the foot of the page was a second place
-                                // to look for the same switch.
-                                let summary = if network.connected {
-                                    format!(
-                                        "Connected · Tap to disconnect · {} dBm",
-                                        network.signal_dbm
-                                    )
-                                } else {
-                                    format!("{security} · {} dBm", network.signal_dbm)
-                                };
-                                (
-                                    NETWORK_ACTIONS[index],
-                                    network.ssid.as_str(),
-                                    summary,
-                                    RowLead::from(Glyph::Wifi),
-                                )
-                            }),
-                    );
-                let turns = paging(self.wifi_page, pages);
-                if !turns.is_empty() {
-                    screen = screen.controls(u8::try_from(turns.len()).unwrap_or(2), turns);
-                }
+                    .section("Networks")
+                    .rows(pages[page].iter().map(|&index| rows[index].as_row()));
+                screen = page_controls(screen, page, pages.len());
             }
         }
         screen.build()
+    }
+
+    #[cfg(test)]
+    fn wifi(&self) -> Screen {
+        self.wifi_for(&Context::default())
+    }
+
+    fn wifi_username(&self) -> Screen {
+        let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            trouble
+        } else if self.username.text().is_empty() {
+            "Type your username exactly as your institution gives it.".to_owned()
+        } else {
+            format!("Username: {}", self.username.text())
+        };
+        ScreenBuilder::new("settings-wifi-username")
+            .top_bar("Join Wi-Fi")
+            .owns_back(true)
+            .heading(self.selected_ssid.as_deref().unwrap_or("Network"))
+            .text(guidance)
+            .keyboard(&self.username, "Next")
+            .build()
+    }
+
+    /// Shows the server certificate and asks whether to trust it. Nothing
+    /// secret has left the reader yet: the probe sent only the anonymous
+    /// outer identity.
+    fn wifi_trust_for(&self, context: &Context) -> Screen {
+        let screen = ScreenBuilder::new("settings-wifi-trust")
+            .top_bar("Check the network")
+            .owns_back(true)
+            .heading(self.selected_ssid.as_deref().unwrap_or("Network"));
+        if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            return screen
+                .text(trouble)
+                .button(DISTRUST, "Back to networks")
+                .build();
+        }
+        let Some((subject, sha256)) = &self.certificate else {
+            return screen
+                .text("Asking the network for its certificate. No password has been sent.")
+                .button(DISTRUST, "Cancel")
+                .build();
+        };
+        screen
+            // The fingerprint is the trust anchor and must remain complete.
+            // A server-supplied name may be arbitrarily long; mark its measured
+            // preview with an ellipsis rather than squeezing out the warning.
+            .text(context.one_line_row(&format!("Server: {}", common_name(subject)), false))
+            .facts([("SHA-256", fingerprint(sha256))])
+            .text(
+                "Verify this fingerprint with your institution or trusted phone. \
+                 Only this exact server will receive your password.",
+            )
+            .primary_button(TRUST, "Trust and join")
+            .button(DISTRUST, "Don't trust")
+            .build()
+    }
+
+    #[cfg(test)]
+    fn wifi_trust(&self) -> Screen {
+        self.wifi_trust_for(&Context::default())
     }
 
     fn wifi_password(&self) -> Screen {
         let count = self.password.text().chars().count();
         let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
             trouble
+        } else if count == 0 && self.enterprise {
+            "Type your password. It is sent only after you check the server.".to_owned()
         } else if count == 0 {
             "Type the network password.".to_owned()
         } else {
@@ -1080,21 +1214,24 @@ impl Settings {
     }
 
     /// Moves the list on the panel one page, clamped at both ends.
-    fn turn_page(&mut self, forward: bool) {
-        let (page, pages) = match self.view {
-            View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
-            View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home
-            | View::WifiPassword
-            | View::Battery
-            | View::About
-            | View::Update
-            | View::UpdateChannelConfirm => return,
+    fn turn_page(&mut self, context: &Context, forward: bool) {
+        let pages = match self.view {
+            View::Home => self.home_pages(context).len(),
+            View::Bluetooth => self.bluetooth_pages(context).len(),
+            View::Wifi => self.wifi_pages(context).len(),
+            _ => return,
         };
+        let page = match self.view {
+            View::Home => &mut self.home_page,
+            View::Bluetooth => &mut self.bluetooth_page,
+            View::Wifi => &mut self.wifi_page,
+            _ => return,
+        };
+        let last = pages.saturating_sub(1);
         *page = if forward {
-            (*page + 1).min(pages - 1)
+            (page.saturating_add(1)).min(last)
         } else {
-            page.saturating_sub(1)
+            (*page).min(last).saturating_sub(1)
         };
     }
 
@@ -1122,8 +1259,15 @@ impl Settings {
             context.device().disconnect_wifi();
             return;
         }
-        if network.secured {
+        if network.secured && is_enterprise_ssid(&network.ssid) {
             self.selected_ssid = Some(network.ssid);
+            self.enterprise = true;
+            self.forget_enterprise_secrets();
+            self.view = View::WifiUsername;
+            self.show(context);
+        } else if network.secured {
+            self.selected_ssid = Some(network.ssid);
+            self.enterprise = false;
             self.password.clear();
             self.view = View::WifiPassword;
             self.show(context);
@@ -1136,13 +1280,19 @@ impl Settings {
     /// screen are submitting a password or going back.
     fn password_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
-            self.view = View::Wifi;
+            self.view = if self.enterprise {
+                View::WifiUsername
+            } else {
+                View::Wifi
+            };
             self.password.clear();
             self.show(context);
             return;
         }
         if let Some(pressed) = self.password.press(action) {
-            if pressed == Pressed::Submitted {
+            if pressed == Pressed::Submitted && self.enterprise {
+                self.submit_enterprise_password(context);
+            } else if pressed == Pressed::Submitted {
                 if (8..=63).contains(&self.password.text().len()) {
                     let password = self.password.take();
                     if let Some(ssid) = self.selected_ssid.take() {
@@ -1163,6 +1313,82 @@ impl Settings {
         }
     }
 
+    /// The password is kept, not sent: the next request asks the network for
+    /// its certificate, and only a trusted certificate lets it go anywhere.
+    fn submit_enterprise_password(&mut self, context: &mut Context) {
+        if !kobo_sdk::valid_wifi_secret(self.password.text()) {
+            self.trouble = Some((Topic::Wifi, "Type your password.".to_owned()));
+            return;
+        }
+        let password = self.password.take();
+        let identity = self.username.text().to_owned();
+        let Some(ssid) = self.selected_ssid.clone() else {
+            return;
+        };
+        self.settled(Topic::Wifi);
+        self.certificate = None;
+        if context.device().probe_enterprise_wifi(ssid, identity) {
+            self.enterprise_password = Some(password);
+            self.view = View::WifiTrust;
+        } else {
+            self.trouble = Some((Topic::Wifi, "That username cannot be used.".to_owned()));
+        }
+    }
+
+    fn username_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK {
+            self.view = View::Wifi;
+            self.forget_enterprise_secrets();
+            self.show(context);
+            return;
+        }
+        if let Some(pressed) = self.username.press(action) {
+            if pressed == Pressed::Submitted {
+                if kobo_sdk::valid_wifi_identity(self.username.text()) {
+                    self.settled(Topic::Wifi);
+                    self.password.clear();
+                    self.view = View::WifiPassword;
+                } else {
+                    self.trouble = Some((
+                        Topic::Wifi,
+                        "Type your username exactly as your institution gives it.".to_owned(),
+                    ));
+                }
+            } else {
+                self.settled(Topic::Wifi);
+            }
+            self.show(context);
+        }
+    }
+
+    fn trust_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == action_id(TRUST) {
+            if let (Some(ssid), Some((_, sha256)), Some(password)) = (
+                self.selected_ssid.clone(),
+                self.certificate.take(),
+                self.enterprise_password.take(),
+            ) {
+                let identity = self.username.text().to_owned();
+                context
+                    .device()
+                    .join_enterprise_wifi(ssid, identity, password, sha256);
+            }
+        } else if action != ActionId::BACK && action != action_id(DISTRUST) {
+            return;
+        }
+        self.settled(Topic::Wifi);
+        self.forget_enterprise_secrets();
+        self.view = View::Wifi;
+        self.show(context);
+    }
+
+    fn forget_enterprise_secrets(&mut self) {
+        self.enterprise_password = None;
+        self.certificate = None;
+        self.password.clear();
+        self.username.clear();
+    }
+
     fn took_update_channel(&mut self, request: &DeviceRequest, channel: UpdateChannel) {
         self.update_channel = Some(channel);
         if matches!(request, DeviceRequest::SetUpdateChannel { .. }) {
@@ -1178,10 +1404,23 @@ impl KoboApp for Settings {
         self.show(context);
     }
 
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if matches!(self.view, View::Home | View::Bluetooth | View::Wifi) {
+            self.turn_page(context, forward);
+            self.show(context);
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one explicit dispatch table for every screen"
+    )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if self.view == View::WifiPassword {
-            self.password_action(context, action);
-            return;
+        match self.view {
+            View::WifiPassword => return self.password_action(context, action),
+            View::WifiUsername => return self.username_action(context, action),
+            View::WifiTrust => return self.trust_action(context, action),
+            _ => {}
         }
         if self.update_channel_action(context, action) {
             return;
@@ -1231,7 +1470,9 @@ impl KoboApp for Settings {
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
                 View::Home
+                | View::WifiUsername
                 | View::WifiPassword
+                | View::WifiTrust
                 | View::Battery
                 | View::About
                 | View::Update
@@ -1251,28 +1492,43 @@ impl KoboApp for Settings {
                 }
                 View::Battery => context.device().read_battery_detail(),
                 View::About => context.device().read_identity(),
-                View::Home | View::WifiPassword | View::Update | View::UpdateChannelConfirm => {}
+                View::Home
+                | View::WifiUsername
+                | View::WifiPassword
+                | View::WifiTrust
+                | View::Update
+                | View::UpdateChannelConfirm => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
-            self.turn_page(true);
+            self.turn_page(context, true);
             self.show(context);
         } else if action == action_id(PREVIOUS) {
-            self.turn_page(false);
+            self.turn_page(context, false);
             self.show(context);
-        } else if let Some(index) = DEVICE_ACTIONS
-            .iter()
-            .position(|name| action == action_id(name))
-        {
-            self.choose_bluetooth(context, self.bluetooth_page * PAGE_SIZE + index);
-        } else if let Some(index) = NETWORK_ACTIONS
-            .iter()
-            .position(|name| action == action_id(name))
-        {
-            self.choose_network(context, self.wifi_page * PAGE_SIZE + index);
+        } else if self.view == View::Bluetooth {
+            if let Some(index) = self
+                .devices
+                .iter()
+                .position(|device| action == action_id(&bluetooth_action(&device.address)))
+            {
+                self.choose_bluetooth(context, index);
+            }
+        } else if self.view == View::Wifi {
+            if let Some(index) = self
+                .networks
+                .iter()
+                .position(|network| action == action_id(&network_action(&network.ssid)))
+            {
+                self.choose_network(context, index);
+            }
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one explicit dispatch table for every screen"
+    )]
     fn on_device_result(
         &mut self,
         context: &mut Context,
@@ -1288,7 +1544,6 @@ impl KoboApp for Settings {
             } => {
                 self.bluetooth_state = RadioState::new(available, enabled);
                 self.devices = devices;
-                self.bluetooth_page %= page_count(self.devices.len());
                 // Latched, so a later reading cannot withdraw a warning the
                 // reader has already been shown.
                 self.restart_on_exit |= restart_on_exit;
@@ -1309,12 +1564,17 @@ impl KoboApp for Settings {
                 self.connected_ssid = connected_ssid;
                 if !networks.is_empty() || matches!(request, DeviceRequest::ScanWifi) {
                     self.networks = networks;
-                    self.wifi_page %= page_count(self.networks.len());
                 }
                 if matches!(request, DeviceRequest::ScanWifi) {
                     self.scanning = false;
                 }
                 self.settled(Topic::Wifi);
+            }
+            DeviceResult::WifiCertificate { subject, sha256 } => {
+                if self.view == View::WifiTrust {
+                    self.certificate = Some((subject, sha256));
+                    self.settled(Topic::Wifi);
+                }
             }
             DeviceResult::BatteryDetail(detail) => {
                 self.battery = Some(detail);
@@ -1362,6 +1622,8 @@ impl KoboApp for Settings {
                 | DeviceRequest::SetWifi { .. }
                 | DeviceRequest::ScanWifi
                 | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::ProbeEnterpriseWifi { .. }
+                | DeviceRequest::JoinEnterpriseWifi { .. }
                 | DeviceRequest::DisconnectWifi => context.device().read_wifi(),
                 DeviceRequest::Update { .. } => {
                     if let UpdateFlow::Installing { version } = self.update.clone() {
@@ -1429,25 +1691,71 @@ impl KoboApp for Settings {
     }
 }
 
-/// The page turns a paginated list should offer from where it is standing.
-///
-/// A list that wraps is a list that lies: on the last page "More" promised
-/// devices that were not there, and pressing it took the reader back to the
-/// first page as if that were forward. Each direction is offered only where
-/// there is a page on that side.
-fn paging(page: usize, pages: usize) -> Vec<(&'static str, &'static str, Glyph)> {
-    let mut turns = Vec::new();
-    if page > 0 {
-        turns.push((PREVIOUS, "Previous", Glyph::Previous));
-    }
-    if page + 1 < pages {
-        turns.push((MORE, "Next", Glyph::Next));
-    }
-    turns
+// A scanner can reorder rows between a drawn tap and its callback. Bind each
+// action to the identity the user saw, rather than its old list position.
+fn bluetooth_action(address: &str) -> String {
+    format!("bt-device-{address}")
+}
+fn network_action(ssid: &str) -> String {
+    format!("wifi-network-{ssid}")
 }
 
-fn page_count(items: usize) -> usize {
-    items.div_ceil(PAGE_SIZE).max(1)
+struct SettingsRow {
+    section: Option<&'static str>,
+    action: String,
+    title: String,
+    summary: String,
+    lead: RowLead,
+}
+
+impl SettingsRow {
+    fn new(
+        section: Option<&'static str>,
+        action: impl Into<String>,
+        title: impl Into<String>,
+        summary: impl Into<String>,
+        glyph: Glyph,
+    ) -> Self {
+        Self {
+            section,
+            action: action.into(),
+            title: title.into(),
+            summary: summary.into(),
+            lead: glyph.into(),
+        }
+    }
+    fn as_row(&self) -> (&str, &str, &str, RowLead) {
+        (&self.action, &self.title, &self.summary, self.lead)
+    }
+}
+
+fn list_pages(
+    context: &Context,
+    rows: &[SettingsRow],
+    nav_bar: bool,
+    prefix: ScreenBuilder,
+) -> Vec<Vec<usize>> {
+    let measured: Vec<_> = rows
+        .iter()
+        .map(|row| (row.title.as_str(), row.summary.as_str()))
+        .collect();
+    context.paginate_rows_under(
+        &measured,
+        nav_bar,
+        kobo_sdk::Position::AtTheFoot,
+        &prefix.build(),
+    )
+}
+
+fn page_controls(screen: ScreenBuilder, page: usize, pages: usize) -> ScreenBuilder {
+    if pages > 1 {
+        screen.page_turns(PREVIOUS, MORE).page_position(
+            u16::try_from(page + 1).unwrap_or(u16::MAX),
+            u16::try_from(pages).unwrap_or(u16::MAX),
+        )
+    } else {
+        screen
+    }
 }
 
 /// The newest published release, as its assets name this device's download.
@@ -1658,11 +1966,45 @@ fn main() -> ExitCode {
     }
 }
 
+/// Networks that sign in with a username and password (802.1X) rather than
+/// one shared key. eduroam and govroam are named the same everywhere.
+fn is_enterprise_ssid(ssid: &str) -> bool {
+    ["eduroam", "govroam"]
+        .iter()
+        .any(|name| ssid.eq_ignore_ascii_case(name))
+}
+
+/// The certificate's `CN`, which is the name people recognise, or the whole
+/// subject when there is none.
+fn common_name(subject: &str) -> &str {
+    subject
+        .rsplit('/')
+        .find_map(|part| part.strip_prefix("CN="))
+        .filter(|name| !name.is_empty())
+        .unwrap_or(subject)
+}
+
+/// The digest as eight colon-free groups of eight, short enough to compare
+/// by eye against what another device shows.
+fn fingerprint(sha256: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    sha256
+        .chunks(4)
+        .map(|group| {
+            group.iter().fold(String::new(), |mut text, byte| {
+                let _ = write!(text, "{byte:02X}");
+                text
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
-        CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, TOGGLE, VERSION,
+        CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
@@ -1900,7 +2242,7 @@ mod tests {
     fn a_full_bluetooth_scan_keeps_every_drawn_action_on_the_panel() {
         let settings = Settings {
             bluetooth_state: RadioState::On,
-            devices: (0..DEVICE_ACTIONS.len()).map(bluetooth_device).collect(),
+            devices: (0..10).map(bluetooth_device).collect(),
             ..Settings::default()
         };
         let screen = settings.bluetooth();
@@ -1916,10 +2258,8 @@ mod tests {
         let settings = Settings {
             wifi_state: RadioState::On,
             connected_ssid: Some("Network 0".to_owned()),
-            networks: NETWORK_ACTIONS
-                .iter()
-                .enumerate()
-                .map(|(index, _)| WifiNetwork {
+            networks: (0..10)
+                .map(|index| WifiNetwork {
                     ssid: format!("Network {index}"),
                     signal_dbm: -40 - i16::try_from(index).unwrap_or_default(),
                     secured: true,
@@ -1943,10 +2283,8 @@ mod tests {
     fn the_last_page_of_networks_offers_only_the_way_back() {
         let mut settings = Settings {
             wifi_state: RadioState::On,
-            networks: NETWORK_ACTIONS
-                .iter()
-                .enumerate()
-                .map(|(index, _)| WifiNetwork {
+            networks: (0..10)
+                .map(|index| WifiNetwork {
                     ssid: format!("Network {index}"),
                     signal_dbm: -40,
                     secured: true,
@@ -1955,7 +2293,7 @@ mod tests {
                 .collect(),
             ..Settings::default()
         };
-        settings.wifi_page = super::page_count(settings.networks.len()) - 1;
+        settings.wifi_page = settings.wifi_pages(&kobo_sdk::Context::default()).len() - 1;
         let layout = settings
             .wifi()
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
@@ -1986,6 +2324,182 @@ mod tests {
             .wifi()
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(RESCAN)).is_none());
+    }
+
+    fn eduroam_on_the_list() -> Settings {
+        Settings {
+            view: View::Wifi,
+            wifi_state: RadioState::On,
+            networks: vec![
+                WifiNetwork {
+                    ssid: "eduroam".to_owned(),
+                    signal_dbm: -50,
+                    secured: true,
+                    connected: false,
+                },
+                WifiNetwork {
+                    ssid: "Home".to_owned(),
+                    signal_dbm: -60,
+                    secured: true,
+                    connected: false,
+                },
+            ],
+            ..Settings::default()
+        }
+    }
+
+    fn sent(commands: &[kobo_sdk::Command]) -> Vec<DeviceRequest> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Device(request) => Some(request.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Walks eduroam from the list to a pinned join, checking at each step
+    /// that the password has not gone anywhere before the server is trusted.
+    #[test]
+    fn eduroam_asks_for_a_username_and_sends_the_password_only_after_trust() {
+        use kobo_sdk::keyboard::Keyboard;
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(eduroam_on_the_list());
+        runner.action(action_id(&super::network_action("eduroam")));
+        assert_eq!(runner.app().view, View::WifiUsername);
+
+        runner.app_mut().username = Keyboard::with_text("s1234567@example.ac.uk");
+        runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app().view, View::WifiPassword);
+
+        runner.app_mut().password = Keyboard::with_text("hunter2");
+        let probe = sent(&runner.action(action_id("kb.enter")));
+        assert_eq!(runner.app().view, View::WifiTrust);
+        assert!(
+            probe.contains(&DeviceRequest::ProbeEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
+            }),
+            "{probe:?}"
+        );
+        assert!(
+            !format!("{probe:?}").contains("hunter2"),
+            "sent before trust"
+        );
+
+        let waiting = text_of(&runner.app().wifi_trust());
+        assert!(waiting.contains("No password has been sent"), "{waiting}");
+
+        let mut context = runner.context();
+        kobo_sdk::KoboApp::on_device_result(
+            runner.app_mut(),
+            &mut context,
+            DeviceRequest::ProbeEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
+            },
+            DeviceResult::WifiCertificate {
+                subject: "/C=GB/O=University/CN=radius.example.ac.uk".to_owned(),
+                sha256: [0x5e; 32],
+            },
+        );
+        let trust = format!("{:?}", runner.app().wifi_trust());
+        assert!(trust.contains("radius.example.ac.uk"), "{trust}");
+        assert!(trust.contains("5E5E5E5E"), "{trust}");
+
+        let join = sent(&runner.action(action_id(super::TRUST)));
+        assert!(
+            join.contains(&DeviceRequest::JoinEnterpriseWifi {
+                ssid: "eduroam".to_owned(),
+                identity: "s1234567@example.ac.uk".to_owned(),
+                password: "hunter2".to_owned(),
+                server_sha256: [0x5e; 32],
+            }),
+            "{join:?}"
+        );
+        let app = runner.app();
+        assert_eq!(app.view, View::Wifi);
+        assert!(app.enterprise_password.is_none());
+        assert!(app.username.text().is_empty());
+        assert!(app.certificate.is_none());
+    }
+
+    #[test]
+    fn refusing_the_server_sends_nothing_and_forgets_the_password() {
+        use kobo_sdk::keyboard::Keyboard;
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings {
+            view: View::WifiTrust,
+            selected_ssid: Some("eduroam".to_owned()),
+            enterprise: true,
+            username: Keyboard::with_text("s1@example.ac.uk"),
+            enterprise_password: Some("hunter2".to_owned()),
+            certificate: Some(("/CN=evil".to_owned(), [1; 32])),
+            ..Settings::default()
+        });
+        let commands = sent(&runner.action(action_id(super::DISTRUST)));
+        assert!(
+            !commands
+                .iter()
+                .any(|request| matches!(request, DeviceRequest::JoinEnterpriseWifi { .. })),
+            "{commands:?}"
+        );
+        assert!(runner.app().enterprise_password.is_none());
+        assert_eq!(runner.app().view, View::Wifi);
+    }
+
+    #[test]
+    fn a_home_network_still_asks_for_one_shared_password() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(eduroam_on_the_list());
+        runner.action(action_id(&super::network_action("Home")));
+        assert_eq!(runner.app().view, View::WifiPassword);
+        assert!(!runner.app().enterprise);
+    }
+
+    #[test]
+    fn the_enterprise_screens_fit_the_panel() {
+        use kobo_sdk::keyboard::Keyboard;
+        let trust = Settings {
+            view: View::WifiTrust,
+            selected_ssid: Some("eduroam".to_owned()),
+            certificate: Some((
+                "/C=GB/O=Example University/CN=a-rather-long-radius-server-name.is.example.ac.uk"
+                    .to_owned(),
+                [0xab; 32],
+            )),
+            ..Settings::default()
+        };
+        for screen in [
+            trust.wifi_trust(),
+            Settings {
+                view: View::WifiTrust,
+                ..Settings::default()
+            }
+            .wifi_trust(),
+            Settings {
+                view: View::WifiUsername,
+                selected_ssid: Some("eduroam".to_owned()),
+                username: Keyboard::with_text("s1234567@example.ac.uk"),
+                ..Settings::default()
+            }
+            .wifi_username(),
+        ] {
+            let issues = screen.validate(&CLARA_BW_METRICS);
+            assert!(issues.is_empty(), "{issues:?}");
+        }
+    }
+
+    #[test]
+    fn certificates_are_shown_by_name_and_grouped_digest() {
+        assert_eq!(
+            super::common_name("/C=GB/O=Uni/CN=radius.example.ac.uk"),
+            "radius.example.ac.uk"
+        );
+        assert_eq!(super::common_name("/O=No name"), "/O=No name");
+        assert_eq!(super::fingerprint(&[0xab; 32]), ["ABABABAB"; 8].join(" "));
+        assert!(super::is_enterprise_ssid("Eduroam"));
+        assert!(!super::is_enterprise_ssid("eduroam-guest"));
     }
 
     fn text_of(screen: &kobo_sdk::Screen) -> String {
@@ -2518,3 +3032,6 @@ mod tests {
         )));
     }
 }
+
+#[cfg(test)]
+mod list_tests;
