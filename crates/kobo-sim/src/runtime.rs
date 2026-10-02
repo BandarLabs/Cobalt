@@ -51,7 +51,11 @@ impl AppSession {
         }
         let is_back =
             matches!(message, Message::Action { action } if *action == kobo_ui::ActionId::BACK);
-        match navigation::route(is_back, state.screen.owns_back) {
+        match navigation::route(
+            is_back,
+            state.screen.owns_back,
+            state.screen.overlay.is_some(),
+        ) {
             BackRoute::Deliver => Ok(true),
             BackRoute::Offer => {
                 let millis = state.time.now()?.monotonic_millis;
@@ -405,6 +409,78 @@ mod tests {
             state.set_screen(kobo_ui::Screen::new(2, vec![]));
             state.time.change("advance 2000").unwrap();
         }
+        assert_eq!(session.next_launch().unwrap(), None);
+        session.writer.close();
+    }
+
+    #[test]
+    fn overlay_back_closes_in_app_then_root_back_leaves_and_unanswered_close_times_out() {
+        let (mut peer, stream) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let clock = Arc::new(
+            kobo_policy::clock::ManualClock::new(kobo_policy::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let covered = kobo_ui::Screen::new(1, vec![]).with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(2),
+            "Settings",
+            vec![],
+        ));
+        let state = crate::AppState {
+            runtime_navigation: true,
+            time: crate::clock::Time::Manual(clock),
+            screen: covered.clone(),
+            ..crate::AppState::default()
+        };
+        let session = AppSession {
+            state: Arc::new(Mutex::new(state)),
+            writer: crate::AppWriter::spawn_for(stream, kobo_protocol::VERSION),
+        };
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        assert!(matches!(
+            kobo_protocol::read_from(&mut peer).unwrap().message,
+            Message::Action {
+                action: kobo_ui::ActionId::BACK
+            }
+        ));
+        assert_eq!(session.next_launch().unwrap(), None);
+        {
+            let mut state = session.state.lock().unwrap();
+            // The app answers by drawing its root without the overlay.
+            state.set_screen(kobo_ui::Screen::new(2, vec![]));
+            state.time.change("advance 2000").unwrap();
+        }
+        assert_eq!(session.next_launch().unwrap(), None);
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        assert_eq!(session.next_launch().unwrap().as_deref(), Some("launcher"));
+        assert!(kobo_protocol::read_from(&mut peer).is_err());
+
+        session.state.lock().unwrap().set_screen(covered);
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        kobo_protocol::read_from(&mut peer).unwrap();
+        session
+            .state
+            .lock()
+            .unwrap()
+            .time
+            .change("advance 1999")
+            .unwrap();
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        kobo_protocol::read_from(&mut peer).unwrap();
+        assert_eq!(session.next_launch().unwrap(), None);
+        session
+            .state
+            .lock()
+            .unwrap()
+            .time
+            .change("advance 1")
+            .unwrap();
+        assert_eq!(session.next_launch().unwrap().as_deref(), Some("launcher"));
         assert_eq!(session.next_launch().unwrap(), None);
         session.writer.close();
     }
