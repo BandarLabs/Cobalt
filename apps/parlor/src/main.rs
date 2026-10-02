@@ -477,29 +477,25 @@ impl Parlor {
         // bar, the same as everywhere else on the reader. A "Games" button
         // beside these wrapped onto a second row at the larger text settings
         // and was drawn off the bottom of the panel.
-        base.grid(
-            3,
-            false,
-            [
-                (
-                    "undo",
-                    if self.undo_pending {
-                        "Agree undo"
-                    } else {
-                        "Undo"
-                    },
-                ),
-                ("record", "Moves"),
-                (
-                    "new",
-                    if position.terminal().is_some() {
-                        "Next round"
-                    } else {
-                        "New game"
-                    },
-                ),
-            ],
-        )
+        base.action_bar([
+            (
+                "undo",
+                if self.undo_pending {
+                    "Agree undo"
+                } else {
+                    "Undo"
+                },
+            ),
+            ("record", "Moves"),
+            (
+                "new",
+                if position.terminal().is_some() {
+                    "Next round"
+                } else {
+                    "New game"
+                },
+            ),
+        ])
         .build()
     }
 
@@ -2224,3 +2220,53 @@ mod navigation_tests;
 
 #[cfg(test)]
 mod review_capture;
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+
+    fn panels() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)]
+            .into_iter()
+            .flat_map(|(width, height, pixels_per_inch)| {
+                [kobo_ui::TextScale::Default, kobo_ui::TextScale::Largest]
+                    .into_iter()
+                    .map(move |text_scale| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    })
+            })
+    }
+    fn fits(screen: &Screen, metrics: kobo_sdk::DisplayMetrics) {
+        let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{metrics:?}: {:#?}",
+            diagnostics.issues
+        );
+    }
+
+    #[test]
+    fn save_failure_after_a_move_keeps_board_actions_reachable() {
+        for metrics in panels() {
+            let mut app = Parlor::default();
+            app.start(Title::Reversi);
+            app.handle_action(action_id("cell-19"));
+            app.save_failed = true;
+            let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+            let screen = runner.app().screen_for(&runner.context());
+            fits(&screen, metrics);
+            let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+            for name in ["undo", "record", "new"] {
+                let action = action_id(name);
+                let rect = layout.rect_of_action(action).expect("board action");
+                assert_eq!(
+                    layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                    Some(action)
+                );
+            }
+        }
+    }
+}

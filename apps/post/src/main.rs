@@ -56,7 +56,7 @@ impl Post {
                 .activity("Opening", None)
                 .build(),
             View::Setup => self.setup(),
-            View::Inbox => self.inbox(),
+            View::Inbox => self.inbox(c),
             View::Letter => self.letter(c),
             View::Compose => self.compose(),
         };
@@ -66,9 +66,9 @@ impl Post {
     fn setup(&self) -> Screen {
         let mut screen = ScreenBuilder::new("post-setup")
             .top_bar("Post")
-            .heading("Connect a Hermes gateway")
-            .text("Post reads letters from a Hermes gateway you run. Install its token with:")
-            .text("kobo post login --gateway <address> --token-file <path> --device <reader>");
+            .section("Connect a gateway")
+            .secondary("Post reads letters from a Hermes gateway you run. Install its token with:")
+            .secondary("kobo post login --gateway <address> --token-file <path> --device <reader>");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -82,34 +82,38 @@ impl Post {
             .build()
     }
 
-    fn inbox(&self) -> Screen {
+    fn inbox_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let mut pages = Vec::new();
+        let mut page = Vec::new();
+        for index in 0..self.letters.len() {
+            page.push(index);
+            let candidate = self.inbox_page(&page, pages.len());
+            if page.len() > 1
+                && candidate
+                    .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            {
+                page.pop();
+                pages.push(page);
+                page = vec![index];
+            }
+        }
+        if !page.is_empty() {
+            pages.push(page);
+        }
+        pages
+    }
+
+    fn inbox(&self, context: &Context) -> Screen {
+        let pages = self.inbox_pages(context);
+        let current = self.page_index.min(pages.len().saturating_sub(1));
+        self.inbox_page(pages.get(current).map_or(&[], Vec::as_slice), current)
+    }
+
+    fn inbox_page(&self, indices: &[usize], page: usize) -> Screen {
         let mut s = ScreenBuilder::new("post-inbox")
             .top_bar("Post")
             .top_bar_action(REFRESH, "Check");
-        s = if self.letters.is_empty() {
-            s.splash(
-                Some(Glyph::Chat),
-                "No letters yet",
-                "Letters appear here when your Hermes gateway delivers one.",
-            )
-        } else {
-            let start = self.page_index * protocol::PER_PAGE;
-            s.rows(
-                self.letters
-                    .iter()
-                    .enumerate()
-                    .skip(start)
-                    .take(protocol::PER_PAGE)
-                    .map(|(n, letter)| {
-                        (
-                            format!("letter.{n}"),
-                            letter.title.clone(),
-                            excerpt(&letter.body),
-                            Glyph::Chat,
-                        )
-                    }),
-            )
-        };
         if let Some(notice) = &self.notice {
             s = s.banner(BannerLevel::Attention, notice);
         }
@@ -125,14 +129,25 @@ impl Post {
                 format!("{queued} replies waiting to be sent.")
             });
         }
-        if self.total > protocol::PER_PAGE {
-            s = s.text(format!(
-                "Page {} of {}",
-                self.page_index + 1,
-                self.total.div_ceil(protocol::PER_PAGE)
-            ));
+        if self.letters.is_empty() {
+            s = s.splash(
+                Some(Glyph::Chat),
+                "No letters yet",
+                "Letters appear here when your Hermes gateway delivers one.",
+            );
+        } else {
+            s = s.rows(indices.iter().map(|&n| {
+                let letter = &self.letters[n];
+                (
+                    format!("letter.{n}"),
+                    letter.title.clone(),
+                    excerpt(&letter.body),
+                    Glyph::Chat,
+                )
+            }));
         }
-        s.spacer(Space::Small)
+        s.text(format!("Page {} · {} letters", page + 1, self.total))
+            .spacer(Space::Small)
             .action_bar([("newer", "Newer"), ("older", "Older")])
             .build()
     }
@@ -177,7 +192,7 @@ impl Post {
 
     fn letter(&self, context: &mut Context) -> Screen {
         let Some(letter) = self.letters.get(self.open) else {
-            return self.inbox();
+            return self.inbox(context);
         };
         let pages = self.letter_pages(context, letter);
         let index = letter_page(&pages, self.place(&letter.id));
@@ -315,8 +330,8 @@ impl Post {
                     }
                     if self.advance_on_fetch {
                         self.advance_on_fetch = false;
-                        let last = self.letters.len().saturating_sub(1) / protocol::PER_PAGE;
-                        self.page_index = (self.fetching_page - 1).min(last);
+                        let last = self.inbox_pages(c).len().saturating_sub(1);
+                        self.page_index = (self.page_index + 1).min(last);
                     }
                     self.loaded = true;
                     self.notice = None;
@@ -555,12 +570,12 @@ impl KoboApp for Post {
             self.check(c);
         } else if a == action_id(OLDER) && self.view == View::Inbox {
             let target = self.page_index + 1;
-            if target * protocol::PER_PAGE < self.letters.len() {
+            if target < self.inbox_pages(c).len() {
                 self.page_index = target;
                 self.show(c);
             } else if self.letters.len() < self.total && self.fetching.is_none() {
-                self.fetching = c.spawn(protocol::letters_page(&self.gateway, target + 1));
-                self.fetching_page = target + 1;
+                self.fetching_page = self.letters.len().div_ceil(protocol::PER_PAGE) + 1;
+                self.fetching = c.spawn(protocol::letters_page(&self.gateway, self.fetching_page));
                 self.advance_on_fetch = true;
             }
         } else if a == action_id(NEWER) && self.view == View::Inbox {
@@ -645,7 +660,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        assert!(!app.inbox().layout().nodes.is_empty());
+        assert!(!app.inbox(&Context::default()).layout().nodes.is_empty());
     }
 
     #[test]
@@ -742,3 +757,81 @@ mod tests {
 
 #[cfg(test)]
 mod ui_review_tests;
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+
+    fn panels() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)]
+            .into_iter()
+            .flat_map(|(width, height, pixels_per_inch)| {
+                [kobo_ui::TextScale::Default, kobo_ui::TextScale::Largest]
+                    .into_iter()
+                    .map(move |text_scale| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    })
+            })
+    }
+    fn fits(screen: &Screen, metrics: kobo_sdk::DisplayMetrics) {
+        let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{metrics:?}: {:#?}",
+            diagnostics.issues
+        );
+    }
+
+    #[test]
+    fn inbox_rows_have_distinct_reachable_targets_on_measured_pages() {
+        for metrics in panels() {
+            let app = Post {
+                view: View::Inbox, total: 12,
+                letters: (0..12).map(|n| Letter { id: format!("letter-{n}"),
+                    title: format!("Letter number {n}"),
+                    body: "The kettle takes its time.\n\nSteam rises while the street outside is still.".into()
+                }).collect(), ..Post::default()
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+            let mut app = Post {
+                letters: runner.app().letters.clone(),
+                total: 12,
+                ..Post::default()
+            };
+            let pages = app.inbox_pages(&runner.context());
+            assert_eq!(
+                pages.iter().flatten().copied().collect::<Vec<_>>(),
+                (0..12).collect::<Vec<_>>()
+            );
+            for (page, indices) in pages.iter().enumerate() {
+                app.page_index = page;
+                let screen = app.inbox(&runner.context());
+                fits(&screen, metrics);
+                let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+                for &index in indices {
+                    let action = action_id(&format!("letter.{index}"));
+                    let rect = layout.rect_of_action(action).expect("visible letter");
+                    assert_eq!(
+                        layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                        Some(action)
+                    );
+                }
+            }
+            let setup = app.setup();
+            fits(&setup, metrics);
+            let text = setup
+                .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .nodes
+                .iter()
+                .flat_map(|node| node.text_lines.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(text.contains("Install its token with:"), "{text}");
+            assert!(text.contains("<reader>"), "{text}");
+        }
+    }
+}

@@ -138,22 +138,62 @@ impl Chat {
             || self.menu_open
             || self.confirming_new
             || self.export.is_some();
-        context.set_screen(self.screen().with_own_back(owns_back));
+        context.set_screen(self.screen_for(context).with_own_back(owns_back));
     }
 
+    #[cfg(test)]
     fn screen(&self) -> Screen {
+        self.screen_for(&Context::default())
+    }
+
+    fn screen_for(&self, context: &Context) -> Screen {
         if let Some(export) = &self.export {
             return export.screen();
         }
         match self.view {
             View::Composing => self.compose(),
             View::Choosing => self.choosing(),
-            View::Talking | View::Waiting => self.transcript(),
+            View::Talking | View::Waiting => {
+                let pages = self.measured_pages(context);
+                self.transcript_page(
+                    &pages,
+                    if self.view == View::Waiting {
+                        0
+                    } else {
+                        self.pages_back
+                    },
+                )
+            }
         }
     }
 
     /// The conversation, newest last, with whatever can be answered by tapping.
-    fn transcript(&self) -> Screen {
+    fn measured_pages(&self, context: &Context) -> Vec<(usize, usize)> {
+        let turns = self.conversation.turns();
+        let metrics = context.metrics();
+        // Measure the complete screen, including offers, notices and navigation.
+        // The estimate is only a starting point; it no longer decides whether
+        // several turns can share a page on this panel.
+        let mut pages = transcript_pages(turns, self.page_budget());
+        loop {
+            let overflow = (0..pages.len()).find(|&page| {
+                let (first, end) = pages[page];
+                end > first + 1
+                    && self
+                        .transcript_page(&pages, pages.len() - 1 - page)
+                        .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                        .has_errors()
+            });
+            let Some(page) = overflow else {
+                return pages;
+            };
+            let (first, end) = pages[page];
+            pages[page] = (first + 1, end);
+            pages.insert(page, (first, first + 1));
+        }
+    }
+
+    fn transcript_page(&self, pages: &[(usize, usize)], pages_back: usize) -> Screen {
         // The keyboard is a destination rather than a button in the flow. A
         // button underneath a transcript moves every time the transcript
         // grows, which on a panel this slow means the control walks out from
@@ -176,13 +216,8 @@ impl Chat {
         // Nothing scrolls on this panel, so a long transcript is paged
         // rather than trimmed away: every turn stays reachable, and the
         // newest page is where the conversation happens.
-        let pages = transcript_pages(turns, self.page_budget());
         let latest = pages.len().saturating_sub(1);
-        let page = if self.view == View::Waiting {
-            latest
-        } else {
-            latest.saturating_sub(self.pages_back.min(latest))
-        };
+        let page = latest.saturating_sub(pages_back.min(latest));
         let on_latest = page >= latest;
         if turns.is_empty() {
             // Centred under a mark rather than ranged left at the top: this
@@ -693,7 +728,7 @@ impl KoboApp for Chat {
         }
 
         if action == action_id(EARLIER) || action == action_id(LATER) {
-            let count = transcript_pages(self.conversation.turns(), self.page_budget()).len();
+            let count = self.measured_pages(context).len();
             if count > 1 {
                 let latest = count - 1;
                 let back = self.pages_back.min(latest);
@@ -1617,6 +1652,59 @@ mod tests {
                     assert_eq!(runner.app().provider, *provider);
                     assert!(commands.iter().any(|command| matches!(command,Command::Store(StoreRequest::Save{key,value}) if key==CHOSEN && value==provider.key().as_bytes())));
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+
+    fn panels() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)]
+            .into_iter()
+            .flat_map(|(width, height, pixels_per_inch)| {
+                [kobo_ui::TextScale::Default, kobo_ui::TextScale::Largest]
+                    .into_iter()
+                    .map(move |text_scale| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    })
+            })
+    }
+    fn fits(screen: &Screen, metrics: kobo_sdk::DisplayMetrics) {
+        let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{metrics:?}: {:#?}",
+            diagnostics.issues
+        );
+    }
+
+    #[test]
+    fn seeded_conversation_keeps_every_turn_on_measured_pages() {
+        for metrics in panels() {
+            let mut app = Chat::default();
+            for index in 0..8 {
+                app.conversation
+                    .push(Role::You, format!("question {index}"));
+                app.conversation.push(Role::Assistant,
+                    "A reply long enough to wrap onto more than one line of a panel that is only a few inches across, which is the whole point.");
+            }
+            let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+            let pages = runner.app().measured_pages(&runner.context());
+            assert_eq!(
+                pages
+                    .iter()
+                    .flat_map(|&(first, end)| first..end)
+                    .collect::<Vec<_>>(),
+                (0..16).collect::<Vec<_>>()
+            );
+            for page in 0..pages.len() {
+                fits(&runner.app().transcript_page(&pages, page), metrics);
             }
         }
     }

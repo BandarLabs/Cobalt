@@ -1465,11 +1465,22 @@ impl Gutenbird {
             );
         }
         if self.awaiting_feed() {
-            return screen
-                .divider()
-                .activity("Fetching the catalog", None)
-                .skeleton(SKELETON_ROWS)
-                .build();
+            let metrics = context.metrics();
+            for rows in (0..=SKELETON_ROWS).rev() {
+                let candidate = screen
+                    .clone()
+                    .divider()
+                    .activity("Fetching the catalog", None)
+                    .skeleton(rows)
+                    .build();
+                if !candidate
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .has_errors()
+                {
+                    return candidate;
+                }
+            }
+            return screen.activity("Fetching the catalog", None).build();
         }
         let Some(entry) = self.stack.last() else {
             if let Some(failure) = self.trouble {
@@ -7305,4 +7316,59 @@ Please read this before you distribute or use this work.\n";
           href="https://gutenberg.example/author/37.opds"/>
   </entry>
 </feed>"#;
+}
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+    #[test]
+    fn both_edition_choices_remain_distinct_at_largest_text() {
+        let metrics = kobo_sdk::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_sdk::CLARA_BW_METRICS
+        };
+        let runner = kobo_sdk::AppRunner::with_metrics(Gutenbird::default(), metrics);
+        let mut app = Gutenbird::default();
+        let mut context = runner.context();
+        app.took_feed(
+            &mut context,
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml"),
+            FeedPurpose::Push { catalog: 0 },
+            "https://www.gutenberg.org/ebooks/564.opds".into(),
+        );
+        let screen = app.shelf_screen(&context);
+        assert!(!screen
+            .diagnostics(&metrics, &Chrome::measuring(true))
+            .has_errors());
+        let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+        let text: String = layout
+            .nodes
+            .iter()
+            .flat_map(|node| &node.text_lines)
+            .flat_map(|line| line.chars())
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // Tile captions are intentionally ellipsised; the full edition name
+        // remains in the publication, while the distinguishing prefix is visible.
+        let books = &app.stack.last().unwrap().feed.publications;
+        assert!(publication_caption(&books[0], books, None).starts_with("No images"));
+        assert!(publication_caption(&books[1], books, None).starts_with("With images"));
+        assert!(text.contains("Withimage"), "{text}");
+        assert!(text.contains("Noimages"), "{text}");
+        for name in ["book-0", "book-1"] {
+            assert!(layout.rect_of_action(action_id(name)).is_some());
+        }
+    }
+    #[test]
+    fn loading_placeholder_fits_the_small_panel_at_largest_text() {
+        let metrics = kobo_sdk::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_sdk::CLARA_BW_METRICS
+        };
+        let mut runner = kobo_sdk::AppRunner::with_metrics(Gutenbird::default(), metrics);
+        runner.start();
+        let screen = runner.app().shelf_screen(&runner.context());
+        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+    }
 }

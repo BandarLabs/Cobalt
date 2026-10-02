@@ -271,7 +271,7 @@ impl HomePanel {
     fn setup(&self) -> Screen {
         let mut s = ScreenBuilder::new("homepanel-setup")
             .top_bar("Home Panel")
-            .heading("Connect Home Assistant")
+            .section("Connect Home Assistant")
             .text(
                 "Enter your Home Assistant address after installing the token from your computer. The test below checks the address, the token, and the network.",
             )
@@ -1245,3 +1245,53 @@ mod tests {
 
 #[cfg(test)]
 mod ui_review_tests;
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+
+    fn panels() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)]
+            .into_iter()
+            .flat_map(|(width, height, pixels_per_inch)| {
+                [kobo_ui::TextScale::Default, kobo_ui::TextScale::Largest]
+                    .into_iter()
+                    .map(move |text_scale| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    })
+            })
+    }
+    fn fits(screen: &Screen, metrics: kobo_sdk::DisplayMetrics) {
+        let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{metrics:?}: {:#?}",
+            diagnostics.issues
+        );
+    }
+
+    #[test]
+    fn setup_instructions_and_keyboard_are_complete_at_large_text() {
+        for metrics in panels() {
+            let runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
+            let screen = runner.app().setup();
+            fits(&screen, metrics);
+            let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+            let text = layout
+                .nodes
+                .iter()
+                .flat_map(|node| node.text_lines.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                text.contains("the address, the token, and the network."),
+                "{text}"
+            );
+            assert!(layout.rect_of_action(action_id("kb.enter")).is_some());
+        }
+    }
+}

@@ -6,7 +6,7 @@
   "page_description": "Four classic board games for two players passing one Kobo, or against the computer at three levels. Every move is saved.",
   "minimum_cobalt_version": "0.3.14",
   "version": "0.1.7",
-  "release_notes": "Read every move through measured record pages, then use Back to return directly to the unchanged board. Page taps and reader page buttons keep long games readable.",
+  "release_notes": "Read every move through measured record pages and return to the unchanged board with Back. Page taps and reader buttons keep long games readable; board actions remain visible after save failures at large text sizes.",
   "glyph": "circle",
   "capabilities": []
 }
