@@ -28,7 +28,7 @@ tap American Robin
 wait-for 1 logged
 clean
 shot tally
-tap Review sightings
+tap-id sightings
 wait-for American Robin ×1
 clean
 shot sightings
