@@ -2,6 +2,9 @@ name: Large-text regression matrix
 on:
   push:
     branches: [validation/large-text-matrix-20261002]
+concurrency:
+  group: large-text-regression-matrix
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -44,7 +47,7 @@ jobs:
         run: python3 scripts/check-apps-sim.py chat parlor homepanel post gutenbird backgammon --out "$RUNNER_TEMP/evidence/before"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 8239f9b57259c29682da0c0bf1d53a20b3424cc9
+          ref: 8482828892042c5d62e1ce637a9646e0d9fdad7e
           persist-credentials: false
       - name: Run every catalog route on the exact fixed union
         id: catalog
@@ -69,7 +72,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-          printf '%s\n' 'before=218b5172262767be2fd25265d2b35f7f9337b8c6' 'after=8239f9b57259c29682da0c0bf1d53a20b3424cc9' 'hardware_tested=false' > "$RUNNER_TEMP/evidence/sources.txt"
+          printf '%s\n' 'before=218b5172262767be2fd25265d2b35f7f9337b8c6' 'after=8482828892042c5d62e1ce637a9646e0d9fdad7e' 'hardware_tested=false' > "$RUNNER_TEMP/evidence/sources.txt"
           test '${{ steps.catalog.outcome }}' = success
           test '${{ steps.specialized.outcome }}' = success
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
