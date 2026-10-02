@@ -1,0 +1,357 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1264,
+                    height: 59,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 0,
+                    width: 78,
+                    height: 59,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1147,
+                    y: 12,
+                    width: 70,
+                    height: 35,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1088,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1029,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 59,
+                    width: 1264,
+                    height: 100,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 59,
+                    width: 100,
+                    height: 100,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 1117,
+                    y: 59,
+                    width: 100,
+                    height: 100,
+                },
+                kind: BarGlyph(
+                    ActionId(
+                        3897901536,
+                    ),
+                    More,
+                ),
+                text_lines: [
+                    "More",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 171,
+                    y: 86,
+                    width: 922,
+                    height: 46,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "AI Command Center",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 159,
+                    width: 1264,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 95,
+                    y: 175,
+                    width: 1122,
+                    height: 45,
+                },
+                kind: Quote(
+                    1,
+                    Byline,
+                ),
+                text_lines: [
+                    "OpenAI",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 95,
+                    y: 232,
+                    width: 1122,
+                    height: 874,
+                },
+                kind: Quote(
+                    1,
+                    Body,
+                ),
+                text_lines: [
+                    "A long answer remains readable across complete pages. Every",
+                    "sentence belongs to the conversation. A long answer remains",
+                    "readable across complete pages. Every sentence belongs to the",
+                    "conversation. A long answer remains readable across complete",
+                    "pages. Every sentence belongs to the conversation. A long answer",
+                    "remains readable across complete pages. Every sentence belongs to",
+                    "the conversation. A long answer remains readable across complete",
+                    "pages. Every sentence belongs to the conversation. A long answer",
+                    "remains readable across complete pages. Every sentence belongs to",
+                    "the conversation. A long answer remains readable across complete",
+                    "pages. Every sentence belongs to the conversation. A long answer",
+                    "remains readable across complete pages. Every sentence belongs to",
+                    "the conversation. A long answer remains readable across complete",
+                    "pages. Every sentence belongs to the conversation. A long answer",
+                    "remains readable across complete pages. Every sentence belongs to",
+                    "the conversation. A long answer remains readable across complete",
+                    "pages. Every sentence belongs to the conversation. A long answer",
+                    "remains readable across complete pages. Every sentence belongs to",
+                    "the",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1538,
+                    width: 1264,
+                    height: 142,
+                },
+                kind: NavBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1538,
+                    width: 1264,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1538,
+                    width: 421,
+                    height: 142,
+                },
+                kind: NavDestinationSelected(
+                    ActionId(
+                        338486351,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Conversation",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 421,
+                    y: 1538,
+                    width: 421,
+                    height: 142,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        1361572173,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Type",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 842,
+                    y: 1538,
+                    width: 422,
+                    height: 142,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        1457512036,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Service",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1455,
+                    width: 1170,
+                    height: 83,
+                },
+                kind: PagePosition,
+                text_lines: [
+                    "1 of 2",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1099,
+                    y: 1455,
+                    width: 118,
+                    height: 83,
+                },
+                kind: PageNext(
+                    ActionId(
+                        1379580329,
+                    ),
+                ),
+                text_lines: [],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 175,
+            width: 1264,
+            height: 1280,
+        },
+        flow_height: 931,
+        page_turns: Declared(
+            PageTurns {
+                previous: ActionId(
+                    1005689627,
+                ),
+                next: ActionId(
+                    1379580329,
+                ),
+                menu: None,
+                position: Some(
+                    (
+                        1,
+                        2,
+                    ),
+                ),
+            },
+        ),
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

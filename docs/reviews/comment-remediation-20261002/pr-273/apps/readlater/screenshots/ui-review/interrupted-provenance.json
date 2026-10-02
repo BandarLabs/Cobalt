@@ -1,0 +1,34 @@
+{
+  "before": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "readlater",
+    "source_revision": "cc0f5aa7ec36607ce7744c83675432dbaacf5891",
+    "source_sha256": "7a986675c80ff7258668846b0387686d9f37ab28f9ea5d57c400b70f9b75442f",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "400f0b122fa9379f72a21b71abc133aa56334fad799e4ff86a99b9f59c3cc1d7",
+    "images": {
+      "before-largest-dismissed-refresh.png": "94b2b166e4b2f020f286627f509131b22f89253face115374bd0abaed30a3d79",
+      "before-default-dismissed-refresh.png": "03c1c4505f374849714fecfbd48984d844ff246cf2b70631839efcec0ca40df0",
+      "before-default-late-unread.png": "79d98bb2f414a3578f7ce8e1e4d8b0825cd98d683b174927b7d5d29b013ec8db",
+      "before-largest-late-unread.png": "31186e6a665b9aece4a3c5577a0c8f35476fcda26dc1712c2432037323cbd7c0"
+    }
+  },
+  "after": {
+    "kind": "native-renderer-snapshots-not-interactive-simulator",
+    "app": "readlater",
+    "source_revision": "cc0f5aa7ec36607ce7744c83675432dbaacf5891",
+    "source_sha256": "60d7f42e42f7062d939aba10ecc33bb4fedbc18760410e858495007e899798fe",
+    "adaptation": "Original main.rs copied unchanged apart from absolute module and include fixture paths for temporary audit crate; scenario appended.",
+    "renderer": "kobo_ui::render_with and kobo_text::install, CLARA_BW_METRICS",
+    "chrome": "Chrome::for_screen with representative measuring status; ensure_way_back",
+    "scenario_sha256": "400f0b122fa9379f72a21b71abc133aa56334fad799e4ff86a99b9f59c3cc1d7",
+    "images": {
+      "after-largest-dismissed-refresh.png": "b63b4e4ad198cb1dcec30297116e389c9dfedd1f07221dca08ad832aa59b8dff",
+      "after-default-dismissed-refresh.png": "9d82a753a87103e1faafb1b7a9012d2f6b9ef5cf49d6e63fad3a9bf1d967997f",
+      "after-default-late-unread.png": "d73e3c8616855016f01c783ca10d50b7374ac4bd3e295b1658407fb9c9f50e38",
+      "after-largest-late-unread.png": "144d2441fce588c66a95c67c46dea205a884b3730ca19c26d3bcb3889daaa645"
+    }
+  }
+}

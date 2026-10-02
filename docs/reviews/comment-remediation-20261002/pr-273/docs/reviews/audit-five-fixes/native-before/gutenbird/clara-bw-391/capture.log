@@ -1,0 +1,26 @@
+   Compiling memmap2 v0.9.11
+   Compiling pulldown-cmark v0.13.4
+   Compiling image v0.25.8
+   Compiling kobo-xml v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-xml)
+   Compiling fontdb v0.23.0
+   Compiling kobo-opds v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-opds)
+   Compiling system-fonts v0.1.2
+   Compiling ratex-unicode-font v0.1.14
+   Compiling ratex-font-loader v0.1.14
+   Compiling ratex-render v0.1.14
+   Compiling kobo-profile v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-profile)
+   Compiling kobo-html v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-html)
+   Compiling kobo-doc v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-doc)
+   Compiling kobo-image v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-image)
+   Compiling kobo-comic v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-comic)
+   Compiling kobo-read v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-read)
+   Compiling kobo-bookview v0.3.24 (/workspace/cobalt-pre-five/crates/kobo-bookview)
+   Compiling five-capture-gutenbird v0.1.0 (/tmp/five-gutenbird-qz9lt1vl)
+    Finished `test` profile [unoptimized] target(s) in 12.81s
+     Running unittests src/main.rs (/workspace/cobalt-capture-target/debug/deps/five_capture_gutenbird-d7b2b64754425bd9)
+
+running 1 test
+test approved_fix_capture::approved_fix_capture ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 103 filtered out; finished in 1.22s
+

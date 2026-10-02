@@ -1,0 +1,207 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling memchr v2.8.3
+   Compiling libm v0.2.16
+   Compiling serde_core v1.0.229
+   Compiling siphasher v1.0.3
+   Compiling syn v2.0.119
+   Compiling syn v3.0.4
+   Compiling hybrid-array v0.4.14
+   Compiling serde v1.0.229
+   Compiling rand_core v0.6.4
+   Compiling unicase v2.9.0
+   Compiling rand v0.8.8
+   Compiling core_maths v0.1.1
+   Compiling crypto-common v0.2.2
+   Compiling serde_derive v1.0.229
+   Compiling block-buffer v0.12.1
+   Compiling phf_shared v0.11.3
+   Compiling const-oid v0.10.2
+   Compiling version_check v0.9.5
+   Compiling slotmap v1.1.1
+   Compiling digest v0.11.3
+   Compiling phf_generator v0.11.3
+   Compiling ttf-parser v0.25.1
+   Compiling mime_guess v2.0.5
+   Compiling cpufeatures v0.3.1
+   Compiling same-file v1.0.6
+   Compiling walkdir v2.5.0
+   Compiling sha2 v0.11.0
+   Compiling phf_macros v0.11.3
+   Compiling aho-corasick v1.1.5
+   Compiling mime v0.3.17
+   Compiling thiserror v1.0.69
+   Compiling log v0.4.34
+   Compiling bytemuck v1.25.2
+   Compiling zmij v1.0.23
+   Compiling roxmltree v0.20.0
+   Compiling ratex-types v0.1.14
+   Compiling regex-syntax v0.8.11
+   Compiling fontconfig-parser v0.5.8
+   Compiling rust-embed-utils v8.12.0
+   Compiling phf v0.11.3
+   Compiling thiserror-impl v1.0.69
+   Compiling memmap2 v0.9.11
+   Compiling bit-vec v0.8.0
+   Compiling serde_json v1.0.151
+   Compiling fontdb v0.23.0
+   Compiling bit-set v0.8.0
+   Compiling rust-embed-impl v8.12.0
+   Compiling ratex-font v0.1.14
+   Compiling regex-automata v0.4.18
+   Compiling sys-locale v0.3.2
+   Compiling kobo-json v0.3.24 (/workspace/cobalt-fixes/crates/kobo-json)
+   Compiling kobo-ui v0.3.24 (/workspace/cobalt-fixes/crates/kobo-ui)
+   Compiling system-fonts v0.1.2
+   Compiling rust-embed v8.12.0
+   Compiling ratex-lexer v0.1.14
+   Compiling owned_ttf_parser v0.25.1
+   Compiling strict-num v0.1.1
+   Compiling bitflags v1.3.2
+   Compiling regex-lite v0.1.9
+   Compiling arrayref v0.3.9
+   Compiling ab_glyph_rasterizer v0.1.10
+   Compiling ab_glyph v0.2.32
+   Compiling tiny-skia-path v0.11.4
+   Compiling png v0.17.16
+   Compiling fancy-regex v0.14.0
+   Compiling regex v1.13.1
+   Compiling ratex-parser v0.1.14
+   Compiling ratex-katex-fonts v0.1.14
+   Compiling ratex-unicode-font v0.1.14
+   Compiling arrayvec v0.7.8
+   Compiling tiny-skia v0.11.4
+   Compiling ratex-font-loader v0.1.14
+   Compiling kobo-protocol v0.3.24 (/workspace/cobalt-fixes/crates/kobo-protocol)
+   Compiling pulldown-cmark v0.13.4
+   Compiling kobo-dict v0.3.24 (/workspace/cobalt-fixes/crates/kobo-dict)
+   Compiling kobo-abi v0.3.24 (/workspace/cobalt-fixes/crates/kobo-abi)
+   Compiling ratex-layout v0.1.14
+   Compiling kobo-net v0.3.24 (/workspace/cobalt-fixes/crates/kobo-net)
+   Compiling hashbrown v0.17.1
+   Compiling ratex-render v0.1.14
+   Compiling kobo-text v0.3.24 (/workspace/cobalt-fixes/crates/kobo-text)
+   Compiling kobo-html v0.3.24 (/workspace/cobalt-fixes/crates/kobo-html)
+   Compiling kobo-policy v0.3.24 (/workspace/cobalt-fixes/crates/kobo-policy)
+   Compiling indexmap v2.14.2
+   Compiling image v0.25.8
+   Compiling kobo-state v0.3.24 (/workspace/cobalt-fixes/crates/kobo-state)
+   Compiling kobo-xml v0.3.24 (/workspace/cobalt-fixes/crates/kobo-xml)
+   Compiling kobo-doc v0.3.24 (/workspace/cobalt-fixes/crates/kobo-doc)
+   Compiling kobo-image v0.3.24 (/workspace/cobalt-fixes/crates/kobo-image)
+   Compiling kobo-sdk v0.3.24 (/workspace/cobalt-fixes/crates/kobo-sdk)
+   Compiling zip v4.6.1
+   Compiling kobo-read v0.3.24 (/workspace/cobalt-fixes/crates/kobo-read)
+   Compiling kobo-comic v0.3.24 (/workspace/cobalt-fixes/crates/kobo-comic)
+   Compiling kobo-bookview v0.3.24 (/workspace/cobalt-fixes/crates/kobo-bookview)
+   Compiling kobo-opds v0.3.24 (/workspace/cobalt-fixes/crates/kobo-opds)
+   Compiling kobo-profile v0.3.24 (/workspace/cobalt-fixes/crates/kobo-profile)
+   Compiling cobalt-native-audit-gutenbird v0.1.0 (/tmp/cobalt-gutenbird-native-s_9pszgx)
+error[E0433]: failed to resolve: use of undeclared type `TextScale`
+    --> src/lib.rs:7377:42
+     |
+7377 |     for (name,text_scale) in [("default",TextScale::Default),("largest",TextScale::Largest)] {
+     |                                          ^^^^^^^^^ use of undeclared type `TextScale`
+     |
+help: consider importing this enum
+     |
+7323 +     use kobo_ui::TextScale;
+     |
+
+error[E0433]: failed to resolve: use of undeclared type `TextScale`
+    --> src/lib.rs:7377:73
+     |
+7377 |     for (name,text_scale) in [("default",TextScale::Default),("largest",TextScale::Largest)] {
+     |                                                                         ^^^^^^^^^ use of undeclared type `TextScale`
+     |
+help: consider importing this enum
+     |
+7323 +     use kobo_ui::TextScale;
+     |
+
+error[E0422]: cannot find struct, variant or union type `DisplayMetrics` in this scope
+    --> src/lib.rs:7378:21
+     |
+7378 | ...   let metrics=DisplayMetrics{text_scale,..CLARA_BW_METRICS};let mut context=AppRunner::with_metrics(Gutenbird::default(),metrics).con...
+     |                   ^^^^^^^^^^^^^^ not found in this scope
+     |
+help: consider importing one of these structs
+     |
+7323 +     use kobo_sdk::DisplayMetrics;
+     |
+7323 +     use kobo_ui::DisplayMetrics;
+     |
+
+error[E0425]: cannot find value `CLARA_BW_METRICS` in this scope
+    --> src/lib.rs:7378:49
+     |
+7378 | ...   let metrics=DisplayMetrics{text_scale,..CLARA_BW_METRICS};let mut context=AppRunner::with_metrics(Gutenbird::default(),metrics).con...
+     |                                               ^^^^^^^^^^^^^^^^ not found in this scope
+     |
+help: consider importing one of these constants
+     |
+7323 +     use kobo_sdk::CLARA_BW_METRICS;
+     |
+7323 +     use kobo_ui::CLARA_BW_METRICS;
+     |
+
+error[E0433]: failed to resolve: use of undeclared type `AppRunner`
+    --> src/lib.rs:7378:83
+     |
+7378 | ...   let metrics=DisplayMetrics{text_scale,..CLARA_BW_METRICS};let mut context=AppRunner::with_metrics(Gutenbird::default(),metrics).con...
+     |                                                                                 ^^^^^^^^^ use of undeclared type `AppRunner`
+     |
+help: consider importing this struct
+     |
+7323 +     use kobo_sdk::AppRunner;
+     |
+
+error[E0433]: failed to resolve: use of undeclared type `AppRunner`
+    --> src/lib.rs:7381:24
+     |
+7381 | ...   let mut runner=AppRunner::with_metrics(Gutenbird {task:Some((TaskId(9),Awaiting::Feed(FeedPurpose::Root{catalog:0},BASE.into()))),....
+     |                      ^^^^^^^^^ use of undeclared type `AppRunner`
+     |
+help: consider importing this struct
+     |
+7323 +     use kobo_sdk::AppRunner;
+     |
+
+error[E0425]: cannot find value `BASE` in this scope
+    --> src/lib.rs:7381:124
+     |
+7381 | ...askId(9),Awaiting::Feed(FeedPurpose::Root{catalog:0},BASE.into()))),..Gutenbird::default()},metrics);
+     |                                                         ^^^^ not found in this scope
+     |
+note: constant `crate::tests::BASE` exists but is inaccessible
+    --> src/lib.rs:4192:5
+     |
+4192 |     const BASE: &str = "https://example.org/catalog";
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+error[E0425]: cannot find function `two_publication_feed_json` in this scope
+    --> src/lib.rs:7382:62
+     |
+7382 | ...   runner.task_outcome(TaskId(9),TaskOutcome::Completed(two_publication_feed_json().into_bytes()));runner.app().show(&mut context);cra...
+     |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+     |
+note: function `crate::tests::two_publication_feed_json` exists but is inaccessible
+    --> src/lib.rs:4370:5
+     |
+4370 |     fn two_publication_feed_json() -> String {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+Some errors have detailed explanations: E0422, E0425, E0433.
+For more information about an error, try `rustc --explain E0422`.
+error: could not compile `cobalt-native-audit-gutenbird` (lib test) due to 8 previous errors
+Traceback (most recent call last):
+  File "/workspace/cobalt-fixes/examples/gutenbird/screenshots/ui-review/capture.py", line 56, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/workspace/cobalt-fixes/examples/gutenbird/screenshots/ui-review/capture.py", line 53, in main
+    subprocess.run(['cargo','test','--offline','--manifest-path',str(harness/'Cargo.toml'),'native_review_snapshots','--','--nocapture'],env=dict(os.environ,CAPTURE_DIR=str(output)),check=True)
+  File "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['cargo', 'test', '--offline', '--manifest-path', '/tmp/cobalt-gutenbird-native-s_9pszgx/Cargo.toml', 'native_review_snapshots', '--', '--nocapture']' returned non-zero exit status 101.

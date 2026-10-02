@@ -1,0 +1,10 @@
+    Checking libc v0.2.189
+    Checking miniz_oxide v0.9.1
+    Checking thiserror v1.0.69
+    Checking kobo-html v0.3.24 (/workspace/cobalt-fixed-integration/crates/kobo-html)
+    Checking kobo-doc v0.3.24 (/workspace/cobalt-fixed-integration/crates/kobo-doc)
+    Checking slice-ring-buffer v0.3.4
+    Checking kobo-abi v0.3.24 (/workspace/cobalt-fixed-integration/crates/kobo-abi)
+    Checking minimp3 v0.5.2
+    Checking kobo-hal v0.3.24 (/workspace/cobalt-fixed-integration/crates/kobo-hal)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.78s

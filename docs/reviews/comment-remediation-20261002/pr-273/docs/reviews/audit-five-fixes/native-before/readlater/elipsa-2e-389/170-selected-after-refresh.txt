@@ -1,0 +1,214 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1404,
+                    height: 76,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 0,
+                    width: 76,
+                    height: 76,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 1178,
+                    y: 0,
+                    width: 190,
+                    height: 76,
+                },
+                kind: BarAction(
+                    ActionId(
+                        2566783941,
+                    ),
+                ),
+                text_lines: [
+                    "Archive",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 1084,
+                    y: 0,
+                    width: 76,
+                    height: 76,
+                },
+                kind: BarGlyph(
+                    ActionId(
+                        3510316913,
+                    ),
+                    Heart,
+                ),
+                text_lines: [
+                    "Star",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 130,
+                    y: 8,
+                    width: 936,
+                    height: 59,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Article 3",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 76,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 233,
+                    y: 88,
+                    width: 938,
+                    height: 140,
+                },
+                kind: Text,
+                text_lines: [
+                    "Body of article 3. This is the article selected",
+                    "before the refresh.",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1765,
+                    width: 1404,
+                    height: 107,
+                },
+                kind: NavBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1765,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1765,
+                    width: 468,
+                    height: 107,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        50142212,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Previous",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 468,
+                    y: 1765,
+                    width: 468,
+                    height: 107,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        1538531746,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Reading list",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 936,
+                    y: 1765,
+                    width: 468,
+                    height: 107,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        1112806980,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Next",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 88,
+            width: 1404,
+            height: 1677,
+        },
+        flow_height: 140,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Reading,
+    },
+    issues: [],
+}

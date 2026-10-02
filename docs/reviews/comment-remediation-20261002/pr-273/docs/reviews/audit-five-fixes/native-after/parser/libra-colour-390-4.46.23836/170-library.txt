@@ -1,0 +1,261 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1264,
+                    height: 59,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 0,
+                    width: 134,
+                    height: 59,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1147,
+                    y: 12,
+                    width: 70,
+                    height: 35,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1088,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1029,
+                    y: 12,
+                    width: 35,
+                    height: 35,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 59,
+                    width: 1264,
+                    height: 100,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 59,
+                    width: 100,
+                    height: 100,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 171,
+                    y: 69,
+                    width: 1046,
+                    height: 79,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Parser",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 159,
+                    width: 1264,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 175,
+                    width: 1170,
+                    height: 136,
+                },
+                kind: Heading(
+                    1,
+                ),
+                text_lines: [
+                    "Interactive fiction",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 585,
+                    y: 626,
+                    width: 94,
+                    height: 94,
+                },
+                kind: SplashGlyph(
+                    Circle,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 193,
+                    y: 767,
+                    width: 877,
+                    height: 105,
+                },
+                kind: SplashTitle,
+                text_lines: [
+                    "Nothing here yet",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 193,
+                    y: 919,
+                    width: 877,
+                    height: 316,
+                },
+                kind: SplashText,
+                text_lines: [
+                    "No stories yet. Push a .z3, .z5",
+                    "or .z8 story with `kobo parser",
+                    "push FILE --device IP`; stories",
+                    "play completely offline.",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1538,
+                    width: 1264,
+                    height: 142,
+                },
+                kind: Spacer,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1538,
+                    width: 1264,
+                    height: 4,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 47,
+                    y: 1552,
+                    width: 1170,
+                    height: 118,
+                },
+                kind: Button(
+                    ActionId(
+                        3572655668,
+                    ),
+                    Enabled,
+                    Normal,
+                ),
+                text_lines: [
+                    "Refresh library",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 175,
+            width: 1264,
+            height: 1363,
+        },
+        flow_height: 1363,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

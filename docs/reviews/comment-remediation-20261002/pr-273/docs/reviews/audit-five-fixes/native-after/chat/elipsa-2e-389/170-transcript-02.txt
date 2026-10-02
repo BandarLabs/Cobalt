@@ -1,0 +1,371 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1404,
+                    height: 45,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 0,
+                    width: 104,
+                    height: 45,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1314,
+                    y: 9,
+                    width: 54,
+                    height: 27,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1269,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1224,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 45,
+                    width: 1404,
+                    height: 76,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 45,
+                    width: 76,
+                    height: 76,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 1292,
+                    y: 45,
+                    width: 76,
+                    height: 76,
+                },
+                kind: BarGlyph(
+                    ActionId(
+                        3897901536,
+                    ),
+                    More,
+                ),
+                text_lines: [
+                    "More",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 130,
+                    y: 53,
+                    width: 1144,
+                    height: 59,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "AI Command Center",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 121,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 269,
+                    y: 133,
+                    width: 902,
+                    height: 60,
+                },
+                kind: Quote(
+                    1,
+                    Byline,
+                ),
+                text_lines: [
+                    "OpenAI",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    4,
+                ),
+                rect: Rect {
+                    x: 269,
+                    y: 202,
+                    width: 902,
+                    height: 944,
+                },
+                kind: Quote(
+                    1,
+                    Body,
+                ),
+                text_lines: [
+                    "conversation. A long answer remains",
+                    "readable across complete pages. Every",
+                    "sentence belongs to the conversation. A",
+                    "long answer remains readable across",
+                    "complete pages. Every sentence belongs to",
+                    "the conversation. A long answer remains",
+                    "readable across complete pages. Every",
+                    "sentence belongs to the conversation. A",
+                    "long answer remains readable across",
+                    "complete pages. Every sentence belongs to",
+                    "the conversation. A long answer remains",
+                    "readable across complete pages. Every",
+                    "sentence belongs to the conversation. A",
+                    "long answer remains readable across",
+                    "complete pages. Every sentence belongs to",
+                    "the",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1765,
+                    width: 1404,
+                    height: 107,
+                },
+                kind: NavBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1765,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 1765,
+                    width: 468,
+                    height: 107,
+                },
+                kind: NavDestinationSelected(
+                    ActionId(
+                        338486351,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Conversation",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 468,
+                    y: 1765,
+                    width: 468,
+                    height: 107,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        1361572173,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Type",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 936,
+                    y: 1765,
+                    width: 468,
+                    height: 107,
+                },
+                kind: NavDestination(
+                    ActionId(
+                        1457512036,
+                    ),
+                    None,
+                ),
+                text_lines: [
+                    "Service",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 1702,
+                    width: 1332,
+                    height: 63,
+                },
+                kind: PagePosition,
+                text_lines: [
+                    "3 of 4",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 1702,
+                    width: 89,
+                    height: 63,
+                },
+                kind: PagePrevious(
+                    ActionId(
+                        1005689627,
+                    ),
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1279,
+                    y: 1702,
+                    width: 89,
+                    height: 63,
+                },
+                kind: PageNext(
+                    ActionId(
+                        1379580329,
+                    ),
+                ),
+                text_lines: [],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 133,
+            width: 1404,
+            height: 1569,
+        },
+        flow_height: 1013,
+        page_turns: Declared(
+            PageTurns {
+                previous: ActionId(
+                    1005689627,
+                ),
+                next: ActionId(
+                    1379580329,
+                ),
+                menu: None,
+                position: Some(
+                    (
+                        3,
+                        4,
+                    ),
+                ),
+            },
+        ),
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}

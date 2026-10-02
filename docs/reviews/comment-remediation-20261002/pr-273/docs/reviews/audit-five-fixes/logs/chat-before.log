@@ -1,0 +1,19 @@
+   Compiling kobo-chat v0.3.24 (/workspace/cobalt-fixes/examples/chat)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.79s
+     Running unittests src/main.rs (target/debug/deps/kobo_chat-1eab53cbbb0de3de)
+
+running 1 test
+
+thread 'long_turn_regression_tests::long_single_turn_fits_every_page' panicked at examples/chat/src/main.rs:1726:17:
+assertion failed: !screen.diagnostics(&metrics, &kobo_ui::Chrome::measuring(true)).has_errors()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test long_turn_regression_tests::long_single_turn_fits_every_page ... FAILED
+
+failures:
+
+failures:
+    long_turn_regression_tests::long_single_turn_fits_every_page
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 58 filtered out; finished in 0.35s
+
+error: test failed, to rerun pass `-p kobo-chat --bin kobo-chat`

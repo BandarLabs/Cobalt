@@ -1,0 +1,10 @@
+   Compiling kobo-chat v0.3.24 (/workspace/cobalt-fixes/examples/chat)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.40s
+     Running unittests src/main.rs (target/debug/deps/kobo_chat-ef5475ebc384b6ae)
+
+running 2 tests
+test long_turn_regression_tests::long_single_turn_fits_every_page ... ok
+test long_turn_regression_tests::long_turns_preserve_graphemes_and_latest_controls ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 0.90s
+

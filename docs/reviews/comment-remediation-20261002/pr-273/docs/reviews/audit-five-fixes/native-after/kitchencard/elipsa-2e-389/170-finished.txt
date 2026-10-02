@@ -1,0 +1,215 @@
+LayoutDiagnostics {
+    layout: Layout {
+        nodes: [
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1404,
+                    height: 45,
+                },
+                kind: StatusBand,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 0,
+                    width: 104,
+                    height: 45,
+                },
+                kind: StatusClock,
+                text_lines: [
+                    "00:00",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1314,
+                    y: 9,
+                    width: 54,
+                    height: 27,
+                },
+                kind: StatusBattery(
+                    Some(
+                        Percent(
+                            50,
+                        ),
+                    ),
+                    false,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1269,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusSignal(
+                    Strong,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    0,
+                ),
+                rect: Rect {
+                    x: 1224,
+                    y: 9,
+                    width: 27,
+                    height: 27,
+                },
+                kind: StatusBluetooth,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 45,
+                    width: 1404,
+                    height: 76,
+                },
+                kind: TopBar,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 36,
+                    y: 45,
+                    width: 76,
+                    height: 76,
+                },
+                kind: Back,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 130,
+                    y: 53,
+                    width: 1238,
+                    height: 59,
+                },
+                kind: TopBarTitle,
+                text_lines: [
+                    "Kitchen Card",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    1,
+                ),
+                rect: Rect {
+                    x: 0,
+                    y: 121,
+                    width: 1404,
+                    height: 3,
+                },
+                kind: Divider,
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 666,
+                    y: 795,
+                    width: 71,
+                    height: 71,
+                },
+                kind: SplashGlyph(
+                    Check,
+                ),
+                text_lines: [],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 350,
+                    y: 902,
+                    width: 703,
+                    height: 79,
+                },
+                kind: SplashTitle,
+                text_lines: [
+                    "Dinner's ready",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    2,
+                ),
+                rect: Rect {
+                    x: 350,
+                    y: 1017,
+                    width: 703,
+                    height: 59,
+                },
+                kind: SplashText,
+                text_lines: [
+                    "Dinner",
+                ],
+            },
+            LayoutNode {
+                id: NodeId(
+                    3,
+                ),
+                rect: Rect {
+                    x: 549,
+                    y: 1747,
+                    width: 305,
+                    height: 89,
+                },
+                kind: Button(
+                    ActionId(
+                        3007309135,
+                    ),
+                    Enabled,
+                    Normal,
+                ),
+                text_lines: [
+                    "Cook again",
+                ],
+            },
+        ],
+        content: Rect {
+            x: 0,
+            y: 133,
+            width: 1404,
+            height: 1703,
+        },
+        flow_height: 1703,
+        page_turns: None,
+        hold: None,
+        context_actions: [],
+        text_hits: [],
+        prose_face: Text,
+    },
+    issues: [],
+}
