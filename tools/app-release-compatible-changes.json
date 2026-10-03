@@ -420,6 +420,17 @@
      "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
     }
    ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Clippings adds the kobo-clippings workspace member. The lock gains only that member and its dependency edges; every package identity a published Store app resolves is unchanged.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "14a8b6d295a2e49e6230f9521172d5ef0bcf8e2b",
+     "compatible_blob": "e4844e8430ce0199620cc3fcbc4130890320486c"
+    }
+   ]
   }
  ]
 }
