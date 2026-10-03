@@ -41,9 +41,43 @@ pub(super) struct Controller {
     usb: bool,
     refusal: Option<String>,
     scheduled_occurrence: u64,
+    /// One-shot synthetic backend faults; never claim to control the kernel.
+    next_backend_fault: Option<BackendFault>,
+    active_backend_fault: Option<BackendFault>,
+    last_backend_fault: Option<BackendFault>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackendFault {
+    PermissionVeto,
+    AlarmAbsent,
+    AlarmFailed,
+    ImmediateWake,
+    DuplicateWake,
+}
+impl BackendFault {
+    fn parse(command: &str) -> Option<Self> {
+        Some(match command {
+            "permission-veto" => Self::PermissionVeto,
+            "alarm-absent" => Self::AlarmAbsent,
+            "alarm-failed" => Self::AlarmFailed,
+            "immediate-wake" => Self::ImmediateWake,
+            "duplicate-wake" => Self::DuplicateWake,
+            _ => return None,
+        })
+    }
+}
 impl Controller {
+    pub fn inject(&mut self, command: &str) -> bool {
+        let Some(fault) = BackendFault::parse(command) else {
+            return false;
+        };
+        if self.next_backend_fault.is_some() || !self.awake() {
+            return false;
+        }
+        self.next_backend_fault = Some(fault);
+        true
+    }
     pub fn awake(&self) -> bool {
         self.power.state() == State::Awake
     }
@@ -70,8 +104,40 @@ impl Controller {
         };
         let conditions = self.conditions(apps, front, now)?;
         if let Some(request) = request {
+            if let Input::Sleep(_) = request {
+                if let Some(fault) = self.next_backend_fault.take() {
+                    self.last_backend_fault = Some(fault);
+                    self.active_backend_fault = Some(fault);
+                    match fault {
+                        BackendFault::PermissionVeto => {
+                            self.refusal = Some("Synthetic permission veto before suspend".into());
+                            self.active_backend_fault = None;
+                            self.publish(apps)?;
+                            return Ok(());
+                        }
+                        BackendFault::AlarmAbsent | BackendFault::AlarmFailed => {
+                            let scheduled = apps.iter().any(|app| {
+                                app.session
+                                    .state
+                                    .lock()
+                                    .is_ok_and(|state| state.scheduled_wake.is_some())
+                            });
+                            if scheduled {
+                                self.refusal = Some(format!("Synthetic {fault:?} before suspend"));
+                                self.active_backend_fault = None;
+                                self.publish(apps)?;
+                                return Ok(());
+                            }
+                        }
+                        BackendFault::ImmediateWake | BackendFault::DuplicateWake => {}
+                    }
+                }
+            }
             let scheduled = matches!(request, Input::Wake(WakeReason::Scheduled)) && !self.awake();
             self.request(apps, request, now, conditions)?;
+            if self.power.state() != State::Preparing {
+                self.active_backend_fault = None;
+            }
             if scheduled && self.awake() {
                 self.deliver_scheduled(apps, front)?;
             }
@@ -108,13 +174,45 @@ impl Controller {
                 self.frontlight = Some(hardware.frontlight_percent);
             }
             self.apply(apps, effect)?;
+            self.apply_enter_fault(apps, effect)?;
+            self.active_backend_fault = None;
         }
+        self.publish(apps)
+    }
+    fn apply_enter_fault(&mut self, apps: &mut [Hosted], effect: Effect) -> io::Result<()> {
+        if matches!(effect, Effect::Enter { .. })
+            && matches!(
+                self.active_backend_fault,
+                Some(BackendFault::ImmediateWake | BackendFault::DuplicateWake)
+            )
+        {
+            if let Some(resume) = self.power.wake(WakeReason::PowerButton) {
+                self.apply(apps, resume)?;
+            }
+            if self.active_backend_fault == Some(BackendFault::DuplicateWake) {
+                let duplicate = self.power.wake(WakeReason::PowerButton);
+                debug_assert!(duplicate.is_none());
+            }
+        }
+        Ok(())
+    }
+    fn publish(&self, apps: &mut [Hosted]) -> io::Result<()> {
         let status = kobo_json::ObjectBuilder::new()
             .set("mode", "simulated-entry-with-real-sdk-barrier")
             .set("hardwareValidated", false)
             .set("state", format!("{:?}", self.power.state()).to_lowercase())
             .set("generation", self.power.generation().to_string())
             .set("usbAttached", self.usb)
+            .set(
+                "nextBackendFault",
+                self.next_backend_fault
+                    .map_or_else(|| "none".to_owned(), |fault| format!("{fault:?}")),
+            )
+            .set(
+                "lastBackendFault",
+                self.last_backend_fault
+                    .map_or_else(|| "none".to_owned(), |fault| format!("{fault:?}")),
+            )
             .set("reason", format!("{:?}", self.power.reason()))
             .set("lastWake", format!("{:?}", self.power.last_wake()))
             .set(
@@ -325,4 +423,105 @@ impl Controller {
 
 fn lock_error<T>(_: std::sync::PoisonError<T>) -> io::Error {
     io::Error::other("power state unavailable")
+}
+
+#[cfg(test)]
+mod synthetic_fault_tests {
+    use super::*;
+    #[test]
+    fn immediate_and_duplicate_wake_cannot_resume_twice() {
+        let mut power = Power::default();
+        let conditions = Conditions {
+            charging: false,
+            usb_attached: false,
+            keep_awake_until: 0,
+            terminal_open: false,
+            input_quiet: true,
+            panel_idle: true,
+            tasks_idle: true,
+        };
+        let prepare = power
+            .begin(&[1], 1, SleepReason::Owner, conditions)
+            .unwrap();
+        assert!(matches!(prepare, Effect::Prepare { generation: 1 }));
+        assert_eq!(power.acknowledge(1, 1, true), None);
+        let enter = power.poll(1, conditions, true).unwrap();
+        assert!(matches!(enter, Effect::Enter { generation: 1 }));
+        assert!(power.entered(1));
+        assert!(matches!(
+            power.wake(WakeReason::PowerButton),
+            Some(Effect::Resume { generation: 1, .. })
+        ));
+        assert_eq!(power.wake(WakeReason::PowerButton), None);
+        assert_eq!(power.state(), State::Awake);
+    }
+    #[test]
+    fn stale_ack_cannot_cross_a_faulted_suspend_generation() {
+        let mut power = Power::default();
+        let conditions = Conditions {
+            charging: false,
+            usb_attached: false,
+            keep_awake_until: 0,
+            terminal_open: false,
+            input_quiet: true,
+            panel_idle: true,
+            tasks_idle: true,
+        };
+        power
+            .begin(&[1], 1, SleepReason::Owner, conditions)
+            .unwrap();
+        assert!(power.abort(Refusal::Busy).is_some());
+        power
+            .begin(&[1], 2, SleepReason::Owner, conditions)
+            .unwrap();
+        assert_eq!(power.acknowledge(1, 1, true), None);
+        assert_eq!(power.poll(2, conditions, true), None);
+        assert_eq!(power.acknowledge(1, 2, true), None);
+        assert!(matches!(
+            power.poll(2, conditions, true),
+            Some(Effect::Enter { generation: 2 })
+        ));
+    }
+    #[test]
+    fn stale_fault_admission_is_nonfatal_and_does_not_queue() {
+        let mut controller = Controller::default();
+        let conditions = Conditions {
+            charging: false,
+            usb_attached: false,
+            keep_awake_until: 0,
+            terminal_open: false,
+            input_quiet: true,
+            panel_idle: true,
+            tasks_idle: true,
+        };
+        controller
+            .power
+            .begin(&[1], 0, SleepReason::Owner, conditions)
+            .unwrap();
+        assert!(!controller.inject("duplicate-wake"));
+        assert!(controller.next_backend_fault.is_none());
+        assert!(controller.power.abort(Refusal::Busy).is_some());
+        assert!(controller.inject("duplicate-wake"));
+    }
+    #[test]
+    fn backend_faults_are_one_shot_and_closed_set() {
+        let mut controller = Controller::default();
+        assert!(controller.inject("permission-veto"));
+        assert!(!controller.inject("alarm-failed"));
+        assert_eq!(
+            controller.next_backend_fault,
+            Some(BackendFault::PermissionVeto)
+        );
+        controller.next_backend_fault.take();
+        for name in [
+            "alarm-absent",
+            "alarm-failed",
+            "immediate-wake",
+            "duplicate-wake",
+        ] {
+            assert!(controller.inject(name));
+            assert!(controller.next_backend_fault.take().is_some());
+        }
+        assert!(!controller.inject("kernel-write"));
+    }
 }

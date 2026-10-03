@@ -216,6 +216,19 @@ fn make_room(apps: &mut Vec<Hosted>, front: u64) -> io::Result<()> {
     Ok(())
 }
 
+fn admit_power_fault(session: &AppSession, power: &mut power::Controller) -> io::Result<()> {
+    if let Some(command) = session.take_power_fault()? {
+        if !power.inject(&command) {
+            session
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state unavailable"))?
+                .record("synthetic power fault refused: host not awake or slot occupied".into());
+        }
+    }
+    Ok(())
+}
+
 /// Run real SDK programs against the simulated HAL/services. Programs are
 /// explicitly selected host binaries; their existence does not grant device
 /// trust or bypass SDK capability declarations. Exit ends only these children.
@@ -255,6 +268,7 @@ pub fn run(
             return Err(io::Error::other("foreground app lost"));
         };
         server.try_serve_one(&apps[index].session)?;
+        admit_power_fault(&apps[index].session, &mut power)?;
         power.step(&mut apps, front)?;
         if power.awake() {
             if let Some(name) = apps[index].session.next_launch()? {
