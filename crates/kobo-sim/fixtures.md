@@ -13,7 +13,7 @@ normal simulator path and have no pinned board identity.
 `POST /input` with `fixture-tap` replays a synthetic tap at one quarter panel
 width and one third panel height. It transforms that coordinate through the
 selected profile's pose and Cobalt's real input decoder. No captured event
-trace is replayed. The simulator's selected `KOBO_PROFILE`, not the table,
+trace is replayed. The simulator's selected `KOBO_SIM_PROFILE`, not the table,
 controls which profile is active.
 
 `POST /panel` accepts `delay 0..5000` milliseconds while idle. This selects a
@@ -24,7 +24,8 @@ exercise invalidation and full-refresh recovery.
 
 In runtime mode, `POST /power-fault` queues a one-shot `permission-veto`,
 `alarm-absent`, `alarm-failed`, `immediate-wake`, or `duplicate-wake` before a
-sleep request. These simulate backend branches only; no actual kernel suspend
+sleep request. Duplicate or stale fault admission is refused without ending
+the runtime loop. These simulate backend branches only; no actual kernel suspend
 or RTC alarm is executed. `POST /wifi-fixture` selects `normal`,
 `interface-missing`, or `interface-down`, keeping device permission checks in
 front of the synthetic result. The interface names in `boardFixture` are

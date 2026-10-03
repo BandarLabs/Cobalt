@@ -3001,6 +3001,24 @@ fn simulated_task_error(
     scenario_task_error(scenario, task)
 }
 
+fn take_shell_fault(
+    state: &mut AppState,
+    request: &kobo_protocol::ShellRequest,
+    declared: &kobo_policy::Declared,
+    backends: &kobo_policy::Declared,
+    paused: bool,
+) -> Option<kobo_protocol::ShellError> {
+    if matches!(request, kobo_protocol::ShellRequest::Open { .. })
+        && !paused
+        && declared.holds(kobo_policy::Capability::Shell)
+        && backends.holds(kobo_policy::Capability::Shell)
+    {
+        state.shell_fault.take()
+    } else {
+        None
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one exhaustive protocol message dispatcher"
@@ -3211,12 +3229,7 @@ fn read_app_messages(
                         .lock()
                         .map_err(|_| io::Error::other("app state unavailable"))?;
                     let paused = state.power_state != kobod::power::State::Awake;
-                    let fault =
-                        if matches!(request, kobo_protocol::ShellRequest::Open { .. }) && !paused {
-                            state.shell_fault.take()
-                        } else {
-                            None
-                        };
+                    let fault = take_shell_fault(&mut state, &request, declared, &backends, paused);
                     (paused, fault)
                 };
                 if paused {
@@ -3900,6 +3913,114 @@ mod tests {
         assert_eq!(WifiFixture::parse(b"interface-observed"), None);
     }
 
+    #[test]
+    fn shell_fault_preserves_declaration_backend_and_paused_refusals() {
+        let mut state = super::AppState {
+            shell_fault: Some(kobo_protocol::ShellError::Failed),
+            ..super::AppState::default()
+        };
+        let allowed = kobo_policy::Declared::parse(["shell"]).unwrap();
+        let denied = kobo_policy::Declared::parse([]).unwrap();
+        let open = kobo_protocol::ShellRequest::Open {
+            columns: 80,
+            rows: 24,
+        };
+        for (declared, backends, paused) in [
+            (&denied, &allowed, false),
+            (&allowed, &denied, false),
+            (&allowed, &allowed, true),
+        ] {
+            assert_eq!(
+                super::take_shell_fault(&mut state, &open, declared, backends, paused),
+                None
+            );
+            assert!(state.shell_fault.is_some());
+        }
+        assert_eq!(
+            super::take_shell_fault(
+                &mut state,
+                &kobo_protocol::ShellRequest::Close,
+                &allowed,
+                &allowed,
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false),
+            Some(kobo_protocol::ShellError::Failed)
+        );
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false),
+            None
+        );
+    }
+    #[test]
+    fn fixture_endpoints_are_bounded() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let mut state = super::AppState {
+            runtime_navigation: true,
+            ..super::AppState::default()
+        };
+        state.set_screen(kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Text {
+                id: kobo_ui::NodeId(1),
+                text: "Independent simulator fixture".into(),
+                links: vec![],
+            }],
+        ));
+        let session = super::AppSession {
+            state: Arc::new(Mutex::new(state)),
+            writer: AppWriter::spawn_for(socket, kobo_protocol::VERSION),
+        };
+        for (path, body, status) in [
+            ("/power-fault", "duplicate-wake", 200),
+            ("/power-fault", "immediate-wake", 400),
+            ("/wifi-fixture", "interface-missing", 200),
+            ("/wifi-fixture", "observed-device", 400),
+            ("/shell-fault", "helper-missing", 200),
+            ("/shell-fault", "helper-start-failed", 400),
+            ("/panel", "delay 6000", 400),
+            ("/panel", "delay 100", 200),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (server, _) = listener.accept().unwrap();
+            write!(
+                client,
+                "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            session.handle_http(server).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status}")),
+                "{path}: {response}"
+            );
+        }
+        if let Ok(out) = std::env::var("COBALT_FIXTURE_CAPTURE_OUT") {
+            let state = session.state.lock().unwrap();
+            let rgb = state.panel.ideal_rgb(super::PROFILE.colour_panel);
+            let data = super::capture::View {
+                app: "synthetic-fixture",
+                mode: "test",
+                screen: &state.screen,
+                source: &super::CaptureSource::default(),
+                paints: state.paints,
+                orientation: state.orientation,
+                simulation: state.simulation_json(),
+                frame: &rgb,
+                ideal: true,
+                rgb: true,
+            }
+            .pack()
+            .unwrap();
+            std::fs::write(out, data).unwrap();
+        }
+    }
     #[test]
     fn shell_faults_are_explicit_one_shot_open_failures() {
         let mut state = super::AppState {
