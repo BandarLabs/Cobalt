@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-habits"
-version = "0.1.1"
+version = "0.1.8"
 dependencies = [
  "kobo-image",
  "kobo-sdk",
@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-syncthing"
-version = "0.2.0"
+version = "0.3.2"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",

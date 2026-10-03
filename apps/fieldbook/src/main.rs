@@ -80,6 +80,11 @@ struct Fieldbook {
     location: Keyboard,
     naming_location: bool,
     outing_page: usize,
+    home_page: usize,
+    packs_page: usize,
+    sightings_page: usize,
+    life_page: usize,
+    delete_candidate: Option<usize>,
     save: SaveState,
     manifest_load: Option<ShelfDownload>,
     loads: Loads,
@@ -107,6 +112,11 @@ impl Default for Fieldbook {
             location: Keyboard::new(),
             naming_location: false,
             outing_page: 0,
+            home_page: 0,
+            packs_page: 0,
+            sightings_page: 0,
+            life_page: 0,
+            delete_candidate: None,
             save: SaveState::Idle,
             manifest_load: None,
             loads: Loads::default(),
@@ -167,6 +177,12 @@ fn clean(text: &str) -> String {
         .join(" ")
         .trim()
         .to_owned()
+}
+
+/// Coded species keep their established identity. Uncoded, manually named
+/// birds are distinct by name; an empty code must not merge every bird.
+fn same_species(code: &str, common: &str, other_code: &str, other_common: &str) -> bool {
+    code == other_code && (!code.is_empty() || common.to_lowercase() == other_common.to_lowercase())
 }
 
 fn species_line(species: &Species) -> String {
@@ -373,7 +389,9 @@ impl Fieldbook {
         }
         let mut seen: Vec<Species> = Vec::new();
         for sighting in &self.sightings {
-            if !seen.iter().any(|known| known.code == sighting.code) {
+            if !seen.iter().any(|known| {
+                same_species(&known.code, &known.common, &sighting.code, &sighting.common)
+            }) {
                 seen.push(Species {
                     code: sighting.code.clone(),
                     common: sighting.common.clone(),
@@ -397,7 +415,11 @@ impl Fieldbook {
                     || species.common.to_lowercase().contains(&needle)
                     || species.scientific.to_lowercase().contains(&needle)
                     || species.code.to_lowercase().contains(&needle);
-                if matches && !found.iter().any(|known| known.code == species.code) {
+                if matches
+                    && !found.iter().any(|known| {
+                        same_species(&known.code, &known.common, &species.code, &species.common)
+                    })
+                {
                     found.push(species.clone());
                 }
             }
@@ -414,11 +436,9 @@ impl Fieldbook {
         let Some(outing) = self.open_outing else {
             return;
         };
-        if let Some(row) = self
-            .sightings
-            .iter_mut()
-            .find(|s| s.outing == outing && s.code == species.code)
-        {
+        if let Some(row) = self.sightings.iter_mut().find(|s| {
+            s.outing == outing && same_species(&s.code, &s.common, &species.code, &species.common)
+        }) {
             row.count = row.count.saturating_add(1);
         } else {
             self.sightings.push(Sighting {
@@ -512,93 +532,117 @@ impl Fieldbook {
         screen
     }
 
-    fn home_screen(&self) -> Screen {
-        let mut s = self.top("Fieldbook");
-        if let Some(notice) = &self.pack_notice {
-            s = s.banner(BannerLevel::Attention, notice.clone());
+    fn paged_rows(
+        context: &Context,
+        screen: ScreenBuilder,
+        rows: &[(String, String, String, Glyph)],
+        page: usize,
+        bottom_bar: bool,
+    ) -> (ScreenBuilder, usize) {
+        let labels = rows
+            .iter()
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_under(
+            &labels,
+            bottom_bar,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen.rows(visible.iter().map(|&index| rows[index].clone()));
+        if count > 1 {
+            screen = screen
+                .page_turns("list-previous", "list-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
         }
-        if self.packs.is_empty() {
-            s = s.secondary(
-                "No field pack yet. Push one with `kobo fieldbook` from a computer; logging works without one.",
-            );
+        (screen, count)
+    }
+
+    fn home_screen(&self, context: &Context) -> (Screen, usize) {
+        let mut screen = self.top("Fieldbook");
+        if let Some(notice) = &self.pack_notice {
+            screen = screen.banner(BannerLevel::Attention, notice);
+        }
+        screen = if self.packs.is_empty() {
+            screen.secondary("No field pack yet. Push one with `kobo fieldbook` from a computer; logging works without one.")
         } else {
-            s = s.secondary(format!(
+            screen.secondary(format!(
                 "{} pack{}, {} species.",
                 self.packs.len(),
                 if self.packs.len() == 1 { "" } else { "s" },
-                self.packs.iter().map(|p| p.species.len()).sum::<usize>()
-            ));
-        }
+                self.packs
+                    .iter()
+                    .map(|pack| pack.species.len())
+                    .sum::<usize>()
+            ))
+        };
         if let Some(outing) = self.open() {
-            let (species, individuals) = self.outing_totals(outing.id);
-            s = s.section(format!(
-                "Open outing: {} · {} · {} · {} species, {} birds",
-                outing.location, outing.date, outing.start, species, individuals
-            ));
-            s = s.buttons([("resume", "Resume tally"), ("finish", "Finish outing")]);
+            let (species, birds) = self.outing_totals(outing.id);
+            screen = screen
+                .secondary(format!(
+                    "Open outing: {} · {} · {} · {} species, {} birds",
+                    outing.location, outing.date, outing.start, species, birds
+                ))
+                .buttons([("resume", "Resume tally"), ("finish", "Finish outing")]);
         } else {
-            s = s.buttons([("new-outing", "Start an outing")]);
+            screen = screen.buttons([("new-outing", "Start an outing")]);
         }
-        let recent: Vec<(String, String, String, Glyph)> = self
+        let rows = self
             .outings
             .iter()
             .rev()
-            .take(6)
             .map(|outing| {
                 let (species, _) = self.outing_totals(outing.id);
                 (
                     format!("outing-{}", outing.id),
-                    format!("{} · {}", outing.location, outing.date),
+                    context.clamped_row(&format!("{} · {}", outing.location, outing.date), 2, true),
                     format!("{species} species"),
                     Glyph::Check,
                 )
             })
-            .collect();
-        s.rows(recent)
-            .nav_bar(
-                Some(0),
-                [
-                    ("home", "Today"),
-                    ("packs", "Packs"),
-                    ("search", "Search"),
-                    ("life", "Life list"),
-                    ("export", "Export"),
-                ],
-            )
-            .build()
+            .collect::<Vec<_>>();
+        let (screen, count) = Self::paged_rows(context, screen, &rows, self.home_page, true);
+        (screen.nav_bar(Some(0), Self::tab_bar()).build(), count)
     }
 
-    fn packs_screen(&self) -> Screen {
-        let mut s = self.top("Field packs");
+    fn packs_screen(&self, context: &Context) -> (Screen, usize) {
+        let mut screen = self.top("Field packs");
         if self.packs.is_empty() {
-            s = s.splash(
-                Some(Glyph::Search),
-                "No field pack yet",
-                "Push a pack with `kobo fieldbook` from a computer. Sightings logged now stay on this reader and join any pack you import later.",
-            );
+            screen=screen.splash(Some(Glyph::Search),"No field pack yet","Push a pack with `kobo fieldbook` from a computer. Sightings logged now stay on this reader and join any pack you import later.");
             if let Some(notice) = &self.pack_notice {
-                s = s.banner(BannerLevel::Attention, notice.clone());
+                screen = screen.banner(BannerLevel::Attention, notice);
             }
-            return s.build();
+            return (screen.nav_bar(Some(1), Self::tab_bar()).build(), 1);
         }
         for (input, reason) in &self.pack_failures {
-            s = s.secondary(format!("{input}: {reason}"));
+            screen = screen.secondary(format!("{input}: {reason}"));
         }
-        s.rows(self.packs.iter().take(6).enumerate().map(|(index, pack)| {
-            (
-                format!("pack-{index}"),
-                pack.title.clone(),
-                format!(
-                    "{} · issued {} · {} species",
-                    pack.region,
-                    pack.issued,
-                    pack.species.len()
-                ),
-                Glyph::Search,
-            )
-        }))
-        .nav_bar(Some(1), Self::tab_bar())
-        .build()
+        let rows = self
+            .packs
+            .iter()
+            .enumerate()
+            .map(|(index, pack)| {
+                (
+                    format!("pack-{index}"),
+                    context.clamped_row(&pack.title, 2, true),
+                    format!(
+                        "{} · issued {} · {} species",
+                        pack.region,
+                        pack.issued,
+                        pack.species.len()
+                    ),
+                    Glyph::Search,
+                )
+            })
+            .collect::<Vec<_>>();
+        let (screen, count) = Self::paged_rows(context, screen, &rows, self.packs_page, true);
+        (screen.nav_bar(Some(1), Self::tab_bar()).build(), count)
     }
 
     fn search_screen(&self) -> Screen {
@@ -670,7 +714,10 @@ impl Fieldbook {
                 let logged: u32 = self
                     .sightings
                     .iter()
-                    .filter(|s| s.outing == outing.id && s.code == bird.code)
+                    .filter(|s| {
+                        s.outing == outing.id
+                            && same_species(&s.code, &s.common, &bird.code, &bird.common)
+                    })
                     .map(|s| u32::from(s.count))
                     .sum();
                 (
@@ -764,90 +811,146 @@ impl Fieldbook {
             })
     }
 
-    fn sightings_screen(&self) -> Screen {
-        let mut s = self.top("Sightings");
+    fn sightings_screen(&self, context: &Context) -> (Screen, usize) {
+        let mut screen = self.top("Sightings");
         let Some(outing) = self.open() else {
-            return s
-                .splash(None, "No open outing", "Start an outing from Today.")
-                .build();
+            return (
+                screen
+                    .splash(None, "No open outing", "Start an outing from Today.")
+                    .build(),
+                1,
+            );
         };
         if self.deleted.is_some() {
-            s = s.banner(BannerLevel::Info, "Sighting deleted.");
+            screen = screen.banner(BannerLevel::Info, "Sighting deleted.");
         }
-        let rows: Vec<(usize, &Sighting)> = self
+        let rows = self
             .sightings
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.outing == outing.id)
-            .collect();
+            .filter(|(_, sighting)| sighting.outing == outing.id)
+            .map(|(index, sighting)| {
+                (
+                    format!("sight-{index}"),
+                    context.clamped_row(
+                        &format!("{} ×{}", sighting.common, sighting.count),
+                        2,
+                        self.deleted.is_some(),
+                    ),
+                    format!("{} · {}", sighting.code, outing.date),
+                    Glyph::Check,
+                )
+            })
+            .collect::<Vec<_>>();
         if rows.is_empty() {
-            let mut screen = s.splash(
+            screen = screen.splash(
                 Some(Glyph::Search),
                 "Nothing logged",
                 "Tally a species on the outing screen.",
             );
-            if self.deleted.is_some() {
-                screen = screen.button("undo", "Undo delete");
-            }
-            return screen.build();
+        } else {
+            screen = screen.secondary("Tap a sighting to review its removal.");
         }
-        let mut screen = s.rows(rows.iter().take(6).map(|(index, sighting)| {
-            (
-                format!("sight-{index}"),
-                format!("{} ×{}", sighting.common, sighting.count),
-                format!("{} · {}", sighting.code, outing.date),
-                Glyph::Check,
-            )
-        }));
+        let (mut screen, count) = Self::paged_rows(
+            context,
+            screen,
+            &rows,
+            self.sightings_page,
+            self.deleted.is_some(),
+        );
         if self.deleted.is_some() {
-            screen = screen.button("undo", "Undo delete");
+            screen = screen.bottom_action("undo", "Undo delete");
         }
-        screen.build()
+        if let Some(sighting) = self
+            .delete_candidate
+            .and_then(|index| self.sightings.get(index))
+        {
+            screen = screen.confirm(
+                "Delete sighting?",
+                format!(
+                    "Remove {} ×{} from this outing? You can undo this deletion.",
+                    context.clamped_row(&sighting.common, 2, false),
+                    sighting.count
+                ),
+                ("delete-sighting", "Delete"),
+                ("keep-sighting", "Keep sighting"),
+            );
+        }
+        (screen.build(), count)
     }
 
-    fn life_screen(&self) -> Screen {
-        let mut s = self.top("Life list");
-        let mut totals: Vec<(&str, &str, u32)> = Vec::new();
+    fn life_totals(&self) -> Vec<(&Sighting, u32)> {
+        let mut totals: Vec<(&Sighting, u32)> = Vec::new();
         for sighting in &self.sightings {
-            if let Some((_, _, total)) = totals
-                .iter_mut()
-                .find(|(_, code, _)| *code == sighting.code)
-            {
+            if let Some((_, total)) = totals.iter_mut().find(|(known, _)| {
+                same_species(&known.code, &known.common, &sighting.code, &sighting.common)
+            }) {
                 *total += u32::from(sighting.count);
             } else {
-                totals.push((&sighting.common, &sighting.code, u32::from(sighting.count)));
+                totals.push((sighting, u32::from(sighting.count)));
             }
         }
+        totals
+    }
+
+    fn life_screen(&self, context: &Context) -> (Screen, usize) {
+        let mut screen = self.top("Life list");
+        let totals = self.life_totals();
         if totals.is_empty() {
-            return s
-                .splash(
-                    Some(Glyph::Search),
-                    "No birds logged",
-                    "Start an outing from Today; every sighting joins this list.",
-                )
-                .build();
-        }
-        s = s.secondary(format!("{} species on this reader.", totals.len()));
-        s.rows(
-            totals
-                .iter()
-                .take(6)
-                .enumerate()
-                .map(|(index, (common, code, total))| {
-                    (
-                        format!("life-{index}"),
-                        (*common).to_owned(),
-                        if code.is_empty() {
-                            format!("{total} birds")
-                        } else {
-                            format!("{code} · {total} birds")
-                        },
-                        Glyph::Check,
+            return (
+                screen
+                    .splash(
+                        Some(Glyph::Search),
+                        "No birds logged",
+                        "Start an outing from Today; every sighting joins this list.",
                     )
-                }),
-        )
-        .nav_bar(Some(3), Self::tab_bar())
-        .build()
+                    .nav_bar(Some(3), Self::tab_bar())
+                    .build(),
+                1,
+            );
+        }
+        screen = screen.secondary(format!("{} species on this reader.", totals.len()));
+        let rows = totals
+            .iter()
+            .enumerate()
+            .map(|(index, (sighting, total))| {
+                (
+                    format!("life-{index}"),
+                    context.clamped_row(&sighting.common, 2, true),
+                    if sighting.code.is_empty() {
+                        format!("{total} birds")
+                    } else {
+                        format!("{} · {total} birds", sighting.code)
+                    },
+                    Glyph::Check,
+                )
+            })
+            .collect::<Vec<_>>();
+        let (screen, count) = Self::paged_rows(context, screen, &rows, self.life_page, true);
+        (screen.nav_bar(Some(3), Self::tab_bar()).build(), count)
+    }
+
+    fn turn_list(&mut self, context: &Context, forward: bool) {
+        let count = match self.view {
+            View::Home => self.home_screen(context).1,
+            View::Packs => self.packs_screen(context).1,
+            View::Sightings => self.sightings_screen(context).1,
+            View::Life => self.life_screen(context).1,
+            _ => return,
+        };
+        let page = match self.view {
+            View::Home => &mut self.home_page,
+            View::Packs => &mut self.packs_page,
+            View::Sightings => &mut self.sightings_page,
+            View::Life => &mut self.life_page,
+            _ => return,
+        };
+        let last = count.saturating_sub(1);
+        *page = if forward {
+            page.saturating_add(1).min(last)
+        } else {
+            (*page).min(last).saturating_sub(1)
+        };
     }
 
     fn export_screen(&self) -> Screen {
@@ -900,12 +1003,12 @@ impl Fieldbook {
 
     fn screen(&self, context: &Context) -> Screen {
         match self.view {
-            View::Home => self.home_screen(),
-            View::Packs => self.packs_screen(),
+            View::Home => self.home_screen(context).0,
+            View::Packs => self.packs_screen(context).0,
             View::Search => self.search_screen(),
             View::Outing => self.outing_screen(context.metrics()),
-            View::Sightings => self.sightings_screen(),
-            View::Life => self.life_screen(),
+            View::Sightings => self.sightings_screen(context).0,
+            View::Life => self.life_screen(context).0,
             View::Export => self.export_screen(),
             View::Detail => self.detail_screen(),
         }
@@ -931,6 +1034,56 @@ impl Fieldbook {
         });
         self.open_outing = Some(id);
         self.persist(context);
+        self.view = View::Outing;
+    }
+
+    fn handle_delete_confirmation(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let Some(index) = self.delete_candidate else {
+            return false;
+        };
+        {
+            if action == action_id("delete-sighting") {
+                self.delete_candidate = None;
+                if let Some(sighting) = self.sightings.get(index).cloned() {
+                    self.deleted = Some((index, sighting));
+                    self.sightings.remove(index);
+                    self.persist(context);
+                    self.sightings_page = self
+                        .sightings_page
+                        .min(self.sightings_screen(context).1.saturating_sub(1));
+                }
+            } else if action == action_id("keep-sighting") || action == ActionId::BACK {
+                self.delete_candidate = None;
+            }
+            true
+        }
+    }
+
+    fn open_life_entry(&mut self, index: usize) {
+        if let Some((sighting, _)) = self.life_totals().get(index) {
+            self.detail = Some(Species {
+                code: sighting.code.clone(),
+                common: sighting.common.clone(),
+                scientific: sighting.scientific.clone(),
+                photo: None,
+            });
+            self.view = View::Detail;
+        }
+    }
+
+    fn log_manual(&mut self, context: &mut Context) {
+        let name = clean(&self.query);
+        if !name.is_empty() {
+            self.log_sighting(
+                context,
+                Species {
+                    code: String::new(),
+                    common: name,
+                    scientific: String::new(),
+                    photo: None,
+                },
+            );
+        }
         self.view = View::Outing;
     }
 
@@ -1047,12 +1200,32 @@ impl KoboApp for Fieldbook {
         }
     }
 
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.delete_candidate.is_none()
+            && matches!(
+                self.view,
+                View::Home | View::Packs | View::Sightings | View::Life
+            )
+        {
+            self.turn_list(context, forward);
+            self.show(context);
+        }
+    }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.handle_delete_confirmation(context, action) {
+            self.show(context);
+            return;
+        }
         if self.handle_keyboards(context, action) {
             return;
         }
         if action == ActionId::BACK || action == action_id("back") || action == action_id("home") {
             self.view = View::Home;
+        } else if action == action_id("list-next") {
+            self.turn_list(context, true);
+        } else if action == action_id("list-previous") {
+            self.turn_list(context, false);
         } else if action == action_id("packs") {
             self.view = View::Packs;
         } else if action == action_id("search") {
@@ -1087,19 +1260,7 @@ impl KoboApp for Fieldbook {
             }
             self.view = View::Outing;
         } else if action == action_id("log-manual") {
-            let name = clean(&self.query);
-            if !name.is_empty() {
-                self.log_sighting(
-                    context,
-                    Species {
-                        code: String::new(),
-                        common: name,
-                        scientific: String::new(),
-                        photo: None,
-                    },
-                );
-            }
-            self.view = View::Outing;
+            self.log_manual(context);
         } else if action == action_id("write-export") {
             self.export(context);
         } else if let Some(index) =
@@ -1117,25 +1278,23 @@ impl KoboApp for Fieldbook {
             if let Some(species) = self.outing_species().get(index).cloned() {
                 self.log_sighting(context, species);
             }
-        } else if let Some(index) = (0..6).find(|i| {
-            self.outings.len() > *i
-                && action
-                    == action_id(&format!(
-                        "outing-{}",
-                        self.outings[self.outings.len() - 1 - i].id
-                    ))
-        }) {
-            let outing = self.outings[self.outings.len() - 1 - index].id;
-            self.open_outing = Some(outing);
-            self.view = View::Outing;
-        } else if let Some(index) =
-            (0..self.sightings.len()).find(|i| action == action_id(&format!("sight-{i}")))
+        } else if let Some(outing) = self
+            .outings
+            .iter()
+            .find(|outing| action == action_id(&format!("outing-{}", outing.id)))
         {
-            if let Some(sighting) = self.sightings.get(index).cloned() {
-                self.deleted = Some((index, sighting));
-                self.sightings.remove(index);
-                self.persist(context);
-            }
+            self.open_outing = Some(outing.id);
+            self.view = View::Outing;
+            self.outing_page = 0;
+            self.sightings_page = 0;
+        } else if let Some(index) = (0..self.sightings.len()).find(|index| {
+            self.view == View::Sightings && action == action_id(&format!("sight-{index}"))
+        }) {
+            self.delete_candidate = Some(index);
+        } else if let Some(index) = (0..self.life_totals().len())
+            .find(|index| self.view == View::Life && action == action_id(&format!("life-{index}")))
+        {
+            self.open_life_entry(index);
         } else if action == action_id("undo") {
             if let Some((index, sighting)) = self.deleted.take() {
                 self.sightings
@@ -1160,3 +1319,6 @@ fn main() -> ExitCode {
         |()| ExitCode::SUCCESS,
     )
 }
+
+#[cfg(test)]
+mod list_tests;
