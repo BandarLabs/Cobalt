@@ -25,6 +25,18 @@ impl Origin {
     }
 }
 
+/// Supplemental read-only evidence. Never used to select a runtime decoder.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InputObservation {
+    pub name: String,
+    pub path: String,
+    /// Kernel capability bitmaps, with their EV/KEY/ABS/SW labels preserved.
+    pub capabilities: Vec<String>,
+    /// Successful query results labeled by absolute-axis number.
+    pub axes: Vec<String>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Observation {
     pub origin: Origin,
@@ -34,6 +46,7 @@ pub struct Observation {
     /// Explicitly observed runtime backends. Empty means none verified; it
     /// never means every backend is available. Names use manifest spelling.
     pub available_backends: Vec<String>,
+    pub input_devices: Vec<InputObservation>,
 }
 
 impl Observation {
@@ -46,6 +59,7 @@ impl Observation {
             captured_at,
             snapshot,
             available_backends: Vec::new(),
+            input_devices: Vec::new(),
         }
     }
 
@@ -71,6 +85,13 @@ impl Observation {
             .set("origin", self.origin.name())
             .set("captured_at", self.captured_at.to_string())
             .set("observed", snapshot_value(&self.snapshot))
+            .set(
+                "input_devices",
+                self.input_devices
+                    .iter()
+                    .map(input_value)
+                    .collect::<Vec<_>>(),
+            )
             .set("inferred", inferred)
             .set(
                 "available_backends",
@@ -155,8 +176,61 @@ impl Observation {
             captured_at,
             snapshot,
             available_backends,
+            input_devices: parse_inputs(&value)?,
         })
     }
+}
+
+fn input_value(input: &InputObservation) -> Value {
+    Object::new()
+        .set("name", input.name.clone())
+        .set("path", input.path.clone())
+        .set(
+            "capabilities",
+            input
+                .capabilities
+                .iter()
+                .map(|s| Value::from(s.as_str()))
+                .collect::<Vec<_>>(),
+        )
+        .set(
+            "axes",
+            input
+                .axes
+                .iter()
+                .map(|s| Value::from(s.as_str()))
+                .collect::<Vec<_>>(),
+        )
+        .set(
+            "error",
+            input.error.as_deref().map_or(Value::Null, Value::from),
+        )
+        .build()
+}
+
+fn parse_inputs(value: &Value) -> Result<Vec<InputObservation>, String> {
+    // Old version-1 observations lack this additive evidence field.
+    let Ok(value) = field(value, "input_devices") else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(inputs) = value else {
+        return Err("invalid input inventory".into());
+    };
+    if inputs.len() > 32 {
+        return Err("too many input devices".into());
+    }
+    inputs
+        .iter()
+        .map(|v| {
+            Ok(InputObservation {
+                name: string(v, "name")?,
+                path: string(v, "path")?,
+                capabilities: strings(v, "capabilities", 4)?,
+                axes: strings(v, "axes", 4)?,
+                error: optional_string(v, "error")?,
+            })
+        })
+        .collect()
 }
 
 fn optional<T>(
@@ -328,6 +402,23 @@ fn parse_touch(v: &Value) -> Result<TouchSnapshot, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn supplementary_inputs_round_trip_without_qualifying_hardware() {
+        let mut observation = Observation::probe(DeviceSnapshot::default(), 1);
+        observation.input_devices.push(super::InputObservation {
+            name: "unknown touch".into(),
+            path: "/dev/input/event4".into(),
+            capabilities: vec!["B: ABS=3".into()],
+            axes: vec!["0:0..599".into()],
+            error: Some("query unavailable".into()),
+        });
+        let json = observation.to_json().unwrap();
+        assert_eq!(Observation::parse(&json).unwrap(), observation);
+        assert!(json.contains("\"inferred\":null"));
+        observation.input_devices = vec![observation.input_devices[0].clone(); 33];
+        assert!(observation.to_json().is_err());
+    }
+
     #[test]
     fn full_synthetic_fixture_round_trips_and_keeps_its_origin() {
         let source = include_str!("../../../docs/quality/fixtures/clara-bw-synthetic.json");

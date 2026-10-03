@@ -28,6 +28,23 @@ pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+/// Enables nonblocking I/O on a pipe or socket while preserving its flags.
+///
+/// # Errors
+/// Returns the underlying descriptor error. This does not bound sysfs reads.
+pub fn set_nonblocking(fd: &impl AsRawFd) -> io::Result<()> {
+    // SAFETY: fcntl only inspects/updates flags on the borrowed live descriptor.
+    let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: F_SETFL takes these integer flags and does not retain a pointer.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// How many bytes are still free on the filesystem `path` lives on.
 ///
 /// # Why anything needs to ask
