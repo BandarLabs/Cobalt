@@ -7,10 +7,12 @@ fixtures added here are original; no external implementation was imported.
 ## Boundaries
 
 - Provisional display selection requires exact qualified device-tree tokens
-  (`fsl,imx6sll` / its existing board alias, `mediatek,mt8110`, or
-  `mediatek,mt8512`) and the matching framebuffer ID. Generic vendor names,
-  legacy i.MX50/i.MX6SL, i.MX6ULL, marketing-only MT8113, contradictory families,
-  and framebuffer mismatches are refused. Existing measured profiles are
+  (`fsl,imx6sll` / its existing board alias, `fsl,imx6ull`, `mediatek,mt8110`,
+  or `mediatek,mt8512`) and the matching framebuffer ID. Generic vendor names,
+  legacy i.MX50/i.MX6SL, marketing-only MT8113, contradictory families, and
+  framebuffer mismatches are refused. The i.MX6ULL Nia keeps the provisional
+  path beta already gave it, because its 4.1.15 EPDC driver takes the same
+  72-byte request as the i.MX6SLL readers. Existing measured profiles are
   unchanged. Provisional profiles remain not write-ready.
 - Passive Wi-Fi tracing retains the `wakeup_count` field as `not-sampled` and
   never opens the sysfs node. A numeric parsing limit was not a read deadline.
@@ -21,15 +23,20 @@ fixtures added here are original; no external implementation was imported.
   pipes, a 64 KiB output ceiling, and owned-child kill/reap cleanup. Inherited
   output pipes cannot keep the caller waiting indefinitely. Credentials stay
   on stdin and are never logged or placed in process arguments.
-- A scan uses an attached interactive firmware client and requires an OK reply
-  followed by a completion event within twelve seconds. Busy, failed, timed-out,
-  and incomplete scans do not return cached results. A disconnected status does
-  not label a remembered SSID connected. Disabled interfaces are not raised by
-  scanning.
+- A scan sends one bounded `scan` command and returns the supplicant's current
+  results without waiting for the new scan to finish. Requests are answered on
+  the session loop, and Settings rescans every five seconds while the Wi-Fi list
+  is shown, so waiting would freeze touch and drawing for most of that time. The
+  next request reports what this one started. `FAIL-BUSY` means a scan is
+  already running and fills the same results, so it is accepted; any other
+  reply fails. A disconnected status does not label a remembered SSID
+  connected. Disabled interfaces are not raised by scanning.
 - The Wi-Fi backend resolves the unique current sysfs wireless marker instead
   of using the hand-back code's cached fallback. Missing, changed, or ambiguous
   interfaces are refused; `mlan0` and other kernel names need no whitelist.
-  Existing hand-back ownership logic is unchanged.
+  `network::wireless_link`, used by status and hand-back checks, now detects
+  the interface on every call instead of caching its first answer, so a radio
+  that appears late as `eth0` is no longer misnamed for the whole session.
 - Join configuration is acknowledged one step at a time before selection and
   saving. Failures remove only the newly allocated network. After a selection
   attempt, restoration of the previous current/enabled networks is best-effort;
@@ -43,7 +50,9 @@ fixtures added here are original; no external implementation was imported.
   not runtime routing choices. No events are consumed and no device is grabbed.
   Missing inventory/open errors are retained; serial/unique IDs are excluded.
   The optional `input_devices` observation field preserves version-1 parsing
-  and roundtrips; it does not select profiles or authorize writes.
+  and roundtrips; it does not select profiles or authorize writes. At most 16
+  nodes and 128 characters per name or capability line are kept, so the
+  largest inventory still fits the 32 KiB observation limit.
 
 No legacy display backend, suspend path, new decoder, profile, authentication
 mode, or sandbox fallback is introduced. Read-only discovery on an older kernel
@@ -86,13 +95,12 @@ Rust 1.85.1, host Linux, no physical reader:
   or dynamic dependency section. C dependencies used Zig 0.16.0 with musl headers.
 
 Tests cover conservative ABI refusal, observation compatibility, unknown and
-separate input nodes, omitted wakeup handshake, delayed scan events, stalled
-stdin, inherited stdout, excessive output, nonzero exit, child reaping, join
+separate input nodes, omitted wakeup handshake, accepted and busy scan replies,
+stalled stdin, inherited stdout, excessive output, nonzero exit, child reaping, join
 failure ordering, disconnected SSIDs, and changing/ambiguous wireless links.
 
 No attended display, input, radio, hand-back, suspend, or Settings/About photo
-was obtained. Firmware interactive-client behavior and real hardware timing
-remain unverified. Keep this PR draft pending review and attended qualification;
+was obtained. Real hardware timing remains unverified. Keep this PR draft pending review and attended qualification;
 nothing was merged, deployed, or installed on a reader.
 
 ## Review follow-up
@@ -107,3 +115,17 @@ all-target/all-feature Clippy for HAL/trace, formatting, and whitespace checks.
 Wi-Fi module documentation now describes unique sysfs discovery and per-exchange
 revalidation rather than the hand-back module's cached fallback. These changes
 add no hardware qualification or runtime behavior.
+
+## Merge-readiness fixes
+
+- Scan no longer waits up to twelve seconds for a completion event on the
+  session loop, and no longer reports `FAIL-BUSY` as "another application
+  holds this resource". This also removes the dependency on the firmware's
+  interactive `wpa_cli` printing scan events, which had not been seen on a
+  reader. The interactive monitor in `wifi_process` is gone; the tool runner
+  now returns the reply together with its exit status, because `wpa_cli`
+  builds differ on whether `FAIL-BUSY` exits non-zero.
+- `network::wireless_link` re-detects on every call.
+- `fsl,imx6ull` is accepted with `mxc_epdc_fb`, restoring the Nia's beta
+  behaviour without readmitting i.MX6SL or i.MX50.
+- Input inventory is bounded so a full doctor observation always parses.

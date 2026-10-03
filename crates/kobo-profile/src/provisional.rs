@@ -144,6 +144,14 @@ pub fn profile_from_probe(
     Ok(Box::leak(Box::new(profile)))
 }
 
+/// The i.MX device-tree roots whose EPDC driver takes the 72-byte update.
+///
+/// The i.MX6SLL readers and the i.MX6ULL Nia ship the 4.1.15 EPDC driver with
+/// the 72-byte request. The i.MX6SL and i.MX50 readers before them use the
+/// 68-byte request under the same `mxc_epdc_fb` name, which is why a family
+/// prefix cannot stand in for these exact roots.
+const MXCFB_V2_ROOTS: [&str; 3] = ["fsl,imx6sll", "fsl,imx6sll-lpddr3-arm2", "fsl,imx6ull"];
+
 /// Select only qualified compatible tokens and the matching framebuffer ID.
 /// The same framebuffer ID exists on older, incompatible i.MX drivers.
 fn controller_for(
@@ -151,11 +159,10 @@ fn controller_for(
     framebuffer_id: &str,
 ) -> Result<FramebufferController, String> {
     let has = |token: &str| compatible.iter().any(|name| name == token);
-    let imx = has("fsl,imx6sll") || has("fsl,imx6sll-lpddr3-arm2");
+    let imx = MXCFB_V2_ROOTS.iter().any(|root| has(root));
     let mtk = has("mediatek,mt8110") || has("mediatek,mt8512");
     let conflicting = compatible.iter().any(|name| {
-        (name.starts_with("fsl,imx")
-            && !matches!(name.as_str(), "fsl,imx6sll" | "fsl,imx6sll-lpddr3-arm2"))
+        (name.starts_with("fsl,imx") && !MXCFB_V2_ROOTS.contains(&name.as_str()))
             || name.starts_with("allwinner,")
             || (imx && name.starts_with("mediatek,"))
             || (mtk && (name.starts_with("fsl,") || name.starts_with("freescale,")))
@@ -267,7 +274,7 @@ mod tests {
         for tokens in [
             vec!["fsl,imx50"],
             vec!["fsl,imx6sl"],
-            vec!["fsl,imx6ull"],
+            vec!["fsl,imx6ull", "fsl,imx6sl"],
             vec!["fsl,generic"],
             vec!["freescale"],
             vec!["mediatek,mt8113"],
@@ -286,10 +293,20 @@ mod tests {
             }
         }
         assert!(super::controller_for(&["fsl,imx6sll".into()], "hwtcon").is_err());
+        assert!(super::controller_for(&["fsl,imx6ull".into()], "hwtcon").is_err());
         assert!(super::controller_for(&["mediatek,mt8512".into()], "mxc_epdc_fb").is_err());
         assert_eq!(
             super::controller_for(&["mediatek,mt8512".into()], "hwtcon").unwrap(),
             FramebufferController::Hwtcon
+        );
+    }
+
+    #[test]
+    fn the_nia_root_selects_the_72_byte_update_its_driver_takes() {
+        assert_eq!(
+            super::controller_for(&["kobo,nia".into(), "fsl,imx6ull".into()], "mxc_epdc_fb")
+                .unwrap(),
+            FramebufferController::MxcfbV2
         );
     }
 

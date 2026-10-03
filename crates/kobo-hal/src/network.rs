@@ -50,12 +50,14 @@ pub const DHCP_EXECUTABLE: &str = "/sbin/dhcpcd";
 /// one such interface on any of these devices. Falls back to `wlan0` when
 /// nothing can be read, which matches every device this was measured against
 /// before it was detected instead of hardcoded.
+///
+/// Looked up on every call rather than once per process. A radio whose driver
+/// is still loading has no interface yet, so the first answer can be the
+/// fallback, and a cached fallback would then misname an `eth0` radio for the
+/// rest of the session. One directory read is cheap next to that.
 #[must_use]
-pub fn wireless_link() -> &'static str {
-    static LINK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    LINK.get_or_init(|| {
-        detect_wireless_link(Path::new("/sys/class/net")).unwrap_or_else(|| "wlan0".to_owned())
-    })
+pub fn wireless_link() -> String {
+    detect_wireless_link(Path::new("/sys/class/net")).unwrap_or_else(|| "wlan0".to_owned())
 }
 
 /// The pure half of [`wireless_link`], taking the root so it can be tested
@@ -176,7 +178,7 @@ impl Connection {
         Self {
             daemons,
             uncertain,
-            was_online: is_online(wireless_link()),
+            was_online: is_online(&wireless_link()),
         }
     }
 
@@ -232,7 +234,7 @@ impl Connection {
         if !self.was_online {
             return Ok(Restored::Unaffected);
         }
-        if !went_offline(wireless_link(), SETTLE) {
+        if !went_offline(&wireless_link(), SETTLE) {
             return Ok(Restored::Unaffected);
         }
         for daemon in &self.daemons {
@@ -241,7 +243,7 @@ impl Connection {
             }
             daemon.start(within)?;
         }
-        Ok(if wait_until_online(wireless_link(), within) {
+        Ok(if wait_until_online(&wireless_link(), within) {
             Restored::Restarted
         } else {
             Restored::StillDown
@@ -263,7 +265,7 @@ impl Connection {
                 uncertain_executables,
             };
         }
-        if !went_offline(wireless_link(), SETTLE) {
+        if !went_offline(&wireless_link(), SETTLE) {
             return SessionConnection {
                 outcome: Restored::Unaffected,
                 started: Vec::new(),
@@ -303,7 +305,7 @@ impl Connection {
                 Err(error) => start_errors.push(error),
             }
         }
-        let outcome = if wait_until_online(wireless_link(), within) {
+        let outcome = if wait_until_online(&wireless_link(), within) {
             Restored::Restarted
         } else {
             Restored::StillDown

@@ -25,6 +25,17 @@ impl Origin {
     }
 }
 
+/// The most input nodes an observation records.
+///
+/// Together with [`MAX_INPUT_TEXT`] this keeps a full inventory well inside
+/// [`MAX_BYTES`]. Without the bound, a reader with many verbose input nodes
+/// would produce an observation its own parser refuses, and the doctor would
+/// report nothing at all. A Kobo exposes four to six.
+pub const MAX_INPUT_DEVICES: usize = 16;
+
+/// The most characters kept from one input name or capability line.
+pub const MAX_INPUT_TEXT: usize = 128;
+
 /// Supplemental read-only evidence. Never used to select a runtime decoder.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InputObservation {
@@ -216,7 +227,7 @@ fn parse_inputs(value: &Value) -> Result<Vec<InputObservation>, String> {
     let Value::Array(inputs) = value else {
         return Err("invalid input inventory".into());
     };
-    if inputs.len() > 32 {
+    if inputs.len() > MAX_INPUT_DEVICES {
         return Err("too many input devices".into());
     }
     inputs
@@ -415,8 +426,28 @@ mod tests {
         let json = observation.to_json().unwrap();
         assert_eq!(Observation::parse(&json).unwrap(), observation);
         assert!(json.contains("\"inferred\":null"));
-        observation.input_devices = vec![observation.input_devices[0].clone(); 33];
+        observation.input_devices =
+            vec![observation.input_devices[0].clone(); MAX_INPUT_DEVICES + 1];
         assert!(observation.to_json().is_err());
+    }
+
+    #[test]
+    fn the_largest_inventory_the_probe_can_record_still_parses() {
+        let long = "x".repeat(MAX_INPUT_TEXT);
+        let mut observation = Observation::probe(DeviceSnapshot::default(), 1);
+        observation.input_devices = vec![
+            super::InputObservation {
+                name: long.clone(),
+                path: "/dev/input/event31".into(),
+                capabilities: vec![long.clone(); 4],
+                axes: vec!["53:-2147483648..2147483647".into(); 4],
+                error: Some("open read-only: permission denied".into()),
+            };
+            MAX_INPUT_DEVICES
+        ];
+        let json = observation.to_json().unwrap();
+        assert!(json.len() <= MAX_BYTES, "{} bytes", json.len());
+        assert_eq!(Observation::parse(&json).unwrap(), observation);
     }
 
     #[test]

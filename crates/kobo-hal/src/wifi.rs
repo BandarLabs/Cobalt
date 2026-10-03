@@ -13,8 +13,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+/// How long one `wpa_cli` exchange may take before it counts as hung.
+///
+/// Requests are answered on the session loop, so this is also the longest a
+/// stuck supplicant can freeze touch and drawing per command. A healthy reply
+/// arrives in milliseconds.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
-const SCAN_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Where the firmware might keep `wpa_cli`. The Clara BW puts it in `/bin`;
 /// the conventional places are checked too, because this list costs one
@@ -126,16 +130,22 @@ impl Wifi {
         self.state()
     }
 
+    /// Starts a scan and answers with the results the supplicant already has.
+    ///
+    /// Does not wait for the scan it starts. Requests are answered on the
+    /// session loop and a radio scan takes seconds, so waiting here would
+    /// freeze touch and drawing for all of it, and Settings asks again every
+    /// few seconds while the list is on screen. The scan one request starts is
+    /// what the next request reports. `FAIL-BUSY` means a scan is already
+    /// running, often the supplicant's own while it is not associated, and it
+    /// fills the same results, so it is not a failure either.
     #[must_use]
     pub fn scan(&self) -> DeviceResult {
         if !interface_enabled(&self.link) {
             return self.state();
         }
-        if let Err(error) = self.scan_complete() {
-            return match error {
-                ScanError::Busy => DeviceResult::Denied(kobo_protocol::DenyReason::Busy),
-                ScanError::Failed(error) => DeviceResult::Failed(error),
-            };
+        if let Err(error) = self.request_scan() {
+            return DeviceResult::Failed(error);
         }
         let results = match self.command(["scan_results"]) {
             Ok(results) => results,
@@ -221,9 +231,12 @@ impl Wifi {
         self.require_link()?;
         let mut command = Command::new(&self.wpa_cli);
         command.args(["-i", self.link.as_str()]).args(arguments);
-        let stdout = super::wifi_process::run(&mut command, b"", COMMAND_TIMEOUT, None)
+        let reply = super::wifi_process::run(&mut command, b"", COMMAND_TIMEOUT)
             .map_err(|error| process_error(&error))?;
-        let stdout = checked_reply(stdout)?;
+        let stdout = checked_reply(reply.text)?;
+        if !reply.success {
+            return Err(DeviceError::Backend);
+        }
         if matches!(
             arguments.first(),
             Some(&"status" | &"scan_results" | &"list_networks" | &"add_network")
@@ -240,10 +253,12 @@ impl Wifi {
         self.require_link()?;
         let mut command = Command::new(&self.wpa_cli);
         command.args(["-i", self.link.as_str()]);
-        let stdout =
-            super::wifi_process::run(&mut command, commands.as_bytes(), COMMAND_TIMEOUT, None)
-                .map_err(|error| process_error(&error))?;
-        let stdout = checked_reply(stdout)?;
+        let reply = super::wifi_process::run(&mut command, commands.as_bytes(), COMMAND_TIMEOUT)
+            .map_err(|error| process_error(&error))?;
+        let stdout = checked_reply(reply.text)?;
+        if !reply.success {
+            return Err(DeviceError::Backend);
+        }
         if reply_ok(&stdout) {
             Ok(stdout)
         } else {
@@ -251,30 +266,13 @@ impl Wifi {
         }
     }
 
-    fn scan_complete(&self) -> Result<(), ScanError> {
-        self.require_link().map_err(ScanError::Failed)?;
+    fn request_scan(&self) -> Result<(), DeviceError> {
+        self.require_link()?;
         let mut command = Command::new(&self.wpa_cli);
-        command.args(["-i", self.link.as_str()]);
-        // Interactive wpa_cli attaches before reading commands. Keep its input
-        // open until the completion/failure event, not a fixed settling delay.
-        let output =
-            super::wifi_process::run(&mut command, b"scan\n", SCAN_TIMEOUT, Some(scan_finished))
-                .map_err(|error| ScanError::Failed(process_error(&error)))?;
-        if output
-            .lines()
-            .any(|line| line.trim().trim_start_matches("> ") == "FAIL-BUSY")
-        {
-            return Err(ScanError::Busy);
-        }
-        if output.contains("CTRL-EVENT-SCAN-FAILED") {
-            return Err(ScanError::Failed(DeviceError::Backend));
-        }
-        checked_reply(output.clone()).map_err(ScanError::Failed)?;
-        if scan_succeeded(&output) {
-            Ok(())
-        } else {
-            Err(ScanError::Failed(DeviceError::Backend))
-        }
+        command.args(["-i", self.link.as_str(), "scan"]);
+        let reply = super::wifi_process::run(&mut command, b"", COMMAND_TIMEOUT)
+            .map_err(|error| process_error(&error))?;
+        scan_accepted(&reply.text)
     }
 }
 
@@ -302,12 +300,6 @@ fn configure_join(
         }
     }
     (Ok(()), true)
-}
-
-#[derive(Debug, PartialEq)]
-enum ScanError {
-    Busy,
-    Failed(DeviceError),
 }
 
 fn process_error(error: &std::io::Error) -> DeviceError {
@@ -379,25 +371,15 @@ fn checked_reply(output: String) -> Result<String, DeviceError> {
     }
 }
 
-fn scan_succeeded(output: &str) -> bool {
-    let mut accepted = false;
-    for line in output.lines() {
-        if line.trim().trim_start_matches("> ") == "OK" {
-            accepted = true;
-        }
-        if accepted && line.contains("CTRL-EVENT-SCAN-RESULTS") {
-            return true;
-        }
+/// Whether the supplicant took the scan request, or already has one running.
+///
+/// Read from the reply rather than the exit status, which differs between
+/// `wpa_cli` builds for `FAIL-BUSY`.
+fn scan_accepted(reply: &str) -> Result<(), DeviceError> {
+    match reply.lines().map(str::trim).find(|line| !line.is_empty()) {
+        Some("OK" | "FAIL-BUSY") => Ok(()),
+        _ => Err(DeviceError::Backend),
     }
-    false
-}
-
-pub(super) fn scan_finished(output: &str) -> bool {
-    scan_succeeded(output)
-        || output.contains("CTRL-EVENT-SCAN-FAILED")
-        || output
-            .lines()
-            .any(|line| line.trim().trim_start_matches("> ").starts_with("FAIL"))
 }
 
 fn connected_ssid(status: &str) -> Option<&str> {
@@ -427,13 +409,8 @@ fn set_interface(link: &str, enabled: bool) -> bool {
         ("/bin/ifconfig", vec![link, state]),
     ] {
         if Path::new(tool).is_file()
-            && super::wifi_process::run(
-                Command::new(tool).args(arguments),
-                b"",
-                COMMAND_TIMEOUT,
-                None,
-            )
-            .is_ok()
+            && super::wifi_process::run(Command::new(tool).args(arguments), b"", COMMAND_TIMEOUT)
+                .is_ok_and(|reply| reply.success)
         {
             return true;
         }
@@ -539,13 +516,21 @@ mod tests {
     }
 
     #[test]
-    fn scan_requires_acceptance_then_completion_and_rejects_busy() {
-        assert!(!super::scan_finished("OK\n"));
-        assert!(!super::scan_succeeded("CTRL-EVENT-SCAN-RESULTS\nOK\n"));
-        assert!(super::scan_succeeded("> OK\n<3>CTRL-EVENT-SCAN-RESULTS\n"));
-        assert!(super::scan_finished("FAIL-BUSY\n"));
-        assert!(super::checked_reply("FAIL-BUSY\n".into()).is_err());
-        assert!(super::scan_finished("OK\n<3>CTRL-EVENT-SCAN-FAILED\n"));
+    fn a_scan_already_running_counts_as_accepted_and_anything_else_fails() {
+        assert_eq!(super::scan_accepted("OK\n"), Ok(()));
+        assert_eq!(super::scan_accepted("FAIL-BUSY\n"), Ok(()));
+        assert_eq!(super::scan_accepted("\nOK\n"), Ok(()));
+        for reply in ["FAIL\n", "UNKNOWN COMMAND\n", "", "OKAY\n"] {
+            assert_eq!(
+                super::scan_accepted(reply),
+                Err(kobo_protocol::DeviceError::Backend),
+                "{reply:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_completed_association_names_a_connected_network() {
         assert_eq!(
             super::connected_ssid("wpa_state=SCANNING\nssid=old\n"),
             None

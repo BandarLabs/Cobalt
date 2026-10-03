@@ -226,7 +226,11 @@ fn input_inventory_from(content: &str) -> Vec<kobo_profile::observation::InputOb
                     .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
             })?;
             Some(kobo_profile::observation::InputObservation {
-                name: name.trim_matches('"').chars().take(256).collect(),
+                name: name
+                    .trim_matches('"')
+                    .chars()
+                    .take(kobo_profile::observation::MAX_INPUT_TEXT)
+                    .collect(),
                 path: format!("/dev/input/{event}"),
                 capabilities: block
                     .lines()
@@ -236,13 +240,17 @@ fn input_inventory_from(content: &str) -> Vec<kobo_profile::observation::InputOb
                             .any(|p| line.starts_with(p))
                     })
                     .take(4)
-                    .map(|line| line.chars().take(256).collect())
+                    .map(|line| {
+                        line.chars()
+                            .take(kobo_profile::observation::MAX_INPUT_TEXT)
+                            .collect()
+                    })
                     .collect(),
                 axes: Vec::new(),
                 error: None,
             })
         })
-        .take(32)
+        .take(kobo_profile::observation::MAX_INPUT_DEVICES)
         .collect()
 }
 

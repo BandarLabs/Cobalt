@@ -13,14 +13,20 @@ impl Drop for OwnedChild {
     }
 }
 
-/// Drain pipes while polling the child, including when a descendant retains a
-/// pipe. A monitor keeps stdin open until its completion predicate succeeds.
-pub(super) fn run(
-    command: &mut Command,
-    input: &[u8],
-    timeout: Duration,
-    monitor: Option<fn(&str) -> bool>,
-) -> io::Result<String> {
+/// What a tool printed, and whether it exited successfully.
+///
+/// Kept together rather than turning a failed exit into an error, because
+/// `wpa_cli` builds differ on whether a `FAIL-BUSY` reply exits non-zero, and
+/// that reply means a scan is already running, which the caller must be able
+/// to read whatever the exit status says.
+pub(super) struct Reply {
+    pub text: String,
+    pub success: bool,
+}
+
+/// Drains the output pipe while polling the child, so a descendant that keeps
+/// the pipe open cannot hold the caller past `timeout`.
+pub(super) fn run(command: &mut Command, input: &[u8], timeout: Duration) -> io::Result<Reply> {
     let deadline = Instant::now() + timeout;
     let mut child = OwnedChild(
         command
@@ -71,7 +77,7 @@ pub(super) fn run(
                 Err(e) => return Err(e),
             }
         }
-        if sent == input.len() && monitor.is_none() {
+        if sent == input.len() {
             stdin.take();
         }
         // One bounded read per iteration prevents a noisy child starving the deadline.
@@ -95,17 +101,12 @@ pub(super) fn run(
             }
             Err(e) => return Err(e),
         };
-        let text = String::from_utf8_lossy(&output);
-        if monitor.is_some_and(|done| done(&text)) {
-            return Ok(text.into_owned());
-        }
         if let Some(status) = child.0.try_wait()? {
             if eof {
-                return if status.success() && monitor.is_none() {
-                    Ok(text.into_owned())
-                } else {
-                    Err(io::Error::other("Wi-Fi tool failed"))
-                };
+                return Ok(Reply {
+                    text: String::from_utf8_lossy(&output).into_owned(),
+                    success: status.success(),
+                });
             }
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -122,16 +123,9 @@ mod tests {
     }
     #[test]
     fn drains_output_and_sends_private_input() {
-        assert_eq!(
-            run(
-                &mut shell("cat"),
-                b"private\n",
-                Duration::from_secs(1),
-                None
-            )
-            .unwrap(),
-            "private\n"
-        );
+        let reply = run(&mut shell("cat"), b"private\n", Duration::from_secs(1)).unwrap();
+        assert_eq!(reply.text, "private\n");
+        assert!(reply.success);
     }
     #[test]
     fn bounds_stalled_input_and_retained_output() {
@@ -140,31 +134,23 @@ mod tests {
             ("sleep 1 & exit 0", Vec::new()),
         ] {
             let start = Instant::now();
-            assert!(run(&mut shell(script), &input, Duration::from_millis(40), None).is_err());
+            assert!(run(&mut shell(script), &input, Duration::from_millis(40)).is_err());
             assert!(start.elapsed() < Duration::from_millis(800));
         }
     }
     #[test]
-    fn monitor_waits_for_completion_and_reaps_its_child() {
-        let marker = std::env::temp_dir().join(format!("cobalt-wifi-child-{}", std::process::id()));
-        let mut command = shell("echo $$ > \"$PID_FILE\"; read request; printf 'OK\\n'; sleep 0.03; printf '<3>CTRL-EVENT-SCAN-RESULTS\\n'; exec sleep 60");
-        command.env("PID_FILE", &marker);
-        let output = run(
-            &mut command,
-            b"scan\n",
+    fn a_failed_exit_still_hands_back_what_the_tool_said() {
+        let reply = run(
+            &mut shell("printf 'FAIL-BUSY\\n'; exit 255"),
+            b"",
             Duration::from_secs(1),
-            Some(crate::wifi::scan_finished),
         )
         .unwrap();
-        assert!(output.contains("CTRL-EVENT-SCAN-RESULTS"));
-        let pid = std::fs::read_to_string(&marker).unwrap();
-        assert!(!std::path::Path::new(&format!("/proc/{}", pid.trim())).exists());
-        std::fs::remove_file(marker).unwrap();
+        assert_eq!(reply.text, "FAIL-BUSY\n");
+        assert!(!reply.success);
     }
-
     #[test]
-    fn bounds_excess_output_and_rejects_exit_failure() {
-        assert!(run(&mut shell("yes output"), b"", Duration::from_secs(1), None).is_err());
-        assert!(run(&mut shell("exit 1"), b"", Duration::from_secs(1), None).is_err());
+    fn bounds_excess_output() {
+        assert!(run(&mut shell("yes output"), b"", Duration::from_secs(1)).is_err());
     }
 }
