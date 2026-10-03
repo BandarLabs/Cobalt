@@ -89,10 +89,16 @@ fn parse_push(arguments: &[String]) -> Result<(String, Vec<String>, Target), Str
                 index += 2;
             }
             "--sim" => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
                 target = Some(Target::Sim);
                 index += 1;
             }
             flag if super::is_device_flag(flag) => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
                 let Some(host) = arguments.get(index + 1) else {
                     return Err(USAGE.to_owned());
                 };
@@ -705,4 +711,56 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
             &output,
         ))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn flag_like_hosts_fail_before_input_or_network() {
+        let base = ["/nonexistent", "--exclude", "fixture"]
+            .map(str::to_owned)
+            .to_vec();
+        for flag in ["--device", "-s"] {
+            for host in ["--sim", "--device", "-s", "-reader", ""] {
+                let target = [flag.to_owned(), host.to_owned()];
+                assert!(parse_target(&target).unwrap_err().contains("device host"));
+                let remove_args = ["fixture".to_owned(), flag.to_owned(), host.to_owned()];
+                assert!(remove(&remove_args).unwrap_err().contains("device host"));
+                for first in [false, true] {
+                    let mut arguments = base.clone();
+                    let index = if first { 1 } else { arguments.len() };
+                    arguments.splice(index..index, [flag.to_owned(), host.to_owned()]);
+                    let error = parse_push(&arguments).expect_err("invalid host rejected");
+                    assert!(error.contains("device host"), "{arguments:?}: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn single_destinations_remain_valid() {
+        for flags in [&["--sim"][..], &["--device", "fixture"]] {
+            let mut arguments = vec!["/nonexistent".to_owned()];
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert!(parse_push(&arguments).is_ok());
+        }
+    }
+    #[test]
+    fn ambiguous_destinations_fail_before_input_is_read() {
+        for flags in [
+            &["--sim", "--sim"][..],
+            &["--sim", "--device", "fixture"],
+            &["--device", "fixture", "--sim"],
+            &["--device", "fixture", "--device", "fixture"],
+        ] {
+            let mut arguments: Vec<String> = ["/nonexistent"]
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect();
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert_eq!(parse_push(&arguments).err().unwrap(), USAGE);
+        }
+    }
+
+    use super::*;
 }

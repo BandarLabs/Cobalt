@@ -151,6 +151,11 @@ impl Birds {
     }
 
     fn reload(&mut self, context: &mut Context) {
+        // A snapshot and its image form one transfer. Replacing either
+        // buffer while a chunk is in flight misreads its offset as missing.
+        if self.snapshot_load.is_some() || self.image_load.is_some() {
+            return;
+        }
         self.loading = true;
         self.notice = None;
         self.snapshot_load = Some(ShelfDownload::new(SNAPSHOT).at_most(MAX_JSON));
@@ -627,3 +632,6 @@ mod tests {
         assert!(issues.is_empty(), "{issues:?}");
     }
 }
+
+#[cfg(test)]
+mod refresh_tests;

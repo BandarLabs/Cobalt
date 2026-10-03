@@ -6,8 +6,9 @@ clean
 shot parser-library
 tap Lamplight
 # At larger text scales the opening spans the page turn; the crate line
-# is what lands on the final page at every scale.
-wait-for pool of light.
+# ends in light. on the final page at every scale; match the final word
+# because the preceding words may wrap between text primitives.
+wait-for light.
 clean
 shot parser-opening
 tap Keyboard
@@ -23,7 +24,7 @@ clean
 shot parser-restore-picker
 tap Story checkpoint
 # At large text scales the room description spans the page turn; the last
-# line is what lands on the final page at every scale.
-wait-for pool of light.
+# word is what lands on the final page at every scale.
+wait-for light.
 clean
 shot parser-restored

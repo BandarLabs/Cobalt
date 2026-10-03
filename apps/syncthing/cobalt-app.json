@@ -4,8 +4,8 @@
   "short_label": "Sync",
   "summary": "Sync folders between your computer and Kobo with Syncthing, on a schedule.",
   "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.",
-  "version": "0.3.1",
-  "release_notes": "Clearer description and setup steps in the Store. No change to how the app works.",
+  "version": "0.3.2",
+  "release_notes": "The reader Back control returns from setup, folders and About to Sync status without changing the running transfer or schedule.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"

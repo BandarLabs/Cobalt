@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.5",
-  "release_notes": "Pads carry their whole key name, wrapped instead of cut; commands, apps, and links each draw their own mark; places nobody has assigned stay paper.",
+  "version": "0.2.6",
+  "release_notes": "Read long command output page by page without clipped lines, and return to the deck with the reader Back control.",
   "glyph": "grid",
   "capabilities": [
     "network"

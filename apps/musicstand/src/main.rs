@@ -72,6 +72,9 @@ struct Stand {
     menu_open: bool,
     notice: Option<String>,
     startup: Startup,
+    library_page: usize,
+    setlists_page: usize,
+    setlist_page: usize,
     manifest_load: Option<ShelfDownload>,
     page_load: Option<ShelfDownload>,
     page_load_key: Option<String>,
@@ -287,13 +290,48 @@ impl Stand {
         }
     }
 
-    fn library(&self) -> Screen {
+    /// Keep every score reachable and reserve the bottom bar before measuring.
+    fn paged_rows(
+        context: &Context,
+        screen: ScreenBuilder,
+        rows: &[(String, String, String)],
+        page: usize,
+    ) -> (ScreenBuilder, usize) {
+        let labels = rows
+            .iter()
+            .map(|(_, title, detail)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_under(
+            &labels,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen.rows(visible.iter().map(|&index| {
+            let (action, title, detail) = &rows[index];
+            (action.clone(), title.clone(), detail.clone(), Glyph::Note)
+        }));
+        if count > 1 {
+            screen = screen
+                .page_turns("list-previous", "list-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
+        }
+        (screen, count)
+    }
+
+    fn library(&self, context: &Context) -> (Screen, usize) {
         let mut screen = ScreenBuilder::new("music-library").top_bar("Music Stand");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
         if !self.startup.manifest_loaded {
-            return screen.activity("Opening your music shelf", None).build();
+            return (screen.activity("Opening your music shelf", None).build(), 1);
         }
         for (input, reason) in &self.failures {
             screen = screen.banner(
@@ -302,33 +340,38 @@ impl Stand {
             );
         }
         if self.scores.is_empty() {
-            return screen
-                .splash(
-                    Some(Glyph::Note),
-                    "Your stand is empty",
-                    "On your computer, run `kobo musicstand init --device IP`, then `kobo musicstand push SCORE.pdf --device IP`.",
+            return (screen.splash(
+                Some(Glyph::Note),
+                "Your stand is empty",
+                "On your computer, run `kobo musicstand init --device IP`, then `kobo musicstand push SCORE.pdf --device IP`.",
+            ).build(), 1);
+        }
+        let rows = self
+            .scores
+            .iter()
+            .map(|score| {
+                let state = self.state_of(&score.id);
+                let detail = if state.marked {
+                    format!("{} pages · page {} marked", score.pages, state.page + 1)
+                } else {
+                    format!("{} pages", score.pages)
+                };
+                (
+                    format!("{OPEN}-{}", score.id),
+                    context.clamped_row(&score.title, 2, true),
+                    detail,
                 )
-                .build();
-        }
-        let mut screen = screen.heading("Library");
-        for score in &self.scores {
-            let state = self.state_of(&score.id);
-            let detail = if state.marked {
-                format!("{} pages · page {} marked", score.pages, state.page + 1)
-            } else {
-                format!("{} pages", score.pages)
-            };
-            screen = screen.rows([(
-                format!("{OPEN}-{}", score.id),
-                score.title.clone(),
-                detail,
-                Glyph::Note,
-            )]);
-        }
-        screen
-            .button(SETLISTS, "Setlists")
-            .button(ABOUT, "Add scores")
-            .build()
+            })
+            .collect::<Vec<_>>();
+        let (screen, pages) =
+            Self::paged_rows(context, screen.heading("Library"), &rows, self.library_page);
+        (
+            screen
+                .top_bar_action(ABOUT, "Add scores")
+                .bottom_action(SETLISTS, "Setlists")
+                .build(),
+            pages,
+        )
     }
 
     fn stand(&self) -> Screen {
@@ -402,28 +445,33 @@ impl Stand {
         screen.build().with_own_back(true)
     }
 
-    fn setlists(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("music-setlists")
+    fn setlists(&self, context: &Context) -> (Screen, usize) {
+        let screen = ScreenBuilder::new("music-setlists")
             .top_bar("Music Stand")
-            .heading("Setlists");
-        for (index, list) in self.setlists.iter().enumerate() {
-            screen = screen.rows([(
-                format!("list-{index}"),
-                list.name.clone(),
-                format!("{} scores", list.entries.len()),
-                Glyph::Note,
-            )]);
-        }
-        screen
-            .secondary("Setlists keep their order for rehearsal and gigs.")
-            .button("new-list", "New setlist from the library")
-            .button(LIBRARY, "Library")
-            .build()
+            .heading("Setlists")
+            .secondary("New setlist copies every score in library order.");
+        let rows = self
+            .setlists
+            .iter()
+            .enumerate()
+            .map(|(index, list)| {
+                (
+                    format!("list-{index}"),
+                    context.clamped_row(&list.name, 2, true),
+                    format!("{} scores", list.entries.len()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (screen, pages) = Self::paged_rows(context, screen, &rows, self.setlists_page);
+        (
+            screen.bottom_action("new-list", "New setlist").build(),
+            pages,
+        )
     }
 
-    fn setlist(&self, index: usize) -> Screen {
+    fn setlist(&self, index: usize, context: &Context) -> (Screen, usize) {
         let Some(list) = self.setlists.get(index) else {
-            return self.setlists();
+            return self.setlists(context);
         };
         let mut screen = ScreenBuilder::new("music-setlist")
             .top_bar("Setlist")
@@ -432,26 +480,53 @@ impl Stand {
             screen = screen.splash(
                 Some(Glyph::Note),
                 "No scores on this setlist yet",
-                "On Setlists, choose New setlist from the library to copy every score on the shelf.",
+                "On Setlists, choose New setlist to copy every score on the shelf.",
             );
         }
-        for (position, id) in list.entries.iter().enumerate() {
-            let Some(score) = self.scores.iter().find(|score| &score.id == id) else {
-                continue;
-            };
-            let state = self.state_of(id);
-            screen = screen.rows([(
-                format!("entry-{position}"),
-                format!("{}. {}", position + 1, score.title),
-                format!("resume at page {}", state.page + 1),
-                Glyph::Note,
-            )]);
-        }
-        let mut buttons = vec![(SETLISTS.to_owned(), "All setlists".to_owned())];
-        if !list.entries.is_empty() {
-            buttons.push(("remove-last".to_owned(), "Remove last score".to_owned()));
-        }
-        screen.buttons(buttons).build()
+        let rows = list
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(position, id)| {
+                let score = self.scores.iter().find(|score| &score.id == id)?;
+                let state = self.state_of(id);
+                Some((
+                    format!("entry-{position}"),
+                    context.clamped_row(&format!("{}. {}", position + 1, score.title), 2, true),
+                    format!("resume at page {}", state.page + 1),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let (screen, pages) = Self::paged_rows(context, screen, &rows, self.setlist_page);
+        let screen = if list.entries.is_empty() {
+            screen.bottom_action(SETLISTS, "All setlists")
+        } else {
+            screen.bottom_action("remove-last", "Remove last score")
+        };
+        (screen.build(), pages)
+    }
+
+    fn turn_list(&mut self, context: &Context, forward: bool) {
+        let count = match self.view {
+            View::Library => self.library(context).1,
+            View::Setlists => self.setlists(context).1,
+            View::Setlist => self
+                .open_setlist
+                .map_or(1, |index| self.setlist(index, context).1),
+            _ => return,
+        };
+        let page = match self.view {
+            View::Library => &mut self.library_page,
+            View::Setlists => &mut self.setlists_page,
+            View::Setlist => &mut self.setlist_page,
+            _ => return,
+        };
+        let last = count.saturating_sub(1);
+        *page = if forward {
+            page.saturating_add(1).min(last)
+        } else {
+            (*page).min(last).saturating_sub(1)
+        };
     }
 
     fn about() -> Screen {
@@ -466,15 +541,16 @@ impl Stand {
 
     fn show(&self, context: &mut Context) {
         let screen = match self.view {
-            View::Library => self.library(),
+            View::Library => self.library(context).0,
             View::Stand => self.stand(),
-            View::Setlists => self.setlists(),
-            View::Setlist => self
-                .open_setlist
-                .map_or_else(|| self.setlists(), |index| self.setlist(index)),
+            View::Setlists => self.setlists(context).0,
+            View::Setlist => self.open_setlist.map_or_else(
+                || self.setlists(context).0,
+                |index| self.setlist(index, context).0,
+            ),
             View::About => Self::about(),
         };
-        context.set_screen(screen);
+        context.set_screen(screen.with_own_back(self.view != View::Library));
     }
 
     fn advance_manifest(&mut self, context: &mut Context, result: &StoreResult) -> bool {
@@ -613,8 +689,10 @@ impl KoboApp for Stand {
             } else {
                 self.previous(context);
             }
-            self.show(context);
+        } else {
+            self.turn_list(context, forward);
         }
+        self.show(context);
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -623,6 +701,7 @@ impl KoboApp for Stand {
                 View::Stand if self.menu_open => self.menu_open = false,
                 View::Stand => self.leave_stand(context),
                 View::Library => context.exit(),
+                View::Setlist => self.view = View::Setlists,
                 _ => self.view = View::Library,
             }
             self.show(context);
@@ -640,6 +719,7 @@ impl KoboApp for Stand {
             for index in 0..self.setlists.len() {
                 if action == action_id(&format!("list-{index}")) {
                     self.open_setlist = Some(index);
+                    self.setlist_page = 0;
                     self.view = View::Setlist;
                     handled = true;
                     break;
@@ -660,6 +740,10 @@ impl KoboApp for Stand {
             }
         }
         if handled {
+        } else if action == action_id("list-next") {
+            self.turn_list(context, true);
+        } else if action == action_id("list-previous") {
+            self.turn_list(context, false);
         } else if action == action_id(MENU) {
             self.menu_open = !self.menu_open;
         } else if action == action_id(ZOOM) {
@@ -691,6 +775,7 @@ impl KoboApp for Stand {
                 name: format!("Setlist {number}"),
                 entries: self.scores.iter().map(|score| score.id.clone()).collect(),
             });
+            self.setlists_page = self.setlists(context).1.saturating_sub(1);
             self.save(context);
         } else if action == action_id("remove-last") {
             if let Some(list) = self
@@ -846,7 +931,7 @@ mod tests {
             },
             ..Stand::default()
         };
-        let screen = stand.library();
+        let screen = stand.library(&Context::default()).0;
         assert!(screen
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
             .issues
@@ -855,7 +940,7 @@ mod tests {
             name: "Gig".to_owned(),
             entries: vec!["score-a".to_owned()],
         });
-        let screen = stand.setlist(0);
+        let screen = stand.setlist(0, &Context::default()).0;
         assert!(screen
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
             .issues
@@ -887,3 +972,6 @@ mod tests {
             .is_empty());
     }
 }
+
+#[cfg(test)]
+mod collection_tests;

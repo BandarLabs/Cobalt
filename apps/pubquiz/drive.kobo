@@ -10,7 +10,7 @@ expect setup
 clean
 shot setup
 tap Continue
-expect Pass-around players
+expect Players
 clean
 shot players
 tap Start round
