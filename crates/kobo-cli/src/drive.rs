@@ -237,6 +237,10 @@ impl Driver {
                 self.post("/device", rest)?;
                 self.wait_idle("")
             }
+            "wifi" => {
+                self.post("/wifi", rest)?;
+                self.wait_idle("")
+            }
             "clock" => {
                 self.post("/clock", rest)?;
                 self.wait_idle("")
@@ -275,6 +279,7 @@ impl Driver {
                 | "tasks"
                 | "panel"
                 | "device"
+                | "wifi"
                 | "clock"
                 | "scenario"
                 | "lifecycle"

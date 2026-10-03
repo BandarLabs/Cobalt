@@ -19,9 +19,11 @@ mod app_store;
 mod board_fixtures;
 mod capture;
 mod clock;
+mod facts;
 mod hardware;
 mod input;
 mod panel;
+mod radio;
 pub mod runtime;
 pub use capture::CaptureSource;
 use panel::PanelPreview;
@@ -191,6 +193,19 @@ fn profile_metrics() -> DisplayMetrics {
         text_scale: kobo_ui::display_metrics_from_env().text_scale,
     }
 }
+
+/// The facts about the selected reader that its panel profile does not hold.
+fn profile_facts() -> facts::Facts {
+    facts::facts(PROFILE.id).expect("every supported profile states its hardware facts")
+}
+
+/// One radio for the whole simulated reader.
+///
+/// Process-wide rather than per application session, because a reader has
+/// one radio: Settings joining a network must be what the next app sees, and
+/// a fault imposed from the controls must reach whichever app is in front.
+static RADIO: LazyLock<Mutex<radio::Radio>> =
+    LazyLock::new(|| Mutex::new(radio::Radio::new(profile_facts().wifi_bands)));
 
 fn physical_rect(orientation: kobo_ui::Orientation, rect: kobo_ui::Rect) -> kobo_ui::Rect {
     match orientation {
@@ -1189,6 +1204,12 @@ struct AppState {
     wake_until: u64,
     scheduled_wake: Option<u64>,
     terminal_open: bool,
+    /// Whether this reader has page-turn buttons to press.
+    ///
+    /// Copied from the profile's facts at session start rather than read from
+    /// them on each press, so a test can stand in for either kind of reader
+    /// while the process runs the default profile.
+    page_keys: bool,
 }
 
 impl Default for AppState {
@@ -1247,6 +1268,7 @@ impl AppState {
             wake_until: 0,
             scheduled_wake: None,
             terminal_open: false,
+            page_keys: profile_facts().page_keys,
         }
     }
 }
@@ -1441,11 +1463,24 @@ impl AppState {
             ));
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
             fields.push(("boardFixture".into(), board_fixtures::metadata(*PROFILE)));
-            fields.push(("wifiFixture".into(), self.wifi_fixture.name().into()));
             fields.push((
                 "nextShellFault".into(),
                 self.shell_fault
                     .map_or(kobo_json::Value::Null, |fault| format!("{fault:?}").into()),
+            ));
+            let facts = profile_facts();
+            fields.push((
+                "hardwareFacts".into(),
+                kobo_json::ObjectBuilder::new()
+                    .set("pageKeys", facts.page_keys)
+                    .set("wifiBands", facts.wifi_bands.name())
+                    .build(),
+            ));
+            fields.push((
+                "wifi".into(),
+                RADIO
+                    .lock()
+                    .map_or(kobo_json::Value::Null, |radio| radio.json()),
             ));
             fields.push(("input".into(), self.input.json()));
             fields.push(("power".into(), self.power_status.clone()));
@@ -1757,6 +1792,17 @@ impl AppSession {
                 }
                 "gpio" => {
                     if let Some(forward) = state.input.gpio(source)? {
+                        // Delivered on every profile, because the injection
+                        // contract lets an app's button path be exercised at
+                        // any panel size. Said in the log when the reader has
+                        // no such buttons, so a journey that only works by
+                        // pressing them is visible as one.
+                        if !state.page_keys {
+                            state.record(format!(
+                                "note: {} has no page-turn buttons; delivered for testing only",
+                                PROFILE.model
+                            ));
+                        }
                         let layout = state.screen.layout_with(
                             &profile_metrics().oriented(state.orientation),
                             &state.chrome,
@@ -2269,6 +2315,35 @@ impl AppSession {
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
                 let body = hardware::json(state.effective_hardware(), state.orientation).to_json();
                 write_response(&mut stream, 200, "application/json", body.as_bytes())
+            }
+            ("GET", "/wifi") => {
+                let body = RADIO
+                    .lock()
+                    .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+                    .json()
+                    .to_json();
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
+            }
+            ("POST", "/wifi") => {
+                match radio::Fault::parse(std::str::from_utf8(&request.body).unwrap_or("")) {
+                    Some(fault) => {
+                        RADIO
+                            .lock()
+                            .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+                            .set_fault(fault);
+                        self.state
+                            .lock()
+                            .map_err(|_| io::Error::other("app state lock poisoned"))?
+                            .record(format!("wifi fault: {}", fault.name()));
+                        write_response(&mut stream, 200, "text/plain", b"ok")
+                    }
+                    None => write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"wifi expects none, absent, hung, unresponsive, or wrong-password",
+                    ),
+                }
             }
             ("POST", "/device") => {
                 match self.change_hardware(std::str::from_utf8(&request.body).unwrap_or("")) {
@@ -2936,6 +3011,29 @@ impl Drop for SessionWorkers {
     }
 }
 
+/// Answers a Wi-Fi request from the simulated radio, once policy allows it.
+///
+/// Policy still decides first, exactly as on a device, so an undeclared app
+/// or a low battery is refused before the radio is asked anything. Reading
+/// the Wi-Fi state is how that decision is obtained without changing it.
+fn wifi_request(
+    services: &mut DeviceServices,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<Option<kobo_protocol::DeviceResult>> {
+    if !radio::is_wifi(request) {
+        return Ok(None);
+    }
+    if let refused @ kobo_protocol::DeviceResult::Denied(_) =
+        services.handle(kobo_protocol::DeviceRequest::ReadWifi)
+    {
+        return Ok(Some(refused));
+    }
+    Ok(RADIO
+        .lock()
+        .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+        .handle(request))
+}
+
 fn current_scenario(state: &Arc<Mutex<AppState>>) -> Scenario {
     state.lock().map_or_else(
         |poisoned| poisoned.into_inner().scenario,
@@ -3136,14 +3234,9 @@ fn read_app_messages(
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
                     state.observe_hardware();
-                    // Refuse a missing/down interface before touching service state.
-                    let mut result = if state.services.refusal_for(&request).is_none() {
-                        state
-                            .wifi_fixture
-                            .write_failure(&request)
-                            .unwrap_or_else(|| state.services.handle(request.clone()))
-                    } else {
-                        state.services.handle(request.clone())
+                    let mut result = match wifi_request(&mut state.services, &request)? {
+                        Some(result) => result,
+                        None => state.services.handle(request.clone()),
                     };
                     if matches!(
                         result,
@@ -5418,6 +5511,44 @@ mod tests {
         session.state.lock().unwrap().lifecycle = Lifecycle::Background;
         session.replay_input("gpio 1 194 1").unwrap();
         assert!(read_protocol_frame(&mut client).is_err());
+    }
+
+    #[test]
+    fn a_page_press_on_a_reader_without_buttons_is_delivered_and_noted() {
+        for page_keys in [false, true] {
+            let (mut client, server) = UnixStream::pair().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let mut state = AppState {
+                page_keys,
+                ..AppState::default()
+            };
+            state.set_screen(Screen::new(4, Vec::new()));
+            let session = AppSession {
+                state: Arc::new(Mutex::new(state)),
+                writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+            };
+            session.replay_input("gpio 1 194 1").unwrap();
+            assert_eq!(
+                read_protocol_frame(&mut client).unwrap().message,
+                Message::PageTurn { forward: true }
+            );
+            let noted = session
+                .state
+                .lock()
+                .unwrap()
+                .logs
+                .iter()
+                .any(|line| line.contains("no page-turn buttons"));
+            assert_eq!(noted, !page_keys);
+        }
+    }
+
+    #[test]
+    fn the_default_clara_bw_profile_has_no_page_buttons_and_hears_both_bands() {
+        assert!(!AppState::default().page_keys);
+        assert_eq!(profile_facts().wifi_bands, facts::Bands::Dual);
     }
 
     #[test]
