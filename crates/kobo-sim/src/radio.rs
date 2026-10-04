@@ -58,6 +58,31 @@ impl Fault {
     }
 }
 
+/// The interface states a board fixture can name, as the radio meets them.
+///
+/// Kept for `POST /wifi-fixture`, but answered the way the backend answers
+/// rather than with errors it never returns. A missing interface means the
+/// backend is not offered, which is the absent radio. An interface that is
+/// down is a radio switched off: reads say so, and a join or an enable brings
+/// it back up, because the backend raises the interface itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Interface {
+    Present,
+    Missing,
+    Down,
+}
+
+impl Interface {
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        match bytes {
+            b"normal" => Some(Self::Present),
+            b"interface-missing" => Some(Self::Missing),
+            b"interface-down" => Some(Self::Down),
+            _ => None,
+        }
+    }
+}
+
 struct Nearby {
     ssid: &'static str,
     signal_dbm: i16,
@@ -131,6 +156,27 @@ impl Radio {
         self.fault = fault;
         if fault == Fault::WrongPassword {
             self.joining = None;
+        }
+    }
+
+    pub fn set_interface(&mut self, interface: Interface) {
+        match interface {
+            Interface::Present => {
+                if self.fault == Fault::Absent {
+                    self.fault = Fault::None;
+                }
+                self.enabled = true;
+            }
+            Interface::Missing => self.fault = Fault::Absent,
+            Interface::Down => {
+                if self.fault == Fault::Absent {
+                    self.fault = Fault::None;
+                }
+                self.enabled = false;
+                self.connected = None;
+                self.joining = None;
+                self.results.clear();
+            }
         }
     }
 
@@ -412,6 +458,41 @@ mod tests {
         let scanned = radio.handle(&DeviceRequest::ScanWifi);
         assert_eq!(connected(scanned.clone()), None);
         assert!(networks(scanned).is_empty());
+    }
+
+    #[test]
+    fn a_fixture_interface_is_answered_as_the_backend_answers_it() {
+        let mut radio = Radio::new(Bands::Dual);
+        join(&mut radio, "Library Guest", "");
+        radio.handle(&DeviceRequest::ReadWifi);
+
+        radio.set_interface(Interface::Down);
+        assert_eq!(
+            radio.handle(&DeviceRequest::ReadWifi),
+            Some(DeviceResult::Wifi {
+                available: true,
+                enabled: false,
+                connected_ssid: None,
+                networks: Vec::new(),
+            })
+        );
+        join(&mut radio, "Library Guest", "");
+        assert_eq!(
+            connected(radio.handle(&DeviceRequest::ReadWifi)).as_deref(),
+            Some("Library Guest")
+        );
+
+        radio.set_interface(Interface::Missing);
+        assert_eq!(
+            radio.handle(&DeviceRequest::SetWifi { enabled: true }),
+            Some(DeviceResult::Denied(DenyReason::Unsupported))
+        );
+        radio.set_interface(Interface::Present);
+        assert!(matches!(
+            radio.handle(&DeviceRequest::ReadWifi),
+            Some(DeviceResult::Wifi { enabled: true, .. })
+        ));
+        assert_eq!(Interface::parse(b"interface-observed"), None);
     }
 
     #[test]
