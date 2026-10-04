@@ -194,9 +194,9 @@ async def main(args) -> int:
                 assert done.returncode == 0, (steps, log_path.read_text()[-1500:])
 
             if args.pairing:
-                await drive("wait-for Pair with your computer", "wait-idle", "shot pair-address")
+                await drive("wait-for Your computer's address", "wait-idle", "shot pair-address")
                 await drive("tap ?123", f"type 127.0.0.1:{port}", "wait-idle", "shot pair-address-typed", "tap Next",
-                            "wait-for Now the pairing code", "wait-idle", "shot pair-code")
+                            "wait-for Pairing code", "wait-idle", "shot pair-code")
                 await drive(*typing_steps(auth.code.lower(), "symbols"), "wait-idle", "shot pair-code-typed", "tap Pair",
                             "wait-for Waiting for Muse", "wait-idle", "shot pair-done")
                 return

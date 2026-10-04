@@ -126,13 +126,13 @@ impl Panel {
         match self.view {
             View::Opening => ScreenBuilder::new("muse-opening")
                 .top_bar(TITLE)
-                .activity("Opening", None)
+                .activity("Opening Muse", None)
                 .build(),
             View::Address => self.address_screen(),
             View::Code => self.code_screen(),
             View::Pairing => ScreenBuilder::new("muse-pairing")
                 .top_bar(TITLE)
-                .activity("Pairing", None)
+                .activity("Pairing with Muse", None)
                 .build(),
             View::Sending => ScreenBuilder::new("muse-sending")
                 .top_bar(TITLE)
@@ -246,9 +246,9 @@ impl Panel {
 
     fn address_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("muse-address")
-            .top_bar(TITLE)
-            .heading("Pair with your computer")
-            .text("On your computer, run kobo-bridge init. It prints an address and a code.");
+            .top_bar("Set up Muse")
+            .heading("Your computer's address")
+            .text("Run kobo-bridge init on the computer that talks to Muse, then type the address it shows.");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -261,12 +261,12 @@ impl Panel {
 
     fn code_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("muse-code")
-            .top_bar(TITLE)
-            .heading("Now the pairing code");
+            .top_bar("Set up Muse")
+            .heading("Pairing code");
         screen = if let Some(trouble) = &self.trouble {
             screen.banner(BannerLevel::Attention, trouble.clone())
         } else {
-            screen.text("The six characters shown beside the address.")
+            screen.text("Type the six characters shown under the address.")
         };
         let typed: Vec<char> = self.keyboard.text().trim().chars().collect();
         let boxes = (0..CODE_LENGTH).map(|slot| {
@@ -304,21 +304,24 @@ impl Panel {
             (true, Some(stamp)) => stamp,
             (false, Some(stamp)) => format!("{detail}\n{stamp}"),
         };
-        let mut screen = ScreenBuilder::new("muse-resting").top_bar(TITLE).splash(
-            Some(Glyph::Chat),
-            if !line.is_empty() {
-                line
-            } else if self.live.is_some() {
-                "Muse has nothing to show"
-            } else {
-                "Waiting for Muse"
-            },
-            detail,
-        );
+        let mut screen = ScreenBuilder::new("muse-resting")
+            .top_bar(TITLE)
+            .top_bar_glyph(REPAIR, "Pairing", Glyph::Settings)
+            .splash(
+                Some(Glyph::Chat),
+                if !line.is_empty() {
+                    line
+                } else if self.live.is_some() {
+                    "Nothing new from Muse"
+                } else {
+                    "Waiting for Muse"
+                },
+                detail,
+            );
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
-        screen.bottom_action(REPAIR, "Pairing").build()
+        screen.build()
     }
 
     fn ask_screen(
@@ -332,7 +335,7 @@ impl Panel {
             .top_bar("Muse asks")
             .heading(question.text.clone());
         if !question.context.is_empty() {
-            screen = screen.secondary(question.context.clone());
+            screen = screen.text(question.context.clone());
         }
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
@@ -386,8 +389,9 @@ impl Panel {
     // -- Pages ---------------------------------------------------------------
 
     fn page_screen(&self, title: &str, blocks: &[Block], page: usize, pages: usize) -> Screen {
-        let mut screen =
-            ScreenBuilder::new("muse-page").top_bar(if title.is_empty() { "Note" } else { title });
+        let mut screen = ScreenBuilder::new("muse-page")
+            .top_bar(if title.is_empty() { "Note" } else { title })
+            .spacer(Space::Small);
         for block in blocks {
             screen = add_block(screen, block, false);
         }
@@ -539,7 +543,7 @@ impl Panel {
             TaskOutcome::Failed(error) => {
                 self.trouble = Some(match error {
                     kobo_sdk::TaskError::NotFound | kobo_sdk::TaskError::Unauthorized => {
-                        "The bridge does not know this reader any more. Change pairing.".to_owned()
+                        "Muse no longer knows this reader. Open Pairing at the top to connect again.".to_owned()
                     }
                     other => Failure::of(other).advice.to_owned(),
                 });
@@ -583,10 +587,10 @@ impl Panel {
         self.trouble = Some(match outcome {
             TaskOutcome::Failed(
                 kobo_sdk::TaskError::NotFound | kobo_sdk::TaskError::Unauthorized,
-            ) => "That code was not accepted. Check it, or wait a minute after several tries."
+            ) => "That code did not work. Check it against your computer, or wait a minute if you have tried a few times."
                 .to_owned(),
             TaskOutcome::Failed(error) => Failure::of(*error).advice.to_owned(),
-            _ => "The bridge sent something unexpected.".to_owned(),
+            _ => "Muse sent something this reader did not understand.".to_owned(),
         });
         self.show(context);
     }
@@ -605,7 +609,7 @@ impl Panel {
                 // says which, so nothing is resent from here.
                 self.trouble = Some(match error {
                     kobo_sdk::TaskError::NotFound | kobo_sdk::TaskError::Unauthorized => {
-                        "That question is no longer waiting.".to_owned()
+                        "Muse has already moved on from that question.".to_owned()
                     }
                     other => Failure::of(*other).advice.to_owned(),
                 });
@@ -662,7 +666,7 @@ impl Panel {
             self.trouble = None;
             Some(address)
         } else {
-            self.trouble = Some("Enter the address shown on your computer.".to_owned());
+            self.trouble = Some("Type the address your computer shows.".to_owned());
             None
         }
     }
@@ -697,7 +701,7 @@ impl Panel {
                 View::Code => {
                     let code = self.keyboard.text().trim().to_uppercase();
                     if code.chars().count() != CODE_LENGTH {
-                        self.trouble = Some("Enter all six characters.".to_owned());
+                        self.trouble = Some("The code has six characters.".to_owned());
                         self.show(context);
                         return true;
                     }
@@ -1423,7 +1427,7 @@ mod tests {
         app.on_task(&mut context, task, TaskOutcome::Failed(TaskError::NotFound));
         let text = shown(&painted(&context.take_commands()).expect("drawn")).join(" ");
         assert!(
-            text.contains("no longer waiting") && text.contains("Move lunch"),
+            text.contains("already moved on") && text.contains("Move lunch"),
             "{text}"
         );
     }
@@ -1490,7 +1494,7 @@ mod tests {
                 "page":null,"ask":null,"image":null}"#,
         );
         let text = format!("{:?}", app.resting());
-        assert!(text.contains("Muse has nothing to show"));
+        assert!(text.contains("Nothing new from Muse"));
         assert!(!text.contains("Waiting for Muse"));
     }
 
@@ -1614,6 +1618,6 @@ mod tests {
             .trouble
             .as_deref()
             .unwrap_or("")
-            .contains("not accepted"));
+            .contains("did not work"));
     }
 }

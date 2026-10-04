@@ -125,7 +125,7 @@ Screenshots are from a Kobo Clara BW or its simulator.
 <tr>
 <td width="33%" valign="top"><a href="apps/magnet/README.md"><img width="230" src="docs/media/site/apps/magnet.png" alt="The Kobo hall sensor responding to a magnet"></a><br><b><a href="apps/magnet/README.md">Magnet</a></b><br>Find the hall sensor behind the bezel and watch it respond to a magnet.</td>
 <td width="33%" valign="top"><a href="apps/morse/README.md"><img width="230" src="docs/media/site/apps/morse.png" alt="A letter filling the Kobo screen while the front light sends Morse code"></a><br><b><a href="apps/morse/README.md">Morse</a></b><br>Type a message and send it in Morse code with the front light.</td>
-<td width="33%" valign="top"><a href="apps/muse-panel/README.md"><img width="230" src="docs/media/site/apps/muse-panel.png" alt="Muse Panel on a Kobo asking whether to move lunch with Priya, with three answers to tap."></a><br><b><a href="apps/muse-panel/README.md">Muse Panel</a></b><br>Let Muse show pages and ask questions on your Kobo.</td>
+<td width="33%" valign="top"><a href="apps/muse-panel/README.md"><img width="230" src="docs/media/site/apps/muse-panel.png" alt="Muse Panel in the Kobo simulator asking whether to move lunch with Priya, with three answers to tap."></a><br><b><a href="apps/muse-panel/README.md">Muse Panel</a></b><br>Let Muse show pages and ask questions on your Kobo.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/musicstand/README.md"><img width="230" src="docs/media/site/apps/musicstand.png" alt="Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."></a><br><b><a href="apps/musicstand/README.md">Music Stand</a></b><br>Read music scores with setlists and half-page turns.</td>
