@@ -16,6 +16,7 @@ use std::thread;
 // source so region and waveform decisions cannot drift.
 mod activity;
 mod app_store;
+mod board_fixtures;
 mod capture;
 mod clock;
 mod hardware;
@@ -259,6 +260,92 @@ impl Scenario {
         Self::ALL
             .into_iter()
             .find(|scenario| scenario.name() == name)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum WifiFixture {
+    #[default]
+    Normal,
+    InterfaceMissing,
+    InterfaceDown,
+}
+impl WifiFixture {
+    fn parse(bytes: &[u8]) -> Option<Self> {
+        match bytes {
+            b"normal" => Some(Self::Normal),
+            b"interface-missing" => Some(Self::InterfaceMissing),
+            b"interface-down" => Some(Self::InterfaceDown),
+            _ => None,
+        }
+    }
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::InterfaceMissing => "interface-missing",
+            Self::InterfaceDown => "interface-down",
+        }
+    }
+    fn write_failure(
+        self,
+        request: &kobo_protocol::DeviceRequest,
+    ) -> Option<kobo_protocol::DeviceResult> {
+        use kobo_protocol::{DeviceError, DeviceRequest, DeviceResult};
+        if !matches!(
+            request,
+            DeviceRequest::SetWifi { .. }
+                | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::DisconnectWifi
+        ) {
+            return None;
+        }
+        match self {
+            Self::Normal => None,
+            Self::InterfaceMissing => Some(DeviceResult::Failed(DeviceError::NotFound)),
+            Self::InterfaceDown => Some(DeviceResult::Failed(DeviceError::Unreachable)),
+        }
+    }
+    fn apply(
+        self,
+        request: &kobo_protocol::DeviceRequest,
+        result: kobo_protocol::DeviceResult,
+    ) -> kobo_protocol::DeviceResult {
+        use kobo_protocol::{DeviceRequest, DeviceResult};
+        if matches!(result, DeviceResult::Denied(_)) {
+            return result;
+        }
+        let wifi = matches!(
+            request,
+            DeviceRequest::ReadWifi
+                | DeviceRequest::SetWifi { .. }
+                | DeviceRequest::ScanWifi
+                | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::DisconnectWifi
+        );
+        if !wifi {
+            return result;
+        }
+        match self {
+            Self::Normal => result,
+            Self::InterfaceMissing => match request {
+                DeviceRequest::ReadWifi | DeviceRequest::ScanWifi => DeviceResult::Wifi {
+                    available: false,
+                    enabled: false,
+                    connected_ssid: None,
+                    networks: Vec::new(),
+                },
+                _ => DeviceResult::Failed(kobo_protocol::DeviceError::NotFound),
+            },
+            Self::InterfaceDown => match request {
+                DeviceRequest::ReadWifi | DeviceRequest::ScanWifi => DeviceResult::Wifi {
+                    available: true,
+                    enabled: false,
+                    connected_ssid: None,
+                    networks: Vec::new(),
+                },
+                _ => DeviceResult::Failed(kobo_protocol::DeviceError::Unreachable),
+            },
+        }
     }
 }
 
@@ -1092,6 +1179,9 @@ struct AppState {
     process_id: Option<u32>,
     protocol: u8,
     power_request: Option<runtime::power::Input>,
+    power_fault: Option<String>,
+    shell_fault: Option<kobo_protocol::ShellError>,
+    wifi_fixture: WifiFixture,
     power_state: kobod::power::State,
     power_generation: u64,
     power_status: kobo_json::Value,
@@ -1147,6 +1237,9 @@ impl AppState {
             process_id: None,
             protocol: kobo_protocol::VERSION,
             power_request: None,
+            power_fault: None,
+            shell_fault: None,
+            wifi_fixture: WifiFixture::Normal,
             power_state: kobod::power::State::Awake,
             power_generation: 0,
             power_status: kobo_json::Value::Null,
@@ -1347,6 +1440,13 @@ impl AppState {
                     .map_or(kobo_json::Value::Null, |apps| apps.metadata()),
             ));
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
+            fields.push(("boardFixture".into(), board_fixtures::metadata(*PROFILE)));
+            fields.push(("wifiFixture".into(), self.wifi_fixture.name().into()));
+            fields.push((
+                "nextShellFault".into(),
+                self.shell_fault
+                    .map_or(kobo_json::Value::Null, |fault| format!("{fault:?}").into()),
+            ));
             fields.push(("input".into(), self.input.json()));
             fields.push(("power".into(), self.power_status.clone()));
             fields.push((
@@ -1629,6 +1729,17 @@ impl AppSession {
                         }
                     }
                 }
+                "fixture-tap" => {
+                    if !source.is_empty() {
+                        return Err(io::Error::other("fixture-tap takes no arguments"));
+                    }
+                    let events = state.input.fixture_tap(&POSE, millis)?;
+                    for (event, held) in events {
+                        if let Some(message) = state.input_event(event, held) {
+                            messages.push(message);
+                        }
+                    }
+                }
                 "tap" => {
                     let (x, y) = parse_touch(source.as_bytes())
                         .ok_or_else(|| io::Error::other("invalid tap coordinates"))?;
@@ -1730,6 +1841,14 @@ impl AppSession {
             )?;
         }
         Ok(())
+    }
+
+    fn take_power_fault(&self) -> io::Result<Option<String>> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state unavailable"))?;
+        Ok(state.power_fault.take())
     }
 
     fn change_clock(&self, command: &str) -> io::Result<()> {
@@ -1996,6 +2115,85 @@ impl AppSession {
                     Err(error) => {
                         write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
                     }
+                }
+            }
+            ("POST", "/wifi-fixture") => {
+                let fixture = WifiFixture::parse(&request.body);
+                match fixture {
+                    Some(fixture) => {
+                        self.state
+                            .lock()
+                            .map_err(|_| io::Error::other("app state unavailable"))?
+                            .wifi_fixture = fixture;
+                        write_response(
+                            &mut stream,
+                            200,
+                            "text/plain",
+                            b"synthetic wifi fixture set",
+                        )
+                    }
+                    None => write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"wifi fixture expects normal, interface-missing, or interface-down",
+                    ),
+                }
+            }
+            ("POST", "/shell-fault") => {
+                let fault = match request.body.as_slice() {
+                    b"helper-missing" => Some(kobo_protocol::ShellError::Unavailable),
+                    b"helper-start-failed" => Some(kobo_protocol::ShellError::Failed),
+                    _ => None,
+                };
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
+                if !state.runtime_navigation || state.shell_fault.is_some() || fault.is_none() {
+                    write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"fault needs runtime mode and an empty slot",
+                    )
+                } else {
+                    state.shell_fault = fault;
+                    write_response(
+                        &mut stream,
+                        200,
+                        "text/plain",
+                        b"synthetic shell fault queued",
+                    )
+                }
+            }
+            ("POST", "/power-fault") => {
+                let command = std::str::from_utf8(&request.body).unwrap_or("");
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
+                if !state.runtime_navigation
+                    || state.power_fault.is_some()
+                    || command.len() > 32
+                    || !matches!(
+                        command,
+                        "permission-veto"
+                            | "alarm-absent"
+                            | "alarm-failed"
+                            | "immediate-wake"
+                            | "duplicate-wake"
+                    )
+                {
+                    write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"fault control needs runtime mode, known fault, and empty slot",
+                    )
+                } else {
+                    state.power_fault = Some(command.to_owned());
+                    write_response(&mut stream, 200, "text/plain", b"synthetic fault queued")
                 }
             }
             ("GET", "/power") => {
@@ -2803,6 +3001,26 @@ fn simulated_task_error(
     scenario_task_error(scenario, task)
 }
 
+fn take_shell_fault(
+    state: &mut AppState,
+    request: &kobo_protocol::ShellRequest,
+    declared: &kobo_policy::Declared,
+    backends: &kobo_policy::Declared,
+    paused: bool,
+    shell_open: bool,
+) -> Option<kobo_protocol::ShellError> {
+    if matches!(request, kobo_protocol::ShellRequest::Open { .. })
+        && !paused
+        && !shell_open
+        && declared.holds(kobo_policy::Capability::Shell)
+        && backends.holds(kobo_policy::Capability::Shell)
+    {
+        state.shell_fault.take()
+    } else {
+        None
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one exhaustive protocol message dispatcher"
@@ -2918,7 +3136,15 @@ fn read_app_messages(
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
                     state.observe_hardware();
-                    let mut result = state.services.handle(request.clone());
+                    // Refuse a missing/down interface before touching service state.
+                    let mut result = if state.services.refusal_for(&request).is_none() {
+                        state
+                            .wifi_fixture
+                            .write_failure(&request)
+                            .unwrap_or_else(|| state.services.handle(request.clone()))
+                    } else {
+                        state.services.handle(request.clone())
+                    };
                     if matches!(
                         result,
                         kobo_protocol::DeviceResult::Done
@@ -2953,6 +3179,7 @@ fn read_app_messages(
                             _ => {}
                         }
                     }
+                    result = state.wifi_fixture.apply(&request, result);
                     if let kobo_protocol::DeviceResult::Identity(identity) = &mut result {
                         identity.profile_id = format!("SIMULATOR:{}", PROFILE.id);
                         identity.model = format!("Simulated {}", PROFILE.model);
@@ -2999,11 +3226,20 @@ fn read_app_messages(
                 answer_store(writer, request_id, &store, &shelf, &request, state)?;
             }
             Message::ShellRequest(request) => {
-                let paused = state
+                let shell_open = shells
                     .lock()
-                    .map_err(|_| io::Error::other("app state unavailable"))?
-                    .power_state
-                    != kobod::power::State::Awake;
+                    .map_err(|_| io::Error::other("shell unavailable"))?
+                    .is_open();
+                let (paused, fault) = {
+                    let mut state = state
+                        .lock()
+                        .map_err(|_| io::Error::other("app state unavailable"))?;
+                    let paused = state.power_state != kobod::power::State::Awake;
+                    let fault = take_shell_fault(
+                        &mut state, &request, declared, &backends, paused, shell_open,
+                    );
+                    (paused, fault)
+                };
                 if paused {
                     write_shared(
                         writer,
@@ -3013,6 +3249,15 @@ fn read_app_messages(
                             message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
                                 kobo_protocol::ShellError::Unavailable,
                             )),
+                        },
+                    )?;
+                } else if let Some(fault) = fault {
+                    write_shared(
+                        writer,
+                        &Frame {
+                            version: kobo_protocol::VERSION,
+                            request_id,
+                            message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(fault)),
                         },
                     )?;
                 } else {
@@ -3621,6 +3866,190 @@ const SHELL: &str = include_str!("shell.html");
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn synthetic_wifi_interfaces_report_distinct_failures_without_mutating_the_radio() {
+        use super::WifiFixture;
+        use kobo_policy::{Backends, Declared, DeviceServices, PowerPolicy};
+        use kobo_protocol::{DeviceError, DeviceRequest, DeviceResult};
+        let allowed = Declared::parse(["wifi-control"]).unwrap();
+        let mut services = DeviceServices::new(
+            allowed.clone(),
+            PowerPolicy::DEFAULT,
+            Backends::with(allowed.iter()),
+        );
+        let read = DeviceRequest::ReadWifi;
+        let enable = DeviceRequest::SetWifi { enabled: true };
+        for fixture in [WifiFixture::InterfaceMissing, WifiFixture::InterfaceDown] {
+            let refusal = fixture.write_failure(&enable).unwrap();
+            assert_eq!(
+                refusal,
+                DeviceResult::Failed(if fixture == WifiFixture::InterfaceMissing {
+                    DeviceError::NotFound
+                } else {
+                    DeviceError::Unreachable
+                })
+            );
+            let before = services.handle(read.clone());
+            let after = fixture.apply(&read, before.clone());
+            assert!(
+                matches!(
+                    after,
+                    DeviceResult::Wifi {
+                        available: false,
+                        enabled: false,
+                        ..
+                    }
+                ) || matches!(
+                    after,
+                    DeviceResult::Wifi {
+                        available: true,
+                        enabled: false,
+                        ..
+                    }
+                )
+            );
+            assert_eq!(services.handle(read.clone()), before);
+        }
+        assert!(matches!(
+            services.handle(enable),
+            DeviceResult::Wifi { enabled: true, .. }
+        ));
+        assert!(matches!(
+            services.handle(read),
+            DeviceResult::Wifi { enabled: true, .. }
+        ));
+        assert_eq!(WifiFixture::parse(b"interface-observed"), None);
+    }
+
+    #[test]
+    fn shell_fault_preserves_declaration_backend_and_paused_refusals() {
+        let mut state = super::AppState {
+            shell_fault: Some(kobo_protocol::ShellError::Failed),
+            ..super::AppState::default()
+        };
+        let allowed = kobo_policy::Declared::parse(["shell"]).unwrap();
+        let denied = kobo_policy::Declared::parse([]).unwrap();
+        let open = kobo_protocol::ShellRequest::Open {
+            columns: 80,
+            rows: 24,
+        };
+        for (declared, backends, paused) in [
+            (&denied, &allowed, false),
+            (&allowed, &denied, false),
+            (&allowed, &allowed, true),
+        ] {
+            assert_eq!(
+                super::take_shell_fault(&mut state, &open, declared, backends, paused, false),
+                None
+            );
+            assert!(state.shell_fault.is_some());
+        }
+        assert_eq!(
+            super::take_shell_fault(
+                &mut state,
+                &kobo_protocol::ShellRequest::Close,
+                &allowed,
+                &allowed,
+                false,
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, true),
+            None
+        );
+        assert!(state.shell_fault.is_some());
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, false),
+            Some(kobo_protocol::ShellError::Failed)
+        );
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, false),
+            None
+        );
+    }
+    #[test]
+    fn fixture_endpoints_are_bounded() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let mut state = super::AppState {
+            runtime_navigation: true,
+            ..super::AppState::default()
+        };
+        state.set_screen(kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Text {
+                id: kobo_ui::NodeId(1),
+                text: "Independent simulator fixture".into(),
+                links: vec![],
+            }],
+        ));
+        let session = super::AppSession {
+            state: Arc::new(Mutex::new(state)),
+            writer: AppWriter::spawn_for(socket, kobo_protocol::VERSION),
+        };
+        for (path, body, status) in [
+            ("/power-fault", "duplicate-wake", 200),
+            ("/power-fault", "immediate-wake", 400),
+            ("/wifi-fixture", "interface-missing", 200),
+            ("/wifi-fixture", "observed-device", 400),
+            ("/shell-fault", "helper-missing", 200),
+            ("/shell-fault", "helper-start-failed", 400),
+            ("/panel", "delay 6000", 400),
+            ("/panel", "delay 100", 200),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (server, _) = listener.accept().unwrap();
+            write!(
+                client,
+                "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            session.handle_http(server).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status}")),
+                "{path}: {response}"
+            );
+        }
+        if let Ok(out) = std::env::var("COBALT_FIXTURE_CAPTURE_OUT") {
+            let state = session.state.lock().unwrap();
+            let rgb = state.panel.ideal_rgb(super::PROFILE.colour_panel);
+            let data = super::capture::View {
+                app: "synthetic-fixture",
+                mode: "test",
+                screen: &state.screen,
+                source: &super::CaptureSource::default(),
+                paints: state.paints,
+                orientation: state.orientation,
+                simulation: state.simulation_json(),
+                frame: &rgb,
+                ideal: true,
+                rgb: true,
+            }
+            .pack()
+            .unwrap();
+            std::fs::write(out, data).unwrap();
+        }
+    }
+    #[test]
+    fn shell_faults_are_explicit_one_shot_open_failures() {
+        let mut state = super::AppState {
+            runtime_navigation: true,
+            ..super::AppState::default()
+        };
+        state.shell_fault = Some(kobo_protocol::ShellError::Failed);
+        assert_eq!(
+            state.shell_fault.take(),
+            Some(kobo_protocol::ShellError::Failed)
+        );
+        assert_eq!(state.shell_fault.take(), None);
+        assert!(state.simulation_json().contains("nextShellFault"));
+    }
+
     #[test]
     fn observations_cannot_silently_select_an_unrelated_profile_or_pose() {
         let mut observation = kobo_profile::observation::Observation::parse(include_str!(
