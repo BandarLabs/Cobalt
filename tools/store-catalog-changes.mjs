@@ -49,11 +49,18 @@ export function isFilmingScript(path, packageDirectory) {
 // of it to every reader who has it in order to fix a paragraph none of them
 // download.
 //
-// Only prose directly beside the package: a nested path may be a screenshot
-// the app page does publish, and src/notes.md is source.
+// The screenshots/ folder beside a package is the README's pictures, and the
+// same argument holds. The app page publishes its images from docs/media/site,
+// not from here, and no app compiles one in. Refreshing fifteen stale README
+// stills after an interface change was refused as fifteen unreleased apps,
+// with fifteen no-op updates to every reader as the remedy.
+//
+// Only prose directly beside the package, and only that one folder of
+// pictures: src/notes.md and src/screenshots/ are source.
 export function isDocumentation(path, packageDirectory) {
   if (!path.startsWith(`${packageDirectory}/`)) return false;
   const beside = path.slice(packageDirectory.length + 1);
+  if (beside.startsWith("screenshots/")) return true;
   return !beside.includes("/") && beside.endsWith(".md");
 }
 

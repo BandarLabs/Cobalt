@@ -49,8 +49,9 @@ second manifest.
 
 - If release inputs or signed public metadata changed, set a strictly newer
   numeric version and add `release_notes` describing the user-visible result.
-- If only tests, comments, setup instructions, or other non-release inputs
-  changed, leave the version alone and omit release notes.
+- If only tests, comments, setup instructions, the README and its
+  `screenshots/`, drive scripts, or other non-release inputs changed, leave
+  the version alone and omit release notes.
 
 CI derives this decision from the last published Beta transaction. Placeholder
 notes such as “Update” or “Bug fixes” are rejected with the changed fields

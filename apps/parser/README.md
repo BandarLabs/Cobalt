@@ -4,7 +4,7 @@ Play interactive fiction offline on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/parser-game.png" alt="A story in progress, with the keyboard open"><br>A story in progress, with the keyboard open</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/parser-game.png" alt="A story open, with words to tap and command buttons"><br>A story open, with words to tap and command buttons</td>
 </tr>
 </table>
 
