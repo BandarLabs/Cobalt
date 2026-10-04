@@ -55,6 +55,7 @@ const screenshots = {
   logicpack: ["logicpack.png", "Logic Pack's Minesweeper board after a revealed cell and contradiction check."],
   launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
+  "muse-panel": ["muse-panel.png", "Muse Panel on a Kobo asking whether to move lunch with Priya, with three answers to tap."],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
   musicstand: ["musicstand.png", "Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."],
   needles: ["needles.png", "Needles pattern screen with row and repeat counters and a large +1 row button."],
