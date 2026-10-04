@@ -110,6 +110,7 @@ const categories = {
   logicpack: "Games",
   magnet: "Developer",
   morse: "Devices",
+  "muse-panel": "Devices",
   musicstand: "Reference",
   needles: "Productivity",
   nonograms: "Games",
