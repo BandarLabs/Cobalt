@@ -1433,6 +1433,7 @@ dependencies = [
  "kobo-bookview",
  "kobo-image",
  "kobo-json",
+ "kobo-net",
  "kobo-protocol",
  "kobo-read",
  "kobo-sdk",

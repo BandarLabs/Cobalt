@@ -128,15 +128,25 @@ fn computer_saved_token_saves_only_address_before_fetching() {
 
 #[test]
 fn saved_token_does_not_bypass_server_validation() {
-    let mut runner = loaded();
-    runner.action(action_id("settings"));
-    runner.app_mut().keyboard = Keyboard::with_text("http://unsafe.example");
-    let commands = runner.action(action_id("saved-token"));
-    no_spawn(&commands);
-    assert!(!commands
-        .iter()
-        .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))));
-    assert!(runner.app_mut().problem.is_some());
+    for server in [
+        "http://unsafe.example",
+        "https:///path",
+        "https://:443/path",
+        "https://read.example:bad/path",
+    ] {
+        let mut runner = loaded();
+        runner.action(action_id("settings"));
+        runner.app_mut().keyboard = Keyboard::with_text(server);
+        let commands = runner.action(action_id("saved-token"));
+        no_spawn(&commands);
+        assert!(
+            !commands
+                .iter()
+                .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))),
+            "{server}"
+        );
+        assert!(runner.app_mut().problem.is_some(), "{server}");
+    }
 }
 
 #[test]
@@ -186,12 +196,39 @@ fn failed_server_save_does_not_claim_connection_and_can_retry() {
     );
 }
 #[test]
+fn saved_token_address_failure_never_claims_token_was_saved() {
+    let mut runner = loaded();
+    runner.action(action_id("settings"));
+    runner.app_mut().keyboard = Keyboard::with_text("https://second.example");
+    runner.action(action_id("saved-token"));
+    let commands = runner.store_result(StoreResult::Denied(StoreError::Unwritable));
+    no_spawn(&commands);
+    assert_eq!(
+        runner.app_mut().problem.as_deref(),
+        Some("The server address could not be saved. Continue to retry.")
+    );
+    assert_eq!(runner.app_mut().server.as_deref(), Some(ORIGIN));
+    runner.action(action_id("dismiss"));
+    let commands = runner.action(action_id("save-server"));
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::Save { key, .. }) if key == SERVER)));
+    let commands = runner.store_result(StoreResult::Saved { key: SERVER.into() });
+    assert!(
+        matches!(spawned(&commands).1, Task::Fetch { url, .. } if url.starts_with("https://second.example/"))
+    );
+}
+
+#[test]
 fn server_validation_rejects_ambiguous_or_untrusted_addresses() {
     for server in ["https://read.example", "https://read.example:8443/library"] {
         assert!(valid_server(server));
     }
     for server in [
         "http://read.example",
+        "https:///path",
+        "https://:443/path",
+        "https://read.example:bad/path",
         "https://a@read.example",
         "https://read.example?a=b",
         "https://read.example/#x",

@@ -671,10 +671,8 @@ impl KoboApp for Readeck {
                 self.view = View::Inbox;
                 self.fetch_list(context, 0, false);
             } else {
-                self.problem = Some(
-                    "The token was saved, but the address could not be saved. Continue to retry."
-                        .into(),
-                );
+                self.problem =
+                    Some("The server address could not be saved. Continue to retry.".into());
             }
         } else if !matches!(result, StoreResult::Saved { .. }) {
             self.problem = Some("Reading position or text size could not be saved. Turn a page to retry before closing.".into());
@@ -765,7 +763,21 @@ fn fetch(url: String, max_bytes: u32) -> Task {
     }
 }
 fn valid_server(server: &str) -> bool {
-    kobo_protocol::valid_secret_server(server)
+    // The network parser defaults an invalid explicit port to 443. Do not
+    // save an address whose written port differs from the connection target.
+    let authority = server
+        .strip_prefix("https://")
+        .unwrap_or("")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    let valid_port = authority.ends_with(']')
+        || authority
+            .rsplit_once(':')
+            .is_none_or(|(_, port)| port.parse::<u16>().is_ok());
+    valid_port
+        && kobo_protocol::valid_secret_server(server)
+        && kobo_net::parse(server).is_ok()
         && !server.contains('%')
         && !server.contains('\\')
         && !server.split('/').any(|s| matches!(s, "." | ".."))
