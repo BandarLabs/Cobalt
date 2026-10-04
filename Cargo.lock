@@ -1252,6 +1252,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-muse-panel"
+version = "0.1.0"
+dependencies = [
+ "kobo-image",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-music-host"
 version = "0.3.25"
 dependencies = [

@@ -1,0 +1,12 @@
+# A fresh simulator has no pairing, so the app asks for the bridge's address,
+# then for the six-character code it printed.
+wait-for Pair with your computer
+expect kobo-bridge init
+clean
+shot address
+type example
+tap Next
+wait-for Now the pairing code
+expect The six characters shown beside the address.
+clean
+shot code

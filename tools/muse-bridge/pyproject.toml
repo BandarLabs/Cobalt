@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kobo-bridge"
+version = "0.1.0"
+description = "Muse gadget bridge that serves an e-ink reader"
+requires-python = ">=3.9"
+dependencies = ["cryptography>=3.3.2", "websockets>=13", "musegadget"]
+
+[project.scripts]
+kobo-bridge = "kobo_bridge.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["kobo_bridge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

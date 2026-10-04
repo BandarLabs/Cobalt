@@ -1,0 +1,25 @@
+{
+  "id": "muse-panel",
+  "display_name": "Muse Panel",
+  "short_label": "Muse",
+  "summary": "Let Muse show pages and ask questions on your Kobo.",
+  "page_description": "Turn your Kobo into a Muse gadget: Muse puts a status line, a page or a question on the e-ink panel, and your taps go back to it.",
+  "version": "0.1.0",
+  "release_notes": "First release. Pair with a computer running the Muse bridge, read pages Muse sends, and answer its questions with a tap.",
+  "glyph": "chat",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "On a computer that is paired with Muse as a gadget, run the Muse bridge and note the address and pairing code it prints.",
+        "command": "kobo-bridge init"
+      },
+      {
+        "text": "Install the certificate authority the bridge printed, so the panel can verify it.",
+        "command": "kobo trust set muse-panel --from ca.pem --device <address>"
+      }
+    ]
+  }
+}
