@@ -139,6 +139,15 @@ impl Radio {
         if !is_wifi(request) {
             return None;
         }
+        // The backend checks credentials before it runs any command, so a
+        // malformed join is refused as invalid even while the supplicant is
+        // failing. Only an absent backend is refused ahead of that, because
+        // then there is no backend to do the checking.
+        if let DeviceRequest::JoinWifi { ssid, password } = request {
+            if self.fault != Fault::Absent && !valid_credentials(ssid, password) {
+                return Some(DeviceResult::Failed(DeviceError::InvalidInput));
+            }
+        }
         Some(match self.fault {
             Fault::Absent => DeviceResult::Denied(DenyReason::Unsupported),
             Fault::Hung => DeviceResult::Failed(DeviceError::TimedOut),
@@ -374,6 +383,24 @@ mod tests {
                 assert_eq!(radio.handle(&request), Some(expected.clone()), "{fault:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_malformed_join_is_refused_as_invalid_whatever_the_supplicant_is_doing() {
+        let mut radio = Radio::new(Bands::Dual);
+        for fault in [Fault::Hung, Fault::Unresponsive, Fault::WrongPassword] {
+            radio.set_fault(fault);
+            assert_eq!(
+                join(&mut radio, "Cobalt Home", "short"),
+                Some(DeviceResult::Failed(DeviceError::InvalidInput)),
+                "{fault:?}"
+            );
+        }
+        radio.set_fault(Fault::Absent);
+        assert_eq!(
+            join(&mut radio, "Cobalt Home", "short"),
+            Some(DeviceResult::Denied(DenyReason::Unsupported))
+        );
     }
 
     #[test]
