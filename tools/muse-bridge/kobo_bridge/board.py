@@ -21,7 +21,8 @@ from typing import Callable
 DEFAULT_STATUS_LINE = "Waiting for Muse"
 MAX_CHOICES = 6
 MAX_LABEL = 60
-MAX_QUESTION = 400
+MAX_QUESTION = 60
+MAX_CONTEXT = 120
 DEFAULT_ASK_TTL_S = 3600
 MAX_ASK_TTL_S = 24 * 3600
 MAX_EVENTS = 200
@@ -49,6 +50,11 @@ class Board:
         try:
             state = json.loads(self._path.read_text(encoding="utf-8"))
             if isinstance(state, dict) and state.get("kind"):
+                ask = state.get("ask")
+                if isinstance(ask, dict) and ask.get("delivery") == "pending":
+                    # A restart cannot tell whether Muse got it; ask again.
+                    ask["answered"] = None
+                    ask.pop("delivery", None)
                 return state
         except (OSError, json.JSONDecodeError):
             pass
@@ -91,16 +97,17 @@ class Board:
         title = _text(title, "title", 120, required=False)
         page_id = _identifier(page_id) or "page-" + uuid.uuid4().hex[:8]
         with self._lock:
+            deadline = self._deadline(keep_s, 86400)
             self._clear_screen()
             self.state["kind"] = "page"
             self.state["page"] = {"id": page_id, "title": title, "blocks": blocks}
-            self.state["expires_at"] = self._deadline(keep_s, 86400)
+            self.state["expires_at"] = deadline
             return {"page_id": page_id, "rev": self._bump()}
 
     def ask(self, question: str, choices: list, context: str = "",
             ask_id: str | None = None, expires_s: int | None = None) -> dict:
         question = _text(question, "question", MAX_QUESTION)
-        context = _text(context, "context", 1200, required=False)
+        context = _text(context, "context", MAX_CONTEXT, required=False)
         normalized = _choices(choices)
         ask_id = _identifier(ask_id) or "ask-" + uuid.uuid4().hex[:8]
         with self._lock:
@@ -108,13 +115,14 @@ class Board:
             if self.state["ask"] and self.state["ask"]["ask_id"] == ask_id \
                     and self.state["ask"].get("answered") is None:
                 raise BoardError("an ask with this id is already waiting")
+            deadline = self._deadline(expires_s, DEFAULT_ASK_TTL_S)
             self._clear_screen()
             self.state["kind"] = "ask"
             self.state["ask"] = {
                 "ask_id": ask_id, "question": question, "context": context,
                 "choices": normalized, "answered": None,
             }
-            self.state["expires_at"] = self._deadline(expires_s, DEFAULT_ASK_TTL_S)
+            self.state["expires_at"] = deadline
             return {"ask_id": ask_id, "rev": self._bump()}
 
     def show_image(self, blob: dict, fit: str = "contain") -> dict:
@@ -179,20 +187,43 @@ class Board:
             if not ask or ask["ask_id"] != ask_id:
                 raise BoardError("that question is no longer waiting")
             if ask.get("answered") is not None:
+                if ask.get("delivery") == "pending":
+                    raise BoardError("that answer is still being sent")
                 raise BoardError("that question was already answered")
             choice = next((c for c in ask["choices"] if c["id"] == choice_id), None)
             if choice is None:
                 raise BoardError("unknown choice")
+            # The answer is held as pending until Muse has it. The screen stays
+            # on the question, so a failed send can be tapped again.
             ask["answered"] = choice["id"]
-            answered = {**ask, "label": choice["label"]}
+            ask["delivery"] = "pending"
+            self._save()
+            return {**ask, "label": choice["label"]}
+
+    def confirm_answer(self, ask_id: str) -> None:
+        """Muse has the answer: leave the question and say what was sent."""
+        with self._lock:
+            ask = self.state.get("ask")
+            if not ask or ask["ask_id"] != ask_id or ask.get("delivery") != "pending":
+                return
+            ask["delivery"] = "sent"
+            label = next((c["label"] for c in ask["choices"] if c["id"] == ask["answered"]), "")
             self._clear_screen()
             self.state["status"] = {
                 "line": self.state["status"]["line"],
-                "detail": 'Sent "%s" to Muse' % choice["label"],
+                "detail": 'Sent "%s" to Muse' % label,
                 "at": self._clock(),
             }
             self._bump()
-            return answered
+
+    def reopen_answer(self, ask_id: str) -> None:
+        """Muse did not get the answer: the question can be answered again."""
+        with self._lock:
+            ask = self.state.get("ask")
+            if ask and ask["ask_id"] == ask_id and ask.get("delivery") == "pending":
+                ask["answered"] = None
+                ask.pop("delivery", None)
+                self._save()
 
     def wait_snapshot(self, known_rev: int | None, wait_s: float) -> dict:
         """Like snapshot, but hold the request until the rev moves or wait_s passes."""

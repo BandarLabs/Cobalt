@@ -21,7 +21,8 @@ COMMAND_SPECS = {
         "description": (
             "Show a page of text on the reader. " + LIMITS + " The body is a small "
             "markdown subset: # and ## headings, paragraphs, - lists, > quotes, ---, "
-            "**bold**, and ![alt](https://...) images on their own line. Long pages "
+            "**bold**. Images are not drawn inside pages: a ![alt](url) line shows its alt "
+            "text; use kobo.draw_url for a picture. Long pages "
             "are split across screens by the reader."
         ),
         "required": {
@@ -49,11 +50,11 @@ COMMAND_SPECS = {
             "'kobo-panel' saying which choice they picked. " + LIMITS
         ),
         "required": {
-            "question": {"type": "string", "description": "The question, one sentence."},
+            "question": {"type": "string", "description": "The question, one short sentence of at most 60 characters so it fits at the largest text size."},
             "choices": {"type": "array", "description": "2 to 6 choices. Each is a label string or {label, id}."},
         },
         "optional": {
-            "context": {"type": "string", "description": "A short line of detail under the question."},
+            "context": {"type": "string", "description": "A short line of detail under the question, at most 120 characters."},
             "ask_id": {"type": "string", "description": "Your own id for this question; it comes back with the answer."},
             "expires_s": {"type": "integer", "description": "Withdraw the question after this many seconds. Default 3600."},
         },
@@ -141,7 +142,7 @@ class KoboExecutor:
 
     def _show_page(self, p: dict) -> dict:
         blocks = markup.parse(p.get("body"))
-        blocks = self._inline_images(blocks)
+        blocks = _images_as_text(blocks)
         result = self.board.show_page(p.get("title", ""), blocks, p.get("page_id"), p.get("keep_s"))
         return {**result, "blocks": len(blocks)}
 
@@ -176,18 +177,14 @@ class KoboExecutor:
             return {"seen": False, "note": "The reader has not checked in yet."}
         return {"seen": True, **hello}
 
-    def _inline_images(self, blocks: list[dict]) -> list[dict]:
-        out = []
-        for block in blocks:
-            if block["t"] != "img":
-                out.append(block)
-                continue
-            try:
-                data, mime = imagefetch.fetch_image(block["url"], self.allow_private_images)
-            except imagefetch.FetchError as err:
-                log.info("image skipped: %s", err)
-                label = block["alt"] or "image"
-                out.append({"t": "p", "spans": [{"s": "[%s unavailable]" % label}]})
-                continue
-            out.append({"t": "img", "alt": block["alt"], **self.board.put_blob(data, mime)})
-        return out
+
+def _images_as_text(blocks: list[dict]) -> list[dict]:
+    """Pages hold text only, so an image line becomes its description."""
+    out = []
+    for block in blocks:
+        if block["t"] == "img":
+            label = block["alt"].strip() or "image"
+            out.append({"t": "p", "spans": [{"s": "[%s]" % label}]})
+        else:
+            out.append(block)
+    return out

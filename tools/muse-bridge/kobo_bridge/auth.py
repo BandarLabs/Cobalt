@@ -26,6 +26,20 @@ class Auth:
         self._failures = 0
         self._locked_until = 0.0
         self.data = self._load()
+        self._seen = self._stamp()
+
+    def _stamp(self) -> int:
+        try:
+            return self._path.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    def _refresh(self) -> None:
+        """Pick up a change another process made, such as `kobo-bridge reset-pairing`."""
+        stamp = self._stamp()
+        if stamp != self._seen:
+            self.data = self._load()
+            self._seen = self._stamp()
 
     def _load(self) -> dict:
         try:
@@ -43,14 +57,18 @@ class Auth:
         fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
+        self._seen = self._stamp()
 
     @property
     def code(self) -> str:
-        return self.data["code"]
+        with self._lock:
+            self._refresh()
+            return self.data["code"]
 
     def pair(self, code: str) -> str | None:
         """Exchange the pairing code for a token, or return None."""
         with self._lock:
+            self._refresh()
             now = self._clock()
             if now < self._locked_until:
                 return None
@@ -75,6 +93,7 @@ class Auth:
     def valid(self, token: str) -> bool:
         digest = _digest(token or "")
         with self._lock:
+            self._refresh()
             return any(hmac.compare_digest(digest, known) for known in self.data["tokens"])
 
     def locked(self) -> bool:

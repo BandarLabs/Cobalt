@@ -35,19 +35,22 @@ def lan_addresses() -> list[str]:
 def make_notifier(service, loop: asyncio.AbstractEventLoop, session_id: str = SIDE_SESSION):
     """Return a function that posts a message to Muse from any thread."""
 
-    def notify(message: str) -> None:
+    def notify(message: str) -> bool:
+        """True only once Muse has accepted the message."""
         session = service._current
         if session is None:
             log.warning("tap not sent: not connected to Muse")
-            return
+            return False
         future = asyncio.run_coroutine_threadsafe(session.send_chat(message, session_id), loop)
         try:
             result = future.result(timeout=70)
         except Exception as err:
             log.warning("tap not delivered: %s", err)
-            return
+            return False
         if not result.get("ok"):
             log.warning("Muse refused the message: HTTP %s", result.get("status"))
+            return False
+        return True
 
     return notify
 

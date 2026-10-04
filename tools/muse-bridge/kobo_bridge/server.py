@@ -118,7 +118,15 @@ def make_server(host: str, port: int, board: Board, auth: Auth, notify: Notify,
                     ask = board.answer(str(body.get("ask_id", "")), str(body.get("choice", "")))
                 except BoardError as err:
                     return self._json(409, {"error": str(err)})
-                notify(answer_message(ask))
+                try:
+                    delivered = bool(notify(answer_message(ask)))
+                except Exception:
+                    log.exception("sending the answer to Muse failed")
+                    delivered = False
+                if not delivered:
+                    board.reopen_answer(ask["ask_id"])
+                    return self._json(502, {"error": "Muse did not get the answer; tap it again"})
+                board.confirm_answer(ask["ask_id"])
                 return self._json(200, {"ok": True})
             self._json(404, {"error": "not found"})
 

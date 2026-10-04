@@ -29,6 +29,12 @@ const MAX_PICTURE: u32 = 4 * 1024 * 1024;
 /// What one picture may hold on the way to the panel (kobo-protocol's budget).
 const MAX_COLOUR_BYTES: u64 = 4 * 1072 * 1448;
 const TITLE: &str = "Muse";
+/// What the bridge accepts for a question and its context. The largest text
+/// size still has to show both on one screen above the answers.
+#[cfg(test)]
+const QUESTION_LIMIT: usize = 60;
+#[cfg(test)]
+const CONTEXT_LIMIT: usize = 120;
 const PAIRED: &str = "paired";
 const REPAIR: &str = "repair";
 const PREVIOUS: &str = "previous-page";
@@ -94,6 +100,8 @@ struct Panel {
     fetching: Option<TaskId>,
     picture: Option<TilePicture>,
     unreadable: bool,
+    /// The picture could not be fetched (not decoded); ask again on the next quiet poll.
+    picture_retry: bool,
     identity: Option<kobo_sdk::DeviceIdentity>,
     battery: Option<u8>,
     said_hello: bool,
@@ -175,6 +183,7 @@ impl Panel {
     fn fetch_picture(&mut self, context: &mut Context) {
         self.picture = None;
         self.unreadable = false;
+        self.picture_retry = false;
         context.drop_picture(PICTURE);
         let Some(Content::Image(picture)) = self.live.as_ref().map(|live| &live.content) else {
             return;
@@ -191,7 +200,12 @@ impl Panel {
 
     fn on_picture(&mut self, context: &mut Context, outcome: &TaskOutcome) {
         let TaskOutcome::Completed(bytes) = outcome else {
-            self.unreadable = true;
+            // A missing blob will not come back; a dropped connection might.
+            match outcome {
+                TaskOutcome::Failed(kobo_sdk::TaskError::NotFound) => self.unreadable = true,
+                TaskOutcome::Cancelled => {}
+                _ => self.picture_retry = true,
+            }
             self.show(context);
             return;
         };
@@ -533,8 +547,19 @@ impl Panel {
                         }
                         self.show(context);
                     }
-                    _ if repaint => self.show(context),
-                    _ => {}
+                    _ => {
+                        if self.picture_retry
+                            && matches!(
+                                self.live.as_ref().map(|live| &live.content),
+                                Some(Content::Image(_))
+                            )
+                        {
+                            self.fetch_picture(context);
+                            self.show(context);
+                        } else if repaint {
+                            self.show(context);
+                        }
+                    }
                 }
                 self.nap = context.spawn(Task::Sleep {
                     seconds: BETWEEN_POLLS,
@@ -1202,12 +1227,25 @@ mod tests {
         .into_bytes()
     }
 
+    /// The longest question and context the bridge accepts, with two choices.
+    fn longest_ask() -> Vec<u8> {
+        let question = "word ".repeat(QUESTION_LIMIT / 5);
+        let words = "word ".repeat(CONTEXT_LIMIT / 5);
+        format!(
+            r#"{{"rev":14,"kind":"ask","status":{{"line":"","detail":""}},
+            "ask":{{"ask_id":"longest","question":"{question}","context":"{words}",
+            "choices":[{{"id":"a","label":"Yes"}},{{"id":"b","label":"No"}}]}}}}"#
+        )
+        .into_bytes()
+    }
+
     fn every_screen(context: &Context) -> Vec<(String, Screen)> {
         let mut screens = Vec::new();
         for (name, bytes) in [
             ("page", SCREEN_PAGE.to_vec()),
             ("ask", SCREEN_ASK.to_vec()),
             ("ask-six-long-choices", six_long_choices()),
+            ("ask-longest-text", longest_ask()),
             ("status", SCREEN_STATUS.to_vec()),
             ("long-page", long_page()),
         ] {
@@ -1326,6 +1364,39 @@ mod tests {
             .iter()
             .any(|line| line.contains("could not open")));
         assert!(app.picture.is_none());
+    }
+
+    #[test]
+    fn a_dropped_picture_download_is_asked_for_again_on_the_next_quiet_poll() {
+        let (mut app, poll) = paired();
+        let commands = deliver(
+            &mut app,
+            poll,
+            br#"{"rev":4,"kind":"image","status":{"line":"","detail":""},
+                "image":{"blob":"b9","fill":true}}"#,
+        );
+        let (task, _) = fetched(&commands).expect("the picture is asked for");
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(TaskError::Unreachable),
+        );
+        let commands = context.take_commands();
+        let screen = painted(&commands).expect("the wait is drawn");
+        assert!(
+            !shown(&screen)
+                .iter()
+                .any(|line| line.contains("could not open")),
+            "a dropped connection is not an unreadable picture"
+        );
+        // The next poll says nothing changed; the picture is asked for again.
+        let mut context = Context::default();
+        app.start_poll(&mut context);
+        let (next, _) = fetched(&context.take_commands()).expect("poll");
+        let commands = deliver(&mut app, next, br#"{"rev":4,"unchanged":true}"#);
+        let (_, url) = fetched(&commands).expect("the picture is asked for again");
+        assert_eq!(url, "https://192.168.1.5:8473/v1/blob/b9");
     }
 
     #[test]

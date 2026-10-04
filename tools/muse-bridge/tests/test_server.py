@@ -10,12 +10,25 @@ from kobo_bridge.server import answer_message, make_server, serve_in_thread
 from kobo_bridge.tls import ensure_certificates
 
 
+class Sent(list):
+    """Messages the bridge tried to hand to Muse; `ok` says whether Muse takes them."""
+
+    ok = True
+    raises = False
+
+    def __call__(self, message):
+        self.append(message)
+        if self.raises:
+            raise RuntimeError("link broke")
+        return self.ok
+
+
 @pytest.fixture
 def stack(tmp_path):
     board, auth = Board(tmp_path / "b"), Auth(tmp_path)
-    sent = []
+    sent = Sent()
     certs = ensure_certificates(tmp_path / "tls", ["127.0.0.1"])
-    server = make_server("127.0.0.1", 0, board, auth, sent.append, certs)
+    server = make_server("127.0.0.1", 0, board, auth, sent, certs)
     serve_in_thread(server)
     ctx = ssl.create_default_context(cafile=str(certs[0]))
 
@@ -115,3 +128,41 @@ def test_a_pairing_code_works_once(stack):
     assert call("GET", "/v1/screen", token=token)[0] == 200
     status, _ = call("POST", "/v1/pair", {"code": auth.code})
     assert status == 200
+
+
+def test_a_failed_send_leaves_the_question_open_for_a_retry(stack):
+    board, auth, sent, call = stack
+    token = pair(auth, call)
+    board.ask("Lunch?", ["Ramen", "Salad"], ask_id="lunch")
+    sent.ok = False
+    status, raw = call("POST", "/v1/event", {"ask_id": "lunch", "choice": "c1"}, token)
+    assert status == 502 and b"tap it again" in raw
+    snap = board.snapshot()
+    assert snap["kind"] == "ask" and snap["ask"]["answered"] is None
+    sent.ok = True
+    assert call("POST", "/v1/event", {"ask_id": "lunch", "choice": "c2"}, token)[0] == 200
+    assert sent[-1] == 'Kobo answer: "Salad" (ask lunch: Lunch?)'
+    assert board.snapshot()["kind"] == "status"
+    assert call("POST", "/v1/event", {"ask_id": "lunch", "choice": "c2"}, token)[0] == 409
+
+
+def test_a_send_that_raises_is_not_acknowledged(stack):
+    board, auth, sent, call = stack
+    token = pair(auth, call)
+    board.ask("Lunch?", ["Ramen", "Salad"], ask_id="lunch")
+    sent.raises = True
+    status, _ = call("POST", "/v1/event", {"ask_id": "lunch", "choice": "c1"}, token)
+    assert status >= 500
+    assert board.snapshot()["ask"]["answered"] is None
+
+
+def test_reset_pairing_from_another_process_reaches_the_running_server(stack, tmp_path):
+    board, auth, sent, call = stack
+    old = pair(auth, call)
+    assert call("GET", "/v1/screen", token=old)[0] == 200
+    other = Auth(tmp_path)
+    other.reset()
+    assert call("GET", "/v1/screen", token=old)[0] == 401
+    status, raw = call("POST", "/v1/pair", {"code": other.code})
+    assert status == 200
+    assert call("GET", "/v1/screen", token=json.loads(raw)["token"])[0] == 200

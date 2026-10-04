@@ -51,8 +51,15 @@ api.muse.ai.
 
 - The reader polls. A change can take up to a minute to appear and nothing
   wakes a sleeping Kobo.
-- Images are JPEG or PNG up to 4 MB from public addresses. Private addresses
-  are refused unless you pass `--allow-private-images`.
+- `kobo.draw_url` shows a full-screen JPEG or PNG up to 4 MB from a public
+  address; private addresses are refused unless you pass `--allow-private-images`.
+  Pages hold text only: an image line in a page shows its description.
+- A question is at most 60 characters with at most 120 characters of context, so
+  both fit above the answers at the largest text size.
+- A tap is acknowledged only once Muse has accepted it. If Muse cannot be
+  reached the reader gets an error and the question stays open to tap again.
+- `kobo-bridge reset-pairing` takes effect on a running bridge at its next
+  request: old tokens stop working and the new code is the one to use.
 - A pairing code works once: after a reader pairs, the bridge issues a new code (`kobo-bridge init` prints it). The endpoint locks after repeated wrong codes.
 
 ## Tests

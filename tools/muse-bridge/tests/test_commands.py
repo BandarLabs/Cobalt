@@ -42,13 +42,12 @@ def test_draw_url_and_image_blocks(tmp_path, image_server):
     assert snap["kind"] == "image" and snap["image"]["mime"] == "image/png"
     assert board.blob(snap["image"]["blob"]) == PNG
 
-    executor = KoboExecutor(board, allow_private_images=True)
-    blocks = executor._inline_images([
-        {"t": "img", "alt": "chart", "url": image_server + "/missing.png"},
-        {"t": "img", "alt": "x", "url": image_server + "/ok.png"},
-    ])
-    assert blocks[0]["t"] == "p" and "unavailable" in blocks[0]["spans"][0]["s"]
-    assert blocks[1]["t"] == "img" and blocks[1]["alt"] == "x" and blocks[1]["mime"] == "image/png"
+    # A page holds text only: an image line becomes its description and nothing is fetched.
+    result = run("kobo.show_page", {"body": "Intro\n\n![chart](https://example.com/c.png)\n\n![](https://example.com/x.png)"})
+    assert result["ok"]
+    blocks = board.snapshot()["page"]["blocks"]
+    assert [b["t"] for b in blocks] == ["p", "p", "p"]
+    assert blocks[1]["spans"][0]["s"] == "[chart]" and blocks[2]["spans"][0]["s"] == "[image]"
 
 
 def test_device_info_before_and_after_hello(tmp_path):
