@@ -206,6 +206,10 @@ async def main(args) -> int:
 
             await invoke("kobo.show_page", {"title": "Saturday", "body": PAGE})
             await drive("wait-for Rain from about four", "wait-idle", "shot page")
+            # Back puts the page away; the resting face returns until Muse sends something new.
+            await drive("tap Back", "wait-for Planning your Saturday", "wait-idle", "shot page-back")
+            await invoke("kobo.show_page", {"title": "Saturday", "body": PAGE + " "})
+            await drive("wait-for Rain from about four", "wait-idle")
 
             await invoke("kobo.ask", {"question": "Move lunch with Priya to 2pm?",
                                       "context": "The Rosemary Cafe table is free at both times.",
@@ -228,6 +232,7 @@ async def main(args) -> int:
 
             await invoke("kobo.draw_url", {"url": f"http://127.0.0.1:{images.server_port}/dawn.png"})
             await drive("wait 6000", "shot picture")
+            await drive("tap-at 536,60", "wait 800", "shot picture-bar", "tap Back", "wait-for Lunch moved to 2pm", "wait 800", "shot picture-back")
             await invoke("kobo.device_info", {})
             print("device_info:", board.hello(), flush=True)
         finally:

@@ -390,8 +390,8 @@ impl Panel {
 
     fn page_screen(&self, title: &str, blocks: &[Block], page: usize, pages: usize) -> Screen {
         let mut screen = ScreenBuilder::new("muse-page")
-            .top_bar(if title.is_empty() { "Note" } else { title })
-            .spacer(Space::Small);
+            .top_bar(TITLE)
+            .heading(if title.is_empty() { "Note" } else { title });
         for block in blocks {
             screen = add_block(screen, block, false);
         }
