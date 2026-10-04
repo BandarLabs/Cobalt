@@ -32,7 +32,8 @@ def lan_addresses() -> list[str]:
     return sorted(found)
 
 
-def make_notifier(service, loop: asyncio.AbstractEventLoop, session_id: str = SIDE_SESSION):
+def make_notifier(service, loop: asyncio.AbstractEventLoop, session_id: str = SIDE_SESSION,
+                  timeout: float = 70.0):
     """Return a function that posts a message to Muse from any thread."""
 
     def notify(message: str) -> bool:
@@ -43,8 +44,11 @@ def make_notifier(service, loop: asyncio.AbstractEventLoop, session_id: str = SI
             return False
         future = asyncio.run_coroutine_threadsafe(session.send_chat(message, session_id), loop)
         try:
-            result = future.result(timeout=70)
+            result = future.result(timeout=timeout)
         except Exception as err:
+            # Stop a send that is still waiting, so a retry does not queue behind it.
+            # A message already on the wire may still arrive: delivery is at least once.
+            future.cancel()
             log.warning("tap not delivered: %s", err)
             return False
         if not result.get("ok"):

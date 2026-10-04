@@ -58,6 +58,10 @@ api.muse.ai.
   both fit above the answers at the largest text size.
 - A tap is acknowledged only once Muse has accepted it. If Muse cannot be
   reached the reader gets an error and the question stays open to tap again.
+  Delivery is at least once, never exactly once: a send that times out is
+  cancelled, but a message already on its way can still arrive, so a retry may
+  reach Muse twice. Every message names the question (`ask <id>`), so a reader
+  of the chat can tell a repeat. A restart reopens an answer that was pending.
 - `kobo-bridge reset-pairing` takes effect on a running bridge at its next
   request: old tokens stop working and the new code is the one to use.
 - A pairing code works once: after a reader pairs, the bridge issues a new code (`kobo-bridge init` prints it). The endpoint locks after repeated wrong codes.
