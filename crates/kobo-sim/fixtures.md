@@ -27,8 +27,11 @@ In runtime mode, `POST /power-fault` queues a one-shot `permission-veto`,
 sleep request. Duplicate or stale fault admission is refused without ending
 the runtime loop. These simulate backend branches only; no actual kernel suspend
 or RTC alarm is executed. `POST /wifi-fixture` selects `normal`,
-`interface-missing`, or `interface-down`, keeping device permission checks in
-front of the synthetic result. The interface names in `boardFixture` are
+`interface-missing`, or `interface-down` on the simulated radio, with device
+permission checks still in front. A missing interface answers as the absent
+radio (`Unsupported`), and a down interface as a radio switched off, which a
+join or an enable brings back up. The radio is shared by every app; see
+`POST /wifi` in `docs/quality/shared-ui-contracts.md` for its other faults. The interface names in `boardFixture` are
 fixture choices, not measured claims. `POST /shell-fault` queues a one-shot
 `helper-missing` or `helper-start-failed` refusal on the next shell open. It
 does not launch or stop a real host helper. Do not treat any success here as
