@@ -3007,9 +3007,11 @@ fn take_shell_fault(
     declared: &kobo_policy::Declared,
     backends: &kobo_policy::Declared,
     paused: bool,
+    shell_open: bool,
 ) -> Option<kobo_protocol::ShellError> {
     if matches!(request, kobo_protocol::ShellRequest::Open { .. })
         && !paused
+        && !shell_open
         && declared.holds(kobo_policy::Capability::Shell)
         && backends.holds(kobo_policy::Capability::Shell)
     {
@@ -3224,12 +3226,18 @@ fn read_app_messages(
                 answer_store(writer, request_id, &store, &shelf, &request, state)?;
             }
             Message::ShellRequest(request) => {
+                let shell_open = shells
+                    .lock()
+                    .map_err(|_| io::Error::other("shell unavailable"))?
+                    .is_open();
                 let (paused, fault) = {
                     let mut state = state
                         .lock()
                         .map_err(|_| io::Error::other("app state unavailable"))?;
                     let paused = state.power_state != kobod::power::State::Awake;
-                    let fault = take_shell_fault(&mut state, &request, declared, &backends, paused);
+                    let fault = take_shell_fault(
+                        &mut state, &request, declared, &backends, paused, shell_open,
+                    );
                     (paused, fault)
                 };
                 if paused {
@@ -3931,7 +3939,7 @@ mod tests {
             (&allowed, &allowed, true),
         ] {
             assert_eq!(
-                super::take_shell_fault(&mut state, &open, declared, backends, paused),
+                super::take_shell_fault(&mut state, &open, declared, backends, paused, false),
                 None
             );
             assert!(state.shell_fault.is_some());
@@ -3942,16 +3950,22 @@ mod tests {
                 &kobo_protocol::ShellRequest::Close,
                 &allowed,
                 &allowed,
+                false,
                 false
             ),
             None
         );
         assert_eq!(
-            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false),
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, true),
+            None
+        );
+        assert!(state.shell_fault.is_some());
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, false),
             Some(kobo_protocol::ShellError::Failed)
         );
         assert_eq!(
-            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false),
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, false),
             None
         );
     }
