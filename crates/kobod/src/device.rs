@@ -336,8 +336,8 @@ fn read_status() -> kobo_ui::Status {
         // strong the association is, so reachability is checked before
         // strength. Showing three arcs on a device that cannot load a page is
         // the one thing this mark must never do.
-        signal: if kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
-            kobo_hal::network::signal_dbm(kobo_hal::network::wireless_link())
+        signal: if kobo_hal::network::is_online(&kobo_hal::network::wireless_link()) {
+            kobo_hal::network::signal_dbm(&kobo_hal::network::wireless_link())
                 .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm)
         } else {
             kobo_ui::Signal::Off
@@ -638,7 +638,7 @@ pub fn present(
         "launch: network recovery finished after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
+    if network.was_online() && kobo_hal::network::is_online(&kobo_hal::network::wireless_link()) {
         wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
     }
     trace(&format!(
@@ -1001,7 +1001,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut Trac
         if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
             let associated = wifi.associated().unwrap_or(false);
             let healthy =
-                associated && kobo_hal::network::is_online(kobo_hal::network::wireless_link());
+                associated && kobo_hal::network::is_online(&kobo_hal::network::wireless_link());
             if healthy {
                 let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
