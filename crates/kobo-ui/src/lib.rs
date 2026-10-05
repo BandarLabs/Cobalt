@@ -2486,7 +2486,8 @@ pub enum StatusMark {
     /// The radio, at the state the runtime measured.
     Signal(Signal),
     /// Something is connected over Bluetooth right now, not merely powered.
-    /// Drawn so that "where is the sound going" is answered on every screen.
+    /// Drawn as headphones, so that "where is the sound going" is answered
+    /// on every screen.
     Bluetooth,
 }
 
@@ -5564,9 +5565,16 @@ pub enum Glyph {
     /// Three dots in a row: whatever else this bar would have offered if it
     /// had more than [`MAX_BAR_ACTIONS`] places to offer it in.
     More,
-    /// The Bluetooth rune. Settings drew Bluetooth with the gear before this
-    /// existed, which made the one row about headphones look like a link back
-    /// to the screen it was already on.
+    /// Bluetooth audio, drawn as headphones.
+    ///
+    /// Settings drew Bluetooth with the gear before this existed, which made
+    /// the one row about headphones look like a link back to the screen it was
+    /// already on. It was then the Bluetooth rune, which is the Bluetooth
+    /// SIG's registered figure mark and reserved for qualified member
+    /// products, so it is drawn as headphones instead. The variant keeps its
+    /// name and wire number, so an application that asks for it is unchanged
+    /// and simply draws headphones, which say what the radio is for on this
+    /// reader anyway.
     Bluetooth,
     /// A key: a credential, a secret, a permission that has to be installed
     /// rather than granted. The permission state drew a head and shoulders
@@ -15832,7 +15840,13 @@ fn draw_status_mark(
             blit_vector_crisp(surface, &vector::wifi(strength), size, square, clip);
         }
         StatusMark::Bluetooth => {
-            blit_vector_crisp(surface, &vector::bluetooth(), size, square, clip);
+            blit_vector_crisp(
+                surface,
+                &vector::shapes(Glyph::Headphones),
+                size,
+                square,
+                clip,
+            );
         }
         // Nothing at all when it could not be read; the room stays reserved.
         StatusMark::Battery {
