@@ -60,7 +60,7 @@ pub fn facts(profile_id: &str) -> Option<Facts> {
         "clara-bw-391" | "clara-bw-395" | "clara-colour-393" | "elipsa-2e-389" => {
             (false, Bands::Dual)
         }
-        "clara-hd-376" => (false, Bands::TwoPointFour),
+        "clara-hd-376" | "nia-382" => (false, Bands::TwoPointFour),
         "libra-h2o-384" | "libra-2-388" => (true, Bands::TwoPointFour),
         "libra-colour-390" | "libra-colour-390-4.46.23836" => (true, Bands::Dual),
         _ => return None,
