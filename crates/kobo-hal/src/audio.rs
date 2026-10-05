@@ -70,6 +70,21 @@ pub enum Source {
     Stream(String),
 }
 
+/// One thing playback proved about the Bluetooth sink.
+///
+/// Numbered, because a repeat is still news. Playback can fail to open the
+/// sink twice in a row with a Bluetooth reply saying "connected" in between,
+/// and a reader of a bare `false` cannot tell the second failure from the
+/// first, so it would leave the mark showing headphones that are gone. A new
+/// `observation` is a new fact whatever it says.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SinkEvidence {
+    /// Counts up with every attempt that proved something.
+    pub observation: u64,
+    /// Whether the sink accepted audio.
+    pub connected: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct State {
     playback: AudioPlaybackState,
@@ -78,7 +93,7 @@ struct State {
     volume: u8,
     error: Option<DeviceError>,
     /// What the last attempt to use the A2DP sink proved, if anything.
-    sink: Option<bool>,
+    sink: Option<SinkEvidence>,
 }
 
 impl Default for State {
@@ -155,7 +170,7 @@ impl Audio {
     /// Stopping playback deliberately leaves the last answer in place: the
     /// headphones are still there when a book is paused.
     #[must_use]
-    pub fn sink_connected(&self) -> Option<bool> {
+    pub fn sink_evidence(&self) -> Option<SinkEvidence> {
         locked(&self.state).sink
     }
 
@@ -490,12 +505,12 @@ fn handle_command(
                 match A2dpSink::open_and_start() {
                     Ok(mut opened) => {
                         if let Err(error) = opened.write_silence(LEAD_IN_FRAMES) {
-                            locked(state).sink = Some(false);
+                            record_sink(state, false);
                             fail(state, error);
                             return;
                         }
                         *sink = Some(opened);
-                        locked(state).sink = Some(true);
+                        record_sink(state, true);
                         // The silence above is the cushion. Writing the first
                         // real chunk right behind it keeps the cushion full;
                         // waiting it out would start playback with an empty
@@ -503,7 +518,7 @@ fn handle_command(
                         *next_write = Instant::now();
                     }
                     Err(error) => {
-                        locked(state).sink = Some(false);
+                        record_sink(state, false);
                         fail(state, error);
                         return;
                     }
@@ -632,6 +647,18 @@ fn keepalive(state: &Mutex<State>, sink: &mut Option<A2dpSink>) -> Result<(), De
     sink_write(state, written)
 }
 
+/// Records one new observation of the sink.
+fn record_sink(state: &Mutex<State>, connected: bool) {
+    let mut observed = locked(state);
+    let observation = observed
+        .sink
+        .map_or(1, |previous| previous.observation.wrapping_add(1));
+    observed.sink = Some(SinkEvidence {
+        observation,
+        connected,
+    });
+}
+
 /// Passes on the result of writing to an open sink, recording a failure as
 /// the headphones going away.
 ///
@@ -641,7 +668,7 @@ fn keepalive(state: &Mutex<State>, sink: &mut Option<A2dpSink>) -> Result<(), De
 /// change in the hardware.
 fn sink_write(state: &Mutex<State>, written: Result<(), DeviceError>) -> Result<(), DeviceError> {
     if written.is_err() {
-        locked(state).sink = Some(false);
+        record_sink(state, false);
     }
     written
 }
@@ -935,7 +962,7 @@ mod tests {
     #[test]
     fn nothing_is_known_about_the_headphones_until_playback_tries() {
         let audio = Audio::simulated();
-        assert_eq!(audio.sink_connected(), None);
+        assert_eq!(audio.sink_evidence(), None);
     }
 
     #[test]
@@ -960,7 +987,12 @@ mod tests {
             &mut None,
             &mut Instant::now(),
         );
-        assert_eq!(super::locked(&state).sink, Some(false));
+        assert_eq!(
+            super::locked(&state)
+                .sink
+                .map(|evidence| evidence.connected),
+            Some(false)
+        );
     }
 
     #[test]
@@ -969,19 +1001,36 @@ mod tests {
         // damaged later track. The headphones were last seen connected and
         // nothing has said otherwise.
         let state = std::sync::Mutex::new(super::State::default());
-        super::locked(&state).sink = Some(true);
+        super::record_sink(&state, true);
+        let before = super::locked(&state).sink;
         assert!(super::play_chunk(&state, &mut None, &mut None).is_err());
         assert!(super::keepalive(&state, &mut None).is_err());
-        assert_eq!(super::locked(&state).sink, Some(true));
+        assert_eq!(super::locked(&state).sink, before);
     }
 
     #[test]
     fn a_failed_sink_write_is_evidence_the_headphones_left() {
         let state = std::sync::Mutex::new(super::State::default());
-        super::locked(&state).sink = Some(true);
+        super::record_sink(&state, true);
         let written = super::sink_write(&state, Err(kobo_protocol::DeviceError::Unreachable));
         assert!(written.is_err());
-        assert_eq!(super::locked(&state).sink, Some(false));
+        assert_eq!(
+            super::locked(&state)
+                .sink
+                .map(|evidence| evidence.connected),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_repeated_answer_is_still_a_new_observation() {
+        let state = std::sync::Mutex::new(super::State::default());
+        super::record_sink(&state, false);
+        let first = super::locked(&state).sink.expect("evidence");
+        super::record_sink(&state, false);
+        let second = super::locked(&state).sink.expect("evidence");
+        assert_eq!(first.connected, second.connected);
+        assert_ne!(first.observation, second.observation);
     }
 
     #[test]

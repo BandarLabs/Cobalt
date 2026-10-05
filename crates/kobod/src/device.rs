@@ -239,10 +239,11 @@ struct StatusSource {
     /// nothing is playing are still noticed only at the next read or the next
     /// play, which is when the answer to "where will the sound go" matters.
     bluetooth: bool,
-    /// The last thing audio playback proved about the sink, so only a change
-    /// in it moves the mark. A sink lost an hour ago must not override a
-    /// Bluetooth reply that has since said headphones are connected.
-    audio_sink: Option<bool>,
+    /// The last audio observation acted on, so each moves the mark once. A
+    /// sink lost an hour ago must not override a Bluetooth reply that has
+    /// since said headphones are connected, and a new loss must not be
+    /// mistaken for that old one.
+    audio_sink: Option<u64>,
     /// The band's readings before Bluetooth is added to them.
     reading: Reading,
     /// The last radio state seen, kept only to trace its changes.
@@ -264,13 +265,20 @@ impl StatusSource {
 
     /// Records what audio playback just proved about the Bluetooth sink.
     ///
-    /// `None` is no evidence either way. Returns whether the band changed.
-    fn observe_audio_sink(&mut self, sink: Option<bool>) -> bool {
-        if sink == self.audio_sink {
+    /// Acts on every observation it has not seen, whatever it says, and on
+    /// none twice. Comparing values instead ignored a repeat: a second failure
+    /// to open the sink, after a Bluetooth reply had put the mark back,
+    /// matched the first and left headphones on the band that were gone.
+    /// Returns whether the band changed.
+    fn observe_audio_sink(&mut self, evidence: Option<kobo_hal::audio::SinkEvidence>) -> bool {
+        let Some(evidence) = evidence else {
+            return false;
+        };
+        if self.audio_sink == Some(evidence.observation) {
             return false;
         }
-        self.audio_sink = sink;
-        sink.is_some_and(|connected| self.observe_bluetooth(connected))
+        self.audio_sink = Some(evidence.observation);
+        self.observe_bluetooth(evidence.connected)
     }
 
     /// Records what the daemon just learned about Bluetooth.
@@ -1947,7 +1955,7 @@ fn host_applications(
             let sink_moved = status.observe_audio_sink(
                 audio
                     .as_ref()
-                    .and_then(kobo_hal::audio::Audio::sink_connected),
+                    .and_then(kobo_hal::audio::Audio::sink_evidence),
             );
             if status.poll() || sink_moved {
                 repaint(
@@ -5772,6 +5780,49 @@ mod tests {
         let (hours, minutes) = now.split_once(':').expect("a separator");
         assert!(hours.parse::<u32>().expect("hours") < 24, "{now}");
         assert!(minutes.parse::<u32>().expect("minutes") < 60, "{now}");
+    }
+
+    fn sink(observation: u64, connected: bool) -> kobo_hal::audio::SinkEvidence {
+        kobo_hal::audio::SinkEvidence {
+            observation,
+            connected,
+        }
+    }
+
+    #[test]
+    fn a_repeated_sink_failure_after_a_bluetooth_reply_still_clears_the_mark() {
+        let mut status = super::StatusSource::new();
+        assert!(!status.observe_audio_sink(Some(sink(1, false))));
+        assert!(
+            status.observe_bluetooth(true),
+            "the reply puts the mark back"
+        );
+        assert!(
+            status.observe_audio_sink(Some(sink(2, false))),
+            "a second failure is news even though it says the same thing"
+        );
+        assert!(!status.bluetooth);
+    }
+
+    #[test]
+    fn a_repeated_sink_success_after_a_bluetooth_reply_still_sets_the_mark() {
+        let mut status = super::StatusSource::new();
+        assert!(status.observe_audio_sink(Some(sink(1, true))));
+        assert!(status.observe_bluetooth(false));
+        assert!(status.observe_audio_sink(Some(sink(2, true))));
+        assert!(status.bluetooth);
+    }
+
+    #[test]
+    fn an_old_sink_observation_never_overrides_a_newer_bluetooth_reply() {
+        let mut status = super::StatusSource::new();
+        assert!(!status.observe_audio_sink(Some(sink(1, false))));
+        assert!(status.observe_bluetooth(true));
+        assert!(
+            !status.observe_audio_sink(Some(sink(1, false))),
+            "polled again, nothing new"
+        );
+        assert!(status.bluetooth);
     }
 
     #[test]
