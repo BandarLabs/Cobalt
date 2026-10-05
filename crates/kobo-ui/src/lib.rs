@@ -2383,10 +2383,15 @@ impl Chrome {
 /// sixty and sixty-five percent, only on whether a page is going to load.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Signal {
-    /// No radio, or no network. Drawn as a struck-through dot rather than as
-    /// zero arcs, because zero arcs reads as a weak signal.
+    /// The radio is switched off or has no interface. Drawn struck through,
+    /// because an empty mark reads as a weak signal.
     #[default]
     Off,
+    /// The radio is on but cannot load a page: still searching, refused, or
+    /// associated with no route yet. Drawn as the outline of the full mark,
+    /// so it reads as "Wi-Fi, nothing through it" rather than as "Wi-Fi off",
+    /// which would send somebody to the switch that is already on.
+    Disconnected,
     Weak,
     Fair,
     Strong,
@@ -3814,7 +3819,12 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
     // outermost. That is the order every device this reader has used puts them
     // in, and the order is the only thing making them identifiable at this
     // size.
-    let mark = height - 2 * metrics.space(Space::Tight);
+    // Seven tenths of the band. Inset by a whole spacing step each side they
+    // came out about three millimetres, small enough beside the clock that
+    // the strip looked unfinished, and the band is already reserved, so the
+    // larger mark costs no room.
+    let mark = height * 7 / 10;
+    let top = (height - mark) / 2;
     let gap = metrics.space(Space::Small);
     let mut right = metrics.width - margin;
     // Wider than tall: the design box is square, so a battery drawn into a
@@ -3824,19 +3834,43 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
         id: NodeId(0),
         rect: Rect {
             x: right - battery_width,
-            y: metrics.space(Space::Tight),
+            y: top,
             width: battery_width,
             height: mark,
         },
         kind: LayoutKind::StatusBattery(status.battery, status.charging),
         text_lines: Vec::new(),
     });
-    right -= battery_width + gap;
+    // The number sits close to the battery it describes; the full gap
+    // separates the two from the radio instead.
+    right -= battery_width + metrics.space(Space::Tight);
+    // The level as a number too. A fill a few pixels wide cannot tell twelve
+    // percent from twenty, and the charging bolt replaces the fill entirely,
+    // so without this a reader on the cable could not see the level at all.
+    // Muted figures at caption size, like the clock, so it is the quietest
+    // thing in the strip rather than a second headline.
+    if let Some(level) = status.battery {
+        let text = format!("{}%", level.get());
+        let width = figures_width(&text, FontSize::Caption, Face::Text);
+        right -= width;
+        layout.nodes.push(LayoutNode {
+            id: NodeId(0),
+            rect: Rect {
+                x: right,
+                y: 0,
+                width,
+                height,
+            },
+            kind: LayoutKind::StatusPercent,
+            text_lines: vec![text],
+        });
+        right -= gap;
+    }
     layout.nodes.push(LayoutNode {
         id: NodeId(0),
         rect: Rect {
             x: right - mark,
-            y: metrics.space(Space::Tight),
+            y: top,
             width: mark,
             height: mark,
         },
@@ -3852,7 +3886,7 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
             id: NodeId(0),
             rect: Rect {
                 x: right - mark,
-                y: metrics.space(Space::Tight),
+                y: top,
                 width: mark,
                 height: mark,
             },
@@ -5856,6 +5890,8 @@ pub enum LayoutKind {
     StatusBand,
     /// The time, at the leading edge of the band.
     StatusClock,
+    /// The battery level as a number, beside the battery.
+    StatusPercent,
     /// The radio, drawn at the strength the runtime measured.
     StatusSignal(Signal),
     StatusBluetooth,
@@ -14860,7 +14896,7 @@ fn render_all_with_selected_font(
             // The one string on the panel that changes while its neighbours
             // stay, so its digits go on a fixed advance and it counts without
             // stepping sideways.
-            LayoutKind::StatusClock => draw_figures(
+            LayoutKind::StatusClock | LayoutKind::StatusPercent => draw_figures(
                 surface,
                 node.text_lines.first().map_or("", String::as_str),
                 node.rect.x,
@@ -14871,17 +14907,20 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::StatusSignal(strength) => {
-                draw_vector(surface, &vector::wifi(strength), node.rect, clip, tone::INK);
+                let size = min(node.rect.width, node.rect.height);
+                blit_vector_crisp(surface, &vector::wifi(strength), size, node.rect, clip);
             }
             LayoutKind::StatusBluetooth => {
-                draw_vector(surface, &vector::bluetooth(), node.rect, clip, tone::INK);
+                let size = min(node.rect.width, node.rect.height);
+                blit_vector_crisp(surface, &vector::bluetooth(), size, node.rect, clip);
             }
             LayoutKind::StatusBattery(level, charging) => {
                 // Nothing at all when it could not be read. An empty battery
                 // and an unreadable one look identical and mean the opposite
                 // things, so the honest drawing of "unknown" is no drawing.
                 if let Some(level) = level {
-                    draw_wide_vector(surface, &vector::battery(level, charging), node.rect, clip);
+                    let shapes = vector::battery(level, charging);
+                    blit_vector_crisp(surface, &shapes, node.rect.width, node.rect, clip);
                 }
             }
             LayoutKind::TopBarTitle => draw_lines(
@@ -15727,19 +15766,6 @@ fn draw_glyph_icon_in(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rec
 /// worse. This is the same reasoning that antialiases text.
 /// Rasterises art that is authored wider than tall.
 ///
-/// The design box is square and [`draw_vector`] fits it to the shorter side,
-/// which is right for an icon and wrong for a battery: fitted to a status
-/// band's height a battery comes out about three millimetres across and reads
-/// as a dot. This fits the box to the width instead and centres it vertically.
-/// The rows that fall outside the rect are empty in the art, so nothing is
-/// lost, the geometry is authored to sit in the middle band of the box.
-fn draw_wide_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect) {
-    if rect.width <= 0 {
-        return;
-    }
-    blit_vector(surface, shapes, rect.width, rect, clip, tone::INK);
-}
-
 fn draw_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect, tone: u8) {
     let size = min(rect.width, rect.height);
     if size <= 0 {
@@ -15771,6 +15797,41 @@ fn blit_vector(
                 continue;
             }
             surface.blend(x, y, tone, alpha);
+        }
+    }
+}
+
+/// Renders the design box at `size` in pure ink and paper, centred on `rect`.
+///
+/// For the status marks. Blended edges are what made them look soft: at three
+/// millimetres a grey fringe is a third of every stroke, and the panel then
+/// spends a greyscale waveform redrawing that fringe whenever the band
+/// changes. Pixels at least half covered are inked and the rest left as
+/// paper, which keeps every stroke edge on a pixel boundary and lets the band
+/// update with the fast two-level waveform.
+fn blit_vector_crisp(
+    surface: &mut Surface,
+    shapes: &[vector::Shape],
+    size: i32,
+    rect: Rect,
+    clip: Rect,
+) {
+    if size <= 0 {
+        return;
+    }
+    let coverage = vector::render(shapes, size);
+    let origin_x = rect.x + (rect.width - size) / 2;
+    let origin_y = rect.y + (rect.height - size) / 2;
+    for row in 0..size {
+        for column in 0..size {
+            if coverage.at(column, row) < 128 {
+                continue;
+            }
+            let (x, y) = (origin_x + column, origin_y + row);
+            if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
+                continue;
+            }
+            surface.blend(x, y, tone::INK, 255);
         }
     }
 }

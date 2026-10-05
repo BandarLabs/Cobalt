@@ -215,10 +215,6 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// changed.
 const STATUS_POLL: Duration = Duration::from_secs(2);
 
-/// How stale a status may be before a frame that is already being drawn takes
-/// a fresh one.
-const STATUS_INTERVAL: Duration = Duration::from_secs(60);
-
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
 ///
 /// Held by the session rather than read per frame. Every reading here is from
@@ -240,6 +236,8 @@ struct StatusSource {
     /// noticed the next time something reads Bluetooth rather than within two
     /// seconds. That is the right trade against making every session reboot.
     bluetooth: bool,
+    /// The last radio state seen, kept only to trace its changes.
+    link: Option<kobo_hal::network::LinkState>,
 }
 
 impl StatusSource {
@@ -249,6 +247,7 @@ impl StatusSource {
             taken: None,
             polled: None,
             bluetooth: false,
+            link: None,
         }
     }
 
@@ -289,11 +288,28 @@ impl StatusSource {
         true
     }
 
-    /// The current status, re-read only when it has gone stale.
+    /// Takes a reading now, whatever the poll interval says, and reports
+    /// whether anything visible moved.
+    ///
+    /// For the moments the daemon has just changed something itself, such as
+    /// switching Wi-Fi off. Waiting for the next poll there drew the reply's
+    /// screen with the old band and then repainted a second later, which is
+    /// the lag people noticed: two panel updates where one would do.
+    fn refresh(&mut self) -> bool {
+        self.polled = None;
+        self.poll()
+    }
+
+    /// The current status, as fresh as the poll interval.
+    ///
+    /// A frame takes the same reading the poll would, rather than one up to a
+    /// minute old. A minute was the old limit, so a screen drawn just after a
+    /// cable was pulled could put the charging mark back for the poll to take
+    /// away again.
     fn get(&mut self) -> &kobo_ui::Status {
         let stale = self
             .taken
-            .is_none_or(|taken| taken.elapsed() >= STATUS_INTERVAL);
+            .is_none_or(|taken| taken.elapsed() >= STATUS_POLL);
         if stale {
             self.last = self.read();
             self.taken = Some(Instant::now());
@@ -301,10 +317,17 @@ impl StatusSource {
         &self.last
     }
 
-    fn read(&self) -> kobo_ui::Status {
+    fn read(&mut self) -> kobo_ui::Status {
+        let (status, link) = read_status();
+        // Traced on change only, so a field report says when the radio went
+        // from searching to associated to routed without a line every poll.
+        if self.link != Some(link) {
+            trace(&format!("wifi link: {link:?}"));
+            self.link = Some(link);
+        }
         kobo_ui::Status {
             bluetooth: self.bluetooth,
-            ..read_status()
+            ..status
         }
     }
 }
@@ -327,27 +350,34 @@ fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chro
     Chrome::for_screen(screen, at_home, Some(status.get().clone()))
 }
 
-/// Assembles one reading of everything the band shows.
-fn read_status() -> kobo_ui::Status {
+/// Assembles one reading of everything the band shows, and the radio state
+/// it was drawn from.
+fn read_status() -> (kobo_ui::Status, kobo_hal::network::LinkState) {
+    use kobo_hal::network::LinkState;
     let battery = kobo_hal::battery::read();
-    kobo_ui::Status {
+    let link = kobo_hal::network::link_state();
+    let status = kobo_ui::Status {
         clock: clock(),
         // A radio with no default route is not a usable connection however
         // strong the association is, so reachability is checked before
         // strength. Showing three arcs on a device that cannot load a page is
-        // the one thing this mark must never do.
-        signal: if kobo_hal::network::is_online(&kobo_hal::network::wireless_link()) {
-            kobo_hal::network::signal_dbm(&kobo_hal::network::wireless_link())
-                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm)
-        } else {
-            kobo_ui::Signal::Off
+        // the one thing this mark must never do. A radio that is on but not
+        // routed is still told apart from one that is off, because the fix
+        // for each is different.
+        signal: match link {
+            LinkState::Absent | LinkState::Down => kobo_ui::Signal::Off,
+            LinkState::Searching | LinkState::NoRoute => kobo_ui::Signal::Disconnected,
+            LinkState::Online => kobo_hal::network::wireless_link()
+                .and_then(|link| kobo_hal::network::signal_dbm(&link))
+                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm),
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
         // Filled in by the caller, which is the only layer holding what the
         // daemon has been told about the controller.
         bluetooth: false,
-    }
+    };
+    (status, link)
 }
 
 /// The wall clock as `HH:MM`, or empty when it cannot be read.
@@ -638,7 +668,7 @@ pub fn present(
         "launch: network recovery finished after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if network.was_online() && kobo_hal::network::is_online(&kobo_hal::network::wireless_link()) {
+    if network.was_online() && kobo_hal::network::online() {
         wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
     }
     trace(&format!(
@@ -1000,8 +1030,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut Trac
     loop {
         if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
             let associated = wifi.associated().unwrap_or(false);
-            let healthy =
-                associated && kobo_hal::network::is_online(&kobo_hal::network::wireless_link());
+            let healthy = associated && kobo_hal::network::online();
             if healthy {
                 let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
@@ -2996,6 +3025,27 @@ fn host_applications(
                                         &mut status,
                                     )?;
                                 }
+                            }
+                            // The same for a request that just changed the
+                            // radio, so the band moves with the switch rather
+                            // than on the next poll.
+                            if matches!(
+                                request,
+                                kobo_protocol::DeviceRequest::SetWifi { .. }
+                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
+                                    | kobo_protocol::DeviceRequest::DisconnectWifi
+                            ) && status.refresh()
+                            {
+                                repaint(
+                                    &mut apps,
+                                    front,
+                                    display,
+                                    whole_screen,
+                                    &mut surface,
+                                    &mut panel,
+                                    &home,
+                                    &mut status,
+                                )?;
                             }
                             reply(
                                 &mut apps[index],
