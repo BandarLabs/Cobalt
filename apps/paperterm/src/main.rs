@@ -1345,46 +1345,93 @@ mod tests {
             Command::Spawn { .. } | Command::Store(StoreRequest::Save { .. })
         )));
     }
+    /// The environment variable naming the one panel a child run lays out.
+    const PANEL_UNDER_TEST: &str = "PAPERTERM_PANEL";
+
+    /// Each panel is laid out in a process of its own, with the real faces
+    /// installed at that panel's metrics, because that is what the device
+    /// draws with. The built-in bitmap fallback sizes type for a 300 ppi panel
+    /// and on the Nia's 212 ppi reports overflow the device does not have. The
+    /// typesetter is installed once per process, hence one child per panel.
     #[test]
     fn entry_and_empty_terminal_screens_fit_all_supported_profiles_and_text_sizes() {
-        for profile in kobo_profile::SUPPORTED_PROFILES {
-            for text_scale in kobo_ui::TextScale::STEPS {
-                let metrics = DisplayMetrics {
-                    width: i32::try_from(profile.width).expect("profile width"),
-                    height: i32::try_from(profile.height).expect("profile height"),
-                    pixels_per_inch: i32::from(profile.pixels_per_inch),
-                    text_scale,
-                };
-                let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
-                for view in [
-                    View::Welcome,
-                    View::Setup,
-                    View::Trust,
-                    View::Start,
-                    View::Preview,
-                    View::Address,
-                    View::Code,
-                    View::Watching,
+        if let Ok(panel) = std::env::var(PANEL_UNDER_TEST) {
+            let profile = kobo_profile::SUPPORTED_PROFILES
+                .iter()
+                .find(|profile| profile.id == panel)
+                .expect("the parent names a supported panel");
+            screens_fit_one_panel(profile);
+            return;
+        }
+        let executable = std::env::current_exe().expect("the test binary can find itself");
+        let failures = kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .filter_map(|profile| {
+                let child = std::process::Command::new(&executable)
+                    .args([
+                        "--exact",
+                        "tests::entry_and_empty_terminal_screens_fit_all_supported_profiles_and_text_sizes",
+                        "--test-threads=1",
+                    ])
+                    .env(PANEL_UNDER_TEST, profile.id)
+                    .output()
+                    .expect("a panel run can be started");
+                (!child.status.success()).then(|| {
+                    format!(
+                        "{}:\n{}{}",
+                        profile.id,
+                        String::from_utf8_lossy(&child.stdout),
+                        String::from_utf8_lossy(&child.stderr)
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    fn screens_fit_one_panel(profile: &kobo_profile::DeviceProfile) {
+        let base = DisplayMetrics {
+            width: i32::try_from(profile.width).expect("profile width"),
+            height: i32::try_from(profile.height).expect("profile height"),
+            pixels_per_inch: i32::from(profile.pixels_per_inch),
+            text_scale: kobo_ui::TextScale::Default,
+        };
+        kobo_text::install(base).expect("the bundled faces load");
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                width: i32::try_from(profile.width).expect("profile width"),
+                height: i32::try_from(profile.height).expect("profile height"),
+                pixels_per_inch: i32::from(profile.pixels_per_inch),
+                text_scale,
+            };
+            let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+            for view in [
+                View::Welcome,
+                View::Setup,
+                View::Trust,
+                View::Start,
+                View::Preview,
+                View::Address,
+                View::Code,
+                View::Watching,
+            ] {
+                for form_error in [
+                    None,
+                    Some("Use a name or IP address, for example laptop:9332."),
+                    Some("Enter the six letters and numbers from your computer."),
                 ] {
-                    for form_error in [
-                        None,
-                        Some("Use a name or IP address, for example laptop:9332."),
-                        Some("Enter the six letters and numbers from your computer."),
-                    ] {
-                        let app = Paperterm {
-                            view,
-                            form_error,
-                            ..Paperterm::default()
-                        };
-                        let diagnostics =
-                            app.screen().diagnostics(&metrics, &Chrome::measuring(true));
-                        assert!(
-                            diagnostics.issues.is_empty(),
-                            "{} {text_scale:?} {view:?}: {:?}",
-                            profile.id,
-                            diagnostics.issues
-                        );
-                    }
+                    let app = Paperterm {
+                        view,
+                        form_error,
+                        ..Paperterm::default()
+                    };
+                    let diagnostics = app.screen().diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{} {text_scale:?} {view:?}: {:?}",
+                        profile.id,
+                        diagnostics.issues
+                    );
                 }
             }
         }

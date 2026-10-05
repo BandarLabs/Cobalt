@@ -1348,6 +1348,7 @@ dependencies = [
  "kobo-profile",
  "kobo-sdk",
  "kobo-stream",
+ "kobo-text",
  "kobo-ui",
 ]
 
