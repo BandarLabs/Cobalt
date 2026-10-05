@@ -144,7 +144,7 @@ Screenshots are from a Kobo Clara BW or its simulator.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/readlater/README.md"><img width="230" src="docs/media/site/apps/readlater.png" alt="Read Later's unread queue of synced Wallabag articles with reading times."></a><br><b><a href="apps/readlater/README.md">Read Later</a></b><br>Read your Wallabag articles anywhere.</td>
-<td width="33%" valign="top"><a href="apps/readeck/README.md"><img width="230" src="docs/media/site/apps/store.png" alt="Readeck available from the signed Cobalt Apps Catalog"></a><br><b><a href="apps/readeck/README.md">Readeck</a></b><br>Read and search your saved Readeck articles.</td>
+<td width="33%" valign="top"><a href="apps/readeck/README.md"><img width="230" src="docs/media/site/apps/readeck/inbox.png" alt="Readeck inbox with sample articles, rendered by Cobalt at Clara BW dimensions; not a device capture."></a><br><b><a href="apps/readeck/README.md">Readeck</a></b><br>Read and search your saved Readeck articles.</td>
 <td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick showing several coding-agent sessions and their pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
 </tr>
 <tr>

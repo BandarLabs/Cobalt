@@ -5,7 +5,7 @@
   "summary": "Read and search your saved Readeck articles.",
   "version": "0.1.0",
   "release_notes": "Initial token-based reader with library search, reading positions, images and article actions.",
-  "minimum_cobalt_version": "999.0.0",
+  "minimum_cobalt_version": "0.3.25",
   "glyph": "bookmark",
   "capabilities": ["network", "frontlight-control"],
   "setup": {

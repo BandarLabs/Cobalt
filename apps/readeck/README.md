@@ -4,14 +4,14 @@ Read and search saved articles from your HTTPS Readeck instance. Mark articles
 read, archive, favorite/unfavorite, or confirm deletion. Changes appear only
 after the server acknowledges them; writes are not automatically retried.
 
-## Publication dependency
+## Requirements
 
-This draft requires the Readeck credential policy in
-[PR #270](https://github.com/BandarLabs/Cobalt/pull/270).
-The manifest minimum `999.0.0` is a development guard, not a real release.
-Before merging/publishing, replace it with the first Cobalt release containing
-that policy, regenerate the app pages, and complete the contributor dry-run.
+Requires Cobalt **0.3.25 or newer**, the first release containing the Readeck
+credential policy from [PR #270](https://github.com/BandarLabs/Cobalt/pull/270).
 Protocol compatibility alone does not grant permission to use Readeck tokens.
+Laptop setup additionally requires a CLI with the `secret set --app --server`
+options introduced alongside this app; older CLIs do not support them.
+On-device token entry does not require the new CLI.
 
 ## Setup from a computer
 
@@ -77,5 +77,11 @@ node tools/app-contribute.mjs --manifest apps/readeck/cobalt-app.json --print-pl
 
 Tests cover account setup, failed saves, reading positions, search, mutations,
 images, and Clara/Elipsa layouts. They are not fresh hardware acceptance.
-Before publication, test the final signed package on a Kobo and verify that an
-update preserves the account and reading position.
+After merge, Beta publishing creates the official signed Store package.
+Before Stable promotion, install that package on a Kobo and verify that an
+update preserves the account and reading position. Local contributor previews
+use a public test key and must not be trusted as official Store releases.
+
+The [listing image](screenshots/inbox.png) uses synthetic articles rendered by
+Cobalt at Clara BW dimensions. It is not device-test evidence. Its reproducible
+capture is in `tools/review-captures/apps/readeck/`.
