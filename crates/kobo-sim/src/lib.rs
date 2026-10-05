@@ -1483,10 +1483,16 @@ impl AppState {
     /// mark on screen until something unrelated redrew it. A frame is
     /// committed only when the mark moved, so a scan does not repaint.
     fn follow_radio(&mut self) {
-        let signal = |state: &Self| state.chrome.status.as_ref().map(|status| status.signal);
-        let before = signal(self);
+        let marks = |state: &Self| {
+            state
+                .chrome
+                .status
+                .as_ref()
+                .map(|status| status.marks.clone())
+        };
+        let before = marks(self);
         self.update_chrome();
-        if signal(self) != before {
+        if marks(self) != before {
             self.commit_frame();
         }
     }
@@ -1495,27 +1501,28 @@ impl AppState {
         if let Ok(snapshot) = self.time.now() {
             self.clock_snapshot = snapshot;
         }
-        let status = kobo_ui::Status {
-            clock: self.clock_snapshot.hour_minute().map_or_else(
+        let signal = if self.scenario == Scenario::Offline {
+            kobo_ui::Signal::Off
+        } else {
+            // The same radio Settings switches, so the band follows it.
+            // A poisoned lock draws what the band drew before this read
+            // the radio at all, rather than failing a frame over it.
+            RADIO
+                .lock()
+                .map_or(kobo_ui::Signal::Strong, |radio| radio.signal())
+        };
+        let status = kobo_ui::Status::standard(
+            self.clock_snapshot.hour_minute().map_or_else(
                 || "--:--".into(),
                 |(hour, minute)| format!("{hour:02}:{minute:02}"),
             ),
-            signal: if self.scenario == Scenario::Offline {
-                kobo_ui::Signal::Off
-            } else {
-                // The same radio Settings switches, so the band follows it.
-                // A poisoned lock draws what the band drew before this read
-                // the radio at all, rather than failing a frame over it.
-                RADIO
-                    .lock()
-                    .map_or(kobo_ui::Signal::Strong, |radio| radio.signal())
-            },
-            battery: Some(kobo_ui::Percent::new(
+            Some(kobo_ui::Percent::new(
                 self.effective_hardware().battery_percent,
             )),
-            charging: self.hardware.charging,
-            bluetooth: true,
-        };
+            self.hardware.charging,
+            signal,
+            true,
+        );
         self.chrome =
             kobo_ui::Chrome::for_screen(&self.screen, self.app_name == "launcher", Some(status));
     }
@@ -3903,7 +3910,14 @@ mod tests {
         let mut state = super::AppState::default();
         state.set_screen(kobo_ui::Screen::new(1, vec![]));
         state.update_chrome();
-        let signal = |state: &super::AppState| state.chrome.status.as_ref().map(|s| s.signal);
+        let signal = |state: &super::AppState| {
+            state.chrome.status.as_ref().and_then(|status| {
+                status.marks.iter().find_map(|mark| match mark {
+                    kobo_ui::StatusMark::Signal(signal) => Some(*signal),
+                    _ => None,
+                })
+            })
+        };
         assert_eq!(signal(&state), Some(kobo_ui::Signal::Strong));
         let drawn = state.panel.planner.refreshes();
         let _ = super::RADIO

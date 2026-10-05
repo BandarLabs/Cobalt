@@ -280,3 +280,6 @@ provided without warranty. Report security issues as described in
 
 GNU Affero General Public License v3.0. See [LICENSE](LICENSE) and
 [THIRD-PARTY.md](THIRD-PARTY.md).
+
+Bluetooth, Wi-Fi and Kobo are trademarks of their owners. See
+[TRADEMARKS.md](TRADEMARKS.md).

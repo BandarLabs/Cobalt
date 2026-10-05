@@ -2363,15 +2363,15 @@ impl Chrome {
     pub fn measuring(back: bool) -> Self {
         Self {
             back,
-            status: Some(Status {
-                clock: "00:00".to_owned(),
-                signal: Signal::Strong,
-                battery: Some(Percent::new(50)),
-                charging: false,
-                // The busiest strip, so nothing measured against this comes
-                // out narrower than the panel it will be drawn on.
-                bluetooth: true,
-            }),
+            // The busiest strip, so nothing measured against this comes out
+            // narrower than the panel it will be drawn on.
+            status: Some(Status::standard(
+                "00:00",
+                Some(Percent::new(50)),
+                false,
+                Signal::Strong,
+                true,
+            )),
         }
     }
 }
@@ -2427,16 +2427,92 @@ pub struct Status {
     /// the reader's locale and the layer that knows the answer is the one that
     /// read the clock. Empty means the device has no time worth showing.
     pub clock: String,
-    pub signal: Signal,
-    /// `None` when the battery could not be read, which is drawn as nothing
-    /// rather than as zero: an empty battery and an unreadable one look the
-    /// same and mean opposite things.
-    pub battery: Option<Percent>,
-    pub charging: bool,
-    /// Whether something is connected right now, not whether the controller is
-    /// powered. Drawn as a mark beside the radio so that the answer to "where
-    /// is the sound going" is on every screen rather than only in Settings.
-    pub bluetooth: bool,
+    /// The marks at the trailing edge, outermost first.
+    ///
+    /// Also the order they give way in: when the band is too narrow for all of
+    /// them, the innermost are dropped first, so the first mark in the list is
+    /// the last one standing. Put what a reader most needs to see first.
+    pub marks: Vec<StatusMark>,
+}
+
+impl Status {
+    /// The band every screen shows: battery outermost, then the radio, then
+    /// Bluetooth while something is connected.
+    ///
+    /// One constructor, so the daemon, the simulator and every test lay the
+    /// marks out in the same order rather than each choosing its own.
+    #[must_use]
+    pub fn standard(
+        clock: impl Into<String>,
+        battery: Option<Percent>,
+        charging: bool,
+        signal: Signal,
+        bluetooth: bool,
+    ) -> Self {
+        let mut marks = vec![
+            StatusMark::Battery {
+                level: battery,
+                charging,
+            },
+            StatusMark::Signal(signal),
+        ];
+        if bluetooth {
+            marks.push(StatusMark::Bluetooth);
+        }
+        Self {
+            clock: clock.into(),
+            marks,
+        }
+    }
+}
+
+/// One mark in the status band.
+///
+/// The band lays out whatever list of these it is given, so a new mark is a
+/// variant here, its width in [`StatusMark::width`], and its drawing in
+/// [`draw_status_mark`]. Nothing else about the band changes.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum StatusMark {
+    /// The level as a number beside a battery, and whether it is on a cable.
+    ///
+    /// `None` when the gauge could not be read, which draws nothing at all
+    /// rather than an empty battery: an empty battery and an unreadable one
+    /// look the same and mean opposite things. The room is still taken, so
+    /// the marks beside it do not shuffle when a reading fails once.
+    Battery {
+        level: Option<Percent>,
+        charging: bool,
+    },
+    /// The radio, at the state the runtime measured.
+    Signal(Signal),
+    /// Something is connected over Bluetooth right now, not merely powered.
+    /// Drawn as headphones, so that "where is the sound going" is answered
+    /// on every screen.
+    Bluetooth,
+}
+
+impl StatusMark {
+    /// How wide the mark is, given the height of a square mark.
+    ///
+    /// The battery's number is given the width of "100%" whatever it says, so
+    /// the radio beside it does not step sideways as the charge falls through
+    /// ten percent.
+    fn width(self, mark: i32, metrics: &DisplayMetrics) -> i32 {
+        match self {
+            Self::Battery { .. } => {
+                battery_glyph_width(mark)
+                    + metrics.space(Space::Tight)
+                    + figures_width("100%", FontSize::Caption, Face::Text)
+            }
+            Self::Signal(_) | Self::Bluetooth => mark,
+        }
+    }
+}
+
+/// Wider than tall: the design box is square, so a battery drawn into a
+/// square would come out about three millimetres across and read as a dot.
+const fn battery_glyph_width(mark: i32) -> i32 {
+    mark * 2
 }
 
 /// Gives a screen a top bar to put the way back in, when it has none.
@@ -3793,7 +3869,15 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
         kind: LayoutKind::StatusBand,
         text_lines: Vec::new(),
     });
-    if !status.clock.is_empty() {
+    let clock_width = if status.clock.is_empty() {
+        0
+    } else {
+        min(
+            metrics.width / 3,
+            figures_width(&status.clock, FontSize::Caption, Face::Text),
+        )
+    };
+    if clock_width > 0 {
         layout.nodes.push(LayoutNode {
             id: NodeId(0),
             rect: Rect {
@@ -3805,53 +3889,26 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
                 // band in ink each time. It can be sized exactly because the
                 // digits go on a fixed advance, so this width is the same at
                 // every minute of the day.
-                width: min(
-                    metrics.width / 3,
-                    figures_width(&status.clock, FontSize::Caption, Face::Text),
-                ),
+                width: clock_width,
                 height,
             },
             kind: LayoutKind::StatusClock,
             text_lines: vec![status.clock.clone()],
         });
     }
-    // Marks are placed from the trailing edge inwards, so the battery is
-    // outermost. That is the order every device this reader has used puts them
-    // in, and the order is the only thing making them identifiable at this
-    // size.
-    // Seven tenths of the band. Inset by a whole spacing step each side they
-    // came out about three millimetres, small enough beside the clock that
-    // the strip looked unfinished, and the band is already reserved, so the
-    // larger mark costs no room.
+    // Marks are placed from the trailing edge inwards, in the order given,
+    // and stop before they would reach the clock. Dropping the innermost is
+    // better than overlapping: a mark drawn over the time is two marks nobody
+    // can read.
     let mark = height * 7 / 10;
-    let top = (height - mark) / 2;
     let gap = metrics.space(Space::Small);
+    let floor = margin + clock_width + gap;
     let mut right = metrics.width - margin;
-    // Wider than tall: the design box is square, so a battery drawn into a
-    // square would come out about three millimetres across and read as a dot.
-    let battery_width = mark * 2;
-    layout.nodes.push(LayoutNode {
-        id: NodeId(0),
-        rect: Rect {
-            x: right - battery_width,
-            y: top,
-            width: battery_width,
-            height: mark,
-        },
-        kind: LayoutKind::StatusBattery(status.battery, status.charging),
-        text_lines: Vec::new(),
-    });
-    // The number sits close to the battery it describes; the full gap
-    // separates the two from the radio instead.
-    right -= battery_width + metrics.space(Space::Tight);
-    // The level as a number too. A fill a few pixels wide cannot tell twelve
-    // percent from twenty, and the charging bolt replaces the fill entirely,
-    // so without this a reader on the cable could not see the level at all.
-    // Muted figures at caption size, like the clock, so it is the quietest
-    // thing in the strip rather than a second headline.
-    if let Some(level) = status.battery {
-        let text = format!("{}%", level.get());
-        let width = figures_width(&text, FontSize::Caption, Face::Text);
+    for status_mark in &status.marks {
+        let width = status_mark.width(mark, metrics);
+        if right - width < floor {
+            break;
+        }
         right -= width;
         layout.nodes.push(LayoutNode {
             id: NodeId(0),
@@ -3861,38 +3918,10 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
                 width,
                 height,
             },
-            kind: LayoutKind::StatusPercent,
-            text_lines: vec![text],
-        });
-        right -= gap;
-    }
-    layout.nodes.push(LayoutNode {
-        id: NodeId(0),
-        rect: Rect {
-            x: right - mark,
-            y: top,
-            width: mark,
-            height: mark,
-        },
-        kind: LayoutKind::StatusSignal(status.signal),
-        text_lines: Vec::new(),
-    });
-    // Innermost, and only present when something is connected. Reserving the
-    // space unconditionally would leave a hole beside the radio on every
-    // screen for the sake of a mark that is usually not drawn.
-    if status.bluetooth {
-        right -= mark + gap;
-        layout.nodes.push(LayoutNode {
-            id: NodeId(0),
-            rect: Rect {
-                x: right - mark,
-                y: top,
-                width: mark,
-                height: mark,
-            },
-            kind: LayoutKind::StatusBluetooth,
+            kind: LayoutKind::StatusMark(*status_mark),
             text_lines: Vec::new(),
         });
+        right -= gap;
     }
     height
 }
@@ -5536,9 +5565,16 @@ pub enum Glyph {
     /// Three dots in a row: whatever else this bar would have offered if it
     /// had more than [`MAX_BAR_ACTIONS`] places to offer it in.
     More,
-    /// The Bluetooth rune. Settings drew Bluetooth with the gear before this
-    /// existed, which made the one row about headphones look like a link back
-    /// to the screen it was already on.
+    /// Bluetooth audio, drawn as headphones.
+    ///
+    /// Settings drew Bluetooth with the gear before this existed, which made
+    /// the one row about headphones look like a link back to the screen it was
+    /// already on. It was then the Bluetooth rune, which is the Bluetooth
+    /// SIG's registered figure mark and reserved for qualified member
+    /// products, so it is drawn as headphones instead. The variant keeps its
+    /// name and wire number, so an application that asks for it is unchanged
+    /// and simply draws headphones, which say what the radio is for on this
+    /// reader anyway.
     Bluetooth,
     /// A key: a credential, a secret, a permission that has to be installed
     /// rather than granted. The permission state drew a head and shoulders
@@ -5890,14 +5926,8 @@ pub enum LayoutKind {
     StatusBand,
     /// The time, at the leading edge of the band.
     StatusClock,
-    /// The battery level as a number, beside the battery.
-    StatusPercent,
-    /// The radio, drawn at the strength the runtime measured.
-    StatusSignal(Signal),
-    StatusBluetooth,
-    /// The battery, drawn at the level the runtime read, and whether it is on
-    /// the charger. `None` means unreadable, which is drawn as nothing.
-    StatusBattery(Option<Percent>, bool),
+    /// One mark at the trailing edge of the band.
+    StatusMark(StatusMark),
     /// A heading, carrying the level it sits at so it is drawn at the size it
     /// was measured at.
     Heading(u8),
@@ -14896,32 +14926,15 @@ fn render_all_with_selected_font(
             // The one string on the panel that changes while its neighbours
             // stay, so its digits go on a fixed advance and it counts without
             // stepping sideways.
-            LayoutKind::StatusClock | LayoutKind::StatusPercent => draw_figures(
+            LayoutKind::StatusClock => draw_figures_crisp(
                 surface,
                 node.text_lines.first().map_or("", String::as_str),
                 node.rect.x,
                 node.rect.y + (node.rect.height - FontSize::Caption.line_height()) / 2,
-                FontSize::Caption,
-                Face::Text,
-                tone::MUTED,
                 clip,
             ),
-            LayoutKind::StatusSignal(strength) => {
-                let size = min(node.rect.width, node.rect.height);
-                blit_vector_crisp(surface, &vector::wifi(strength), size, node.rect, clip);
-            }
-            LayoutKind::StatusBluetooth => {
-                let size = min(node.rect.width, node.rect.height);
-                blit_vector_crisp(surface, &vector::bluetooth(), size, node.rect, clip);
-            }
-            LayoutKind::StatusBattery(level, charging) => {
-                // Nothing at all when it could not be read. An empty battery
-                // and an unreadable one look identical and mean the opposite
-                // things, so the honest drawing of "unknown" is no drawing.
-                if let Some(level) = level {
-                    let shapes = vector::battery(level, charging);
-                    blit_vector_crisp(surface, &shapes, node.rect.width, node.rect, clip);
-                }
+            LayoutKind::StatusMark(mark) => {
+                draw_status_mark(surface, mark, node.rect, metrics, clip);
             }
             LayoutKind::TopBarTitle => draw_lines(
                 surface,
@@ -15798,6 +15811,117 @@ fn blit_vector(
             }
             surface.blend(x, y, tone, alpha);
         }
+    }
+}
+
+/// Draws one status mark into the band-high `rect` its layout reserved.
+///
+/// Marks are vertically centred at seven tenths of the band, the same for
+/// every kind, which is what keeps them on one line however many there are.
+fn draw_status_mark(
+    surface: &mut Surface,
+    mark: StatusMark,
+    rect: Rect,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let size = rect.height * 7 / 10;
+    let square = Rect {
+        x: rect.x + rect.width - size,
+        y: rect.y + (rect.height - size) / 2,
+        width: size,
+        height: size,
+    };
+    match mark {
+        StatusMark::Signal(strength) => {
+            blit_vector_crisp(surface, &vector::wifi(strength), size, square, clip);
+        }
+        StatusMark::Bluetooth => {
+            blit_vector_crisp(
+                surface,
+                &vector::shapes(Glyph::Headphones),
+                size,
+                square,
+                clip,
+            );
+        }
+        // Nothing at all when it could not be read; the room stays reserved.
+        StatusMark::Battery {
+            level: Some(level),
+            charging,
+        } => {
+            let glyph = Rect {
+                x: rect.x + rect.width - battery_glyph_width(size),
+                width: battery_glyph_width(size),
+                ..square
+            };
+            let shapes = vector::battery(level, charging);
+            blit_vector_crisp(surface, &shapes, glyph.width, glyph, clip);
+            // Set against the battery, so a short number leaves its spare room
+            // on the side away from the glyph rather than between them.
+            let text = format!("{}%", level.get());
+            let width = figures_width(&text, FontSize::Caption, Face::Text);
+            draw_figures_crisp(
+                surface,
+                &text,
+                glyph.x - width - metrics.space(Space::Tight),
+                rect.y + (rect.height - FontSize::Caption.line_height()) / 2,
+                clip,
+            );
+        }
+        StatusMark::Battery { level: None, .. } => {}
+    }
+}
+
+/// Draws status-band figures in pure ink and paper, on a fixed advance.
+///
+/// The band's text changes on its own, the clock every minute and the battery
+/// whenever the charge moves, and blended edges would put grey on the panel
+/// each time: a greyscale refresh for a digit, and a soft figure beside marks
+/// that are drawn sharp. The figures are set into a scratch surface and only
+/// the pixels at least half covered are inked, the same rule as the marks.
+fn draw_figures_crisp(surface: &mut Surface, text: &str, x: i32, y: i32, clip: Rect) {
+    let width = figures_width(text, FontSize::Caption, Face::Text);
+    let height = FontSize::Caption.line_height();
+    let (Ok(columns), Ok(rows)) = (usize::try_from(width), usize::try_from(height)) else {
+        return;
+    };
+    if columns == 0 || rows == 0 {
+        return;
+    }
+    let mut scratch = Surface::new(columns, rows);
+    scratch.clear(tone::PAPER);
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    draw_figures(
+        &mut scratch,
+        text,
+        0,
+        0,
+        FontSize::Caption,
+        Face::Text,
+        tone::INK,
+        whole,
+    );
+    for (index, value) in scratch.pixels.iter().enumerate() {
+        if *value >= 128 {
+            continue;
+        }
+        let (Ok(column), Ok(row)) = (
+            i32::try_from(index % columns),
+            i32::try_from(index / columns),
+        ) else {
+            continue;
+        };
+        let (px, py) = (x + column, y + row);
+        if px < clip.x || py < clip.y || px >= clip.x + clip.width || py >= clip.y + clip.height {
+            continue;
+        }
+        surface.blend(px, py, tone::INK, 255);
     }
 }
 
@@ -19734,13 +19858,7 @@ mod prose_tests {
     }
 
     fn a_status() -> Status {
-        Status {
-            clock: "09:41".to_owned(),
-            signal: Signal::Fair,
-            battery: Some(Percent::new(64)),
-            charging: false,
-            bluetooth: false,
-        }
+        Status::standard("09:41", Some(Percent::new(64)), false, Signal::Fair, false)
     }
 
     #[test]
@@ -19920,21 +20038,135 @@ mod prose_tests {
         assert_eq!(Signal::from_dbm(-95), Signal::Weak);
     }
 
+    fn band_marks(status: Status, metrics: &DisplayMetrics) -> Vec<(StatusMark, Rect)> {
+        let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Cobalt"));
+        let chrome = Chrome::with_back(false).with_status(status);
+        screen
+            .layout_with(metrics, &chrome)
+            .nodes
+            .into_iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::StatusMark(mark) => Some((mark, node.rect)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_band_is_drawn_in_ink_and_paper_only() {
+        // Anything else in the band selects a greyscale refresh each time the
+        // clock ticks or the charge moves, and draws soft figures beside sharp
+        // marks.
+        let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Cobalt"));
+        let chrome = Chrome::with_back(false).with_status(Status::standard(
+            "09:41",
+            Some(Percent::new(64)),
+            true,
+            Signal::Fair,
+            true,
+        ));
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+        let mut surface = Surface::new(stride, height);
+        surface.clear(tone::PAPER);
+        render_with(&screen, &CLARA_BW_METRICS, &chrome, &mut surface, None);
+        let band = usize::try_from(CLARA_BW_METRICS.status_band_height()).expect("a height");
+        let grey = surface.pixels[..band * stride]
+            .iter()
+            .filter(|&&value| value != tone::PAPER && value != tone::INK)
+            .count();
+        assert_eq!(grey, 0, "{grey} grey pixels in the status band");
+    }
+
+    #[test]
+    fn marks_are_placed_from_the_trailing_edge_in_the_order_given() {
+        let marks = band_marks(
+            Status::standard("09:41", Some(Percent::new(80)), false, Signal::Fair, true),
+            &CLARA_BW_METRICS,
+        );
+        let kinds: Vec<_> = marks.iter().map(|(mark, _)| *mark).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                StatusMark::Battery {
+                    level: Some(Percent::new(80)),
+                    charging: false
+                },
+                StatusMark::Signal(Signal::Fair),
+                StatusMark::Bluetooth,
+            ]
+        );
+        for pair in marks.windows(2) {
+            assert!(
+                pair[1].1.x + pair[1].1.width <= pair[0].1.x,
+                "{:?} overlaps {:?}",
+                pair[1].0,
+                pair[0].0
+            );
+        }
+    }
+
+    #[test]
+    fn a_band_too_narrow_for_every_mark_drops_the_innermost_first() {
+        // Ten Bluetooth marks cannot fit beside the clock. The battery and the
+        // radio are listed first and must survive; none may reach the clock.
+        let mut status =
+            Status::standard("09:41", Some(Percent::new(80)), false, Signal::Fair, false);
+        status
+            .marks
+            .extend(std::iter::repeat_n(StatusMark::Bluetooth, 30));
+        let marks = band_marks(status, &CLARA_BW_METRICS);
+        assert!(
+            marks.len() < 32,
+            "every mark was placed, so nothing was tested"
+        );
+        assert!(matches!(marks[0].0, StatusMark::Battery { .. }));
+        assert_eq!(marks[1].0, StatusMark::Signal(Signal::Fair));
+        let clock_end = CLARA_BW_METRICS.screen_margin()
+            + figures_width("09:41", FontSize::Caption, Face::Text);
+        let innermost = marks.last().expect("some marks").1;
+        assert!(innermost.x > clock_end, "a mark was drawn over the clock");
+    }
+
+    #[test]
+    fn the_radio_does_not_move_as_the_battery_number_changes_width() {
+        let signal_x = |level| {
+            band_marks(
+                Status::standard(
+                    "09:41",
+                    Some(Percent::new(level)),
+                    false,
+                    Signal::Fair,
+                    false,
+                ),
+                &CLARA_BW_METRICS,
+            )
+            .into_iter()
+            .find(|(mark, _)| matches!(mark, StatusMark::Signal(_)))
+            .expect("a radio mark")
+            .1
+            .x
+        };
+        assert_eq!(signal_x(5), signal_x(100));
+    }
+
     #[test]
     fn an_unreadable_battery_is_drawn_as_nothing_rather_than_as_empty() {
         // An empty battery and an unreadable one look identical and mean the
         // opposite things, so the honest drawing of "unknown" is no drawing.
         let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Cobalt"));
-        let status = Status {
-            battery: None,
-            ..a_status()
-        };
+        let status = Status::standard("09:41", None, false, Signal::Fair, false);
         let chrome = Chrome::with_back(false).with_status(status);
         let layout = screen.layout_with(&CLARA_BW_METRICS, &chrome);
         let rect = layout
             .nodes
             .iter()
-            .find(|node| matches!(node.kind, LayoutKind::StatusBattery(..)))
+            .find(|node| {
+                matches!(
+                    node.kind,
+                    LayoutKind::StatusMark(StatusMark::Battery { .. })
+                )
+            })
             .expect("the slot is still reserved so the marks do not shuffle")
             .rect;
         let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
@@ -24304,13 +24536,13 @@ mod figure_tests {
         let clock_rect = |time: &str| {
             let chrome = Chrome {
                 back: false,
-                status: Some(Status {
-                    clock: time.to_owned(),
-                    signal: Signal::Strong,
-                    battery: Some(Percent::new(50)),
-                    charging: false,
-                    bluetooth: true,
-                }),
+                status: Some(Status::standard(
+                    time,
+                    Some(Percent::new(50)),
+                    false,
+                    Signal::Strong,
+                    true,
+                )),
             };
             let screen = Screen::new(
                 1,

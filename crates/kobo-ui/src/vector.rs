@@ -725,7 +725,7 @@ pub fn battery(percent: Percent, charging: bool) -> Vec<Shape> {
 /// it is as sharp as the lit arcs rather than a grey ghost of them.
 ///
 /// The geometry is placed so that the full mark is centred in the design box,
-/// which puts it on the same line as the Bluetooth mark and the battery beside
+/// which puts it on the same line as the headphones mark and the battery beside
 /// it, and nothing moves when the strength changes.
 #[must_use]
 pub fn wifi(strength: Signal) -> Vec<Shape> {
@@ -756,32 +756,6 @@ pub fn wifi(strength: Signal) -> Vec<Shape> {
         _ => shapes.push(Shape::Fill(Path::circle(500, 790, 75))),
     }
     shapes
-}
-
-/// The Bluetooth rune, drawn only when something is actually connected.
-///
-/// One continuous stroke: a vertical spine with two crossing arms that meet it
-/// at the quarter points. Drawn as a single path rather than a spine plus four
-/// arms so that the joins stay closed when it is rasterised at eight pixels,
-/// where four separate strokes come apart into a smudge.
-///
-/// There is no "on but not connected" mark. The reason to look at this strip
-/// is to know where the sound is about to come out, and a controller that is
-/// powered with nothing paired answers that question the same way as one that
-/// is switched off.
-#[must_use]
-pub fn bluetooth() -> Vec<Shape> {
-    const W: i32 = 70;
-    vec![Shape::Stroke {
-        path: Path::new()
-            .move_to(330, 330)
-            .line_to(670, 670)
-            .line_to(500, 840)
-            .line_to(500, 160)
-            .line_to(670, 330)
-            .line_to(330, 670),
-        width: W,
-    }]
 }
 
 #[cfg(test)]
@@ -837,9 +811,9 @@ mod tests {
         // the eye but invisible to a test that only asks whether the glyph
         // drew anything. The wifi mark was exactly that for a long time: its
         // dot was pinned to the bottom of the box and the arcs grew upward
-        // from there, so the whole mark sat low beside the Bluetooth rune.
+        // from there, so the whole mark sat low beside the Bluetooth mark.
         let marks = [
-            ("bluetooth", super::bluetooth()),
+            ("headphones", super::shapes(Glyph::Headphones)),
             ("wifi", super::wifi(Signal::Strong)),
             ("wifi off", super::wifi(Signal::Off)),
             ("wifi disconnected", super::wifi(Signal::Disconnected)),
