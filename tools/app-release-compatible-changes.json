@@ -358,12 +358,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge. Gallery and Paperterm add kobo-text the same way, only as dev-dependencies, so their panel-fit tests measure each supported panel with the faces it draws; their published runtime dependencies are unchanged.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "67777d3ec875a6efd0d45e471ff308a34e0371a6"
+     "compatible_blob": "444133da7648f179fbec1249d92b5fa21fb15d98"
     }
    ]
   },
