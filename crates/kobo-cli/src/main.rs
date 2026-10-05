@@ -43,6 +43,7 @@ mod readlater;
 mod receipts;
 mod report;
 mod runtime_dev;
+mod server_secret;
 mod stream_demo;
 mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
@@ -6921,6 +6922,7 @@ enum SecretTarget {
 
 const SECRET_USAGE: &str =
     "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
+                            \x20      kobo secret set <name> --app APP --server HTTPS_URL (--from PATH | --stdin) --device IP\n\
                             \x20      kobo secret list (--device IP | --volume PATH)\n\
                             \x20      kobo secret remove <name> (--device IP | --volume PATH)";
 
@@ -7183,6 +7185,9 @@ fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
 }
 
 fn secret_command(arguments: &[String]) -> Result<(), String> {
+    if server_secret::requested(arguments) {
+        return server_secret::command(arguments);
+    }
     if provider_help_requested(arguments) {
         println!("{SECRET_USAGE}");
         return Ok(());

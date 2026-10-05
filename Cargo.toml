@@ -86,6 +86,7 @@ members = [
     "apps/post",
     "apps/pubquiz",
     "apps/readlater",
+    "apps/readeck",
     "apps/rss-miniflux",
     "apps/sudoku",
     "apps/syncthing",

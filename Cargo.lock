@@ -930,6 +930,7 @@ dependencies = [
  "kobo-music-host",
  "kobo-net",
  "kobo-opml",
+ "kobo-policy",
  "kobo-profile",
  "kobo-protocol",
  "kobo-sdk",
@@ -1424,6 +1425,20 @@ dependencies = [
  "kobo-text",
  "kobo-ui",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "kobo-readeck"
+version = "0.3.25"
+dependencies = [
+ "kobo-bookview",
+ "kobo-image",
+ "kobo-json",
+ "kobo-net",
+ "kobo-protocol",
+ "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
