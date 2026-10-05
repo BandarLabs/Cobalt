@@ -14,6 +14,10 @@ kobo-json = { path = "../../crates/kobo-json" }
 kobo-profile = { path = "../../crates/kobo-profile" }
 kobo-stream = { path = "../../crates/kobo-stream" }
 kobo-ui = { path = "../../crates/kobo-ui" }
+# The faces the device draws with. The built-in fallback sizes type for a
+# 300 ppi panel, so fitting a screen on any other density has to measure with
+# these instead.
+kobo-text = { path = "../../crates/kobo-text" }
 
 [lints]
 workspace = true
