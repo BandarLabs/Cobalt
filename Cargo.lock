@@ -1074,6 +1074,7 @@ version = "0.3.25"
 dependencies = [
  "kobo-profile",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 
