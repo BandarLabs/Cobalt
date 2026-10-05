@@ -18,6 +18,29 @@ pub enum FramebufferController {
     MxcfbV2,
 }
 
+/// How Cobalt learns that a submitted update has reached the panel.
+///
+/// A profile fact rather than a controller fact, because the same MXCFB v2
+/// interface behaves differently from board to board. On most of them the
+/// completion ioctl returns once the controller has finished. On the Nia it
+/// can stall for seconds: `KOReader` marks `KoboLuna`'s wait as unreliable and
+/// `FBInk` carries the same quirk for device code 382. Every refresh Cobalt
+/// makes passes through a completion fence before the next one, so a stalled
+/// wait there is a stalled interface, not one late frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompletionWait {
+    /// Ask the controller, through its completion ioctl, for each marker.
+    ReliableIoctl,
+    /// Never enter the completion ioctl; pause briefly instead.
+    ///
+    /// The kernel's update queue still orders and merges the submissions, so
+    /// what is given up is only the knowledge that a region is on the glass.
+    /// The pause is `KOReader`'s stub wait for the same quirk, 2.5 ms, which is
+    /// long enough to keep a burst of updates from arriving all at once and
+    /// short enough that the interface never waits on the panel.
+    BypassUnreliableMxcfb,
+}
+
 /// How a device's touch controller reports position relative to the display.
 ///
 /// This used to be inferred from the framebuffer's `rotation`. It cannot be:
@@ -244,6 +267,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
     framebuffer_controller: FramebufferController::Hwtcon,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
@@ -318,6 +342,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
     framebuffer_controller: FramebufferController::Hwtcon,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
@@ -393,6 +418,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     compatible_fragments: &["fsl,imx6sll-lpddr3-arm2", "fsl,imx6sll"],
     framebuffer_id: "mxc_epdc_fb",
     framebuffer_controller: FramebufferController::MxcfbV2,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
@@ -474,6 +500,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
     framebuffer_controller: FramebufferController::Hwtcon,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1404,
     height: 1872,
     pixels_per_inch: 227,
@@ -563,6 +590,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     compatible_fragments: &["fsl,imx6sll"],
     framebuffer_id: "mxc_epdc_fb",
     framebuffer_controller: FramebufferController::MxcfbV2,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1264,
     height: 1680,
     pixels_per_inch: 300,
@@ -665,6 +693,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
     framebuffer_controller: FramebufferController::Hwtcon,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1264,
     height: 1680,
     pixels_per_inch: 300,
@@ -788,6 +817,7 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
     compatible_fragments: &["fsl,imx6sll"],
     framebuffer_id: "mxc_epdc_fb",
     framebuffer_controller: FramebufferController::MxcfbV2,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1264,
     height: 1680,
     pixels_per_inch: 300,
@@ -852,6 +882,96 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
     colour_panel: false,
 };
 
+/// Kobo Nia, the i.MX6ULL board, ported and measured by its owner in
+/// BandarLabs/Cobalt#45.
+///
+/// Measured with `kobo doctor` on firmware 4.38.23684. The geometry satisfies
+/// the [`GeometryRule::MxcEpdcV2`] derivation with one screen
+/// (`ALIGN(758, 32) = 768`, `ALIGN(1024, 128) * 1 = 1024`, stride
+/// `768 * 4 = 3072`), but the rule stays [`GeometryRule::Fixed`] and the
+/// verified set stays one pose, as for the Clara HD: the pose at rotation 1
+/// has not been seen on this panel.
+///
+/// The touch controller names itself `elan-touch`, not the `Elan Touchscreen`
+/// of the Libra 2, and reports landscape ranges 0..1024 by 0..758. Its mapping
+/// was confirmed by a touch about a centimetre in from the top left: raw
+/// `(109, 654)` landed at display `(104, 109)`, which is
+/// [`TouchTransform::TransposeMirrorX`].
+///
+/// Completion waits are bypassed; see [`CompletionWait::BypassUnreliableMxcfb`].
+///
+/// Still pending, so `write_ready` is false:
+///
+/// - The attended evidence block from `docs/PORTING.md`, including sandbox
+///   results on this 4.1.15 kernel and refresh timing over a few hundred
+///   updates with the bypass in place.
+/// - The hardware revision. The measured unit is `PCB='E60U20'`,
+///   `PCB_REV=0x10`, `PCB_LVL='A'`, `PMIC='RC5T619'`, `FL_PWM='LM3630x1a'`.
+///   A later Nia ships a BD71828 PMIC under the same device code, and nothing
+///   in this profile's identity (serial prefix, firmware, kernel) tells the
+///   two apart. That revision is unmeasured.
+pub const NIA_382: DeviceProfile = DeviceProfile {
+    id: "nia-382",
+    model: "Kobo Nia",
+    device_code: 382,
+    device_tree_model: "Freescale i.MX6 ULL DDR3 NTX Board",
+    compatible_fragments: &["fsl,imx6ull-ddr3-arm2", "fsl,imx6ull"],
+    framebuffer_id: "mxc_epdc_fb",
+    framebuffer_controller: FramebufferController::MxcfbV2,
+    completion_wait: CompletionWait::BypassUnreliableMxcfb,
+    width: 758,
+    height: 1024,
+    pixels_per_inch: 212,
+    virtual_width: 768,
+    virtual_height: 1024,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 3072,
+    memory_length: 3_145_728,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 3,
+    verified_rotations: &[3],
+    geometry_rule: GeometryRule::Fixed,
+    touch_name: "elan-touch",
+    touch_x_min: 0,
+    touch_x_max: 1024,
+    touch_y_min: 0,
+    touch_y_max: 758,
+    serial_prefix: "N306",
+    firmware_versions: &["4.38.23684"],
+    kernel_release: "4.1.15-00463-g38afd5cea756",
+    write_ready: false,
+    // Unmeasured on this device.
+    leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
+    colour_panel: false,
+};
+
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
     &CLARA_BW_395,
@@ -862,6 +982,7 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &LIBRA_COLOUR_390,
     &LIBRA_COLOUR_390_446,
     &LIBRA_H2O_384,
+    &NIA_382,
 ];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
@@ -1064,6 +1185,8 @@ pub struct DeviceProfile {
     pub framebuffer_id: &'static str,
     /// Which update ABI this device's framebuffer driver implements.
     pub framebuffer_controller: FramebufferController,
+    /// Whether the controller's completion ioctl can be trusted on this board.
+    pub completion_wait: CompletionWait,
     pub width: u32,
     pub height: u32,
     pub pixels_per_inch: u16,
@@ -1976,12 +2099,13 @@ mod tests {
     /// reports it. The other verified pose, `rotation: 2` (buttons-left), has
     /// its own composed-pose test below rather than a second reference here.
     const LIBRA_H2O_POSE: PanelPose<'static> = PanelPose::reference(&LIBRA_H2O_384);
+    const NIA_POSE: PanelPose<'static> = PanelPose::reference(&NIA_382);
 
     use super::{
         identify_profile, write_ready_profile, Bitfield, DeviceProfile, DeviceSnapshot,
         FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391,
         CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
-        LIBRA_COLOUR_390_446, LIBRA_H2O_384, WRITE_EVIDENCE_PENDING,
+        LIBRA_COLOUR_390_446, LIBRA_H2O_384, NIA_382, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -2330,6 +2454,7 @@ mod tests {
                 ("libra-colour-390", &[][..]),
                 ("libra-colour-390-4.46.23836", &["/bin/wpa_supplicant"][..]),
                 ("libra-h2o-384", &[][..]),
+                ("nia-382", &[][..]),
             ]
         );
     }
@@ -2352,6 +2477,7 @@ mod tests {
                 ("libra-colour-390", false),
                 ("libra-colour-390-4.46.23836", true),
                 ("libra-h2o-384", false),
+                ("nia-382", false),
             ]
         );
     }
@@ -3059,6 +3185,116 @@ mod tests {
             .expect("flipped sample remains in range");
         assert_eq!(flipped_x, (909, 160));
         assert_eq!(flipped_y, (162, 1287));
+    }
+
+    /// The Nia as `kobo doctor` read it on the owner's unit, in BandarLabs/Cobalt#45.
+    fn measured_nia() -> DeviceSnapshot {
+        let channel = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["fsl,imx6ull-ddr3-arm2".into(), "fsl,imx6ull".into()],
+            model: Some("Freescale i.MX6 ULL DDR3 NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 758,
+                height: 1024,
+                virtual_width: 768,
+                virtual_height: 1024,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 3072,
+                memory_length: 3_145_728,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red: channel,
+                green: Bitfield {
+                    offset: 8,
+                    ..channel
+                },
+                blue: Bitfield {
+                    offset: 0,
+                    ..channel
+                },
+                alpha: Bitfield {
+                    offset: 24,
+                    ..channel
+                },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "elan-touch".into(),
+                x_min: 0,
+                x_max: 1024,
+                y_min: 0,
+                y_max: 758,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N306".into()),
+                firmware_version: Some("4.38.23684".into()),
+                kernel_release: Some("4.1.15-00463-g38afd5cea756".into()),
+                device_code: Some(382),
+            },
+        }
+    }
+
+    #[test]
+    fn nia_doctor_snapshot_matches_but_stays_read_only_while_evidence_is_pending() {
+        let snapshot = measured_nia();
+        let report = NIA_382.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        assert!(NIA_382.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(identify_profile(&snapshot), Some(&NIA_382));
+        assert!(write_ready_profile(&snapshot).is_err());
+    }
+
+    #[test]
+    fn nia_is_the_only_profile_that_bypasses_the_completion_wait() {
+        for profile in super::SUPPORTED_PROFILES {
+            let bypassed = profile.completion_wait == super::CompletionWait::BypassUnreliableMxcfb;
+            assert_eq!(bypassed, profile.id == NIA_382.id, "{}", profile.id);
+        }
+    }
+
+    #[test]
+    fn nia_touch_edges_map_inside_the_panel_and_round_trip() {
+        for raw in [(0, 0), (0, 758), (1024, 0), (1024, 758)] {
+            let display = NIA_POSE
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Nia edge maps to the display");
+            assert!(display.0 < NIA_382.width, "x escaped: {display:?}");
+            assert!(display.1 < NIA_382.height, "y escaped: {display:?}");
+        }
+        for display in [(0, 0), (757, 0), (0, 1023), (757, 1023), (379, 512)] {
+            let raw = NIA_POSE
+                .display_to_touch(display.0, display.1)
+                .expect("Nia display point maps to the controller");
+            assert_eq!(NIA_POSE.touch_to_display(raw.0, raw.1), Some(display));
+        }
+    }
+
+    /// Captured from a physical touch about a centimetre in from the top-left
+    /// of the Nia: raw `(109, 654)` landed at display `(104, 109)`, which
+    /// fixes the direction of both axes.
+    #[test]
+    fn nia_touch_transform_matches_a_physically_measured_touch() {
+        assert_eq!(NIA_POSE.touch_to_display(109, 654), Some((104, 109)));
+
+        let flipped_x = NIA_POSE
+            .touch_to_display(109, 758 - 654)
+            .expect("flipped sample remains in range");
+        let flipped_y = NIA_POSE
+            .touch_to_display(1024 - 109, 654)
+            .expect("flipped sample remains in range");
+        assert_eq!(flipped_x, (653, 109));
+        assert_eq!(flipped_y, (104, 914));
     }
 
     /// The Libra Colour exactly as `kobo doctor` read it from a cold boot
