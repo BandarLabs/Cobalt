@@ -476,6 +476,56 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     ..CLARA_BW_391
 };
 
+/// Kobo Clara 2E, codename `goldfinch`, an i.MX6SLL board whose device tree,
+/// framebuffer geometry and pixel layout `kobo doctor` reads back exactly as
+/// it reads the Clara HD's. Everything but its identity and its digitiser is
+/// therefore taken from [`CLARA_HD_376`], the way [`CLARA_COLOUR_393`] builds
+/// on the Clara BW.
+///
+/// Measured on the owner's N506 on firmware 4.38.23828, whose kernel reports a
+/// bare `4.1.15` with no build suffix. The digitiser is a `FocalTech` `fts_ts`
+/// on `/dev/input/event1` rather than the Clara HD's Cypress `cyttsp5_mt`, and
+/// its maximums equal the panel's dimensions, 1448 by 1072, where the Cypress
+/// controller's stop one short. X runs along the long edge, so the axes are
+/// exchanged.
+///
+/// The reader has no orientation sensor and Nickel draws it in portrait only,
+/// so the Clara HD's single verified pose, rotation 3, is the whole set here
+/// too.
+///
+/// `touch_transform` was measured on the device with `kobo touch-probe`,
+/// read-only and ungrabbed: four taps with the screen upright, going
+/// anticlockwise from the top-left corner. Moving down the left edge drove
+/// `raw_x` upward, 60 to 1402, and moving right along the bottom drove `raw_y`
+/// downward, 1019 to 35, so the axes are exchanged and display X is mirrored.
+/// Every tap landed in the corner it was made in. That is the Clara HD's
+/// transform too, but on a different digitiser, so it was measured rather
+/// than inherited.
+///
+/// `write_ready` is false because nothing has yet watched this panel take a
+/// write from Cobalt. The radio fields are unmeasured: this board is said to
+/// be a close sibling of the Libra 2's, whose leftover `wpa_supplicant` had to
+/// be reaped, but that is evidence about another device.
+pub const CLARA_2E_386: DeviceProfile = DeviceProfile {
+    id: "clara-2e-386",
+    model: "Kobo Clara 2E",
+    device_code: 386,
+    touch_transform: TouchTransform::TransposeMirrorX,
+    touch_name: "fts_ts",
+    touch_x_min: 0,
+    touch_x_max: 1448,
+    touch_y_min: 0,
+    touch_y_max: 1072,
+    serial_prefix: "N506",
+    firmware_versions: &["4.38.23828"],
+    kernel_release: "4.1.15",
+    write_ready: false,
+    leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
+    colour_panel: false,
+    ..CLARA_HD_376
+};
+
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     id: "elipsa-2e-389",
     model: "Kobo Elipsa 2E",
@@ -868,6 +918,7 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_395,
     &CLARA_HD_376,
     &CLARA_COLOUR_393,
+    &CLARA_2E_386,
     &ELIPSA_2E_389,
     &LIBRA_2_388,
     &LIBRA_COLOUR_390,
@@ -2030,6 +2081,7 @@ mod tests {
     const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
     const ELIPSA_2E_POSE: PanelPose<'static> = PanelPose::reference(&ELIPSA_2E_389);
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
+    const CLARA_2E_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_2E_386);
     /// The Libra H2O at its reference pose: `rotation: 0` as the framebuffer
     /// reports it. The other verified pose, `rotation: 2` (buttons-left), has
     /// its own composed-pose test below rather than a second reference here.
@@ -2037,9 +2089,9 @@ mod tests {
 
     use super::{
         identify_profile, write_ready_profile, Bitfield, DeviceProfile, DeviceSnapshot,
-        FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391,
-        CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
-        LIBRA_COLOUR_390_446, LIBRA_H2O_384, WRITE_EVIDENCE_PENDING,
+        FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_2E_386,
+        CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388,
+        LIBRA_COLOUR_390, LIBRA_COLOUR_390_446, LIBRA_H2O_384, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -2384,6 +2436,7 @@ mod tests {
                 ("clara-bw-395", &[][..]),
                 ("clara-hd-376", &[][..]),
                 ("clara-colour-393", &[][..]),
+                ("clara-2e-386", &[][..]),
                 ("elipsa-2e-389", &[][..]),
                 ("libra-2-388", &["/bin/wpa_supplicant"][..]),
                 ("libra-colour-390", &[][..]),
@@ -2407,6 +2460,7 @@ mod tests {
                 ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
+                ("clara-2e-386", false),
                 ("elipsa-2e-389", true),
                 ("libra-2-388", true),
                 ("libra-colour-390", false),
@@ -3119,6 +3173,153 @@ mod tests {
             .expect("flipped sample remains in range");
         assert_eq!(flipped_x, (909, 160));
         assert_eq!(flipped_y, (162, 1287));
+    }
+
+    /// The Clara 2E exactly as `kobo doctor` read it from the owner's N506.
+    /// The values are the ones the doctor printed, not values re-derived from
+    /// the profile they pin.
+    fn measured_clara_2e() -> DeviceSnapshot {
+        let channel = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
+            model: Some("Freescale i.MX6SLL NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 1072,
+                height: 1448,
+                virtual_width: 1088,
+                virtual_height: 1536,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 4352,
+                memory_length: 6_782_976,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red: channel,
+                green: Bitfield {
+                    offset: 8,
+                    ..channel
+                },
+                blue: Bitfield {
+                    offset: 0,
+                    ..channel
+                },
+                alpha: Bitfield {
+                    offset: 24,
+                    ..channel
+                },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "fts_ts".into(),
+                x_min: 0,
+                x_max: 1448,
+                y_min: 0,
+                y_max: 1072,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N506".into()),
+                firmware_version: Some("4.38.23828".into()),
+                kernel_release: Some("4.1.15".into()),
+                device_code: Some(386),
+            },
+        }
+    }
+
+    /// Matched and identified, and held back only by the attended evidence
+    /// nobody has gathered yet.
+    #[test]
+    fn clara_2e_doctor_snapshot_matches_its_strict_profile() {
+        let snapshot = measured_clara_2e();
+        let report = CLARA_2E_386.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(
+            report.write_blockers,
+            vec![WRITE_EVIDENCE_PENDING.to_owned()]
+        );
+        assert!(CLARA_2E_386.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(identify_profile(&snapshot), Some(&CLARA_2E_386));
+    }
+
+    /// The two readers agree on every framebuffer and device tree field, so
+    /// the digitiser is all that keeps either profile off the other's
+    /// hardware. Identity alone would not: `identify_profile` falls back to
+    /// geometry when no profile claims the identity.
+    #[test]
+    fn the_clara_2e_and_the_clara_hd_cannot_claim_each_other() {
+        assert_eq!(
+            CLARA_HD_376.validate(&measured_clara_2e()).readiness,
+            Readiness::Rejected
+        );
+
+        let mut clara_hd = measured_clara_2e();
+        clara_hd.touch = Some(TouchSnapshot {
+            path: "/dev/input/event1".into(),
+            name: "cyttsp5_mt".into(),
+            x_min: 0,
+            x_max: 1447,
+            y_min: 0,
+            y_max: 1071,
+        });
+        clara_hd.identity = IdentitySnapshot {
+            serial_prefix: Some("N249".into()),
+            firmware_version: Some("4.38.23697".into()),
+            kernel_release: Some("4.1.15-00136-g12655eaaef89".into()),
+            device_code: Some(376),
+        };
+        assert_eq!(
+            CLARA_2E_386.validate(&clara_hd).readiness,
+            Readiness::Rejected
+        );
+        assert_eq!(identify_profile(&clara_hd), Some(&CLARA_HD_376));
+    }
+
+    #[test]
+    fn clara_2e_touch_edges_stay_inside_the_panel_and_display_points_round_trip() {
+        for raw in [(0, 0), (0, 1072), (1448, 0), (1448, 1072)] {
+            let display = CLARA_2E_POSE
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Clara 2E edge maps to the display");
+            assert!(display.0 < CLARA_2E_386.width, "x escaped: {display:?}");
+            assert!(display.1 < CLARA_2E_386.height, "y escaped: {display:?}");
+        }
+        for display in [(0, 0), (1071, 0), (0, 1447), (1071, 1447), (536, 724)] {
+            let raw = CLARA_2E_POSE
+                .display_to_touch(display.0, display.1)
+                .expect("Clara 2E display point maps to the controller");
+            assert_eq!(CLARA_2E_POSE.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(CLARA_2E_POSE.display_to_touch(1072, 0), None);
+        assert_eq!(CLARA_2E_POSE.display_to_touch(0, 1448), None);
+    }
+
+    /// Four taps on the owner's Clara 2E with `kobo touch-probe`, read-only and
+    /// ungrabbed, made with the screen upright and going anticlockwise from
+    /// the top-left corner. The display points are the ones the device
+    /// printed, and each is in the corner that was tapped.
+    #[test]
+    fn clara_2e_touch_transform_matches_four_physically_measured_taps() {
+        let taps = [
+            ("top-left", (60, 1021), (51, 60)),
+            ("bottom-left", (1402, 1019), (53, 1401)),
+            ("bottom-right", (1416, 35), (1036, 1415)),
+            ("top-right", (63, 34), (1037, 63)),
+        ];
+        for (corner, raw, display) in taps {
+            assert_eq!(
+                CLARA_2E_POSE.touch_to_display(raw.0, raw.1),
+                Some(display),
+                "the {corner} tap"
+            );
+        }
     }
 
     /// The Libra Colour exactly as `kobo doctor` read it from a cold boot
