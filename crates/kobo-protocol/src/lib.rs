@@ -57,7 +57,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 13 adds persistent selected state to grid cells. Its runtime retains
 /// a version-12 reader so already installed Folio applications keep working.
 /// Version 14 adds the bounded board viewport on a new node tag. Versions
-/// 11, 12 and 13 remain readable; board nodes require version 14.
+/// 10, 11, 12 and 13 remain readable; board nodes require version 14.
 /// Version 14 also adds generation-scoped suspend barriers on new message tags.
 /// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
 /// Beta tag 34 adds bounded pencil-puzzle marks and orthogonal strokes.
