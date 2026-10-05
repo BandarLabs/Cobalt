@@ -201,7 +201,12 @@ mod tests {
         for end in 5..bytes.len() {
             assert!(read(&mut Reader::new(&bytes[5..end]), id).is_err());
         }
-        for version in [LEGACY_VERSION, FOLIO_VERSION, SELECTED_GRID_VERSION] {
+        for version in [
+            crate::DICTIONARY_VERSION,
+            LEGACY_VERSION,
+            FOLIO_VERSION,
+            SELECTED_GRID_VERSION,
+        ] {
             assert!(encoded_len(&board, version).is_err());
         }
         let frame = Frame {
