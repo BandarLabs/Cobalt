@@ -237,6 +237,7 @@ impl TouchMapping {
 }
 
 pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "clara-bw-391",
     model: "Kobo Clara BW",
     device_code: 391,
@@ -311,6 +312,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
 /// controller, ranges, firmware, and kernel, so the N365 attended display,
 /// touch-direction, exit, and recovery evidence also covers this refresh.
 pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "clara-bw-395",
     model: "Kobo Clara BW",
     device_code: 395,
@@ -386,6 +388,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
 /// the Clara BW's, on the same `cyttsp5_mt` controller with the same panel
 /// dimensions.
 pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "clara-hd-376",
     model: "Kobo Clara HD",
     device_code: 376,
@@ -455,6 +458,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
 /// identity and the same framebuffer and touch values to `kobo doctor`.
 /// Owner testing and screenshots are recorded on issue #30 and PR #38.
 pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "clara-colour-393",
     model: "Kobo Clara Colour",
     device_code: 393,
@@ -467,6 +471,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
 };
 
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "elipsa-2e-389",
     model: "Kobo Elipsa 2E",
     device_code: 389,
@@ -556,6 +561,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
 /// `touch_to_display`, so a device accepted at the wrong rotation would have
 /// its touch input placed wrongly.
 pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "libra-2-388",
     model: "Kobo Libra 2",
     device_code: 388,
@@ -658,6 +664,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
 /// tap, page-button presses, and a clean stock-reader restart — was reviewed
 /// upstream on PR #49.
 pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "libra-colour-390",
     model: "Kobo Libra Colour",
     device_code: 390,
@@ -724,6 +731,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
 /// display, touch, exit, and recovery evidence match the hardware profile
 /// above. The firmware is kept as a separate exact identity.
 pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "libra-colour-390-4.46.23836",
     firmware_versions: &["4.46.23836"],
     write_ready: true,
@@ -781,6 +789,7 @@ pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
 /// after a deliberately-failed child, and Nickel was alive and healthy after
 /// six stop/hand-back cycles with no kernel reset.
 pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
+    warmth: None,
     id: "libra-h2o-384",
     model: "Kobo Libra H2O",
     device_code: 384,
@@ -1054,8 +1063,27 @@ pub struct DeviceSnapshot {
     pub identity: IdentitySnapshot,
 }
 
+/// Measured direction of a warmth control. Never infer this from a chip name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WarmthDirection {
+    /// Larger raw values are warmer.
+    Increasing,
+    /// Smaller raw values are warmer.
+    Decreasing,
+}
+
+/// A measured warmth topology. Other controllers need their own mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WarmthControl {
+    /// Aggregate `lm3630a_led/color`, scaled by `max_color`.
+    Lm3630aColor { direction: WarmthDirection },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceProfile {
+    /// None until topology AND warm-bank direction have attended evidence.
+    /// This gate also applies to owner-unlocked/provisional devices.
+    pub warmth: Option<WarmthControl>,
     pub id: &'static str,
     pub model: &'static str,
     pub device_code: u16,

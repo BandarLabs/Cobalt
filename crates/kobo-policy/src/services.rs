@@ -97,6 +97,7 @@ pub struct DeviceServices {
     dictionaries: kobo_dict::Index,
     auto_update: AutoUpdateChoices,
     update_channel: UpdateChannel,
+    simulated_warmth: Option<u8>,
 }
 
 /// The two standing update switches, held together because they are asked
@@ -116,11 +117,13 @@ impl DeviceServices {
     /// it will get on a device.
     #[must_use]
     pub fn simulated() -> Self {
-        Self::new(
+        let mut services = Self::new(
             Declared::all(),
             PowerPolicy::DEFAULT,
             Backends::with(Capability::ALL),
-        )
+        );
+        services.simulated_warmth = Some(50);
+        services
     }
 
     /// Services for a real device.
@@ -150,6 +153,7 @@ impl DeviceServices {
                 apps: true,
             },
             update_channel: UpdateChannel::Stable,
+            simulated_warmth: None,
         }
     }
 
@@ -252,6 +256,8 @@ impl DeviceServices {
             }
             DeviceRequest::SetFrontlight { percent } => self.set_frontlight(percent),
             DeviceRequest::ReadFrontlight => self.read_frontlight(),
+            DeviceRequest::SetWarmth { percent } => self.warmth(Some(percent)),
+            DeviceRequest::ReadWarmth => self.warmth(None),
             DeviceRequest::ReadBluetooth | DeviceRequest::ScanBluetooth => self.bluetooth_state(),
             DeviceRequest::SetBluetooth { enabled } => {
                 if let Some(reason) = self.refusal(Capability::BluetoothControl) {
@@ -609,6 +615,21 @@ impl DeviceServices {
         self.audio_state()
     }
 
+    fn warmth(&mut self, percent: Option<u8>) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::FrontlightControl) {
+            return DeviceResult::Denied(reason);
+        }
+        // Real hardware is answered directly by kobod. Brightness availability
+        // alone never establishes warmth support, even with a declared grant.
+        let Some(current) = &mut self.simulated_warmth else {
+            return DeviceResult::Denied(DenyReason::Unsupported);
+        };
+        if let Some(percent) = percent {
+            *current = percent.min(100);
+        }
+        DeviceResult::Warmth { percent: *current }
+    }
+
     fn set_frontlight(&mut self, percent: u8) -> DeviceResult {
         if let Some(reason) = self.refusal(Capability::FrontlightControl) {
             return DeviceResult::Denied(reason);
@@ -678,7 +699,8 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
         DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
         DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,
-        DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
+        DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight
+        | DeviceRequest::SetWarmth { .. } | DeviceRequest::ReadWarmth => {
             Capability::FrontlightControl
         }
         DeviceRequest::ReadBluetooth
@@ -1027,6 +1049,47 @@ mod tests {
     }
 
     #[test]
+    fn warmth_requires_frontlight_capability_and_an_explicit_backend() {
+        for request in [
+            DeviceRequest::ReadWarmth,
+            DeviceRequest::SetWarmth { percent: 100 },
+        ] {
+            assert_eq!(
+                super::request_capability(&request),
+                Some(Capability::FrontlightControl)
+            );
+            let mut undeclared = DeviceServices::new(
+                declared(&[]),
+                PowerPolicy::DEFAULT,
+                Backends::with([Capability::FrontlightControl]),
+            );
+            assert_eq!(
+                undeclared.handle(request.clone()),
+                DeviceResult::Denied(DenyReason::NotDeclared)
+            );
+            let mut brightness_only = DeviceServices::new(
+                Declared::all(),
+                PowerPolicy::DEFAULT,
+                Backends::with([Capability::FrontlightControl]),
+            );
+            assert_eq!(
+                brightness_only.handle(request),
+                DeviceResult::Denied(DenyReason::Unsupported)
+            );
+        }
+        let mut simulated = DeviceServices::simulated();
+        assert_eq!(
+            simulated.handle(DeviceRequest::SetWarmth { percent: 255 }),
+            DeviceResult::Warmth { percent: 100 }
+        );
+        simulated.handle(DeviceRequest::SetFrontlight { percent: 100 });
+        assert_eq!(
+            simulated.handle(DeviceRequest::ReadWarmth),
+            DeviceResult::Warmth { percent: 100 }
+        );
+    }
+
+    #[test]
     fn a_device_build_that_owns_no_hardware_refuses_every_change() {
         let mut services =
             DeviceServices::new(Declared::all(), PowerPolicy::DEFAULT, Backends::none());
@@ -1037,6 +1100,8 @@ mod tests {
             DeviceRequest::ScheduleWake { seconds: 3600 },
             DeviceRequest::SetFrontlight { percent: 50 },
             DeviceRequest::ReadFrontlight,
+            DeviceRequest::ReadWarmth,
+            DeviceRequest::SetWarmth { percent: 50 },
         ] {
             assert_eq!(
                 services.handle(request.clone()),

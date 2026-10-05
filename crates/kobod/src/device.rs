@@ -2686,6 +2686,12 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {
                                 match &request {
+                                    kobo_protocol::DeviceRequest::SetWarmth { .. }
+                                    | kobo_protocol::DeviceRequest::ReadWarmth => warmth_request(
+                                        frontlight,
+                                        display.profile().warmth,
+                                        &request,
+                                    ),
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
                                         bluetooth.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
@@ -6725,5 +6731,85 @@ mod hosting_tests {
         .is_err());
         assert!(!directory.join("apps/zotero-reader/openai").exists());
         let _ignored = std::fs::remove_dir_all(directory);
+    }
+}
+
+/// Called only after caller identity, declaration and policy gates pass.
+fn warmth_request(
+    light: Option<&kobo_hal::frontlight::Frontlight>,
+    mapping: Option<kobo_profile::WarmthControl>,
+    request: &kobo_protocol::DeviceRequest,
+) -> kobo_protocol::DeviceResult {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+    let Some(light) = light else {
+        return DeviceResult::Denied(DenyReason::Unsupported);
+    };
+    let result = match request {
+        DeviceRequest::SetWarmth { percent } => light.set_warmth(mapping, *percent),
+        DeviceRequest::ReadWarmth => light.warmth(mapping),
+        _ => return DeviceResult::Failed(DeviceError::InvalidInput),
+    };
+    match result {
+        Ok(percent) => DeviceResult::Warmth { percent },
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+            DeviceResult::Denied(DenyReason::Unsupported)
+        }
+        Err(error) => {
+            trace(&format!("warmth refused: {error}"));
+            DeviceResult::Failed(DeviceError::Backend)
+        }
+    }
+}
+
+#[cfg(test)]
+mod warmth_tests {
+    use super::warmth_request;
+    use kobo_hal::frontlight::Frontlight;
+    use kobo_profile::{WarmthControl, WarmthDirection};
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+    use std::fs;
+
+    #[test]
+    fn warmth_dispatch_refuses_missing_hardware_and_reports_real_values_and_failures() {
+        let request = DeviceRequest::SetWarmth { percent: 24 };
+        let mapping = Some(WarmthControl::Lm3630aColor {
+            direction: WarmthDirection::Increasing,
+        });
+        assert_eq!(
+            warmth_request(None, mapping, &request),
+            DeviceResult::Denied(DenyReason::Unsupported)
+        );
+        let root = std::env::temp_dir().join(format!("kobod-warmth-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let control = root.join("lm3630a_led");
+        fs::create_dir_all(&control).unwrap();
+        for (file, value) in [
+            ("brightness", "17"),
+            ("max_brightness", "100"),
+            ("color", "3"),
+            ("max_color", "10"),
+        ] {
+            fs::write(control.join(file), value).unwrap();
+        }
+        let light = Frontlight::open_in(&root).unwrap();
+        assert_eq!(
+            warmth_request(Some(&light), None, &request),
+            DeviceResult::Denied(DenyReason::Unsupported)
+        );
+        assert_eq!(
+            warmth_request(Some(&light), mapping, &request),
+            DeviceResult::Warmth { percent: 20 }
+        );
+        assert_eq!(
+            warmth_request(Some(&light), mapping, &DeviceRequest::ReadWarmth),
+            DeviceResult::Warmth { percent: 20 }
+        );
+        fs::remove_file(control.join("color")).unwrap();
+        assert_eq!(
+            warmth_request(Some(&light), mapping, &request),
+            DeviceResult::Failed(DeviceError::Backend)
+        );
+        assert!(!control.join("color").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

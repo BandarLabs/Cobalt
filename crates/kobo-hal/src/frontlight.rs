@@ -55,18 +55,20 @@
 //! as much light as this device has: a beacon meant to be read across a room
 //! has nothing else to spend.
 //!
-//! So `100` means every bank, and anything below it leaves the balance the
-//! owner chose alone. The seam is at the top of the scale because that is the
+//! Unless an app has explicitly set warmth, `100` means every bank, and
+//! anything below it leaves the balance the owner chose alone. The seam is at the top of the scale because that is the
 //! only point where the two readings of "brighter" disagree, and it is the
 //! point where the honest answer is light rather than warmth. The balance is
 //! remembered and put back by [`Frontlight::restore`] exactly as the brightness
 //! is, so a session that ends leaves nothing moved.
 
+use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 mod recovery;
+mod warmth;
 
 /// Where Linux publishes backlight controls.
 const BACKLIGHTS: &str = "/sys/class/backlight";
@@ -94,6 +96,8 @@ pub struct Frontlight {
     /// [`None`] on a light with a single bank, and on any device that does not
     /// publish the file, which is why nothing here requires it.
     balance: Option<Balance>,
+    /// Last explicit app setting, separate from the immutable owner capture.
+    explicit_warmth: Cell<Option<u32>>,
 }
 
 /// The balance between the two banks of a light that has two.
@@ -156,6 +160,7 @@ impl Frontlight {
             original,
             original_raw: raw,
             balance,
+            explicit_warmth: Cell::new(None),
         })
     }
 
@@ -182,7 +187,8 @@ impl Frontlight {
     /// same integer, and an application that redraws a slider from the returned
     /// value stays honest about it.
     ///
-    /// At the top of the range every bank is lit; below it the owner's balance
+    /// An explicit warmth setting wins at every brightness. Otherwise,
+    /// at the top of the range every bank is lit; below it the owner's balance
     /// between them is left alone. The balance is written on every call rather
     /// than only on the way past 100, so that stepping back down from the top
     /// hands the warmth back straight away instead of at the end of the
@@ -195,11 +201,13 @@ impl Frontlight {
     pub fn set(&self, percent: u8) -> io::Result<u8> {
         let percent = percent.min(100);
         if let Some(balance) = self.balance {
-            self.balance(if percent == 100 {
-                balance.even()
-            } else {
-                balance.original
-            })?;
+            self.balance(self.explicit_warmth.get().unwrap_or_else(|| {
+                if percent == 100 {
+                    balance.even()
+                } else {
+                    balance.original
+                }
+            }))?;
         }
         self.brightness(percent)
     }
@@ -210,7 +218,12 @@ impl Frontlight {
     /// out when it is handed a level, so a balance written afterwards would sit
     /// in the file until something else moved the light.
     fn balance(&self, colour: u32) -> io::Result<()> {
-        fs::write(self.control.join("color"), format!("{colour}\n"))
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(self.control.join("color"))?
+            .write_all(format!("{colour}\n").as_bytes())
     }
 
     /// Writes the level, and reports what the hardware could make of it.
@@ -265,7 +278,9 @@ impl Frontlight {
             }
         });
         balance_result?;
-        brightness_result
+        let restored = brightness_result?;
+        self.explicit_warmth.set(None);
+        Ok(restored)
     }
 }
 

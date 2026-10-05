@@ -107,6 +107,7 @@ impl Frontlight {
             original: to_percent(original_raw, maximum),
             original_raw,
             balance,
+            explicit_warmth: std::cell::Cell::new(None),
         };
         saved.restore()?;
         Ok(true)
