@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
-  "version": "0.1.7",
-  "release_notes": "Clearer description in the Store. No change to how the app works.",
+  "version": "0.1.8",
+  "release_notes": "The Stats tab stays selected while viewing weekly statistics, including when returning from settings.",
   "glyph": "check",
   "capabilities": []
 }

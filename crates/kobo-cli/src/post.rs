@@ -49,11 +49,20 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
     while let Some((flag, tail)) = rest.split_first() {
         match flag.as_str() {
             "--sim" => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
                 target = Some(Target::Sim);
                 rest = tail;
             }
-            "--device" => {
+            flag if super::is_device_flag(flag) => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
                 let (ip, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
+                if !super::valid_device_host(ip) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
                 target = Some(Target::Device(ip.clone()));
                 rest = tail;
             }
@@ -68,9 +77,10 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
             _ => return Err(USAGE.to_owned()),
         }
     }
+    let target = target.ok_or_else(|| USAGE.to_owned())?;
     let gateway = gateway.ok_or_else(|| USAGE.to_owned())?;
-    if !gateway.starts_with("https://") {
-        return Err("the gateway must be an https:// address".to_owned());
+    if !kobo_sdk::permissions::credentials::servers::valid_server(&gateway) {
+        return Err("the gateway must be a valid HTTPS server address".to_owned());
     }
     let token_file = token_file.ok_or_else(|| USAGE.to_owned())?;
     let metadata =
@@ -82,13 +92,18 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
         .map_err(|error| format!("read {token_file}: {error}"))?
         .trim()
         .to_owned();
-    if token.is_empty() {
-        return Err(format!("{token_file} holds no token"));
+    if token.is_empty()
+        || token.len() > kobo_protocol::MAX_APP_SECRET_BYTES
+        || token.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "{token_file} holds no usable token (maximum 512 bytes, no control characters)"
+        ));
     }
     Ok(Options {
         gateway: gateway.trim_end_matches('/').to_owned(),
         token,
-        target: target.ok_or_else(|| USAGE.to_owned())?,
+        target,
     })
 }
 
@@ -156,7 +171,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
             );
         }
         Target::Device(host) => {
-            let install = super::secret_install_script(CREDENTIAL, &credential);
+            let install = credential_install_script(&credential);
             let encoded = super::base64_encode(gateway.as_bytes());
             let script = format!(
                 "{install}\
@@ -177,6 +192,38 @@ fn login(arguments: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Stage the account alongside its final app-scoped path. A failed decoder or
+/// interrupted transfer must leave the previous account intact. Each transfer
+/// owns a unique private staging file, so stale or concurrent files cannot
+/// block sign-in or be removed by another transfer.
+fn credential_install_script(credential: &str) -> String {
+    let encoded = super::base64_encode(credential.as_bytes());
+    format!(
+        r#"set -eu
+umask 077
+root=/mnt/onboard/.adds/cobalt
+for directory in /mnt /mnt/onboard /mnt/onboard/.adds "$root" "$root/secrets" "$root/secrets/apps" "$root/secrets/apps/post" "$root/secrets/apps/post/servers"; do
+    test ! -L "$directory" || exit 1
+    if test ! -d "$directory"; then mkdir "$directory"; fi
+done
+for directory in "$root/secrets" "$root/secrets/apps" "$root/secrets/apps/post" "$root/secrets/apps/post/servers"; do
+    chmod 700 "$directory"
+done
+cd "$root/secrets/apps/post/servers"
+test ! -d '{CREDENTIAL}' || exit 1
+partial=$(mktemp './.{CREDENTIAL}.writing.XXXXXX') || exit 1
+trap 'rm -f "$partial"' EXIT
+trap 'exit 1' HUP INT TERM
+base64 -d > "$partial" <<'COBALT_POST_ACCOUNT'
+{encoded}
+COBALT_POST_ACCOUNT
+chmod 600 "$partial"
+mv -f "$partial" '{CREDENTIAL}'
+trap - EXIT HUP INT TERM
+"#
+    )
 }
 
 fn remote(host: &str, script: &str) -> Result<(), String> {
@@ -201,6 +248,173 @@ fn remote(host: &str, script: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flag_like_hosts_fail_before_input_or_network() {
+        let base = [
+            "--gateway",
+            "https://letters.example",
+            "--token-file",
+            "/nonexistent",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        for flag in ["--device", "-s"] {
+            for host in ["--sim", "--device", "-s", "-reader", ""] {
+                for first in [false, true] {
+                    let mut arguments = base.clone();
+                    let index = if first { 0 } else { arguments.len() };
+                    arguments.splice(index..index, [flag.to_owned(), host.to_owned()]);
+                    let error = parse_options(&arguments)
+                        .err()
+                        .expect("invalid host rejected");
+                    assert!(error.contains("device host"), "{arguments:?}: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gateways_reject_unusable_runtime_addresses_before_reading_tokens() {
+        for gateway in [
+            "https://",
+            "http://example.com",
+            "https://user@example.com",
+            "https://example.com/?token=x",
+            "https://example.com/#x",
+            "https://example.com/../x",
+            "https://example.com/%2e/x",
+            "https://example.com/%0a",
+            "https://example.com/\n",
+        ] {
+            let arguments = [
+                "--sim",
+                "--gateway",
+                gateway,
+                "--token-file",
+                "/nonexistent",
+            ]
+            .map(str::to_owned);
+            assert!(parse_options(&arguments)
+                .err()
+                .unwrap()
+                .contains("valid HTTPS"));
+        }
+    }
+
+    #[test]
+    fn device_account_install_is_private_atomic_and_app_scoped() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = std::env::temp_dir().join(format!("post-install-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let record = credential_value("https://letters.example", "fixture-token");
+        let script = credential_install_script(&record)
+            .replace("/mnt/onboard/.adds/cobalt", root.to_str().unwrap())
+            .replace("/mnt /mnt/onboard /mnt/onboard/.adds ", "");
+        let run = |script: &str| {
+            std::process::Command::new("sh")
+                .args(["-c", script])
+                .output()
+                .unwrap()
+        };
+        assert!(run(&script).status.success());
+        let servers = root.join("secrets/apps/post/servers");
+        let account = servers.join(CREDENTIAL);
+        assert_eq!(fs::read_to_string(&account).unwrap(), record);
+        assert_eq!(
+            fs::metadata(&account).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        for directory in [
+            "secrets",
+            "secrets/apps",
+            "secrets/apps/post",
+            "secrets/apps/post/servers",
+        ] {
+            assert_eq!(
+                fs::metadata(root.join(directory))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+        assert!(!root.join("secrets/hermes-post").exists());
+        let broken = script.replace("base64 -d", "false");
+        assert!(!run(&broken).status.success());
+        assert_eq!(fs::read_to_string(&account).unwrap(), record);
+        let interrupted = script.replace("base64 -d", "kill -TERM $$\nbase64 -d");
+        assert!(!run(&interrupted).status.success());
+        assert_eq!(fs::read_to_string(&account).unwrap(), record);
+        assert_eq!(fs::read_dir(&servers).unwrap().count(), 1);
+        fs::write(servers.join(".hermes-post.writing"), "occupied").unwrap();
+        fs::write(
+            servers.join(".hermes-post.writing.other"),
+            "another transfer",
+        )
+        .unwrap();
+        assert!(run(&script).status.success());
+        assert_eq!(
+            fs::read_to_string(servers.join(".hermes-post.writing")).unwrap(),
+            "occupied"
+        );
+        assert_eq!(fs::read_to_string(&account).unwrap(), record);
+        assert_eq!(
+            fs::read_dir(&servers).unwrap().count(),
+            3,
+            "own staging cleaned up without removing another transfer"
+        );
+        assert_eq!(
+            fs::read_to_string(servers.join(".hermes-post.writing.other")).unwrap(),
+            "another transfer"
+        );
+        fs::rename(&servers, root.join("redirected")).unwrap();
+        symlink(root.join("redirected"), &servers).unwrap();
+        assert!(!run(&script).status.success());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tokens_must_fit_the_runtime_record() {
+        let file = std::env::temp_dir().join(format!("post-token-{}", std::process::id()));
+        let arguments = [
+            "--sim",
+            "--gateway",
+            "https://letters.example",
+            "--token-file",
+            file.to_str().unwrap(),
+        ]
+        .map(str::to_owned);
+        for token in ["x".repeat(513), "a\nb".to_owned(), "a\u{7f}b".to_owned()] {
+            fs::write(&file, token).unwrap();
+            assert!(parse_options(&arguments).is_err());
+        }
+        fs::write(&file, "x".repeat(512)).unwrap();
+        assert!(parse_options(&arguments).is_ok());
+        fs::remove_file(file).unwrap();
+    }
+    #[test]
+    fn ambiguous_destinations_fail_before_input_is_read() {
+        for flags in [
+            &["--sim", "--sim"][..],
+            &["--sim", "--device", "fixture"],
+            &["--device", "fixture", "--sim"],
+            &["--device", "fixture", "--device", "fixture"],
+        ] {
+            let mut arguments: Vec<String> = [
+                "--gateway",
+                "https://letters.example",
+                "--token-file",
+                "/nonexistent",
+            ]
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert_eq!(parse_options(&arguments).err().unwrap(), USAGE);
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -427,20 +427,20 @@ mod tests {
         let screen = screens(&commands)
             .pop()
             .expect("a build that prints redraws");
-        let status = kobo_ui::Status {
-            clock: "07:20".to_string(),
-            signal: kobo_ui::Signal::Fair,
-            battery: Some(kobo_ui::Percent::new(41)),
-            charging: false,
-            bluetooth: false,
-        };
+        let status = kobo_ui::Status::standard(
+            "07:20",
+            Some(kobo_ui::Percent::new(41)),
+            false,
+            kobo_ui::Signal::Fair,
+            false,
+        );
         let chrome = Chrome::with_back(true).with_status(status);
         let drawn = screen.layout_with(&CLARA_BW_METRICS, &chrome);
         assert!(
-            drawn
-                .nodes
-                .iter()
-                .any(|node| matches!(node.kind, LayoutKind::StatusBattery(Some(_), _))),
+            drawn.nodes.iter().any(|node| matches!(
+                node.kind,
+                LayoutKind::StatusMark(kobo_ui::StatusMark::Battery { level: Some(_), .. })
+            )),
             "a long build took the battery reading off the panel"
         );
     }

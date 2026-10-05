@@ -39,38 +39,110 @@ pub const SUPPLICANT_EXECUTABLE: &str = "/bin/wpa_supplicant";
 /// The DHCP client that owns the address and the default route.
 pub const DHCP_EXECUTABLE: &str = "/sbin/dhcpcd";
 
-/// The interface the device connects with.
+/// The interface the device connects with, or `None` when there is not
+/// exactly one.
 ///
 /// Detected rather than assumed. Most Kobos name it `wlan0`, but the Libra
 /// H2O's older Realtek driver names it `eth0` -- assuming `wlan0` there made
 /// every caller of this conclude Wi-Fi was simply absent, on a device that was
 /// connected to it at the time. Whichever interface under `/sys/class/net`
 /// carries a `wireless` subdirectory is the radio: that is the kernel's own
-/// marker for it, not a name any driver gets to choose, and there is exactly
-/// one such interface on any of these devices. Falls back to `wlan0` when
-/// nothing can be read, which matches every device this was measured against
-/// before it was detected instead of hardcoded.
+/// marker for it, not a name any driver gets to choose.
+///
+/// No name is guessed when nothing matches. This used to fall back to `wlan0`,
+/// but the firmware's own fallback is `eth0`, so the guess was wrong on exactly
+/// the devices it was there for, and every status and diagnostic built on it
+/// then described an interface that does not exist. Two matches are refused
+/// for the same reason: the Wi-Fi backend already refuses them before sending
+/// a command, and a band that picked one of the two would describe a radio the
+/// backend will not touch.
+///
+/// Looked up on every call rather than once per process. A radio whose driver
+/// is still loading has no interface yet, and an answer cached then would
+/// misname it for the rest of the session. One directory read is cheap next
+/// to that.
 #[must_use]
-pub fn wireless_link() -> &'static str {
-    static LINK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    LINK.get_or_init(|| {
-        detect_wireless_link(Path::new("/sys/class/net")).unwrap_or_else(|| "wlan0".to_owned())
-    })
+pub fn wireless_link() -> Option<String> {
+    wireless_link_in(Path::new("/sys/class/net"))
 }
 
 /// The pure half of [`wireless_link`], taking the root so it can be tested
-/// without `/sys`.
-fn detect_wireless_link(root: &Path) -> Option<String> {
-    let mut entries: Vec<_> = fs::read_dir(root).ok()?.filter_map(Result::ok).collect();
-    // Sorted so that a root with more than one match (never expected on real
-    // hardware, but not something a directory read can rule out) picks the
-    // same interface every time rather than whichever the filesystem
-    // happened to list first.
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    entries.into_iter().find_map(|entry| {
-        let name = entry.file_name().to_str()?.to_owned();
-        entry.path().join("wireless").is_dir().then_some(name)
-    })
+/// without `/sys`. Shared with the Wi-Fi backend so the two cannot disagree
+/// about which interface is the radio.
+#[must_use]
+pub fn wireless_link_in(root: &Path) -> Option<String> {
+    let mut names = fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("wireless").is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok());
+    let name = names.next()?;
+    names.next().is_none().then_some(name)
+}
+
+/// Whether the radio currently has a default route.
+///
+/// Resolves the interface afresh, so a radio that appears or is renamed while
+/// something is waiting on it is still seen.
+#[must_use]
+pub fn online() -> bool {
+    wireless_link().is_some_and(|link| is_online(&link))
+}
+
+/// How far the radio is from a usable connection.
+///
+/// Ordered, so that each state implies every one before it. The states are
+/// kept apart because each has a different fix: a missing interface is a
+/// driver the stock reader has not loaded, a down one is a radio switched off,
+/// an up one that is not associated is still searching or was refused, and an
+/// associated one with no route is waiting on DHCP or on a network that gives
+/// no gateway. Reporting all four as "offline" is what made field reports
+/// unreadable.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LinkState {
+    /// No interface, or more than one.
+    Absent,
+    /// The interface exists but is administratively down.
+    Down,
+    /// Up, but not associated with a network.
+    Searching,
+    /// Associated, but with no default route yet.
+    NoRoute,
+    /// Associated and routed.
+    Online,
+}
+
+/// Reads the radio's [`LinkState`] from files the kernel publishes.
+#[must_use]
+pub fn link_state() -> LinkState {
+    let root = Path::new("/sys/class/net");
+    let Some(link) = wireless_link_in(root) else {
+        return LinkState::Absent;
+    };
+    let route = fs::read_to_string("/proc/net/route").unwrap_or_default();
+    link_state_in(root, &link, &route)
+}
+
+/// The pure half of [`link_state`].
+///
+/// `flags` bit 0 is `IFF_UP`, which is what `ip link set up` changes. For a
+/// wireless interface the kernel reports `operstate` as `up` only once the
+/// supplicant has associated and authorised it, so it stands in for
+/// association without asking the supplicant, which would cost a process per
+/// poll.
+fn link_state_in(root: &Path, link: &str, route: &str) -> LinkState {
+    let text = |name: &str| fs::read_to_string(root.join(link).join(name)).unwrap_or_default();
+    let up = u32::from_str_radix(text("flags").trim().trim_start_matches("0x"), 16)
+        .is_ok_and(|flags| flags & 1 != 0);
+    if !up {
+        LinkState::Down
+    } else if text("operstate").trim() != "up" {
+        LinkState::Searching
+    } else if has_default_route(route, link) {
+        LinkState::Online
+    } else {
+        LinkState::NoRoute
+    }
 }
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -176,7 +248,7 @@ impl Connection {
         Self {
             daemons,
             uncertain,
-            was_online: is_online(wireless_link()),
+            was_online: online(),
         }
     }
 
@@ -232,7 +304,7 @@ impl Connection {
         if !self.was_online {
             return Ok(Restored::Unaffected);
         }
-        if !went_offline(wireless_link(), SETTLE) {
+        if !went_offline(SETTLE) {
             return Ok(Restored::Unaffected);
         }
         for daemon in &self.daemons {
@@ -241,7 +313,7 @@ impl Connection {
             }
             daemon.start(within)?;
         }
-        Ok(if wait_until_online(wireless_link(), within) {
+        Ok(if wait_until_online(within) {
             Restored::Restarted
         } else {
             Restored::StillDown
@@ -263,7 +335,7 @@ impl Connection {
                 uncertain_executables,
             };
         }
-        if !went_offline(wireless_link(), SETTLE) {
+        if !went_offline(SETTLE) {
             return SessionConnection {
                 outcome: Restored::Unaffected,
                 started: Vec::new(),
@@ -303,7 +375,7 @@ impl Connection {
                 Err(error) => start_errors.push(error),
             }
         }
-        let outcome = if wait_until_online(wireless_link(), within) {
+        let outcome = if wait_until_online(within) {
             Restored::Restarted
         } else {
             Restored::StillDown
@@ -327,14 +399,16 @@ pub fn is_online(link: &str) -> bool {
     fs::read_to_string("/proc/net/route").is_ok_and(|table| has_default_route(&table, link))
 }
 
-/// Watches `link` for `settle`, returning whether it was ever seen offline.
+/// Watches the radio for `settle`, returning whether it was ever seen offline.
 ///
 /// Returning early on the first offline reading keeps the common case cheap;
-/// only a connection that genuinely survives costs the full wait.
-fn went_offline(link: &str, settle: Duration) -> bool {
+/// only a connection that genuinely survives costs the full wait. The
+/// interface is looked up on every reading, because a driver the reader
+/// reloads during the handoff can come back under a different name.
+fn went_offline(settle: Duration) -> bool {
     let deadline = Instant::now() + settle;
     loop {
-        if !is_online(link) {
+        if !online() {
             return true;
         }
         if Instant::now() >= deadline {
@@ -344,10 +418,10 @@ fn went_offline(link: &str, settle: Duration) -> bool {
     }
 }
 
-fn wait_until_online(link: &str, within: Duration) -> bool {
+fn wait_until_online(within: Duration) -> bool {
     let deadline = Instant::now() + within;
     loop {
-        if is_online(link) {
+        if online() {
             return true;
         }
         if Instant::now() >= deadline {
@@ -435,7 +509,7 @@ pub fn signal_dbm_in(table: &str, link: &str) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::detect_wireless_link;
+    use super::{link_state_in, wireless_link_in, LinkState};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -463,7 +537,7 @@ mod tests {
         let root = root("eth0-named-radio");
         interface(&root, "lo", false);
         interface(&root, "eth0", true);
-        assert_eq!(detect_wireless_link(&root), Some("eth0".to_owned()));
+        assert_eq!(wireless_link_in(&root), Some("eth0".to_owned()));
     }
 
     #[test]
@@ -471,7 +545,7 @@ mod tests {
         let root = root("wlan0-named-radio");
         interface(&root, "lo", false);
         interface(&root, "wlan0", true);
-        assert_eq!(detect_wireless_link(&root), Some("wlan0".to_owned()));
+        assert_eq!(wireless_link_in(&root), Some("wlan0".to_owned()));
     }
 
     #[test]
@@ -479,7 +553,56 @@ mod tests {
         let root = root("no-radio-present");
         interface(&root, "lo", false);
         interface(&root, "eth0", false);
-        assert_eq!(detect_wireless_link(&root), None);
+        assert_eq!(wireless_link_in(&root), None);
+    }
+
+    #[test]
+    fn two_radios_are_refused_rather_than_one_being_picked() {
+        // The Wi-Fi backend refuses to command either of two radios, so a band
+        // that described one of them would describe a radio nothing can use.
+        let root = root("two-radios");
+        interface(&root, "eth0", true);
+        interface(&root, "wlan0", true);
+        assert_eq!(wireless_link_in(&root), None);
+    }
+
+    fn link(root: &Path, flags: &str, operstate: &str) {
+        interface(root, "eth0", true);
+        fs::write(root.join("eth0/flags"), flags).expect("flags");
+        fs::write(root.join("eth0/operstate"), operstate).expect("operstate");
+    }
+
+    const ROUTED: &str = "Iface\tDestination\tGateway\neth0\t00000000\t0101A8C0\n";
+
+    #[test]
+    fn a_radio_switched_off_is_down_whatever_else_it_reports() {
+        let root = root("state-down");
+        link(&root, "0x1002\n", "down\n");
+        assert_eq!(link_state_in(&root, "eth0", ROUTED), LinkState::Down);
+    }
+
+    #[test]
+    fn a_radio_that_is_up_but_not_associated_is_searching() {
+        let root = root("state-searching");
+        link(&root, "0x1003\n", "dormant\n");
+        assert_eq!(link_state_in(&root, "eth0", ""), LinkState::Searching);
+    }
+
+    #[test]
+    fn association_without_a_default_route_is_not_online() {
+        let root = root("state-no-route");
+        link(&root, "0x1003\n", "up\n");
+        assert_eq!(
+            link_state_in(&root, "eth0", "Iface\tDestination\n"),
+            LinkState::NoRoute
+        );
+    }
+
+    #[test]
+    fn association_with_a_default_route_is_online() {
+        let root = root("state-online");
+        link(&root, "0x1003\n", "up\n");
+        assert_eq!(link_state_in(&root, "eth0", ROUTED), LinkState::Online);
     }
 
     #[test]
@@ -490,7 +613,7 @@ mod tests {
             "root"
         ));
         let _ = fs::remove_dir_all(&missing);
-        assert_eq!(detect_wireless_link(&missing), None);
+        assert_eq!(wireless_link_in(&missing), None);
     }
 
     #[test]

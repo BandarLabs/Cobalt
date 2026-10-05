@@ -7,8 +7,8 @@ mod mealie;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, Glyph, KoboApp, Screen, ScreenBuilder,
-    StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Credential, Glyph, KoboApp, Position, Screen,
+    ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use mealie::Recipe;
 use std::{process::ExitCode, time::Duration};
@@ -53,6 +53,8 @@ struct Kitchen {
     tonight: Option<String>,
     servings: u32,
     step: usize,
+    browse_page: usize,
+    ingredients_page: usize,
     checked: Vec<usize>,
     timer: Option<(usize, u32)>,
     view: Option<View>,
@@ -212,6 +214,7 @@ impl Kitchen {
         self.tonight = Some(slug);
         self.servings = servings;
         self.step = 0;
+        self.ingredients_page = 0;
         self.checked.clear();
         self.view = Some(View::Tonight);
         self.info("Tonight's card is saved for offline cooking.");
@@ -322,7 +325,9 @@ impl Kitchen {
     }
 
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context).with_own_back(
+            self.editing.is_some() || self.view.is_some_and(|view| view != View::Tonight),
+        ));
     }
 
     fn banner(screen: ScreenBuilder, note: Option<&(bool, String)>) -> ScreenBuilder {
@@ -333,8 +338,180 @@ impl Kitchen {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // One screen per view keeps the layout beside its data.
-    fn screen(&self) -> Screen {
+    fn page_controls(screen: ScreenBuilder, page: usize, count: usize) -> ScreenBuilder {
+        if count <= 1 {
+            return screen;
+        }
+        screen
+            .page_turns("list-previous", "list-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            )
+    }
+
+    fn browse_prefix(&self) -> ScreenBuilder {
+        Self::banner(
+            ScreenBuilder::new("kitchencard")
+                .top_bar("Pick a recipe")
+                .top_bar_action("sync", "Sync"),
+            self.note.as_ref(),
+        )
+    }
+
+    fn browse_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.recipes.len()).collect();
+        order.sort_by_key(|&index| &self.recipes[index].category);
+        order
+    }
+
+    fn browse_slice(&self, indices: &[usize], page: usize, count: usize) -> Screen {
+        let mut screen = self.browse_prefix();
+        let mut group = Vec::new();
+        let mut heading = None;
+        for &index in indices {
+            let recipe = &self.recipes[index];
+            if heading != Some(recipe.category.as_str()) {
+                if let Some(heading) = heading {
+                    screen = screen.section_rows(heading, None, std::mem::take(&mut group));
+                }
+                heading = Some(recipe.category.as_str());
+            }
+            group.push((
+                format!("recipe-{index}"),
+                recipe.name.clone(),
+                format!(
+                    "serves {} · {} step{}",
+                    recipe.servings,
+                    recipe.steps.len(),
+                    if recipe.steps.len() == 1 { "" } else { "s" }
+                ),
+                Glyph::Reader,
+            ));
+        }
+        if let Some(heading) = heading {
+            screen = screen.section_rows(heading, None, group);
+        }
+        Self::page_controls(screen, page, count).build()
+    }
+
+    fn browse_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let mut pages = Vec::new();
+        let mut page = Vec::new();
+        // At most twelve recipes: measure the exact grouped layout so that a
+        // continuation page can repeat its category without stealing a row.
+        for index in self.browse_order() {
+            page.push(index);
+            if page.len() > 1
+                && !self
+                    .browse_slice(&page, 0, 2)
+                    .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+                    .issues
+                    .is_empty()
+            {
+                page.pop();
+                pages.push(std::mem::take(&mut page));
+                page.push(index);
+            }
+        }
+        if !page.is_empty() {
+            pages.push(page);
+        }
+        pages
+    }
+
+    fn browse_screen(&self, context: &Context) -> Screen {
+        if self.recipes.is_empty() {
+            return self
+                .browse_prefix()
+                .empty_state("Nothing from Mealie yet.")
+                .primary_button("sync", "Sync Mealie")
+                .build();
+        }
+        let pages = self.browse_pages(context);
+        let page = self.browse_page.min(pages.len().saturating_sub(1));
+        self.browse_slice(&pages[page], page, pages.len())
+    }
+
+    fn ingredients_prefix(&self) -> ScreenBuilder {
+        ScreenBuilder::new("kitchencard")
+            .top_bar("Ingredients")
+            .tabs(1, [("cook", "Steps"), ("ingredients", "Ingredients")])
+            .secondary(format!(
+                "Serves {} · tap a line to check it off",
+                self.servings
+            ))
+    }
+
+    fn ingredient_rows(&self) -> Vec<(String, String, String, Glyph)> {
+        self.recipe().map_or_else(Vec::new, |recipe| {
+            recipe
+                .ingredients
+                .iter()
+                .enumerate()
+                .map(|(index, ingredient)| {
+                    let amount = amounts::amount(ingredient, self.servings, recipe.servings);
+                    let detail = if amount.is_empty() || amount == ingredient.label() {
+                        String::new()
+                    } else {
+                        amount
+                    };
+                    (
+                        format!("ingredient-{index}"),
+                        ingredient.label().to_owned(),
+                        detail,
+                        if self.checked.contains(&index) {
+                            Glyph::Check
+                        } else {
+                            Glyph::Circle
+                        },
+                    )
+                })
+                .collect()
+        })
+    }
+
+    fn ingredients_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.ingredient_rows();
+        let borrowed = rows
+            .iter()
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        context.paginate_rows_under(
+            &borrowed,
+            false,
+            Position::AtTheFoot,
+            &self.ingredients_prefix().build(),
+        )
+    }
+
+    fn ingredients_screen(&self, context: &Context) -> Screen {
+        if self.recipe().is_none() {
+            return ScreenBuilder::new("kitchencard")
+                .top_bar("Ingredients")
+                .empty_state("Pick a recipe first.")
+                .primary_button("browse", "Pick a recipe")
+                .build();
+        }
+        let screen = self.ingredients_prefix();
+        let rows = self.ingredient_rows();
+        if rows.is_empty() {
+            return screen
+                .empty_state("No ingredient list came with this recipe.")
+                .build();
+        }
+        let pages = self.ingredients_pages(context);
+        let page = self.ingredients_page.min(pages.len().saturating_sub(1));
+        Self::page_controls(
+            screen.rows(pages[page].iter().map(|&index| rows[index].clone())),
+            page,
+            pages.len(),
+        )
+        .build()
+    }
+
+    #[allow(clippy::too_many_lines)] // Each arm is a distinct, small screen.
+    fn screen(&self, context: &Context) -> Screen {
         if let Some(setting) = self.editing {
             let prompt = match setting {
                 Setting::Server => "Mealie HTTPS address",
@@ -431,49 +608,7 @@ impl Kitchen {
                     ])
                     .build()
             }
-            View::Browse => {
-                let mut screen = Self::banner(
-                    ScreenBuilder::new("kitchencard")
-                        .top_bar("Pick a recipe")
-                        .top_bar_action("sync", "Sync"),
-                    self.note.as_ref(),
-                );
-                if self.recipes.is_empty() {
-                    return screen
-                        .empty_state("Nothing from Mealie yet.")
-                        .primary_button("sync", "Sync Mealie")
-                        .button("tonight", "Back")
-                        .build();
-                }
-                let mut by_category: std::collections::BTreeMap<&str, Vec<(usize, &Recipe)>> =
-                    std::collections::BTreeMap::new();
-                for (index, recipe) in self.recipes.iter().enumerate() {
-                    by_category
-                        .entry(recipe.category.as_str())
-                        .or_default()
-                        .push((index, recipe));
-                }
-                for (category, recipes) in by_category {
-                    screen = screen.section_rows(
-                        category,
-                        None,
-                        recipes.into_iter().map(|(index, recipe)| {
-                            (
-                                format!("recipe-{index}"),
-                                recipe.name.clone(),
-                                format!(
-                                    "serves {} · {} step{}",
-                                    recipe.servings,
-                                    recipe.steps.len(),
-                                    if recipe.steps.len() == 1 { "" } else { "s" }
-                                ),
-                                Glyph::Reader,
-                            )
-                        }),
-                    );
-                }
-                screen.button("tonight", "Back").build()
-            }
+            View::Browse => self.browse_screen(context),
             View::Cook => {
                 let Some(recipe) = self.recipe() else {
                     return ScreenBuilder::new("kitchencard")
@@ -530,47 +665,7 @@ impl Kitchen {
                     .reading_menu("tonight")
                     .build()
             }
-            View::Ingredients => {
-                let Some(recipe) = self.recipe() else {
-                    return ScreenBuilder::new("kitchencard")
-                        .top_bar("Ingredients")
-                        .empty_state("Pick a recipe first.")
-                        .primary_button("browse", "Pick a recipe")
-                        .build();
-                };
-                let screen = ScreenBuilder::new("kitchencard")
-                    .top_bar("Ingredients")
-                    .tabs(1, [("cook", "Steps"), ("ingredients", "Ingredients")])
-                    .secondary(format!(
-                        "Serves {} · tap a line to check it off",
-                        self.servings
-                    ));
-                if recipe.ingredients.is_empty() {
-                    return screen
-                        .empty_state("No ingredient list came with this recipe.")
-                        .build();
-                }
-                screen
-                    .rows(recipe.ingredients.iter().enumerate().map(|(index, ingredient)| {
-                        let amount = amounts::amount(ingredient, self.servings, recipe.servings);
-                        let detail = if amount.is_empty() || amount == ingredient.label() {
-                            String::new()
-                        } else {
-                            amount
-                        };
-                        (
-                            format!("ingredient-{index}"),
-                            ingredient.label().to_owned(),
-                            detail,
-                            if self.checked.contains(&index) {
-                                Glyph::Check
-                            } else {
-                                Glyph::Circle
-                            },
-                        )
-                    }))
-                    .build()
-            }
+            View::Ingredients => self.ingredients_screen(context),
             View::Finished => {
                 let name = self.recipe().map_or("Dinner", |recipe| recipe.name.as_str());
                 let mut screen = ScreenBuilder::new("kitchencard")
@@ -583,7 +678,7 @@ impl Kitchen {
                     ]);
                 }
                 screen
-                    .buttons([("tonight", "Back to tonight"), ("again", "Cook again")])
+                    .button("again", "Cook again")
                     .build()
             }
             View::Settings => ScreenBuilder::new("kitchencard")
@@ -593,7 +688,6 @@ impl Kitchen {
                 .secondary(
                     "On your computer run `kobo secret set mealie` with a Mealie API token, then sync here.",
                 )
-                .button("back", "Back")
                 .build(),
         }
     }
@@ -764,7 +858,14 @@ impl KoboApp for Kitchen {
             self.keyboard = Keyboard::with_text(&self.credential);
             self.editing = Some(Setting::Credential);
         } else if action == action_id("back") || action == ActionId::BACK {
-            self.view = Some(View::Tonight);
+            if self.view == Some(View::Ingredients) {
+                self.view = Some(View::Cook);
+            } else {
+                if matches!(self.view, Some(View::Cook | View::Finished)) {
+                    self.stop_timer(context);
+                }
+                self.view = Some(View::Tonight);
+            }
         } else if action == action_id("retry-save") {
             if let Some(snapshot) = &mut self.snapshot {
                 snapshot.retry(context);
@@ -773,6 +874,7 @@ impl KoboApp for Kitchen {
         } else if action == action_id("sync") {
             self.sync(context);
         } else if action == action_id("browse") {
+            self.browse_page = 0;
             self.view = Some(View::Browse);
         } else if action == action_id("tonight") {
             if self.view == Some(View::Cook) || self.view == Some(View::Finished) {
@@ -780,12 +882,34 @@ impl KoboApp for Kitchen {
             }
             self.view = Some(View::Tonight);
         } else if action == action_id("cook") {
+            if self.view != Some(View::Ingredients) {
+                self.step = 0;
+            }
             self.view = Some(View::Cook);
-            self.step = 0;
             context.device().keep_awake(Duration::from_secs(3600));
             self.persist_tonight(context);
         } else if action == action_id("ingredients") {
             self.view = Some(View::Ingredients);
+        } else if action == action_id("list-previous") || action == action_id("list-next") {
+            let (page, count) = match self.view {
+                Some(View::Browse) => (self.browse_page, self.browse_pages(context).len()),
+                Some(View::Ingredients) => {
+                    (self.ingredients_page, self.ingredients_pages(context).len())
+                }
+                _ => return,
+            };
+            let last = count.saturating_sub(1);
+            let page = page.min(last);
+            let next = if action == action_id("list-next") {
+                page.saturating_add(1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            if self.view == Some(View::Browse) {
+                self.browse_page = next;
+            } else {
+                self.ingredients_page = next;
+            }
         } else if action == action_id("more") && self.servings < 12 {
             self.servings += 1;
             self.persist_tonight(context);
@@ -1032,7 +1156,7 @@ mod tests {
                 app.view = Some(view);
             }
             assert!(
-                app.screen()
+                app.screen(&Context::default())
                     .diagnostics(&CLARA_BW_METRICS, &chrome)
                     .issues
                     .is_empty(),
@@ -1048,7 +1172,7 @@ mod tests {
         app.servings = 4;
         app.checked = vec![0];
         let layout = app
-            .screen()
+            .screen(&Context::default())
             .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let text = format!("{layout:?}");
         assert!(text.contains("4 tins"), "scaled amount on screen: {text}");
@@ -1058,3 +1182,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

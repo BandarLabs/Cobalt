@@ -14,9 +14,8 @@
 //!
 //! So a provisional profile carries the derived fields and leaves that one gap
 //! honest. It is never `write_ready`, so it cannot reach a panel until the
-//! owner has been told what it is and has said yes. What it buys is that an
-//! owner of a Nia or an Aura gets a screen and a choice rather than a device
-//! that appears to do nothing.
+//! owner has been told what it is and has said yes. This path also requires
+//! qualified display ABI evidence; consent cannot qualify an unknown driver.
 
 use crate::{
     firmware_branch, DeviceProfile, DeviceSnapshot, FramebufferController, GeometryRule,
@@ -67,7 +66,7 @@ pub fn profile_from_probe(
             "the firmware version {firmware} names no release branch"
         ));
     }
-    let controller = controller_for(&snapshot.compatible)?;
+    let controller = controller_for(&snapshot.compatible, &framebuffer.id)?;
 
     let profile = DeviceProfile {
         id: PROVISIONAL_ID,
@@ -145,21 +144,37 @@ pub fn profile_from_probe(
     Ok(Box::leak(Box::new(profile)))
 }
 
-/// Which update ABI to use, taken from the `SoC` family the device tree names.
+/// The i.MX device-tree roots whose EPDC driver takes the 72-byte update.
 ///
-/// Derived rather than guessed. The two ABIs disagree about the size of the
-/// update struct, so submitting one to a driver expecting the other is not a
-/// refusal that can be caught and retried, and the device tree is the only
-/// thing that says which is underneath without writing to find out.
-fn controller_for(compatible: &[String]) -> Result<FramebufferController, String> {
-    let names = compatible.join(" ").to_ascii_lowercase();
-    if names.contains("mediatek") || names.contains("mt8") {
-        return Ok(FramebufferController::Hwtcon);
+/// The i.MX6SLL readers and the i.MX6ULL Nia ship the 4.1.15 EPDC driver with
+/// the 72-byte request. The i.MX6SL and i.MX50 readers before them use the
+/// 68-byte request under the same `mxc_epdc_fb` name, which is why a family
+/// prefix cannot stand in for these exact roots.
+const MXCFB_V2_ROOTS: [&str; 3] = ["fsl,imx6sll", "fsl,imx6sll-lpddr3-arm2", "fsl,imx6ull"];
+
+/// Select only qualified compatible tokens and the matching framebuffer ID.
+/// The same framebuffer ID exists on older, incompatible i.MX drivers.
+fn controller_for(
+    compatible: &[String],
+    framebuffer_id: &str,
+) -> Result<FramebufferController, String> {
+    let has = |token: &str| compatible.iter().any(|name| name == token);
+    let imx = MXCFB_V2_ROOTS.iter().any(|root| has(root));
+    let mtk = has("mediatek,mt8110") || has("mediatek,mt8512");
+    let conflicting = compatible.iter().any(|name| {
+        (name.starts_with("fsl,imx") && !MXCFB_V2_ROOTS.contains(&name.as_str()))
+            || name.starts_with("allwinner,")
+            || (imx && name.starts_with("mediatek,"))
+            || (mtk && (name.starts_with("fsl,") || name.starts_with("freescale,")))
+    });
+    match (imx, mtk, conflicting, framebuffer_id) {
+        (true, false, false, "mxc_epdc_fb") => Ok(FramebufferController::MxcfbV2),
+        (false, true, false, "hwtcon") => Ok(FramebufferController::Hwtcon),
+        _ => Err(
+            "no qualified, unambiguous display ABI matches the device tree and framebuffer"
+                .to_owned(),
+        ),
     }
-    if names.contains("imx6") || names.contains("freescale") || names.contains("fsl,") {
-        return Ok(FramebufferController::MxcfbV2);
-    }
-    Err("the device tree names no SoC family this build has a framebuffer driver for".to_owned())
 }
 
 /// The density to assume, borrowed from a measured profile of the same size.
@@ -211,12 +226,12 @@ mod tests {
         }
     }
 
-    /// A reader with no entry in the table: an i.MX6 Aura's panel size, and a
+    /// A reader with no entry in the table: an unmeasured i.MX6SLL panel size, and a
     /// firmware branch nothing here has been measured on.
     fn unmeasured_snapshot() -> DeviceSnapshot {
         DeviceSnapshot {
-            compatible: vec!["kobo,aura".to_owned(), "fsl,imx6sl".to_owned()],
-            model: Some("Kobo Aura".to_owned()),
+            compatible: vec!["test,unmeasured".to_owned(), "fsl,imx6sll".to_owned()],
+            model: Some("Synthetic SLL reader".to_owned()),
             framebuffer: Some(FramebufferSnapshot {
                 id: "mxc_epdc_fb".to_owned(),
                 width: 758,
@@ -246,12 +261,53 @@ mod tests {
                 y_max: 1023,
             }),
             identity: IdentitySnapshot {
-                serial_prefix: Some("N514".into()),
+                serial_prefix: Some("TEST".into()),
                 firmware_version: Some("4.28.17623".into()),
-                kernel_release: Some("3.0.35".into()),
-                device_code: Some(310),
+                kernel_release: Some("4.1.15".into()),
+                device_code: Some(999),
             },
         }
+    }
+
+    #[test]
+    fn ambiguous_legacy_and_mismatched_displays_are_refused() {
+        for tokens in [
+            vec!["fsl,imx50"],
+            vec!["fsl,imx6sl"],
+            vec!["fsl,imx6ull", "fsl,imx6sl"],
+            vec!["fsl,generic"],
+            vec!["freescale"],
+            vec!["mediatek,mt8113"],
+            vec!["mt8"],
+            vec!["mediatek"],
+            vec!["prefix-fsl,imx6sll"],
+            vec!["fsl,imx6sll", "fsl,imx6sl"],
+            vec!["fsl,imx6sll", "mediatek,mt8110"],
+        ] {
+            let names = tokens.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+            for id in ["mxc_epdc_fb", "hwtcon"] {
+                assert!(
+                    super::controller_for(&names, id).is_err(),
+                    "{tokens:?} {id}"
+                );
+            }
+        }
+        assert!(super::controller_for(&["fsl,imx6sll".into()], "hwtcon").is_err());
+        assert!(super::controller_for(&["fsl,imx6ull".into()], "hwtcon").is_err());
+        assert!(super::controller_for(&["mediatek,mt8512".into()], "mxc_epdc_fb").is_err());
+        assert_eq!(
+            super::controller_for(&["mediatek,mt8512".into()], "hwtcon").unwrap(),
+            FramebufferController::Hwtcon
+        );
+    }
+
+    #[test]
+    fn the_nia_root_selects_the_72_byte_update_its_driver_takes() {
+        assert_eq!(
+            super::controller_for(&["kobo,nia".into(), "fsl,imx6ull".into()], "mxc_epdc_fb")
+                .unwrap(),
+            FramebufferController::MxcfbV2
+        );
     }
 
     #[test]
@@ -294,7 +350,8 @@ mod tests {
             FramebufferController::MxcfbV2
         );
 
-        imx.compatible = vec!["kobo,clara".to_owned(), "mediatek,mt8113".to_owned()];
+        imx.compatible = vec!["kobo,clara".to_owned(), "mediatek,mt8110".to_owned()];
+        imx.framebuffer.as_mut().unwrap().id = "hwtcon".to_owned();
         assert_eq!(
             profile_from_probe(&imx, TouchTransform::Direct)
                 .expect("derivable")

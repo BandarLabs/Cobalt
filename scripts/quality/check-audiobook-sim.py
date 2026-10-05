@@ -157,13 +157,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scale', default='default')
+    parser.add_argument('--profile', default='clara-bw-391')
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target'))).resolve()
     cli, provenance = build_cli(ROOT, target)
     providers = Providers()
-    result = dict(provenance=provenance, scale=args.scale, checks=[])
+    result = dict(provenance=provenance, scale=args.scale, profile=args.profile, checks=[])
 
     with tempfile.TemporaryDirectory(prefix='cobalt-audiobook-', dir='/tmp') as temporary:
         private = Path(temporary)
@@ -187,7 +188,7 @@ def main():
                    CARGO_INCREMENTAL='0', CARGO_BUILD_JOBS='1',
                    KOBO_SIM_HTTP_FIXTURE=','.join(sockets),
                    KOBO_SIM_TRUST_DIR=str(trust), KOBO_TEXT_SCALE=args.scale,
-                   KOBO_SIM_PROFILE='clara-bw-391')
+                   KOBO_SIM_PROFILE=args.profile)
         env.pop('KOBO_SIM_OFFLINE', None)
         secrets = private / 'cobalt-sim-secrets/apps/audiobook'
 
@@ -241,10 +242,10 @@ def main():
                 start()
                 drive('wait-for No audiobooks yet')
                 capture('audiobook-empty')
-                drive('tap Play the sample', 'wait-for The Quiet Shelf', 'wait 2500')
+                drive('tap-id sample', 'wait-for The Quiet Shelf', 'wait 2500')
                 capture('audiobook-sample-player')
                 drive('tap back', 'wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 drive('tap Type any topic', 'type the moon', 'tap Create',
                       'wait-for Account details')
                 capture('audiobook-preflight-missing')
@@ -257,7 +258,7 @@ def main():
                            'attempt named research, writing and narration as missing and no '
                            'fixture received any request',
                     status='passed'))
-                drive('tap Your audiobooks', 'wait-for The Quiet Shelf')
+                drive('tap-id shelf', 'wait-for The Quiet Shelf')
 
                 # Phase B: all three accounts installed; a full creation.
                 stop()
@@ -268,7 +269,7 @@ def main():
                     os.chmod(secrets / name, 0o600)
                 start()
                 drive('wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 providers.exa_delay = 5.0
                 drive('tap Type any topic', 'type the moon', 'tap Create',
                       'wait-for Researching the topic')
@@ -296,13 +297,13 @@ def main():
 
                 # Phase C: a narration call fails; Resume spends only that call.
                 drive('tap back', 'wait-for The Moon Tonight')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 providers.tts_fail_at = providers.total('elevenlabs') + 2
                 drive('tap Type any topic', 'type the tides', 'tap Create',
                       'wait-for Could not create audiobook')
                 capture('audiobook-failed-resume')
                 before = providers.total('elevenlabs')
-                drive('tap Resume', 'wait-for Now playing', 'wait 1500')
+                drive('tap-id resume', 'wait-for Now playing', 'wait 1500')
                 assert providers.total('elevenlabs') == before + 2, \
                     f'resume re-narrated too much: {before} -> {providers.total("elevenlabs")}'
                 result['checks'].append(dict(
@@ -315,7 +316,7 @@ def main():
                 # Phase D: cancel mid-narration; the checkpoint survives a
                 # simulator restart and resumes the script from the top.
                 drive('tap back', 'wait-for Audiobooks')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 providers.tts_delay = 6.0
                 drive('tap Type any topic', 'type the stars', 'tap Create',
                       'wait-for Narrating part 1 of 3')
@@ -324,10 +325,10 @@ def main():
                 stop()
                 start()
                 drive('wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for What should it be about?')
+                drive('tap Create', 'wait-for Your topic')
                 capture('audiobook-compose-resume')
                 restart_base = providers.total('elevenlabs')
-                drive('tap Resume', 'wait-for Now playing', 'wait 1500')
+                drive('tap-id resume', 'wait-for Now playing', 'wait 1500')
                 assert providers.total('elevenlabs') == restart_base + 3, \
                     'a restarted resume re-narrates the whole script, honestly'
                 result['checks'].append(dict(

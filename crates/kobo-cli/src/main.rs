@@ -3973,6 +3973,7 @@ fn capture_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Resul
 
 fn valid_device_host(host: &str) -> bool {
     !host.is_empty()
+        && !host.starts_with('-')
         && host
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b':' | b'-' | b'_'))
@@ -9033,6 +9034,8 @@ mod tests {
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));
+        assert!(!valid_device_host("--sim"));
+        assert!(!valid_device_host("-reader"));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
         assert_eq!(

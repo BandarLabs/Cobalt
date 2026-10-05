@@ -13,11 +13,6 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 use zvm::{Machine, RunState, StoryInfo};
 
-// Three rows to a page rather than four: with the story's own checkpoint
-// listed and a message on the panel, four rows crowded the guidance line off
-// the largest text scale, and the renderer refused the screen.
-const SLOT_PAGE_ROWS: usize = 3;
-
 const STORY_PREFIX: &str = "story-";
 /// Shelf name of the bundled tutorial story.
 const TUTORIAL_BLOB: &str = "story-first-light.z3";
@@ -38,6 +33,7 @@ enum SlotAction {
 struct Parser {
     view: View,
     stories: Vec<(String, u32)>,
+    library_page: usize,
     saves: Vec<String>,
     slots_page: usize,
     machine: Option<Machine>,
@@ -64,6 +60,7 @@ impl Default for Parser {
         Self {
             view: View::Library,
             stories: Vec::new(),
+            library_page: 0,
             saves: Vec::new(),
             slots_page: 0,
             machine: None,
@@ -120,46 +117,65 @@ impl Parser {
     fn show(&mut self, context: &mut Context) {
         self.repaginate(context);
         context.set_screen(match self.view {
-            View::Library => self.library_screen(),
+            View::Library => self.library_screen(context),
             View::Play => self.play_screen(),
-            View::Slots => self.slots_screen(),
+            View::Slots => self.slots_screen_for(context),
         });
     }
 
-    fn library_screen(&self) -> Screen {
+    fn library_prefix(&self) -> ScreenBuilder {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
             .heading("Interactive fiction");
         if let Some(message) = &self.message {
             builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
-        let stories = self
-            .stories
-            .iter()
-            .enumerate()
-            .map(|(index, (name, size))| {
+        builder
+    }
+
+    fn library_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        context.paginate_tiles_under(
+            self.stories.len(),
+            TileShape::Portrait,
+            true,
+            &self.library_prefix().build(),
+        )
+    }
+
+    fn library_screen(&self, context: &Context) -> Screen {
+        let builder = self.library_prefix();
+        if self.stories.is_empty() {
+            return builder
+                .empty_state(
+                    "No stories yet. Push a .z3, .z5 or .z8 story with \
+                     `kobo parser push FILE --device IP`; stories play completely offline.",
+                )
+                .bottom_action("refresh", "Refresh library")
+                .build();
+        }
+        let pages = self.library_pages(context);
+        let page = self.library_page.min(pages.len().saturating_sub(1));
+        let mut builder = builder.tile_grid(
+            TileShape::Portrait,
+            pages[page].iter().map(|&index| {
+                let (name, size) = &self.stories[index];
                 (
                     format!("story-{index}"),
                     display_name(name),
                     Glyph::Book,
                     move |tile: kobo_sdk::Tile| tile.with_subtitle(format_size(*size)),
                 )
-            })
-            .collect::<Vec<_>>();
-        if stories.is_empty() {
-            builder
-                .empty_state(
-                    "No stories yet. Push a .z3, .z5 or .z8 story with \
-                     `kobo parser push FILE --device IP`; stories play completely offline.",
-                )
-                .bottom_action("refresh", "Refresh library")
-                .build()
-        } else {
-            builder
-                .tile_grid(TileShape::Portrait, stories)
-                .bottom_action("refresh", "Refresh library")
-                .build()
+            }),
+        );
+        if pages.len() > 1 {
+            builder = builder
+                .page_turns("library-previous", "library-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
         }
+        builder.bottom_action("refresh", "Refresh library").build()
     }
 
     fn play_screen(&self) -> Screen {
@@ -192,7 +208,7 @@ impl Parser {
         let commands = palette(self.machine.as_ref());
         let mut builder = ScreenBuilder::new("parser-play")
             .top_bar(status)
-            .top_bar_glyph("library", "Library", Glyph::Book)
+            .owns_back(true)
             .reading(true)
             .rich_text_linking(
                 text,
@@ -235,11 +251,7 @@ impl Parser {
         builder.build()
     }
 
-    fn slots_screen(&self) -> Screen {
-        let title = match self.slot_action {
-            SlotAction::Save => "Save game",
-            SlotAction::Restore => "Restore game",
-        };
+    fn slot_rows(&self) -> Vec<(String, String, String, Glyph)> {
         let slot_rows = (1..=10).map(|slot| {
             let occupied = self.machine.as_ref().is_some_and(|machine| {
                 self.saves
@@ -265,7 +277,7 @@ impl Parser {
         } else {
             None
         };
-        let all_rows: Vec<_> = checkpoint
+        checkpoint
             .into_iter()
             .map(|_| {
                 (
@@ -276,15 +288,14 @@ impl Parser {
                 )
             })
             .chain(slot_rows)
-            .collect();
-        let page_count = all_rows.len().div_ceil(SLOT_PAGE_ROWS);
-        let page = self.slots_page.min(page_count - 1);
-        let first = page * SLOT_PAGE_ROWS;
-        let last = (first + SLOT_PAGE_ROWS).min(all_rows.len());
-        let rows: Vec<_> = all_rows[first..last].to_vec();
-        // One line up top says what a slot is before anybody has to guess:
-        // a position of this story kept on this reader, with the story
-        // itself resuming where it was left whether a slot was used or not.
+            .collect()
+    }
+
+    fn slots_prefix(&self) -> ScreenBuilder {
+        let title = match self.slot_action {
+            SlotAction::Save => "Save game",
+            SlotAction::Restore => "Restore game",
+        };
         let guidance = match self.slot_action {
             SlotAction::Save => {
                 "Keep this position in a slot. The story also resumes where you left off."
@@ -295,19 +306,47 @@ impl Parser {
         };
         let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
-            .top_bar_action("play", "Back")
-            .text(guidance)
-            .rows(rows);
-        if page_count > 1 {
+            .owns_back(true)
+            .text(guidance);
+        if let Some(message) = &self.message {
+            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        }
+        builder
+    }
+
+    fn slot_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.slot_rows();
+        let labels: Vec<_> = rows
+            .iter()
+            .map(|row| (row.1.as_str(), row.2.as_str()))
+            .collect();
+        context.paginate_rows_under(
+            &labels,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &self.slots_prefix().build(),
+        )
+    }
+
+    #[cfg(test)]
+    fn slots_screen(&self) -> Screen {
+        self.slots_screen_for(&Context::default())
+    }
+
+    fn slots_screen_for(&self, context: &Context) -> Screen {
+        let rows = self.slot_rows();
+        let pages = self.slot_pages(context);
+        let page = self.slots_page.min(pages.len().saturating_sub(1));
+        let mut builder = self
+            .slots_prefix()
+            .rows(pages[page].iter().map(|&index| rows[index].clone()));
+        if pages.len() > 1 {
             builder = builder
                 .page_turns("slots-page-back", "slots-page-next")
                 .page_position(
                     u16::try_from(page + 1).unwrap_or(u16::MAX),
-                    u16::try_from(page_count).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
                 );
-        }
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
         }
         builder.build()
     }
@@ -317,6 +356,14 @@ impl Parser {
             return;
         };
         self.message = None;
+        if self.open_blob.as_ref() == Some(name) && self.machine.is_some() {
+            // A newer selection also cancels any other story being loaded.
+            self.loading = None;
+            // The library is a detour, not a restart of the open story.
+            self.view = View::Play;
+            self.show(context);
+            return;
+        }
         let mut download = ShelfDownload::new(name).at_most(16 * 1024 * 1024);
         download.start(context);
         self.loading = Some(download);
@@ -595,13 +642,20 @@ impl KoboApp for Parser {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id("library") {
+        if action == ActionId::BACK && self.view == View::Play && self.keyboard_open {
+            self.keyboard_open = false;
+            self.show(context);
+            return;
+        }
+        if action == action_id("library") || (action == ActionId::BACK && self.view == View::Play) {
             self.view = View::Library;
+            self.message = None;
             context.shelf().list();
             self.show(context);
             return;
         }
-        if action == action_id("play") {
+        if action == action_id("play") || (action == ActionId::BACK && self.view == View::Slots) {
+            self.message = None;
             if self.view == View::Slots {
                 if let Some(machine) = &mut self.machine {
                     if machine.awaiting_restore() {
@@ -620,6 +674,18 @@ impl KoboApp for Parser {
         }
         if action == action_id("refresh") {
             context.shelf().list();
+            return;
+        }
+        if self.view == View::Slots
+            && (action == action_id("slots-page-back") || action == action_id("slots-page-next"))
+        {
+            self.on_page_turn(context, action == action_id("slots-page-next"));
+            return;
+        }
+        if self.view == View::Library
+            && (action == action_id("library-previous") || action == action_id("library-next"))
+        {
+            self.on_page_turn(context, action == action_id("library-next"));
             return;
         }
         for index in 0..self.stories.len() {
@@ -761,8 +827,19 @@ impl KoboApp for Parser {
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Library {
+            let last = self.library_pages(context).len().saturating_sub(1);
+            let page = self.library_page.min(last);
+            self.library_page = if forward {
+                (page + 1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            self.show(context);
+            return;
+        }
         if self.view == View::Slots {
-            let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
+            let page_count = self.slot_pages(context).len();
             self.slots_page = if forward {
                 (self.slots_page + 1).min(page_count - 1)
             } else {
@@ -1332,16 +1409,17 @@ mod tests {
         };
         parser.slot_action = SlotAction::Restore;
         parser.message = Some("The story asked to restore a game - pick a slot.".to_owned());
-        let page_count = 10usize.div_ceil(SLOT_PAGE_ROWS);
         for scale in TextScale::STEPS {
             let scaled = DisplayMetrics {
                 text_scale: scale,
                 ..CLARA_BW_METRICS
             };
-            for page in 0..page_count {
+            let runner = kobo_sdk::AppRunner::with_metrics(Parser::default(), scaled);
+            let context = runner.context();
+            for page in 0..parser.slot_pages(&context).len() {
                 parser.slots_page = page;
                 let diagnostics = parser
-                    .slots_screen()
+                    .slots_screen_for(&context)
                     .diagnostics(&scaled, &Chrome::default());
                 assert!(
                     diagnostics.issues.is_empty(),
@@ -1399,7 +1477,7 @@ mod tests {
                     for keyboard_open in [false, true] {
                         parser.keyboard_open = keyboard_open;
                         for (name, screen) in [
-                            ("library", parser.library_screen()),
+                            ("library", parser.library_screen(&Context::default())),
                             ("play", parser.play_screen()),
                         ] {
                             let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
@@ -1417,3 +1495,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod navigation_tests;

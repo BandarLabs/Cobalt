@@ -104,7 +104,7 @@ struct ReadingList {
     collection_page: usize,
     list_page: usize,
     library_page: usize,
-    detail_pages: Vec<Vec<String>>,
+    detail_body: String,
     detail_page: usize,
     detail: Option<Detail>,
     attachment: Option<Attachment>,
@@ -372,7 +372,7 @@ impl ReadingList {
         self.opened_title.clone_from(&paper.title);
         self.opened_creators.clone_from(&paper.creators);
         self.detail = None;
-        self.detail_pages.clear();
+        self.detail_body.clear();
         self.detail_page = 0;
         self.from_library = false;
         self.view = View::Detail;
@@ -857,17 +857,14 @@ impl ReadingList {
     }
 
     fn setup_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("zotero-reader-setup")
-            .top_bar("Stacks")
-            .heading("Connect your Zotero library")
-            .text(
-                "Create a dedicated read-only key in Zotero, install it with `kobo secret set \
-                 zotero --device <address>`, then enter the numeric user ID shown beside that key.",
-            );
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
-        }
+        let mut screen = ScreenBuilder::new("zotero-reader-setup").top_bar("Connect Zotero");
+        screen = if let Some(trouble) = &self.trouble {
+            screen.banner(BannerLevel::Attention, trouble.clone())
+        } else {
+            screen.secondary("Enter the numeric user ID shown beside your Zotero API key.")
+        };
         screen
+            .secondary("Read-only: kobo secret set zotero --device <address>")
             .field(
                 "zotero-user-id",
                 self.keyboard.text(),
@@ -915,7 +912,12 @@ impl ReadingList {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
-        let pages = context.paginate_rows(&borrowed, true);
+        let pages = context.paginate_rows_under(
+            &borrowed,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.collection_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen
@@ -988,7 +990,15 @@ impl ReadingList {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
-        let pages = context.paginate_rows(&borrowed, true);
+        // Notices consume the same space as rows, and ranked rows measure their
+        // leading number column. Measuring either away hides the last paper.
+        let pages = context.paginate_ranked_rows_under(
+            &borrowed,
+            true,
+            u16::try_from(rows.len()).unwrap_or(u16::MAX),
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.list_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|shown_index| {
@@ -1018,7 +1028,7 @@ impl ReadingList {
             .build()
     }
 
-    fn detail_screen(&self) -> Screen {
+    fn detail_screen(&self, context: &Context) -> Screen {
         let read = self
             .opened_key
             .as_ref()
@@ -1037,17 +1047,6 @@ impl ReadingList {
             matches!(awaiting, Awaiting::Detail | Awaiting::DetailChildren)
         }) {
             return screen.activity("Fetching paper details", None).build();
-        }
-        let page = self
-            .detail_page
-            .min(self.detail_pages.len().saturating_sub(1));
-        for line in self
-            .detail_pages
-            .get(page)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            screen = screen.text(line.clone());
         }
         let has_pdf = self
             .detail
@@ -1079,15 +1078,67 @@ impl ReadingList {
         if self.pending_memory.is_some() && self.memory_upload.is_none() {
             actions.push((RETRY_MEMORY, "Retry memory", Some(Glyph::Download)));
         }
+        let has_actions = !actions.is_empty();
         screen = match actions.as_slice() {
             [] => screen,
             [(name, label, Some(glyph))] => screen.bottom_action_marked(*name, *label, *glyph),
             _ => screen.action_bar_marked(actions),
         };
+        let pages = self.detail_pages(context, &screen.clone().build(), has_actions);
+        let page = self.detail_page.min(pages.len().saturating_sub(1));
+        for paragraph in pages.get(page).into_iter().flatten() {
+            screen = screen.text(paragraph.clone());
+        }
         screen
             .page_turns(READ_BACK, READ_NEXT)
-            .page_position(page_number(page), page_total(self.detail_pages.len()))
+            .page_position(page_number(page), page_total(pages.len()))
             .build()
+    }
+
+    fn detail_pages(
+        &self,
+        context: &Context,
+        prefix: &Screen,
+        has_actions: bool,
+    ) -> Vec<Vec<String>> {
+        // The SDK reserves a placed block on the first page. Reflow the
+        // continuation below the same block so a recovery notice remains
+        // accounted for on every page, without reaching into renderer internals.
+        let text = self.detail_body.replace("\r\n", "\n").replace('\r', "\n");
+        let mut remaining = text
+            .split("\n\n")
+            .enumerate()
+            .map(|(index, text)| (u32::try_from(index).unwrap_or(u32::MAX), text.to_owned()))
+            .collect::<Vec<_>>();
+        let mut pages = Vec::new();
+        while !remaining.is_empty() {
+            let paragraphs = remaining
+                .iter()
+                .map(|(tag, text)| (*tag, 0, kobo_sdk::QuoteRole::Body, text.as_str()))
+                .collect::<Vec<_>>();
+            let mut measured = context
+                .paginate_tagged_under(&paragraphs, has_actions, prefix)
+                .into_iter();
+            let Some(page) = measured.next() else { break };
+            if page.is_empty() {
+                break;
+            }
+            pages.push(page.into_iter().map(|(_, _, _, text)| text).collect());
+            remaining.clear();
+            // Rejoin only pieces of the same original paragraph. This keeps
+            // paragraph gaps while retaining the SDK's wrapped continuation.
+            for (tag, _, _, text) in measured.flatten() {
+                if let Some((last_tag, last_text)) = remaining.last_mut() {
+                    if *last_tag == tag {
+                        last_text.push(' ');
+                        last_text.push_str(&text);
+                        continue;
+                    }
+                }
+                remaining.push((tag, text));
+            }
+        }
+        pages
     }
 
     fn converting_screen(&self) -> Screen {
@@ -1117,10 +1168,10 @@ impl ReadingList {
             .build()
     }
 
-    fn full_text_screen(&self) -> Screen {
+    fn full_text_screen(&self, context: &Context) -> Screen {
         self.book
             .screen(&self.opened_title)
-            .unwrap_or_else(|| self.detail_screen())
+            .unwrap_or_else(|| self.detail_screen(context))
     }
 
     fn library_screen(&self, context: &Context) -> Screen {
@@ -1153,7 +1204,13 @@ impl ReadingList {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
-        let pages = context.paginate_rows(&borrowed, true);
+        let retrying = self.pending_memory.is_some() && self.memory_upload.is_none();
+        let pages = context.paginate_rows_under(
+            &borrowed,
+            retrying,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen
@@ -1189,9 +1246,9 @@ impl ReadingList {
             View::Collections => self.collections_screen(context),
             View::Feed => self.feed_screen(context),
             View::Search => self.search_screen(),
-            View::Detail => self.detail_screen(),
+            View::Detail => self.detail_screen(context),
             View::Converting => self.converting_screen(),
-            View::FullText => self.full_text_screen(),
+            View::FullText => self.full_text_screen(context),
             View::Library => self.library_screen(context),
         };
         context.set_screen(screen.with_own_back(!matches!(self.view, View::Setup | View::Feed)));
@@ -1209,6 +1266,17 @@ impl ReadingList {
     }
 
     fn turn(&mut self, context: &mut Context, forward: bool) {
+        let screen = match self.view {
+            View::Collections => self.collections_screen(context),
+            View::Feed => self.feed_screen(context),
+            View::Library => self.library_screen(context),
+            View::Detail => self.detail_screen(context),
+            _ => return,
+        };
+        let last = screen
+            .page_turns
+            .and_then(|turns| turns.position)
+            .map_or(0, |(_, total)| usize::from(total).saturating_sub(1));
         let page = match self.view {
             View::Collections => &mut self.collection_page,
             View::Feed => &mut self.list_page,
@@ -1216,11 +1284,11 @@ impl ReadingList {
             View::Detail => &mut self.detail_page,
             _ => return,
         };
-        if forward {
-            *page = page.saturating_add(1);
+        *page = if forward {
+            (*page).min(last).saturating_add(1).min(last)
         } else {
-            *page = page.saturating_sub(1);
-        }
+            (*page).min(last).saturating_sub(1)
+        };
         self.show(context);
     }
 
@@ -1441,9 +1509,7 @@ impl KoboApp for ReadingList {
                 self.from_library = true;
                 self.detail = None;
                 self.detail_page = 0;
-                self.detail_pages = vec![vec![
-                    "This paper text is kept for offline reading.".to_owned()
-                ]];
+                "This paper text is kept for offline reading.".clone_into(&mut self.detail_body);
                 self.view = View::Detail;
                 self.show(context);
                 return;
@@ -1533,8 +1599,7 @@ impl KoboApp for ReadingList {
                         self.attachment = attachment;
                         if let Some(detail) = &mut self.detail {
                             detail.paper.has_pdf = self.attachment.is_some();
-                            self.detail_pages =
-                                context.paginate_reading(&detail_text(detail), false);
+                            self.detail_body = detail_text(detail);
                         }
                     } else {
                         self.trouble =
@@ -2005,6 +2070,220 @@ mod tests {
         StoreResult, Task, TaskError, TaskId, TaskOutcome,
     };
 
+    fn text_size_metrics() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        let mut smallest = kobo_sdk::CLARA_BW_METRICS;
+        while let Some(scale) = smallest.text_scale.smaller() {
+            smallest.text_scale = scale;
+        }
+        std::iter::successors(Some(smallest), |metrics| {
+            Some(kobo_sdk::DisplayMetrics {
+                text_scale: metrics.text_scale.larger()?,
+                ..*metrics
+            })
+        })
+    }
+
+    #[test]
+    fn setup_instructions_and_invalid_id_recovery_fit_every_text_size() {
+        // Elipsa font DPI is exercised in a separate native profile process.
+        for (width, height) in [(1072, 1448), (1448, 1072), (1264, 1680), (1680, 1264)] {
+            for mut metrics in text_size_metrics() {
+                metrics.width = width;
+                metrics.height = height;
+                let text_scale = metrics.text_scale;
+                let _runner = AppRunner::with_metrics(ReadingList::default(), metrics);
+                for trouble in [
+                    None,
+                    Some(
+                        "The Zotero user ID must contain only digits and is not your username."
+                            .to_owned(),
+                    ),
+                ] {
+                    let app = ReadingList {
+                        trouble,
+                        ..ReadingList::default()
+                    };
+                    let screen = app.setup_screen();
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(diagnostics
+                        .layout
+                        .rect_of_action(action_id("kb.enter"))
+                        .is_some());
+                    let text = diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .flat_map(|node| &node.text_lines)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    assert!(text.to_ascii_lowercase().contains("read-only"));
+                    assert!(
+                        text.contains("<address>"),
+                        "the installation command must not be clipped"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paper_and_collection_pages_reserve_room_for_notices_and_recovery() {
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
+            let context = AppRunner::with_metrics(ReadingList::default(), metrics).context();
+            let mut app = ReadingList::default();
+            app.collections = (0..12)
+                .map(|index| Collection {
+                    key: format!("COLL{index:04}"),
+                    name: format!("Research collection {index}"),
+                })
+                .collect();
+            app.selected = app.collections.first().cloned();
+            app.snapshot.papers = (0..12).map(|index| Paper {
+                key:format!("PAPER{index:04}"),
+                title:format!("Paper {index}: A study of river measurements collected over several seasons"),
+                creators:"Ada Lovelace and Grace Hopper".into(),
+                year:"2026".into(),
+                ..Paper::default()
+            }).collect();
+            app.filtered = (0..12).collect();
+            app.library = app
+                .snapshot
+                .papers
+                .iter()
+                .map(|paper| Kept {
+                    key: paper.key.clone(),
+                    title: paper.title.clone(),
+                    creators: paper.creators.clone(),
+                    bytes: 4096,
+                })
+                .collect();
+            app.last_opened = Some("PAPER0000".into());
+            for failed in [false, true] {
+                app.trouble = failed.then(|| {
+                    "Zotero could not be reached. Cached papers are still available.".into()
+                });
+                app.pending_memory = failed.then(|| ("memory.PAPER0000".into(), vec![1]));
+                for (view, prefix) in [
+                    (super::View::Collections, super::COLLECTION),
+                    (super::View::Feed, super::PAPER),
+                    (super::View::Library, super::KEPT),
+                ] {
+                    app.view = view;
+                    app.collection_page = 0;
+                    app.list_page = 0;
+                    app.library_page = 0;
+                    let build = |app: &ReadingList| match view {
+                        super::View::Collections => app.collections_screen(&context),
+                        super::View::Feed => app.feed_screen(&context),
+                        super::View::Library => app.library_screen(&context),
+                        _ => unreachable!(),
+                    };
+                    let total = build(&app)
+                        .page_turns
+                        .and_then(|turns| turns.position)
+                        .unwrap()
+                        .1;
+                    let mut seen = vec![0; 12];
+                    for page in 0..usize::from(total) {
+                        app.collection_page = page;
+                        app.list_page = page;
+                        app.library_page = page;
+                        let diagnostics =
+                            build(&app).diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "{text_scale:?}, {view:?}, failed={failed}, page={page}: {:?}",
+                            diagnostics.issues
+                        );
+                        for (index, count) in seen.iter_mut().enumerate() {
+                            let action = action_id(&format!("{prefix}{index}"));
+                            if let Some(rect) = diagnostics.layout.rect_of_action(action) {
+                                assert_eq!(
+                                    diagnostics.layout.hit_test(
+                                        rect.x + rect.width / 2,
+                                        rect.y + rect.height / 2
+                                    ),
+                                    Some(action)
+                                );
+                                *count += 1;
+                            }
+                        }
+                    }
+                    assert_eq!(
+                        seen,
+                        vec![1; 12],
+                        "each original item must appear once across its pages"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_detail_text_fits_beneath_recovery_notices_without_losing_words() {
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
+            let mut context = AppRunner::with_metrics(ReadingList::default(), metrics).context();
+            let body = "The researchers measured the river throughout the year and compared the rainfall with the surrounding fields. ".repeat(20);
+            let mut app = ReadingList {
+                view: super::View::Detail,
+                opened_title: "River measurements".into(),
+                detail_body: body.clone(),
+                detail: Some(Detail {
+                    paper: Paper {
+                        has_pdf: true,
+                        ..Paper::default()
+                    },
+                    ..Detail::default()
+                }),
+                ..ReadingList::default()
+            };
+            for failed in [false, true] {
+                app.trouble = failed
+                    .then(|| "Zotero could not be reached. Try opening the text again.".into());
+                app.detail_page = 0;
+                let total = app
+                    .detail_screen(&context)
+                    .page_turns
+                    .and_then(|turns| turns.position)
+                    .unwrap()
+                    .1;
+                let mut drawn = Vec::new();
+                for page in 0..usize::from(total) {
+                    app.detail_page = page;
+                    let screen = app.detail_screen(&context);
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?}, failed={failed}, page={page}: {:?}",
+                        diagnostics.issues
+                    );
+                    for node in &screen.nodes {
+                        if let kobo_sdk::Node::Text { text, .. } = node {
+                            drawn.extend(text.split_whitespace().map(str::to_owned));
+                        }
+                    }
+                }
+                assert_eq!(drawn, body.split_whitespace().collect::<Vec<_>>());
+                for _ in 0..3 {
+                    app.turn(&mut context, true);
+                }
+                assert_eq!(app.detail_page, usize::from(total) - 1);
+                app.turn(&mut context, false);
+                assert_eq!(app.detail_page, usize::from(total).saturating_sub(2));
+            }
+        }
+    }
+
     #[test]
     fn a_missing_zotero_key_opens_attended_or_cli_setup() {
         let task = TaskId(7);
@@ -2127,7 +2406,7 @@ mod tests {
             view: super::View::Detail,
             opened_key: Some(paper.key.clone()),
             opened_title: paper.title.clone(),
-            detail_pages: vec![vec!["Metadata".to_owned()]],
+            detail_body: "Metadata".to_owned(),
             detail: Some(Detail {
                 paper,
                 ..Detail::default()

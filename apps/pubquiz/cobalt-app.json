@@ -4,10 +4,10 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.10",
-  "release_notes": "Save the scorecard from the podium: the round's players and scores are written as a CSV on the reader. Score rows now say 1 point, not 1 points.",
+  "version": "0.1.12",
+  "release_notes": "Categories select the exact visible choice at every text size. Back preserves setup choices and cancels renaming. Four-player setup keeps names and Start round reachable in both layouts.",
   "glyph": "chat",
   "capabilities": [
-   "network"
+    "network"
   ]
 }

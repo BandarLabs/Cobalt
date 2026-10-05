@@ -604,6 +604,7 @@ struct Gutenbird {
     lookup_page: usize,
 
     catalogs: Vec<Catalog>,
+    catalog_page: usize,
     current: usize,
     stack: Vec<StackEntry>,
 
@@ -697,6 +698,7 @@ impl Default for Gutenbird {
                 .map(|(name, root)| Catalog::new(*name, *root, false))
                 .collect(),
             current: 0,
+            catalog_page: 0,
             stack: Vec::new(),
             open: None,
             formats: Vec::new(),
@@ -756,7 +758,7 @@ impl Gutenbird {
 
     fn show(&self, context: &mut Context) {
         let screen = match self.view {
-            View::Catalogs => self.catalogs_screen(),
+            View::Catalogs => self.catalogs_screen(context),
             View::AddCatalog => self.add_catalog_screen(),
             View::Shelf => self.shelf_screen(context),
             View::Search => self.search_screen(),
@@ -837,24 +839,84 @@ impl Gutenbird {
     // Catalogs
     // ---------------------------------------------------------------
 
-    fn catalogs_screen(&self) -> kobo_sdk::Screen {
+    fn catalogs_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("gutenbird-catalogs")
             .top_bar("Catalogs")
             .top_bar_glyph("add-catalog", "Add a catalog", Glyph::Plus);
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        let rows = self.catalogs.iter().enumerate().map(|(index, catalog)| {
-            let trailing = if index == self.current { "Open" } else { "" };
-            (
-                format!("catalog-{index}"),
-                catalog.name.clone(),
-                catalog.root.clone(),
-                RowLead::Icon(Glyph::Book),
-                trailing.to_owned(),
-            )
-        });
-        screen.rows_with_trailing(rows).build()
+        screen
+    }
+
+    fn catalog_rows(&self, context: &Context) -> Vec<(String, String, &'static str)> {
+        self.catalogs
+            .iter()
+            .enumerate()
+            .map(|(index, catalog)| {
+                let state = if index == self.current { "Open" } else { "" };
+                (
+                    context.clamped_row_beside(&catalog.name, state, 2, false),
+                    context.clamped_row(&catalog.root, 2, false),
+                    state,
+                )
+            })
+            .collect()
+    }
+
+    fn catalog_pages(
+        &self,
+        context: &Context,
+        rows: &[(String, String, &'static str)],
+    ) -> Vec<Vec<usize>> {
+        let metrics = context.metrics();
+        let rows = rows
+            .iter()
+            .map(|(title, root, state)| (title.as_str(), root.as_str(), *state))
+            .collect::<Vec<_>>();
+        kobo_ui::with_text_scale(metrics.text_scale, || {
+            let used = self
+                .catalogs_prefix()
+                .build()
+                .layout_with(&metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = metrics.prose_area(true, false);
+            area.height = area
+                .height
+                .saturating_sub(metrics.status_band_height())
+                .saturating_sub(metrics.page_position_band())
+                .saturating_sub(used)
+                .saturating_sub(if used > 0 { area.gap } else { 0 })
+                .max(1);
+            kobo_ui::paginate_rows_with_trailing(&rows, &metrics, area)
+        })
+    }
+
+    fn catalogs_screen(&self, context: &Context) -> kobo_sdk::Screen {
+        let rows = self.catalog_rows(context);
+        let pages = self.catalog_pages(context, &rows);
+        let current = self.catalog_page.min(pages.len().saturating_sub(1));
+        let mut screen = self.catalogs_prefix().rows_with_trailing(
+            pages.get(current).into_iter().flatten().map(|&index| {
+                let (name, root, state) = &rows[index];
+                (
+                    format!("catalog-{index}"),
+                    name.clone(),
+                    root.clone(),
+                    RowLead::Icon(Glyph::Book),
+                    *state,
+                )
+            }),
+        );
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("catalogs-previous", "catalogs-next")
+                .page_position(
+                    u16::try_from(current + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
     }
 
     fn add_catalog_screen(&self) -> kobo_sdk::Screen {
@@ -1403,11 +1465,22 @@ impl Gutenbird {
             );
         }
         if self.awaiting_feed() {
-            return screen
-                .divider()
-                .activity("Fetching the catalog", None)
-                .skeleton(SKELETON_ROWS)
-                .build();
+            let metrics = context.metrics();
+            for rows in (0..=SKELETON_ROWS).rev() {
+                let candidate = screen
+                    .clone()
+                    .divider()
+                    .activity("Fetching the catalog", None)
+                    .skeleton(rows)
+                    .build();
+                if !candidate
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .has_errors()
+                {
+                    return candidate;
+                }
+            }
+            return screen.activity("Fetching the catalog", None).build();
         }
         let Some(entry) = self.stack.last() else {
             if let Some(failure) = self.trouble {
@@ -3629,6 +3702,20 @@ impl KoboApp for Gutenbird {
                 None => {}
             }
         }
+        if self.view == View::Catalogs
+            && (action == action_id("catalogs-next") || action == action_id("catalogs-previous"))
+        {
+            let pages = self.catalog_pages(context, &self.catalog_rows(context));
+            let last = pages.len().saturating_sub(1);
+            let current = self.catalog_page.min(last);
+            self.catalog_page = if action == action_id("catalogs-next") {
+                current.saturating_add(1).min(last)
+            } else {
+                current.saturating_sub(1)
+            };
+            self.show(context);
+            return;
+        }
         if action == action_id("catalogs") {
             self.stop_federating();
             self.go(View::Catalogs);
@@ -4149,6 +4236,103 @@ mod tests {
     /// Following a link whose fetch fails shows the saved copy of that page.
     /// Stepping back to the page that was fetched left the notice up, telling
     /// a reader who was online a moment ago to reconnect.
+    #[test]
+    fn every_added_catalog_stays_reachable_with_notices_at_all_text_sizes() {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let context = AppRunner::with_metrics(Gutenbird::default(), metrics).context();
+            let mut app = Gutenbird {
+                catalogs: (0..20)
+                    .map(|index| {
+                        Catalog::new(
+                            format!("Library {index}"),
+                            format!("https://library-{index}.example/catalog"),
+                            true,
+                        )
+                    })
+                    .collect(),
+                current: 17,
+                ..Gutenbird::default()
+            };
+            app.catalogs[0].name =
+                "A catalog with a longer descriptive name for its public collection".into();
+            for failed in [false, true] {
+                app.problem = failed.then(|| {
+                    "The catalog could not be refreshed. Choose another library or try again."
+                        .into()
+                });
+                let rows = app.catalog_rows(&context);
+                let pages = app.catalog_pages(&context, &rows);
+                assert!(pages.len() > 1);
+                let mut seen = Vec::new();
+                for (page, shown) in pages.iter().enumerate() {
+                    app.catalog_page = page;
+                    let diagnostics = app
+                        .catalogs_screen(&context)
+                        .diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?}, failed={failed}, page={page}: {:?}",
+                        diagnostics.issues
+                    );
+                    for &index in shown {
+                        let action = action_id(&format!("catalog-{index}"));
+                        let rect = diagnostics
+                            .layout
+                            .rect_of_action(action)
+                            .expect("catalog has a visible touch target");
+                        assert_eq!(
+                            diagnostics
+                                .layout
+                                .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                            Some(action)
+                        );
+                        seen.push(index);
+                    }
+                }
+                assert_eq!(seen, (0..20).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_page_turns_are_bounded_and_return_from_a_shelf_keeps_the_page() {
+        use kobo_sdk::KoboApp;
+        let mut context = AppRunner::new(Gutenbird::default()).context();
+        let mut app = Gutenbird {
+            catalogs: (0..20)
+                .map(|index| {
+                    Catalog::new(
+                        format!("Library {index}"),
+                        format!("https://library-{index}.example/catalog"),
+                        true,
+                    )
+                })
+                .collect(),
+            ..Gutenbird::default()
+        };
+        let pages = app.catalog_pages(&context, &app.catalog_rows(&context));
+        app.on_action(&mut context, action_id("catalogs-previous"));
+        assert_eq!(app.catalog_page, 0);
+        app.on_action(&mut context, action_id("catalogs-next"));
+        assert_eq!(app.catalog_page, 1);
+        let index = pages[1][0];
+        app.on_action(&mut context, action_id(&format!("catalog-{index}")));
+        assert_eq!(app.current, index);
+        app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        assert_eq!(app.view, View::Catalogs);
+        assert_eq!(app.catalog_page, 1);
+        for _ in 0..pages.len() + 3 {
+            app.on_action(&mut context, action_id("catalogs-next"));
+        }
+        assert_eq!(app.catalog_page, pages.len() - 1);
+        app.on_action(&mut context, action_id("catalogs-previous"));
+        assert_eq!(app.catalog_page, pages.len() - 2);
+    }
+
     #[test]
     fn stepping_back_from_a_saved_page_leaves_its_notice_behind() {
         let mut app = Gutenbird {
@@ -7132,4 +7316,59 @@ Please read this before you distribute or use this work.\n";
           href="https://gutenberg.example/author/37.opds"/>
   </entry>
 </feed>"#;
+}
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+    #[test]
+    fn both_edition_choices_remain_distinct_at_largest_text() {
+        let metrics = kobo_sdk::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_sdk::CLARA_BW_METRICS
+        };
+        let runner = kobo_sdk::AppRunner::with_metrics(Gutenbird::default(), metrics);
+        let mut app = Gutenbird::default();
+        let mut context = runner.context();
+        app.took_feed(
+            &mut context,
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml"),
+            FeedPurpose::Push { catalog: 0 },
+            "https://www.gutenberg.org/ebooks/564.opds".into(),
+        );
+        let screen = app.shelf_screen(&context);
+        assert!(!screen
+            .diagnostics(&metrics, &Chrome::measuring(true))
+            .has_errors());
+        let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+        let text: String = layout
+            .nodes
+            .iter()
+            .flat_map(|node| &node.text_lines)
+            .flat_map(|line| line.chars())
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // Tile captions are intentionally ellipsised; the full edition name
+        // remains in the publication, while the distinguishing prefix is visible.
+        let books = &app.stack.last().unwrap().feed.publications;
+        assert!(publication_caption(&books[0], books, None).starts_with("No images"));
+        assert!(publication_caption(&books[1], books, None).starts_with("With images"));
+        assert!(text.contains("Withimage"), "{text}");
+        assert!(text.contains("Noimages"), "{text}");
+        for name in ["book-0", "book-1"] {
+            assert!(layout.rect_of_action(action_id(name)).is_some());
+        }
+    }
+    #[test]
+    fn loading_placeholder_fits_the_small_panel_at_largest_text() {
+        let metrics = kobo_sdk::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_sdk::CLARA_BW_METRICS
+        };
+        let mut runner = kobo_sdk::AppRunner::with_metrics(Gutenbird::default(), metrics);
+        runner.start();
+        let screen = runner.app().shelf_screen(&runner.context());
+        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+    }
 }

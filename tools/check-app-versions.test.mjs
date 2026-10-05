@@ -551,10 +551,22 @@ test("prose beside an application is not a release input", () => {
   // Source is source, whatever it is named.
   assert.equal(isDocumentation("apps/notes/src/main.rs", "apps/notes"), false);
   assert.equal(isDocumentation("apps/notes/build-armv7.sh", "apps/notes"), false);
-  // A nested path may be a screenshot the app page publishes, so only prose
-  // directly beside the package is excused.
+  // Only prose directly beside the package is excused.
   assert.equal(isDocumentation("apps/notes/docs/guide.md", "apps/notes"), false);
   assert.equal(isDocumentation("apps/notes-extra/README.md", "apps/notes"), false);
+});
+
+// The README's own pictures are no more downloaded than its prose. The app
+// page publishes from docs/media/site, so a refreshed still beside the package
+// must not owe every reader a new version of the app.
+test("the screenshots a README shows are not a release input", () => {
+  assert.equal(isDocumentation("apps/notes/screenshots/home.png", "apps/notes"), true);
+  assert.equal(isDocumentation("examples/todo/screenshots/list.png", "examples/todo"), true);
+  // Only that folder, only beside the package.
+  assert.equal(isDocumentation("apps/notes/src/screenshots/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/assets/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes-extra/screenshots/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/screenshots", "apps/notes"), false);
 });
 
 // One route per application was the assumption, and the shelf broke it: an

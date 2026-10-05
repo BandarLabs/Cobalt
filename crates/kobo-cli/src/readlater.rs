@@ -55,11 +55,20 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
     while let Some((flag, tail)) = rest.split_first() {
         let (value, tail) = match flag.as_str() {
             "--sim" => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
                 target = Some(Target::Sim);
                 (None, tail)
             }
-            "--device" => {
+            flag if super::is_device_flag(flag) => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
                 let (ip, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
+                if !super::valid_device_host(ip) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
                 target = Some(Target::Device(ip.clone()));
                 (None, tail)
             }
@@ -87,6 +96,7 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
         }
         rest = tail;
     }
+    let target = target.ok_or_else(|| USAGE.to_owned())?;
     let server = server.ok_or_else(|| USAGE.to_owned())?;
     if !server.starts_with("https://") {
         return Err("the Wallabag server must be an https:// address".to_owned());
@@ -98,7 +108,7 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
         client_secret: secret_file(&client_secret_file, "client secret")?,
         username: username.ok_or_else(|| USAGE.to_owned())?,
         password: password(password_env, password_file)?,
-        target: target.ok_or_else(|| USAGE.to_owned())?,
+        target,
     })
 }
 
@@ -130,7 +140,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
     )
     .map_err(|error| super::post::login_error("Wallabag", &server, error))?;
     let token = parse_token(&answer)
-        .ok_or_else(|| "the Wallabag sign-in answer held no tokens".to_owned())?;
+        .ok_or_else(|| "the Wallabag sign-in answer held no usable tokens (access token: maximum 512 bytes, no control characters)".to_owned())?;
 
     let session = format!(
         "{{\"version\":\"1\",\"server\":{},\"client_id\":{},\"client_secret\":{},\"refresh_token\":{},\"access_token\":{}}}",
@@ -205,8 +215,14 @@ fn parse_token(bytes: &[u8]) -> Option<Tokens> {
         let found = value.get(name)?.as_str()?.trim();
         (!found.is_empty()).then(|| found.to_owned())
     };
+    let access_token = text("access_token")?;
+    if access_token.len() > kobo_protocol::MAX_APP_SECRET_BYTES
+        || access_token.chars().any(char::is_control)
+    {
+        return None;
+    }
     Some(Tokens {
-        access_token: text("access_token")?,
+        access_token,
         refresh_token: text("refresh_token")?,
     })
 }
@@ -260,6 +276,76 @@ fn remote(host: &str, script: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flag_like_hosts_fail_before_input_or_network() {
+        let base = [
+            "--server",
+            "https://bag.example",
+            "--client-id",
+            "id",
+            "--username",
+            "user",
+            "--client-secret-file",
+            "/nonexistent",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        for flag in ["--device", "-s"] {
+            for host in ["--sim", "--device", "-s", "-reader", ""] {
+                for first in [false, true] {
+                    let mut arguments = base.clone();
+                    let index = if first { 0 } else { arguments.len() };
+                    arguments.splice(index..index, [flag.to_owned(), host.to_owned()]);
+                    let error = parse_options(&arguments)
+                        .err()
+                        .expect("invalid host rejected");
+                    assert!(error.contains("device host"), "{arguments:?}: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn access_tokens_must_fit_the_runtime_record() {
+        for access in ["x".repeat(513), "a\nb".to_owned(), "a\u{7f}b".to_owned()] {
+            let answer = format!(
+                "{{\"access_token\":{},\"refresh_token\":\"r\"}}",
+                json_string(&access)
+            );
+            assert!(parse_token(answer.as_bytes()).is_none());
+        }
+        let answer = format!(
+            "{{\"access_token\":\"{}\",\"refresh_token\":\"r\"}}",
+            "x".repeat(512)
+        );
+        assert!(parse_token(answer.as_bytes()).is_some());
+    }
+    #[test]
+    fn ambiguous_destinations_fail_before_input_is_read() {
+        for flags in [
+            &["--sim", "--sim"][..],
+            &["--sim", "--device", "fixture"],
+            &["--device", "fixture", "--sim"],
+            &["--device", "fixture", "--device", "fixture"],
+        ] {
+            let mut arguments: Vec<String> = [
+                "--server",
+                "https://bag.example",
+                "--client-id",
+                "id",
+                "--username",
+                "user",
+                "--client-secret-file",
+                "/nonexistent",
+            ]
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert_eq!(parse_options(&arguments).err().unwrap(), USAGE);
+        }
+    }
+
     use super::*;
 
     #[test]

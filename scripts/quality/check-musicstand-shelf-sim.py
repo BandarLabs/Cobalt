@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--push-cli", type=Path, default=None,
                         help="CLI binary with `kobo musicstand`; defaults to the built one.")
     parser.add_argument("--scale", default="default")
+    parser.add_argument("--profile", default="clara-bw-391")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -37,7 +38,7 @@ def main():
         env = dict(os.environ, TMPDIR=str(private), RUSTUP_TOOLCHAIN="1.85.1",
                    CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_DEBUG="0",
                    CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="1",
-                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391")
+                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE=args.profile)
         env.pop("KOBO_SIM_OFFLINE", None)
 
         # The shelf is prepared by the real companion CLI, exactly as an owner
@@ -54,7 +55,7 @@ def main():
 
         process = None
         address = None
-        result = dict(provenance=provenance, scale=args.scale,
+        result = dict(provenance=provenance, scale=args.scale, profile=args.profile,
                       shelf=dict(scores=len(manifest["scores"]), pages=len(pages)),
                       checks=[])
         with (out / "simulator.log").open("w") as log:
@@ -106,11 +107,11 @@ def main():
                 # Staff-width zoom: real notation, legible.
                 drive("tap-at 536 724", "wait-for Zoom in", "tap Zoom in", "wait 2000")
                 capture("musicstand-zoom-staff")
-                drive("tap-at 536 724", "wait-for Mark page corner", "tap Mark page corner", "wait 800")
-                drive("tap-at 536 724", "wait-for Library", "tap Library", "wait-for Library", "wait-for marked")
+                drive("tap-at 536 724", "tap-id mark", "wait 800")
+                drive("tap-at 536 724", "wait-for-id library", "tap-id library", "wait-for Library", "wait-for marked")
                 capture("musicstand-library-marked")
                 drive("tap Setlists", "wait-for Setlists",
-                      "tap New setlist from the library", "wait-for Setlist 1")
+                      "tap-id new-list", "wait-for Setlist 1")
                 capture("musicstand-setlists")
                 drive("tap Setlist 1", "wait-for resume at page")
                 capture("musicstand-setlist")

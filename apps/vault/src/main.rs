@@ -7,8 +7,8 @@ mod shelf;
 
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder, ShelfDownload,
-    ShelfProgress, StoreResult,
+    action_id, ActionId, Context, Glyph, KoboApp, Position, RowLead, Screen, ScreenBuilder,
+    ShelfDownload, ShelfProgress, StoreResult,
 };
 use model::{link_matches_path, Note};
 use shelf::{ImportFailure, Manifest, NoteEntry};
@@ -31,6 +31,7 @@ enum View {
     Search,
     Backlinks,
     About,
+    Failure,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,6 +82,7 @@ struct Vault {
     entry: TextEntry,
     results: Vec<(usize, String)>,
     legacy_checked: bool,
+    failure_index: usize,
 }
 
 impl Default for Vault {
@@ -106,12 +108,13 @@ impl Default for Vault {
             entry: TextEntry::new().opened_by("search"),
             results: Vec::new(),
             legacy_checked: false,
+            failure_index: 0,
         }
     }
 }
 
 impl Vault {
-    fn show(&self, cx: &mut Context) {
+    fn show(&mut self, cx: &mut Context) {
         let screen = self.screen(cx);
         cx.set_screen(screen);
     }
@@ -273,28 +276,40 @@ impl Vault {
         self.view = View::Search;
     }
 
-    fn paged_rows(&self, cx: &Context, view: View, rows: &Rows, screen: ScreenBuilder) -> Screen {
+    fn paged_rows(
+        &mut self,
+        cx: &Context,
+        view: View,
+        rows: &Rows,
+        screen: ScreenBuilder,
+    ) -> Screen {
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
             .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
             .collect();
-        let chunks = cx.paginate_rows(&borrowed, true);
+        let chunks = cx.paginate_rows_under(
+            &borrowed,
+            false,
+            Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.page(view).min(chunks.len().saturating_sub(1));
+        // Clamp the stored cursor as well as the rendered page: repeated Next
+        // at the end must never create invisible pages that Previous must undo.
+        self.set_page(view, page);
         let shown = chunks.get(page).map(Vec::as_slice).unwrap_or_default();
         let mut screen = screen.rows(shown.iter().filter_map(|index| rows.get(*index).cloned()));
         if chunks.len() > 1 {
-            screen = screen
-                .secondary(format!("Page {} of {}", page + 1, chunks.len()))
-                .buttons([
-                    ("list-prev", "Previous page".to_owned()),
-                    ("list-next", "Next page".to_owned()),
-                ]);
+            screen = screen.page_turns("list-prev", "list-next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(chunks.len()).unwrap_or(u16::MAX),
+            );
         }
         screen.build().with_own_back(true)
     }
 
     #[allow(clippy::too_many_lines)]
-    fn screen(&self, cx: &mut Context) -> Screen {
+    fn screen(&mut self, cx: &mut Context) -> Screen {
         if self.entry.is_open() {
             return ScreenBuilder::new("vault-search")
                 .top_bar("Search")
@@ -324,7 +339,8 @@ impl Vault {
         }
         match self.view {
             View::Home => self.home_screen(),
-            View::About => self.about_screen(),
+            View::About => self.about_screen(cx),
+            View::Failure => self.failure_screen(cx),
             View::Browse => {
                 let (folders, notes) = self.browse_level();
                 let mut rows: Rows = Vec::new();
@@ -534,33 +550,75 @@ impl Vault {
             .build()
     }
 
-    fn about_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("vault-about")
+    fn failures(&self) -> Vec<&ImportFailure> {
+        self.pushed
+            .iter()
+            .chain(self.synced.iter())
+            .flat_map(|manifest| manifest.failures.iter())
+            .collect()
+    }
+
+    fn about_screen(&mut self, context: &Context) -> Screen {
+        let screen = ScreenBuilder::new("vault-about")
             .top_bar("About Vault")
             .text(
                 "Push a folder of Markdown notes with kobo vault push <folder>. The host \
                  folder is the source of truth; edits made here stay here. Notes Sync \
                  delivers are ingested with kobo vault ingest.",
             );
-        let failures: Vec<&ImportFailure> = self
-            .pushed
-            .iter()
-            .chain(self.synced.iter())
-            .flat_map(|m| m.failures.iter())
-            .collect();
-        if !failures.is_empty() {
-            screen = screen
-                .heading("Did not import")
-                .rows(failures.iter().enumerate().map(|(index, failure)| {
-                    (
-                        format!("failure-{index}"),
-                        failure.input.clone(),
-                        failure.reason.clone(),
-                        RowLead::Icon(Glyph::Note),
-                    )
-                }));
+        let failures = self.failures();
+        if failures.is_empty() {
+            return screen.build().with_own_back(true);
         }
-        screen.build().with_own_back(true)
+        let rows: Rows = failures
+            .iter()
+            .enumerate()
+            .map(|(index, failure)| {
+                (
+                    format!("failure-{index}"),
+                    failure.input.clone(),
+                    failure.reason.clone(),
+                    RowLead::Icon(Glyph::Note),
+                )
+            })
+            .collect();
+        self.paged_rows(
+            context,
+            View::About,
+            &rows,
+            screen.heading("Did not import"),
+        )
+    }
+
+    fn failure_pages(&self, context: &Context) -> Vec<Vec<String>> {
+        self.failures()
+            .get(self.failure_index)
+            .map_or_else(Vec::new, |failure| {
+                context.paginate(&format!("{}\n\n{}", failure.input, failure.reason), false)
+            })
+    }
+
+    fn failure_screen(&mut self, context: &Context) -> Screen {
+        let mut screen = ScreenBuilder::new("vault-import-problem")
+            .top_bar("Did not import")
+            .owns_back(true);
+        let pages = self.failure_pages(context);
+        let page = self.page(View::Failure).min(pages.len().saturating_sub(1));
+        self.set_page(View::Failure, page);
+        if let Some(paragraphs) = pages.get(page) {
+            for paragraph in paragraphs {
+                screen = screen.text(paragraph);
+            }
+        } else {
+            screen = screen.text("This import problem is no longer in the report.");
+        }
+        if pages.len() > 1 {
+            screen = screen.page_turns("list-prev", "list-next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        screen.build()
     }
 
     fn note_screen(&self, cx: &Context) -> Screen {
@@ -775,7 +833,7 @@ impl KoboApp for Vault {
             let view = self.view;
             let page = self.page(view);
             let next = if a == action_id("list-next") {
-                page + 1
+                page.saturating_add(1)
             } else {
                 page.saturating_sub(1)
             };
@@ -788,6 +846,7 @@ impl KoboApp for Vault {
                 }
                 View::Backlinks => self.view = View::Note,
                 View::TagNotes => self.view = View::Tags,
+                View::Failure => self.view = View::About,
                 View::Browse if !self.browse_stack.is_empty() => {
                     self.browse_stack.pop();
                     self.set_page(View::Browse, 0);
@@ -796,6 +855,17 @@ impl KoboApp for Vault {
                 _ => self.view = View::Home,
             }
         } else {
+            if self.view == View::About {
+                if let Some(index) = (0..self.failures().len())
+                    .find(|index| a == action_id(&format!("failure-{index}")))
+                {
+                    self.failure_index = index;
+                    self.set_page(View::Failure, 0);
+                    self.view = View::Failure;
+                    self.show(cx);
+                    return;
+                }
+            }
             for (index, _) in self.notes.iter().enumerate() {
                 if a == action_id(&format!("note-{index}")) {
                     self.open_note(cx, index);
@@ -1038,3 +1108,6 @@ mod tests {
         assert_eq!(runner.app().note_page, 3);
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

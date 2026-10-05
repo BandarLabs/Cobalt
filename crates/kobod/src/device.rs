@@ -215,10 +215,6 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// changed.
 const STATUS_POLL: Duration = Duration::from_secs(2);
 
-/// How stale a status may be before a frame that is already being drawn takes
-/// a fresh one.
-const STATUS_INTERVAL: Duration = Duration::from_secs(60);
-
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
 ///
 /// Held by the session rather than read per frame. Every reading here is from
@@ -236,10 +232,22 @@ struct StatusSource {
     /// the session to the slow reboot on hand-back. So this is told rather
     /// than asked, from the replies the daemon is already carrying.
     ///
-    /// The cost is that headphones which wander out of range on their own are
-    /// noticed the next time something reads Bluetooth rather than within two
-    /// seconds. That is the right trade against making every session reboot.
+    /// Audio playback is the second witness. The player writes to the
+    /// firmware's A2DP sockets, which accept audio only while headphones are
+    /// connected, so opening them proves a connection and losing them proves
+    /// its end, at no cost to the stack. Headphones that wander off while
+    /// nothing is playing are still noticed only at the next read or the next
+    /// play, which is when the answer to "where will the sound go" matters.
     bluetooth: bool,
+    /// The last audio observation acted on, so each moves the mark once. A
+    /// sink lost an hour ago must not override a Bluetooth reply that has
+    /// since said headphones are connected, and a new loss must not be
+    /// mistaken for that old one.
+    audio_sink: Option<u64>,
+    /// The band's readings before Bluetooth is added to them.
+    reading: Reading,
+    /// The last radio state seen, kept only to trace its changes.
+    link: Option<kobo_hal::network::LinkState>,
 }
 
 impl StatusSource {
@@ -249,7 +257,28 @@ impl StatusSource {
             taken: None,
             polled: None,
             bluetooth: false,
+            audio_sink: None,
+            reading: Reading::default(),
+            link: None,
         }
+    }
+
+    /// Records what audio playback just proved about the Bluetooth sink.
+    ///
+    /// Acts on every observation it has not seen, whatever it says, and on
+    /// none twice. Comparing values instead ignored a repeat: a second failure
+    /// to open the sink, after a Bluetooth reply had put the mark back,
+    /// matched the first and left headphones on the band that were gone.
+    /// Returns whether the band changed.
+    fn observe_audio_sink(&mut self, evidence: Option<kobo_hal::audio::SinkEvidence>) -> bool {
+        let Some(evidence) = evidence else {
+            return false;
+        };
+        if self.audio_sink == Some(evidence.observation) {
+            return false;
+        }
+        self.audio_sink = Some(evidence.observation);
+        self.observe_bluetooth(evidence.connected)
     }
 
     /// Records what the daemon just learned about Bluetooth.
@@ -261,7 +290,7 @@ impl StatusSource {
             return false;
         }
         self.bluetooth = connected;
-        self.last.bluetooth = connected;
+        self.last = self.reading.status(connected);
         true
     }
 
@@ -289,11 +318,28 @@ impl StatusSource {
         true
     }
 
-    /// The current status, re-read only when it has gone stale.
+    /// Takes a reading now, whatever the poll interval says, and reports
+    /// whether anything visible moved.
+    ///
+    /// For the moments the daemon has just changed something itself, such as
+    /// switching Wi-Fi off. Waiting for the next poll there drew the reply's
+    /// screen with the old band and then repainted a second later, which is
+    /// the lag people noticed: two panel updates where one would do.
+    fn refresh(&mut self) -> bool {
+        self.polled = None;
+        self.poll()
+    }
+
+    /// The current status, as fresh as the poll interval.
+    ///
+    /// A frame takes the same reading the poll would, rather than one up to a
+    /// minute old. A minute was the old limit, so a screen drawn just after a
+    /// cable was pulled could put the charging mark back for the poll to take
+    /// away again.
     fn get(&mut self) -> &kobo_ui::Status {
         let stale = self
             .taken
-            .is_none_or(|taken| taken.elapsed() >= STATUS_INTERVAL);
+            .is_none_or(|taken| taken.elapsed() >= STATUS_POLL);
         if stale {
             self.last = self.read();
             self.taken = Some(Instant::now());
@@ -301,11 +347,38 @@ impl StatusSource {
         &self.last
     }
 
-    fn read(&self) -> kobo_ui::Status {
-        kobo_ui::Status {
-            bluetooth: self.bluetooth,
-            ..read_status()
+    fn read(&mut self) -> kobo_ui::Status {
+        let (reading, link) = read_status();
+        // Traced on change only, so a field report says when the radio went
+        // from searching to associated to routed without a line every poll.
+        if self.link != Some(link) {
+            trace(&format!("wifi link: {link:?}"));
+            self.link = Some(link);
         }
+        self.reading = reading;
+        self.reading.status(self.bluetooth)
+    }
+}
+
+/// One reading of what the band shows, apart from Bluetooth, which the
+/// daemon is told rather than reads.
+#[derive(Clone, Debug, Default)]
+struct Reading {
+    clock: String,
+    battery: Option<kobo_ui::Percent>,
+    charging: bool,
+    signal: kobo_ui::Signal,
+}
+
+impl Reading {
+    fn status(&self, bluetooth: bool) -> kobo_ui::Status {
+        kobo_ui::Status::standard(
+            self.clock.clone(),
+            self.battery,
+            self.charging,
+            self.signal,
+            bluetooth,
+        )
     }
 }
 
@@ -327,27 +400,31 @@ fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chro
     Chrome::for_screen(screen, at_home, Some(status.get().clone()))
 }
 
-/// Assembles one reading of everything the band shows.
-fn read_status() -> kobo_ui::Status {
+/// Assembles one reading of everything the band shows, and the radio state
+/// it was drawn from.
+fn read_status() -> (Reading, kobo_hal::network::LinkState) {
+    use kobo_hal::network::LinkState;
     let battery = kobo_hal::battery::read();
-    kobo_ui::Status {
+    let link = kobo_hal::network::link_state();
+    let reading = Reading {
         clock: clock(),
         // A radio with no default route is not a usable connection however
         // strong the association is, so reachability is checked before
         // strength. Showing three arcs on a device that cannot load a page is
-        // the one thing this mark must never do.
-        signal: if kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
-            kobo_hal::network::signal_dbm(kobo_hal::network::wireless_link())
-                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm)
-        } else {
-            kobo_ui::Signal::Off
+        // the one thing this mark must never do. A radio that is on but not
+        // routed is still told apart from one that is off, because the fix
+        // for each is different.
+        signal: match link {
+            LinkState::Absent | LinkState::Down => kobo_ui::Signal::Off,
+            LinkState::Searching | LinkState::NoRoute => kobo_ui::Signal::Disconnected,
+            LinkState::Online => kobo_hal::network::wireless_link()
+                .and_then(|link| kobo_hal::network::signal_dbm(&link))
+                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm),
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
-        // Filled in by the caller, which is the only layer holding what the
-        // daemon has been told about the controller.
-        bluetooth: false,
-    }
+    };
+    (reading, link)
 }
 
 /// The wall clock as `HH:MM`, or empty when it cannot be read.
@@ -638,7 +715,7 @@ pub fn present(
         "launch: network recovery finished after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
+    if network.was_online() && kobo_hal::network::online() {
         wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
     }
     trace(&format!(
@@ -1000,8 +1077,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut Trac
     loop {
         if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
             let associated = wifi.associated().unwrap_or(false);
-            let healthy =
-                associated && kobo_hal::network::is_online(kobo_hal::network::wireless_link());
+            let healthy = associated && kobo_hal::network::online();
             if healthy {
                 let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
@@ -1874,7 +1950,14 @@ fn host_applications(
             // Repainting is conditional on the reading having moved, and the
             // frame planner declines an identical frame anyway, so a session
             // sitting still costs nothing beyond reading four small files.
-            if status.poll() {
+            // Audio playback proves the Bluetooth sink present or gone as it
+            // opens and loses it; that is free to ask and moves the mark.
+            let sink_moved = status.observe_audio_sink(
+                audio
+                    .as_ref()
+                    .and_then(kobo_hal::audio::Audio::sink_evidence),
+            );
+            if status.poll() || sink_moved {
                 repaint(
                     &mut apps,
                     front,
@@ -2996,6 +3079,27 @@ fn host_applications(
                                         &mut status,
                                     )?;
                                 }
+                            }
+                            // The same for a request that just changed the
+                            // radio, so the band moves with the switch rather
+                            // than on the next poll.
+                            if matches!(
+                                request,
+                                kobo_protocol::DeviceRequest::SetWifi { .. }
+                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
+                                    | kobo_protocol::DeviceRequest::DisconnectWifi
+                            ) && status.refresh()
+                            {
+                                repaint(
+                                    &mut apps,
+                                    front,
+                                    display,
+                                    whole_screen,
+                                    &mut surface,
+                                    &mut panel,
+                                    &home,
+                                    &mut status,
+                                )?;
                             }
                             reply(
                                 &mut apps[index],
@@ -4351,8 +4455,9 @@ enum Tap {
 /// reliable enough to be the way out of anything. A screen may ask for first
 /// refusal on it (see [`Screen::owns_back`]) so that a screen reached from
 /// inside an application goes back to where it was reached from rather than
-/// out of the application. That is a delivery, not a transfer of ownership:
-/// the caller still leaves if no new screen follows.
+/// out of the application. An open overlay also receives Back so the application
+/// can dismiss it even over a root screen. That is a delivery, not a transfer
+/// of ownership: the caller still leaves if no new screen follows.
 #[allow(
     clippy::too_many_arguments,
     reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
@@ -4433,6 +4538,7 @@ fn deliver_touch(
     let route = kobod::navigation::route(
         action == ActionId::BACK,
         current.is_some_and(|screen| screen.owns_back),
+        current.is_some_and(|screen| screen.overlay.is_some()),
     );
     if route == kobod::navigation::BackRoute::Leave {
         return Ok(Tap::Leave);
@@ -5448,6 +5554,26 @@ mod tests {
     }
 
     #[test]
+    fn a_protocol_10_app_keeps_receiving_protocol_10() {
+        // The oldest protocol in the release registry. Refusing it left Store
+        // applications built for it unable to open after a platform update.
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::DICTIONARY_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::DICTIONARY_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_11_app_keeps_receiving_protocol_11() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::LEGACY_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::LEGACY_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_12_app_keeps_receiving_protocol_12() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::FOLIO_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::FOLIO_VERSION);
+    }
+
+    #[test]
     fn a_protocol_13_app_keeps_receiving_protocol_13() {
         // #191: Todo compiled for 13 died with UnsupportedVersion(14) on the
         // first runtime-originated frame. Elipsa rotation session-rotation1.log
@@ -5674,6 +5800,49 @@ mod tests {
         let (hours, minutes) = now.split_once(':').expect("a separator");
         assert!(hours.parse::<u32>().expect("hours") < 24, "{now}");
         assert!(minutes.parse::<u32>().expect("minutes") < 60, "{now}");
+    }
+
+    fn sink(observation: u64, connected: bool) -> kobo_hal::audio::SinkEvidence {
+        kobo_hal::audio::SinkEvidence {
+            observation,
+            connected,
+        }
+    }
+
+    #[test]
+    fn a_repeated_sink_failure_after_a_bluetooth_reply_still_clears_the_mark() {
+        let mut status = super::StatusSource::new();
+        assert!(!status.observe_audio_sink(Some(sink(1, false))));
+        assert!(
+            status.observe_bluetooth(true),
+            "the reply puts the mark back"
+        );
+        assert!(
+            status.observe_audio_sink(Some(sink(2, false))),
+            "a second failure is news even though it says the same thing"
+        );
+        assert!(!status.bluetooth);
+    }
+
+    #[test]
+    fn a_repeated_sink_success_after_a_bluetooth_reply_still_sets_the_mark() {
+        let mut status = super::StatusSource::new();
+        assert!(status.observe_audio_sink(Some(sink(1, true))));
+        assert!(status.observe_bluetooth(false));
+        assert!(status.observe_audio_sink(Some(sink(2, true))));
+        assert!(status.bluetooth);
+    }
+
+    #[test]
+    fn an_old_sink_observation_never_overrides_a_newer_bluetooth_reply() {
+        let mut status = super::StatusSource::new();
+        assert!(!status.observe_audio_sink(Some(sink(1, false))));
+        assert!(status.observe_bluetooth(true));
+        assert!(
+            !status.observe_audio_sink(Some(sink(1, false))),
+            "polled again, nothing new"
+        );
+        assert!(status.bluetooth);
     }
 
     #[test]
@@ -6189,6 +6358,65 @@ mod tests {
                 action: ActionId::BACK
             }
         ));
+    }
+
+    #[test]
+    fn overlay_close_is_delivered_before_a_root_back_leaves() {
+        let chrome = Chrome::with_back(true);
+        let root = hello();
+        let covered = root.clone().with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(2),
+            "Settings",
+            vec![],
+        ));
+        let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().unwrap();
+        app.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        for (screen, kind, expected) in [
+            (
+                &covered,
+                kobo_ui::LayoutKind::OverlayClose,
+                Tap::OfferedBack,
+            ),
+            (&root, kobo_ui::LayoutKind::Back, Tap::Leave),
+        ] {
+            let layout = screen.layout_with(&crate::device_metrics(), &chrome);
+            let rect = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kind)
+                .unwrap()
+                .rect;
+            let tap = TouchEvent::Up {
+                x: u32::try_from(rect.x + rect.width / 2).unwrap(),
+                y: u32::try_from(rect.y + rect.height / 2).unwrap(),
+            };
+            assert_eq!(
+                deliver_touch(
+                    &mut runtime,
+                    tap,
+                    Some(screen),
+                    &chrome,
+                    false,
+                    kobo_ui::Orientation::Portrait,
+                    kobo_ui::LandscapeTurn::Clockwise,
+                    kobo_protocol::VERSION,
+                    kobo_ui::TopBarState::Hidden,
+                )
+                .unwrap(),
+                expected,
+            );
+            if expected == Tap::OfferedBack {
+                assert!(matches!(
+                    kobo_protocol::read_from(&mut app).unwrap().message,
+                    Message::Action {
+                        action: ActionId::BACK
+                    }
+                ));
+            } else {
+                assert!(kobo_protocol::read_from(&mut app).is_err());
+            }
+        }
     }
 
     fn catalogue() -> PathBuf {

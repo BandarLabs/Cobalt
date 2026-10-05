@@ -1,0 +1,24 @@
+{
+  "original_to_relocated": {
+    "apps/backgammon/screenshots/ui-review/render.rs": "tools/review-captures/apps/backgammon/screenshots/ui-review/render.rs",
+    "apps/birds/screenshots/ui-review/capture.py": "tools/review-captures/apps/birds/screenshots/ui-review/capture.py",
+    "apps/fieldbook/screenshots/ui-review/capture.py": "tools/review-captures/apps/fieldbook/screenshots/ui-review/capture.py",
+    "apps/inkling/screenshots/ui-review/capture-sim.py": "tools/review-captures/apps/inkling/screenshots/ui-review/capture-sim.py",
+    "apps/inkling/screenshots/ui-review/capture.py": "tools/review-captures/apps/inkling/screenshots/ui-review/capture.py",
+    "apps/rss-miniflux/screenshots/ui-review/capture.py": "tools/review-captures/apps/rss-miniflux/screenshots/ui-review/capture.py",
+    "apps/rss-miniflux/screenshots/ui-review/scenario.rs": "tools/review-captures/apps/rss-miniflux/screenshots/ui-review/scenario.rs",
+    "apps/syncthing/screenshots/review/capture.py": "tools/review-captures/apps/syncthing/screenshots/review/capture.py",
+    "apps/syncthing/screenshots/review/capture.rs": "tools/review-captures/apps/syncthing/screenshots/review/capture.rs",
+    "examples/hn/screenshots/ui-review/capture.py": "tools/review-captures/examples/hn/screenshots/ui-review/capture.py",
+    "examples/hn/screenshots/ui-review/notice-dismissal-scenario.rs": "tools/review-captures/examples/hn/screenshots/ui-review/notice-dismissal-scenario.rs",
+    "examples/hn/screenshots/ui-review/scenario.rs": "tools/review-captures/examples/hn/screenshots/ui-review/scenario.rs",
+    "examples/launcher/screenshots/ui-review/capture-scene.rs": "tools/review-captures/examples/launcher/screenshots/ui-review/capture-scene.rs",
+    "examples/launcher/screenshots/ui-review/capture-support.rs": "tools/review-captures/examples/launcher/screenshots/ui-review/capture-support.rs",
+    "examples/launcher/screenshots/ui-review/capture.json": "tools/review-captures/examples/launcher/screenshots/ui-review/capture.json",
+    "examples/launcher/screenshots/ui-review/capture.py": "tools/review-captures/examples/launcher/screenshots/ui-review/capture.py",
+    "apps/backgammon/src/review_capture.rs": "tools/review-captures/apps/backgammon/src/review_capture.rs",
+    "apps/birds/src/review_capture.rs": "tools/review-captures/apps/birds/src/review_capture.rs",
+    "apps/fieldbook/src/review_capture.rs": "tools/review-captures/apps/fieldbook/src/review_capture.rs",
+    "apps/inkling/src/review_capture.rs": "tools/review-captures/apps/inkling/src/review_capture.rs"
+  }
+}
