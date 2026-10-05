@@ -2,11 +2,13 @@
 //!
 //! This module never starts a second supplicant. Nickel and Cobalt would then
 //! be two owners of one interface, an arrangement already proven unsafe on the
-//! Clara BW. The backend is available only when the firmware's `wpa_cli` and
-//! a unique `/sys/class/net/*/wireless` interface are both present. Each
-//! exchange revalidates that interface; missing, changed, or ambiguous matches
-//! are refused without a cached name or fallback. All operations go through
-//! the existing firmware owner.
+//! Clara BW. The backend exists whenever the firmware's `wpa_cli` does, and
+//! the interface is resolved on every exchange rather than at open. A radio
+//! whose driver the stock reader had not loaded when the session began, or
+//! that comes back under another name, is then usable as soon as it appears,
+//! instead of the session reporting Wi-Fi unsupported until the next one.
+//! Missing or ambiguous interfaces are refused per request, never guessed.
+//! All operations go through the existing firmware owner.
 
 use kobo_protocol::{DeviceError, DeviceResult, WifiNetwork, MAX_RADIO_DEVICES};
 use std::path::{Path, PathBuf};
@@ -34,25 +36,41 @@ const WPA_TOOLS: [&str; 4] = [
 #[derive(Clone, Debug)]
 pub struct Wifi {
     wpa_cli: PathBuf,
-    link: String,
 }
 
 impl Wifi {
     #[must_use]
     pub fn open() -> Option<Self> {
-        let link = discover_link(Path::new("/sys/class/net"))?;
         WPA_TOOLS
             .into_iter()
             .map(Path::new)
             .find(|path| path.is_file())
             .map(|path| Self {
                 wpa_cli: path.to_path_buf(),
-                link,
             })
+    }
+
+    /// The radio's interface as it is now.
+    ///
+    /// `NotFound` rather than `Backend` when there is none, because that is a
+    /// radio the stock reader has not brought up, not a supplicant that failed.
+    fn link() -> Result<String, DeviceError> {
+        discover_link(Path::new("/sys/class/net")).ok_or(DeviceError::NotFound)
     }
 
     #[must_use]
     pub fn state(&self) -> DeviceResult {
+        // No interface is a radio that is off as far as anyone here can tell,
+        // not a missing feature: reporting it as unavailable would tell
+        // Settings to stop asking, and the radio can appear a moment later.
+        let Ok(link) = Self::link() else {
+            return DeviceResult::Wifi {
+                available: true,
+                enabled: false,
+                connected_ssid: None,
+                networks: Vec::new(),
+            };
+        };
         let status = match self.command(["status"]) {
             Ok(status) => status,
             Err(error) => return DeviceResult::Failed(error),
@@ -60,7 +78,7 @@ impl Wifi {
         let completed = value(&status, "wpa_state").is_some_and(|state| state == "COMPLETED");
         DeviceResult::Wifi {
             available: true,
-            enabled: interface_enabled(&self.link),
+            enabled: interface_enabled(&link),
             connected_ssid: completed
                 .then(|| value(&status, "ssid").unwrap_or_default().to_owned()),
             networks: Vec::new(),
@@ -95,7 +113,7 @@ impl Wifi {
     /// Returns an error when the interface cannot be raised or the existing
     /// firmware supplicant rejects one of the recovery commands.
     pub fn recover_association(&self) -> Result<(), DeviceError> {
-        if !set_interface(&self.link, true) {
+        if !set_interface(&Self::link()?, true) {
             return Err(DeviceError::Backend);
         }
         if self.associated()? {
@@ -112,8 +130,12 @@ impl Wifi {
 
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> DeviceResult {
+        let link = match Self::link() {
+            Ok(link) => link,
+            Err(error) => return DeviceResult::Failed(error),
+        };
         if enabled {
-            if !set_interface(&self.link, true) {
+            if !set_interface(&link, true) {
                 return DeviceResult::Failed(DeviceError::Backend);
             }
             if let Err(error) = self.command(["reconnect"]) {
@@ -123,7 +145,7 @@ impl Wifi {
             if let Err(error) = self.command(["disconnect"]) {
                 return DeviceResult::Failed(error);
             }
-            if !set_interface(&self.link, false) {
+            if !set_interface(&link, false) {
                 return DeviceResult::Failed(DeviceError::Backend);
             }
         }
@@ -141,7 +163,10 @@ impl Wifi {
     /// fills the same results, so it is not a failure either.
     #[must_use]
     pub fn scan(&self) -> DeviceResult {
-        if !interface_enabled(&self.link) {
+        let Ok(link) = Self::link() else {
+            return self.state();
+        };
+        if !interface_enabled(&link) {
             return self.state();
         }
         if let Err(error) = self.request_scan() {
@@ -158,7 +183,7 @@ impl Wifi {
         let connected = connected_ssid(&status);
         DeviceResult::Wifi {
             available: true,
-            enabled: interface_enabled(&self.link),
+            enabled: interface_enabled(&link),
             connected_ssid: connected.map(str::to_owned),
             networks: parse_scan_results(&results, connected),
         }
@@ -169,7 +194,11 @@ impl Wifi {
         if !valid_credentials(ssid, password) {
             return DeviceResult::Failed(DeviceError::InvalidInput);
         }
-        if !set_interface(&self.link, true) {
+        let link = match Self::link() {
+            Ok(link) => link,
+            Err(error) => return DeviceResult::Failed(error),
+        };
+        if !set_interface(&link, true) {
             return DeviceResult::Failed(DeviceError::Backend);
         }
         let previous = match self
@@ -219,18 +248,10 @@ impl Wifi {
         }
     }
 
-    fn require_link(&self) -> Result<(), DeviceError> {
-        if discover_link(Path::new("/sys/class/net")).as_deref() == Some(self.link.as_str()) {
-            Ok(())
-        } else {
-            Err(DeviceError::Backend)
-        }
-    }
-
     fn command<const N: usize>(&self, arguments: [&str; N]) -> Result<String, DeviceError> {
-        self.require_link()?;
+        let link = Self::link()?;
         let mut command = Command::new(&self.wpa_cli);
-        command.args(["-i", self.link.as_str()]).args(arguments);
+        command.args(["-i", link.as_str()]).args(arguments);
         let reply = super::wifi_process::run(&mut command, b"", COMMAND_TIMEOUT)
             .map_err(|error| process_error(&error))?;
         let stdout = checked_reply(reply.text)?;
@@ -250,9 +271,9 @@ impl Wifi {
 
     /// Credentials are delivered only through the bounded private input pipe.
     fn script(&self, commands: &str) -> Result<String, DeviceError> {
-        self.require_link()?;
+        let link = Self::link()?;
         let mut command = Command::new(&self.wpa_cli);
-        command.args(["-i", self.link.as_str()]);
+        command.args(["-i", link.as_str()]);
         let reply = super::wifi_process::run(&mut command, commands.as_bytes(), COMMAND_TIMEOUT)
             .map_err(|error| process_error(&error))?;
         let stdout = checked_reply(reply.text)?;
@@ -267,9 +288,9 @@ impl Wifi {
     }
 
     fn request_scan(&self) -> Result<(), DeviceError> {
-        self.require_link()?;
+        let link = Self::link()?;
         let mut command = Command::new(&self.wpa_cli);
-        command.args(["-i", self.link.as_str(), "scan"]);
+        command.args(["-i", link.as_str(), "scan"]);
         let reply = super::wifi_process::run(&mut command, b"", COMMAND_TIMEOUT)
             .map_err(|error| process_error(&error))?;
         scan_accepted(&reply.text)
@@ -334,16 +355,7 @@ fn saved_networks(list: &str) -> Result<Vec<(String, bool)>, DeviceError> {
 }
 
 fn discover_link(root: &Path) -> Option<String> {
-    let mut names = std::fs::read_dir(root)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().join("wireless").is_dir())
-        .filter_map(|entry| entry.file_name().into_string().ok());
-    let name = names.next()?;
-    if names.next().is_some() {
-        return None;
-    }
-    Some(name)
+    super::network::wireless_link_in(root)
 }
 
 fn reply_ok(output: &str) -> bool {
@@ -359,13 +371,12 @@ fn checked_reply(output: String) -> Result<String, DeviceError> {
             line.starts_with("FAIL") || line.starts_with("UNKNOWN COMMAND")
         })
     {
-        if output.to_ascii_lowercase().contains("password")
-            || output.to_ascii_lowercase().contains("invalid")
-        {
-            Err(DeviceError::Authentication)
-        } else {
-            Err(DeviceError::Backend)
-        }
+        // Not `Authentication`, whatever the words say. A wrong password is
+        // refused by the access point during the handshake, after every
+        // command here has already answered `OK`, so no command reply can
+        // report one. Guessing it from words like "invalid" showed people a
+        // wrong-password error for malformed commands.
+        Err(DeviceError::Backend)
     } else {
         Ok(output)
     }
@@ -512,6 +523,23 @@ mod tests {
             if failing_step < 3 {
                 assert!(!seen.iter().any(|s| s.contains("save_config")));
             }
+        }
+    }
+
+    #[test]
+    fn a_failed_command_is_never_reported_as_a_wrong_password() {
+        // A wrong password is refused during the handshake, after every
+        // command has already said OK, so these replies cannot mean one.
+        for reply in [
+            "FAIL\n",
+            "FAIL invalid argument\n",
+            "> FAIL password too short\n",
+        ] {
+            assert_eq!(
+                super::checked_reply(reply.to_owned()),
+                Err(kobo_protocol::DeviceError::Backend),
+                "{reply:?}"
+            );
         }
     }
 

@@ -47,7 +47,7 @@ pub fn read() -> Option<Battery> {
 pub fn read_from(supplies: &Path) -> Option<Battery> {
     let supply = find_battery(supplies)?;
     let percent = read_percent(&supply.join("capacity"))?;
-    let charging = read_charging(&supply.join("status"));
+    let charging = cable_online(supplies).unwrap_or_else(|| read_charging(&supply.join("status")));
     Some(Battery { percent, charging })
 }
 
@@ -117,6 +117,37 @@ fn read_percent(path: &Path) -> Option<u8> {
     Some(u8::try_from(value.clamp(0, 100)).unwrap_or(0))
 }
 
+/// Whether a cable is delivering power, from the supply that carries it.
+///
+/// Asked before the battery's own status, because the battery's answer lags
+/// the cable and sometimes never catches up. A gauge at a hundred percent
+/// reports `Full` whether or not anything is plugged in, so a cable pulled
+/// from a full reader left the charging mark on the panel indefinitely. The
+/// USB or mains supply's `online` changes the moment the cable does.
+///
+/// `None` when no such supply publishes a readable `online`, so a device whose
+/// driver exposes only the battery keeps the answer it had before.
+fn cable_online(supplies: &Path) -> Option<bool> {
+    let mut seen = None;
+    for entry in fs::read_dir(supplies).ok()?.filter_map(Result::ok).take(32) {
+        let path = entry.path();
+        let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
+        let kind = kind.trim();
+        if !(kind == "USB" || kind.starts_with("USB_") || kind == "Mains" || kind == "Wireless") {
+            continue;
+        }
+        match fs::read_to_string(path.join("online"))
+            .as_deref()
+            .map(str::trim)
+        {
+            Ok("1") => return Some(true),
+            Ok("0") => seen = Some(false),
+            _ => {}
+        }
+    }
+    seen
+}
+
 /// Whether the device is on external power.
 ///
 /// A missing or unreadable status is reported as not charging, which is the
@@ -153,6 +184,26 @@ mod tests {
         if !status.is_empty() {
             fs::write(path.join("status"), status).expect("a status");
         }
+    }
+
+    #[test]
+    fn pulling_the_cable_from_a_full_battery_clears_the_charging_mark() {
+        // The gauge says Full with or without a cable, so only the supply that
+        // carries the cable can say it has gone.
+        let root = root("cable-pulled-at-full");
+        supply(&root, "battery", "Battery", "100", "Full");
+        supply(&root, "usb", "USB", "", "");
+        fs::write(root.join("usb/online"), "0\n").expect("online");
+        assert!(!read_from(&root).expect("a battery").charging);
+        fs::write(root.join("usb/online"), "1\n").expect("online");
+        assert!(read_from(&root).expect("a battery").charging);
+    }
+
+    #[test]
+    fn without_a_cable_supply_the_battery_status_still_decides() {
+        let root = root("no-cable-supply");
+        supply(&root, "battery", "Battery", "40", "Charging");
+        assert!(read_from(&root).expect("a battery").charging);
     }
 
     #[test]

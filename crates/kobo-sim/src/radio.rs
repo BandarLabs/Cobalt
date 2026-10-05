@@ -270,6 +270,22 @@ impl Radio {
         }
     }
 
+    /// What the status band should show for this radio.
+    ///
+    /// Follows the switch only. A simulated app reaches the network whether
+    /// or not a network was joined here, so drawing "disconnected" for an
+    /// unjoined radio would contradict the app on the same screen. Switching
+    /// Wi-Fi off in a simulated Settings still strikes the mark through, the
+    /// way it does on a reader.
+    #[must_use]
+    pub const fn signal(&self) -> kobo_ui::Signal {
+        if self.enabled {
+            kobo_ui::Signal::Strong
+        } else {
+            kobo_ui::Signal::Off
+        }
+    }
+
     pub fn json(&self) -> kobo_json::Value {
         kobo_json::ObjectBuilder::new()
             .set("fault", self.fault.name())
@@ -510,5 +526,15 @@ mod tests {
         }
         assert_eq!(Fault::parse("wrong password"), None);
         assert_eq!(Fault::parse("busy"), None);
+    }
+
+    #[test]
+    fn the_band_follows_the_wifi_switch() {
+        let mut radio = Radio::new(Bands::TwoPointFour);
+        assert_eq!(radio.signal(), kobo_ui::Signal::Strong);
+        let _ = radio.handle(&DeviceRequest::SetWifi { enabled: false });
+        assert_eq!(radio.signal(), kobo_ui::Signal::Off);
+        let _ = radio.handle(&DeviceRequest::SetWifi { enabled: true });
+        assert_eq!(radio.signal(), kobo_ui::Signal::Strong);
     }
 }

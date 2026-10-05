@@ -1488,7 +1488,12 @@ impl AppState {
             signal: if self.scenario == Scenario::Offline {
                 kobo_ui::Signal::Off
             } else {
-                kobo_ui::Signal::Strong
+                // The same radio Settings switches, so the band follows it.
+                // A poisoned lock draws what the band drew before this read
+                // the radio at all, rather than failing a frame over it.
+                RADIO
+                    .lock()
+                    .map_or(kobo_ui::Signal::Strong, |radio| radio.signal())
             },
             battery: Some(kobo_ui::Percent::new(
                 self.effective_hardware().battery_percent,
