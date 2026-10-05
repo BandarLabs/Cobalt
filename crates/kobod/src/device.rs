@@ -232,10 +232,19 @@ struct StatusSource {
     /// the session to the slow reboot on hand-back. So this is told rather
     /// than asked, from the replies the daemon is already carrying.
     ///
-    /// The cost is that headphones which wander out of range on their own are
-    /// noticed the next time something reads Bluetooth rather than within two
-    /// seconds. That is the right trade against making every session reboot.
+    /// Audio playback is the second witness. The player writes to the
+    /// firmware's A2DP sockets, which accept audio only while headphones are
+    /// connected, so opening them proves a connection and losing them proves
+    /// its end, at no cost to the stack. Headphones that wander off while
+    /// nothing is playing are still noticed only at the next read or the next
+    /// play, which is when the answer to "where will the sound go" matters.
     bluetooth: bool,
+    /// The last thing audio playback proved about the sink, so only a change
+    /// in it moves the mark. A sink lost an hour ago must not override a
+    /// Bluetooth reply that has since said headphones are connected.
+    audio_sink: Option<bool>,
+    /// The band's readings before Bluetooth is added to them.
+    reading: Reading,
     /// The last radio state seen, kept only to trace its changes.
     link: Option<kobo_hal::network::LinkState>,
 }
@@ -247,8 +256,21 @@ impl StatusSource {
             taken: None,
             polled: None,
             bluetooth: false,
+            audio_sink: None,
+            reading: Reading::default(),
             link: None,
         }
+    }
+
+    /// Records what audio playback just proved about the Bluetooth sink.
+    ///
+    /// `None` is no evidence either way. Returns whether the band changed.
+    fn observe_audio_sink(&mut self, sink: Option<bool>) -> bool {
+        if sink == self.audio_sink {
+            return false;
+        }
+        self.audio_sink = sink;
+        sink.is_some_and(|connected| self.observe_bluetooth(connected))
     }
 
     /// Records what the daemon just learned about Bluetooth.
@@ -260,7 +282,7 @@ impl StatusSource {
             return false;
         }
         self.bluetooth = connected;
-        self.last.bluetooth = connected;
+        self.last = self.reading.status(connected);
         true
     }
 
@@ -318,17 +340,37 @@ impl StatusSource {
     }
 
     fn read(&mut self) -> kobo_ui::Status {
-        let (status, link) = read_status();
+        let (reading, link) = read_status();
         // Traced on change only, so a field report says when the radio went
         // from searching to associated to routed without a line every poll.
         if self.link != Some(link) {
             trace(&format!("wifi link: {link:?}"));
             self.link = Some(link);
         }
-        kobo_ui::Status {
-            bluetooth: self.bluetooth,
-            ..status
-        }
+        self.reading = reading;
+        self.reading.status(self.bluetooth)
+    }
+}
+
+/// One reading of what the band shows, apart from Bluetooth, which the
+/// daemon is told rather than reads.
+#[derive(Clone, Debug, Default)]
+struct Reading {
+    clock: String,
+    battery: Option<kobo_ui::Percent>,
+    charging: bool,
+    signal: kobo_ui::Signal,
+}
+
+impl Reading {
+    fn status(&self, bluetooth: bool) -> kobo_ui::Status {
+        kobo_ui::Status::standard(
+            self.clock.clone(),
+            self.battery,
+            self.charging,
+            self.signal,
+            bluetooth,
+        )
     }
 }
 
@@ -352,11 +394,11 @@ fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chro
 
 /// Assembles one reading of everything the band shows, and the radio state
 /// it was drawn from.
-fn read_status() -> (kobo_ui::Status, kobo_hal::network::LinkState) {
+fn read_status() -> (Reading, kobo_hal::network::LinkState) {
     use kobo_hal::network::LinkState;
     let battery = kobo_hal::battery::read();
     let link = kobo_hal::network::link_state();
-    let status = kobo_ui::Status {
+    let reading = Reading {
         clock: clock(),
         // A radio with no default route is not a usable connection however
         // strong the association is, so reachability is checked before
@@ -373,11 +415,8 @@ fn read_status() -> (kobo_ui::Status, kobo_hal::network::LinkState) {
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
-        // Filled in by the caller, which is the only layer holding what the
-        // daemon has been told about the controller.
-        bluetooth: false,
     };
-    (status, link)
+    (reading, link)
 }
 
 /// The wall clock as `HH:MM`, or empty when it cannot be read.
@@ -1903,7 +1942,14 @@ fn host_applications(
             // Repainting is conditional on the reading having moved, and the
             // frame planner declines an identical frame anyway, so a session
             // sitting still costs nothing beyond reading four small files.
-            if status.poll() {
+            // Audio playback proves the Bluetooth sink present or gone as it
+            // opens and loses it; that is free to ask and moves the mark.
+            let sink_moved = status.observe_audio_sink(
+                audio
+                    .as_ref()
+                    .and_then(kobo_hal::audio::Audio::sink_connected),
+            );
+            if status.poll() || sink_moved {
                 repaint(
                     &mut apps,
                     front,

@@ -1055,16 +1055,16 @@ fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
 /// says anything true. Deliberately not round numbers, so nobody mistakes a
 /// simulated reading for a real one.
 fn simulated_status() -> kobo_ui::Status {
-    kobo_ui::Status {
-        clock: "09:41".to_owned(),
-        signal: kobo_ui::Signal::Strong,
-        battery: Some(kobo_ui::Percent::new(72)),
-        charging: false,
-        // On, so the simulator draws the mark and a layout fault beside the
-        // radio shows up here rather than only on hardware with headphones
-        // paired.
-        bluetooth: true,
-    }
+    // Bluetooth on, so the simulator draws the mark and a layout fault beside
+    // the radio shows up here rather than only on hardware with headphones
+    // paired.
+    kobo_ui::Status::standard(
+        "09:41",
+        Some(kobo_ui::Percent::new(72)),
+        false,
+        kobo_ui::Signal::Strong,
+        true,
+    )
 }
 
 /// The application that is home, and so has no way back to draw.

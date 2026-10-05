@@ -1038,13 +1038,13 @@ mod tests {
         // With the status bar the device actually draws. Without it the
         // content starts high enough that the shelf fits and the test agrees
         // with the bug, which is how this shipped.
-        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status {
-            clock: "20:36".to_string(),
-            signal: kobo_ui::Signal::Strong,
-            battery: Some(kobo_ui::Percent::new(74)),
-            charging: false,
-            bluetooth: false,
-        });
+        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status::standard(
+            "20:36",
+            Some(kobo_ui::Percent::new(74)),
+            false,
+            kobo_ui::Signal::Strong,
+            false,
+        ));
         let layout = screen.layout_with(&kobo_ui::CLARA_BW_METRICS, &chrome);
         let position = layout
             .nodes
@@ -1933,13 +1933,13 @@ mod tests {
         let inked = |clock: &str| {
             let chrome = kobo_ui::Chrome {
                 back: false,
-                status: Some(kobo_ui::Status {
-                    clock: clock.to_owned(),
-                    signal: kobo_ui::Signal::Strong,
-                    battery: Some(kobo_ui::Percent::new(50)),
-                    charging: false,
-                    bluetooth: true,
-                }),
+                status: Some(kobo_ui::Status::standard(
+                    clock,
+                    Some(kobo_ui::Percent::new(50)),
+                    false,
+                    kobo_ui::Signal::Strong,
+                    true,
+                )),
             };
             let screen = kobo_ui::Screen::new(
                 1,

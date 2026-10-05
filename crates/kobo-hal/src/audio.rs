@@ -77,6 +77,8 @@ struct State {
     duration_ms: u32,
     volume: u8,
     error: Option<DeviceError>,
+    /// What the last attempt to use the A2DP sink proved, if anything.
+    sink: Option<bool>,
 }
 
 impl Default for State {
@@ -87,6 +89,7 @@ impl Default for State {
             duration_ms: 0,
             volume: 70,
             error: None,
+            sink: None,
         }
     }
 }
@@ -140,6 +143,20 @@ impl Audio {
             state,
             worker: Some(worker),
         }
+    }
+
+    /// Whether the firmware's Bluetooth audio sink was last seen accepting
+    /// audio.
+    ///
+    /// The A2DP sockets exist only while headphones are connected, so opening
+    /// them is proof of a connection and losing them mid-stream is proof of
+    /// its end. `None` until playback has tried, because a player that has
+    /// never opened the sink knows nothing about the headphones either way.
+    /// Stopping playback deliberately leaves the last answer in place: the
+    /// headphones are still there when a book is paused.
+    #[must_use]
+    pub fn sink_connected(&self) -> Option<bool> {
+        locked(&self.state).sink
     }
 
     #[must_use]
@@ -425,6 +442,9 @@ fn run(receiver: &mpsc::Receiver<Command>, state: &Mutex<State>, fetcher: Option
                     _ => Ok(()),
                 };
                 if let Err(error) = result {
+                    // A write that fails mid-stream is the sink going away:
+                    // the headphones were switched off or left range.
+                    locked(state).sink = Some(false);
                     fail(state, error);
                     stop_sink(&mut sink);
                 }
@@ -473,10 +493,12 @@ fn handle_command(
                 match A2dpSink::open_and_start() {
                     Ok(mut opened) => {
                         if let Err(error) = opened.write_silence(LEAD_IN_FRAMES) {
+                            locked(state).sink = Some(false);
                             fail(state, error);
                             return;
                         }
                         *sink = Some(opened);
+                        locked(state).sink = Some(true);
                         // The silence above is the cushion. Writing the first
                         // real chunk right behind it keeps the cushion full;
                         // waiting it out would start playback with an empty
@@ -484,6 +506,7 @@ fn handle_command(
                         *next_write = Instant::now();
                     }
                     Err(error) => {
+                        locked(state).sink = Some(false);
                         fail(state, error);
                         return;
                     }
@@ -892,6 +915,37 @@ mod tests {
     fn frames_are_reported_in_milliseconds_without_overflow() {
         assert_eq!(frames_to_ms(48_000), 1_000);
         assert_eq!(frames_to_ms(u64::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn nothing_is_known_about_the_headphones_until_playback_tries() {
+        let audio = Audio::simulated();
+        assert_eq!(audio.sink_connected(), None);
+    }
+
+    #[test]
+    fn a_sink_that_will_not_open_is_evidence_the_headphones_are_gone() {
+        // No A2DP control socket exists on a host, which is exactly the state
+        // of a reader with no headphones connected.
+        assert!(!std::path::Path::new(super::CONTROL_SOCKET).exists());
+        let state = std::sync::Mutex::new(super::State::default());
+        let mut media = Some(super::Media {
+            tracks: Vec::new(),
+            starts: Vec::new(),
+            total_frames: 0,
+            track: 0,
+            pcm: Vec::new(),
+            frame: 0,
+        });
+        super::handle_command(
+            super::Command::Play { restart: false },
+            &state,
+            None,
+            &mut media,
+            &mut None,
+            &mut Instant::now(),
+        );
+        assert_eq!(super::locked(&state).sink, Some(false));
     }
 
     #[test]
