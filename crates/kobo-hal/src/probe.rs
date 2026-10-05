@@ -178,7 +178,9 @@ fn discover_touch_path(input_devices_path: &str) -> Option<PathBuf> {
 
 /// The controllers every measured Kobo uses, picked by name before anything
 /// else so that a reader somebody has tested keeps the node it was tested on.
-const NAMED_TOUCH_CONTROLLERS: [&str; 2] = ["cyttsp5_mt", "Elan Touchscreen"];
+/// The Nia's Elan controller names itself `elan-touch`, not the Libra 2's
+/// `Elan Touchscreen`.
+const NAMED_TOUCH_CONTROLLERS: [&str; 3] = ["cyttsp5_mt", "Elan Touchscreen", "elan-touch"];
 
 /// Name fragments of nodes that are never the touch panel, whatever axes
 /// they declare. Buttons, the power key and the cover sensor live on these,
@@ -408,6 +410,19 @@ H: Handlers=event0\n";
             Some(Path::new("/dev/input/event2"))
         );
     }
+
+    #[test]
+    fn finds_nia_elan_touch_handler() {
+        let fixture = "I: Bus=0018 Vendor=0000 Product=0000 Version=0000\n\
+N: Name=\"elan-touch\"\n\
+H: Handlers=mouse0 event1\n\
+B: EV=b\n";
+        assert_eq!(
+            discover_touch_path_from(fixture, 32).as_deref(),
+            Some(Path::new("/dev/input/event1"))
+        );
+    }
+
     /// A multi-touch controller with no name anybody here has seen: pressure,
     /// touch major and minor, both position axes and a tracking id, printed
     /// in 32-bit words the way a 32-bit kernel prints them.
