@@ -600,6 +600,17 @@ actions; release of panel and touch followed by a successful stock-reader
 restart; and suspend/resume with monotonic device uptime and no Cobalt process
 left running.
 
+[KOReader marks its KoboLuna/Nia profile](https://github.com/koreader/koreader/blob/master/frontend/device/kobo/device.lua#L372-L383)
+as having an unreliable `MXCFB_WAIT_FOR_UPDATE_COMPLETE` ioctl, and
+[FBInk carries the same quirk](https://github.com/NiLuJe/FBInk/blob/master/fbink_device_id.c#L974-L982)
+for device code 382. The Nia profile therefore never enters that ioctl: each
+completion fence pauses for the
+[2.5 ms KOReader's stub wait uses](https://github.com/koreader/koreader-base/blob/master/ffi/framebuffer_mxcfb.lua#L239-L244)
+and retires the marker. The frame-timing records name these `paced`, not
+`completed`, because a pause is not evidence the panel finished. Sustained
+timing over several hundred physical refreshes is still required before the
+Nia's writes are enabled.
+
 Update markers are random and at least `0x40000000`, because markers are a
 global namespace shared with the stock reader and a low fixed marker could be
 matched against another process's update.
