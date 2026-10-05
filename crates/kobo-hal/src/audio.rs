@@ -438,13 +438,10 @@ fn run(receiver: &mpsc::Receiver<Command>, state: &Mutex<State>, fetcher: Option
                 let current = locked(state).playback;
                 let result = match current {
                     AudioPlaybackState::Playing => play_chunk(state, &mut media, &mut sink),
-                    AudioPlaybackState::Paused => keepalive(&mut sink),
+                    AudioPlaybackState::Paused => keepalive(state, &mut sink),
                     _ => Ok(()),
                 };
                 if let Err(error) = result {
-                    // A write that fails mid-stream is the sink going away:
-                    // the headphones were switched off or left range.
-                    locked(state).sink = Some(false);
                     fail(state, error);
                     stop_sink(&mut sink);
                 }
@@ -617,18 +614,36 @@ fn play_chunk(
     let frames = CHUNK_FRAMES.min(loaded.pcm.len() / 2 - loaded.frame);
     let end = start + frames * 2;
     let volume = locked(state).volume;
-    sink.as_mut()
+    let written = sink
+        .as_mut()
         .ok_or(DeviceError::Unreachable)?
-        .write_samples(&loaded.pcm[start..end], volume)?;
+        .write_samples(&loaded.pcm[start..end], volume);
+    sink_write(state, written)?;
     loaded.frame += frames;
     locked(state).position_ms = frames_to_ms(loaded.position_frames());
     Ok(())
 }
 
-fn keepalive(sink: &mut Option<A2dpSink>) -> Result<(), DeviceError> {
-    sink.as_mut()
+fn keepalive(state: &Mutex<State>, sink: &mut Option<A2dpSink>) -> Result<(), DeviceError> {
+    let written = sink
+        .as_mut()
         .ok_or(DeviceError::Unreachable)?
-        .write_silence(CHUNK_FRAMES)
+        .write_silence(CHUNK_FRAMES);
+    sink_write(state, written)
+}
+
+/// Passes on the result of writing to an open sink, recording a failure as
+/// the headphones going away.
+///
+/// Only a failed write is that evidence. Playback can also fail before it
+/// writes anything, decoding a damaged later track for instance, and taking
+/// the headphones off the band then would describe a fault in the book as a
+/// change in the hardware.
+fn sink_write(state: &Mutex<State>, written: Result<(), DeviceError>) -> Result<(), DeviceError> {
+    if written.is_err() {
+        locked(state).sink = Some(false);
+    }
+    written
 }
 
 fn fail(state: &Mutex<State>, error: DeviceError) {
@@ -945,6 +960,27 @@ mod tests {
             &mut None,
             &mut Instant::now(),
         );
+        assert_eq!(super::locked(&state).sink, Some(false));
+    }
+
+    #[test]
+    fn a_media_fault_is_not_evidence_the_headphones_left() {
+        // Playback fails here before it writes anything, as it would on a
+        // damaged later track. The headphones were last seen connected and
+        // nothing has said otherwise.
+        let state = std::sync::Mutex::new(super::State::default());
+        super::locked(&state).sink = Some(true);
+        assert!(super::play_chunk(&state, &mut None, &mut None).is_err());
+        assert!(super::keepalive(&state, &mut None).is_err());
+        assert_eq!(super::locked(&state).sink, Some(true));
+    }
+
+    #[test]
+    fn a_failed_sink_write_is_evidence_the_headphones_left() {
+        let state = std::sync::Mutex::new(super::State::default());
+        super::locked(&state).sink = Some(true);
+        let written = super::sink_write(&state, Err(kobo_protocol::DeviceError::Unreachable));
+        assert!(written.is_err());
         assert_eq!(super::locked(&state).sink, Some(false));
     }
 

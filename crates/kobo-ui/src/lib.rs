@@ -14926,14 +14926,11 @@ fn render_all_with_selected_font(
             // The one string on the panel that changes while its neighbours
             // stay, so its digits go on a fixed advance and it counts without
             // stepping sideways.
-            LayoutKind::StatusClock => draw_figures(
+            LayoutKind::StatusClock => draw_figures_crisp(
                 surface,
                 node.text_lines.first().map_or("", String::as_str),
                 node.rect.x,
                 node.rect.y + (node.rect.height - FontSize::Caption.line_height()) / 2,
-                FontSize::Caption,
-                Face::Text,
-                tone::MUTED,
                 clip,
             ),
             LayoutKind::StatusMark(mark) => {
@@ -15864,18 +15861,67 @@ fn draw_status_mark(
             // on the side away from the glyph rather than between them.
             let text = format!("{}%", level.get());
             let width = figures_width(&text, FontSize::Caption, Face::Text);
-            draw_figures(
+            draw_figures_crisp(
                 surface,
                 &text,
                 glyph.x - width - metrics.space(Space::Tight),
                 rect.y + (rect.height - FontSize::Caption.line_height()) / 2,
-                FontSize::Caption,
-                Face::Text,
-                tone::MUTED,
                 clip,
             );
         }
         StatusMark::Battery { level: None, .. } => {}
+    }
+}
+
+/// Draws status-band figures in pure ink and paper, on a fixed advance.
+///
+/// The band's text changes on its own, the clock every minute and the battery
+/// whenever the charge moves, and blended edges would put grey on the panel
+/// each time: a greyscale refresh for a digit, and a soft figure beside marks
+/// that are drawn sharp. The figures are set into a scratch surface and only
+/// the pixels at least half covered are inked, the same rule as the marks.
+fn draw_figures_crisp(surface: &mut Surface, text: &str, x: i32, y: i32, clip: Rect) {
+    let width = figures_width(text, FontSize::Caption, Face::Text);
+    let height = FontSize::Caption.line_height();
+    let (Ok(columns), Ok(rows)) = (usize::try_from(width), usize::try_from(height)) else {
+        return;
+    };
+    if columns == 0 || rows == 0 {
+        return;
+    }
+    let mut scratch = Surface::new(columns, rows);
+    scratch.clear(tone::PAPER);
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    draw_figures(
+        &mut scratch,
+        text,
+        0,
+        0,
+        FontSize::Caption,
+        Face::Text,
+        tone::INK,
+        whole,
+    );
+    for (index, value) in scratch.pixels.iter().enumerate() {
+        if *value >= 128 {
+            continue;
+        }
+        let (Ok(column), Ok(row)) = (
+            i32::try_from(index % columns),
+            i32::try_from(index / columns),
+        ) else {
+            continue;
+        };
+        let (px, py) = (x + column, y + row);
+        if px < clip.x || py < clip.y || px >= clip.x + clip.width || py >= clip.y + clip.height {
+            continue;
+        }
+        surface.blend(px, py, tone::INK, 255);
     }
 }
 
@@ -20004,6 +20050,32 @@ mod prose_tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn the_band_is_drawn_in_ink_and_paper_only() {
+        // Anything else in the band selects a greyscale refresh each time the
+        // clock ticks or the charge moves, and draws soft figures beside sharp
+        // marks.
+        let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Cobalt"));
+        let chrome = Chrome::with_back(false).with_status(Status::standard(
+            "09:41",
+            Some(Percent::new(64)),
+            true,
+            Signal::Fair,
+            true,
+        ));
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+        let mut surface = Surface::new(stride, height);
+        surface.clear(tone::PAPER);
+        render_with(&screen, &CLARA_BW_METRICS, &chrome, &mut surface, None);
+        let band = usize::try_from(CLARA_BW_METRICS.status_band_height()).expect("a height");
+        let grey = surface.pixels[..band * stride]
+            .iter()
+            .filter(|&&value| value != tone::PAPER && value != tone::INK)
+            .count();
+        assert_eq!(grey, 0, "{grey} grey pixels in the status band");
     }
 
     #[test]
