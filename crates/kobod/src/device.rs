@@ -5450,6 +5450,26 @@ mod tests {
     }
 
     #[test]
+    fn a_protocol_10_app_keeps_receiving_protocol_10() {
+        // The oldest protocol in the release registry. Refusing it left Store
+        // applications built for it unable to open after a platform update.
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::DICTIONARY_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::DICTIONARY_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_11_app_keeps_receiving_protocol_11() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::LEGACY_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::LEGACY_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_12_app_keeps_receiving_protocol_12() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::FOLIO_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::FOLIO_VERSION);
+    }
+
+    #[test]
     fn a_protocol_13_app_keeps_receiving_protocol_13() {
         // #191: Todo compiled for 13 died with UnsupportedVersion(14) on the
         // first runtime-originated frame. Elipsa rotation session-rotation1.log

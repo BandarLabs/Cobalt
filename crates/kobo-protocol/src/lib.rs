@@ -17,9 +17,10 @@ use std::cmp::min;
 pub const MAGIC: [u8; 4] = *b"KOBO";
 /// The newest wire version emitted by this runtime.
 ///
-/// During the 0.3.5 OTA window the decoder also accepts
-/// [`LEGACY_VERSION`]. Every other version remains refused rather than
-/// reinterpreted.
+/// The decoder accepts every version in [`ACCEPTED_VERSIONS`], which reaches
+/// back to [`DICTIONARY_VERSION`] so that applications already installed from
+/// the Store keep working when the platform under them is updated. Every other
+/// version is refused rather than reinterpreted.
 ///
 /// Went to 3 when a grid cell gained an optional glyph. That is a change to
 /// the payload of an existing tag rather than a new tag, so an old runtime
@@ -94,8 +95,40 @@ pub const SIM_CALLBACK_COMPLETE: &str = "cobalt.sim.callback.complete.v1";
 
 /// Folio's tile, section, and page-rail protocol.
 pub const FOLIO_VERSION: u8 = 12;
-/// The pre-Folio protocol retained during the compatibility window.
+/// The last pre-Folio protocol, retained so installed applications keep
+/// working.
 pub const LEGACY_VERSION: u8 = 11;
+/// The oldest protocol the runtime still speaks.
+///
+/// Version 11 only added the identity request and its result, on tags of
+/// their own, and changed the shape of no existing frame. A version-10
+/// application never sends either, and the runtime sends the result only in
+/// answer to the request, so its frames read and are answered exactly as a
+/// version-11 application's are. Refusing it left Store applications built
+/// for it unable to open after a platform update, with nothing on screen to
+/// say why.
+pub const DICTIONARY_VERSION: u8 = 10;
+/// Every protocol the runtime reads and answers in.
+///
+/// An application keeps the version it was built with for as long as it is
+/// installed, so a version leaves this list only when no published
+/// application can still be speaking it. A test holds it to the release
+/// registry's `tools/protocol-minimums.json`, so removing one is a visible
+/// decision rather than a side effect.
+pub const ACCEPTED_VERSIONS: [u8; 6] = [
+    DICTIONARY_VERSION,
+    LEGACY_VERSION,
+    FOLIO_VERSION,
+    SELECTED_GRID_VERSION,
+    SUSPEND_VERSION,
+    VERSION,
+];
+
+/// Whether `version` is one the runtime reads and answers in.
+#[must_use]
+pub fn accepted_version(version: u8) -> bool {
+    ACCEPTED_VERSIONS.contains(&version)
+}
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -1986,10 +2019,7 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    if !matches!(
-        frame.version,
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | SUSPEND_VERSION | VERSION
-    ) {
+    if !accepted_version(frame.version) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
     let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
@@ -2748,7 +2778,7 @@ fn task_outcome_len(outcome: &TaskOutcome) -> Result<usize, ProtocolError> {
 }
 
 fn orientation_layout(version: u8) -> Result<(u8, usize), ProtocolError> {
-    if version == LEGACY_VERSION {
+    if version < FOLIO_VERSION {
         Err(ProtocolError::InvalidValue("protocol 12 orientation"))
     } else {
         Ok((36, 1))
@@ -4266,12 +4296,12 @@ fn encoded_node_len(
         } => {
             // Protocol 11 ends after the optional value. Protocol 12 adds a
             // second flag and the optional trailing destination.
-            let mut length = if version == LEGACY_VERSION { 6 } else { 7 };
+            let mut length = if version < FOLIO_VERSION { 6 } else { 7 };
             add_encoded_len(&mut length, encoded_string_len(title)?)?;
             if let Some(value) = value {
                 add_encoded_len(&mut length, encoded_string_len(value)?)?;
             }
-            if version == LEGACY_VERSION && link.is_some() {
+            if version < FOLIO_VERSION && link.is_some() {
                 return Err(ProtocolError::InvalidValue("protocol 12 section link"));
             }
             if let Some(link) = link {
@@ -4442,7 +4472,7 @@ fn encoded_node_len(
             if tiles.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
             }
-            if version == LEGACY_VERSION && matches!(shape, TileShape::Card) {
+            if version < FOLIO_VERSION && matches!(shape, TileShape::Card) {
                 return Err(ProtocolError::InvalidValue("protocol 12 tile shape"));
             }
             let mut length = 7;
@@ -4451,7 +4481,7 @@ fn encoded_node_len(
                 add_encoded_len(&mut length, encoded_string_len(&tile.label)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&tile.badge)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&tile.subtitle)?)?;
-                if version == LEGACY_VERSION {
+                if version < FOLIO_VERSION {
                     if !tile.value.is_empty() {
                         return Err(ProtocolError::InvalidValue("protocol 12 tile value"));
                     }
@@ -4471,7 +4501,7 @@ fn encoded_node_len(
             }
             length
         }
-        Node::PageRail { .. } if version == LEGACY_VERSION => {
+        Node::PageRail { .. } if version < FOLIO_VERSION => {
             return Err(ProtocolError::InvalidValue("protocol 12 page rail"));
         }
         Node::PageRail { .. } => 9,
@@ -4635,10 +4665,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::BadMagic);
     }
     let version = bytes[4];
-    if !matches!(
-        version,
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | SUSPEND_VERSION | VERSION
-    ) {
+    if !accepted_version(version) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -4665,7 +4692,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             let mut count = 0;
             Message::SetScreen(decode_screen(&mut reader, 0, &mut count, version)?)
         }
-        36 if version == LEGACY_VERSION => {
+        36 if version < FOLIO_VERSION => {
             return Err(ProtocolError::UnknownMessageType(36));
         }
         36 => Message::SetOrientation(
@@ -5113,10 +5140,7 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if !matches!(
-        header[4],
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | SUSPEND_VERSION | VERSION
-    ) {
+    if !accepted_version(header[4]) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -5525,7 +5549,7 @@ fn encode_node(
             if let Some(value) = value {
                 push_string(output, value)?;
             }
-            if version == LEGACY_VERSION {
+            if version < FOLIO_VERSION {
                 if link.is_some() {
                     return Err(ProtocolError::InvalidValue("protocol 12 section link"));
                 }
@@ -5787,7 +5811,7 @@ fn encode_node(
         Node::TileGrid { id, tiles, shape } => {
             output.push(9);
             push_u32(output, id.0);
-            if version == LEGACY_VERSION && matches!(shape, TileShape::Card) {
+            if version < FOLIO_VERSION && matches!(shape, TileShape::Card) {
                 return Err(ProtocolError::InvalidValue("protocol 12 tile shape"));
             }
             output.push(match shape {
@@ -5808,7 +5832,7 @@ fn encode_node(
                 });
                 push_string(output, &tile.badge)?;
                 push_string(output, &tile.subtitle)?;
-                if version == LEGACY_VERSION {
+                if version < FOLIO_VERSION {
                     if !tile.value.is_empty() {
                         return Err(ProtocolError::InvalidValue("protocol 12 tile value"));
                     }
@@ -5837,7 +5861,7 @@ fn encode_node(
             }
         }
         Node::PageRail { id, page, of } => {
-            if version == LEGACY_VERSION {
+            if version < FOLIO_VERSION {
                 return Err(ProtocolError::InvalidValue("protocol 12 page rail"));
             }
             output.push(31);
@@ -6487,7 +6511,7 @@ fn decode_screen(
     screen.reading = reading;
     screen.auto_hide_top_bar = auto_hide_top_bar;
     screen.reading_font = reading_font;
-    screen.legacy_typography = version == LEGACY_VERSION;
+    screen.legacy_typography = version < FOLIO_VERSION;
     Ok(screen)
 }
 
@@ -6698,7 +6722,7 @@ fn decode_node(
             } else {
                 Some(reader.string()?)
             };
-            let link = if version == LEGACY_VERSION {
+            let link = if version < FOLIO_VERSION {
                 None
             } else {
                 match reader.u8()? {
@@ -6898,12 +6922,12 @@ fn decode_node(
                 };
                 let badge = reader.string()?;
                 let subtitle = reader.string()?;
-                let value = if version == LEGACY_VERSION {
+                let value = if version < FOLIO_VERSION {
                     String::new()
                 } else {
                     reader.string()?
                 };
-                let menu = if version == LEGACY_VERSION {
+                let menu = if version < FOLIO_VERSION {
                     None
                 } else {
                     match reader.u8()? {
@@ -8782,6 +8806,33 @@ mod tests {
     }
 
     #[test]
+    fn every_protocol_a_published_app_was_built_for_is_still_accepted() {
+        // The release registry lists every protocol the Store has published
+        // applications at. An application keeps its protocol for as long as
+        // it is installed, so a platform update that refused one of these
+        // would leave that application unable to open. Removing a version
+        // from the runtime now means removing it from the registry first.
+        let registry = include_str!("../../../tools/protocol-minimums.json");
+        let start = registry.find("\"protocols\"").expect("a protocols map");
+        let body = &registry[start..];
+        let end = body.find('}').expect("the map closes");
+        let published: Vec<u8> = body[..end]
+            .split('"')
+            .filter_map(|part| part.parse::<u8>().ok())
+            .collect();
+        assert!(
+            !published.is_empty(),
+            "no protocols were read from the registry"
+        );
+        for version in published {
+            assert!(
+                accepted_version(version),
+                "protocol {version} is in the release registry but the runtime refuses it"
+            );
+        }
+    }
+
+    #[test]
     fn versions_outside_the_window_are_refused() {
         let frame = Frame {
             version: VERSION,
@@ -8789,10 +8840,10 @@ mod tests {
             message: Message::Exit,
         };
         let mut bytes = encode(&frame).expect("encoding");
-        bytes[4] = LEGACY_VERSION - 1;
+        bytes[4] = DICTIONARY_VERSION - 1;
         assert_eq!(
             decode(&bytes),
-            Err(ProtocolError::UnsupportedVersion(LEGACY_VERSION - 1))
+            Err(ProtocolError::UnsupportedVersion(DICTIONARY_VERSION - 1))
         );
         bytes[4] = VERSION + 1;
         assert_eq!(
