@@ -1476,6 +1476,21 @@ impl AppState {
         self.services.set_magnet(observed.magnet_present);
     }
 
+    /// Redraws the band when a Wi-Fi request changed what it shows.
+    ///
+    /// The band samples the radio only when the chrome is rebuilt, and a Wi-Fi
+    /// reply rebuilds nothing on its own, so switching Wi-Fi off left the old
+    /// mark on screen until something unrelated redrew it. A frame is
+    /// committed only when the mark moved, so a scan does not repaint.
+    fn follow_radio(&mut self) {
+        let signal = |state: &Self| state.chrome.status.as_ref().map(|status| status.signal);
+        let before = signal(self);
+        self.update_chrome();
+        if signal(self) != before {
+            self.commit_frame();
+        }
+    }
+
     fn update_chrome(&mut self) {
         if let Ok(snapshot) = self.time.now() {
             self.clock_snapshot = snapshot;
@@ -3153,6 +3168,9 @@ fn read_app_messages(
                         Some(result) => result,
                         None => state.services.handle(request.clone()),
                     };
+                    if radio::is_wifi(&request) {
+                        state.follow_radio();
+                    }
                     if matches!(
                         result,
                         kobo_protocol::DeviceResult::Done
@@ -3873,6 +3891,37 @@ const SHELL: &str = include_str!("shell.html");
 
 #[cfg(test)]
 mod tests {
+    /// Held by every test that changes the process-wide simulated radio, so
+    /// one cannot switch it while another is reading it back.
+    static RADIO_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn switching_wifi_off_redraws_the_band_without_waiting_for_another_frame() {
+        let _radio = RADIO_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = super::AppState::default();
+        state.set_screen(kobo_ui::Screen::new(1, vec![]));
+        state.update_chrome();
+        let signal = |state: &super::AppState| state.chrome.status.as_ref().map(|s| s.signal);
+        assert_eq!(signal(&state), Some(kobo_ui::Signal::Strong));
+        let drawn = state.panel.planner.refreshes();
+        let _ = super::RADIO
+            .lock()
+            .unwrap()
+            .handle(&kobo_protocol::DeviceRequest::SetWifi { enabled: false });
+        state.follow_radio();
+        let after = signal(&state);
+        let redrawn = state.panel.planner.refreshes() != drawn;
+        // The radio is process-wide, so put it back before asserting.
+        let _ = super::RADIO
+            .lock()
+            .unwrap()
+            .handle(&kobo_protocol::DeviceRequest::SetWifi { enabled: true });
+        assert_eq!(after, Some(kobo_ui::Signal::Off));
+        assert!(redrawn, "the band changed but no frame was committed");
+    }
+
     #[test]
     fn a_wifi_request_is_refused_by_policy_before_the_radio_is_asked() {
         use kobo_policy::{Backends, Declared, DeviceServices, PowerPolicy};
@@ -3942,6 +3991,9 @@ mod tests {
     }
     #[test]
     fn fixture_endpoints_are_bounded() {
+        let _radio = RADIO_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (socket, _peer) = UnixStream::pair().unwrap();
         let mut state = super::AppState {
             runtime_navigation: true,

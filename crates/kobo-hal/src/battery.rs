@@ -126,9 +126,13 @@ fn read_percent(path: &Path) -> Option<u8> {
 /// USB or mains supply's `online` changes the moment the cable does.
 ///
 /// `None` when no such supply publishes a readable `online`, so a device whose
-/// driver exposes only the battery keeps the answer it had before.
+/// driver exposes only the battery keeps the answer it had before. Also `None`
+/// when one supply says `0` and another cannot be read: the unreadable one may
+/// be the cable that is plugged in, and answering "unplugged" would override
+/// a battery that reports it is charging.
 fn cable_online(supplies: &Path) -> Option<bool> {
     let mut seen = None;
+    let mut unknown = false;
     for entry in fs::read_dir(supplies).ok()?.filter_map(Result::ok).take(32) {
         let path = entry.path();
         let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
@@ -142,10 +146,14 @@ fn cable_online(supplies: &Path) -> Option<bool> {
         {
             Ok("1") => return Some(true),
             Ok("0") => seen = Some(false),
-            _ => {}
+            _ => unknown = true,
         }
     }
-    seen
+    if unknown {
+        None
+    } else {
+        seen
+    }
 }
 
 /// Whether the device is on external power.
@@ -196,6 +204,18 @@ mod tests {
         fs::write(root.join("usb/online"), "0\n").expect("online");
         assert!(!read_from(&root).expect("a battery").charging);
         fs::write(root.join("usb/online"), "1\n").expect("online");
+        assert!(read_from(&root).expect("a battery").charging);
+    }
+
+    #[test]
+    fn an_unreadable_cable_supply_does_not_overrule_a_charging_battery() {
+        // One supply says unplugged and another cannot be read. The unreadable
+        // one may be the live cable, so the battery's own status decides.
+        let root = root("unreadable-cable-supply");
+        supply(&root, "battery", "Battery", "60", "Charging");
+        supply(&root, "usb", "USB", "", "");
+        fs::write(root.join("usb/online"), "0\n").expect("online");
+        supply(&root, "mains", "Mains", "", "");
         assert!(read_from(&root).expect("a battery").charging);
     }
 
