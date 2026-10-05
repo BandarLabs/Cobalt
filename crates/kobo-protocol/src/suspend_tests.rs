@@ -24,7 +24,12 @@ fn suspend_messages_are_bounded_generation_scoped_and_version_gated() {
         for length in 0..bytes.len() {
             assert!(decode(&bytes[..length]).is_err());
         }
-        for version in [LEGACY_VERSION, FOLIO_VERSION, SELECTED_GRID_VERSION] {
+        for version in [
+            crate::DICTIONARY_VERSION,
+            LEGACY_VERSION,
+            FOLIO_VERSION,
+            SELECTED_GRID_VERSION,
+        ] {
             assert!(encode(&Frame {
                 version,
                 ..frame.clone()

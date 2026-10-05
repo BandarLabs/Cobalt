@@ -108,6 +108,11 @@ pub const LEGACY_VERSION: u8 = 11;
 /// for it unable to open after a platform update, with nothing on screen to
 /// say why.
 pub const DICTIONARY_VERSION: u8 = 10;
+/// The protocols that predate Folio and share its legacy wire layout, so
+/// tests can hold every pre-Folio gate for each of them.
+#[cfg(test)]
+const PRE_FOLIO_VERSIONS: [u8; 2] = [DICTIONARY_VERSION, LEGACY_VERSION];
+
 /// Every protocol the runtime reads and answers in.
 ///
 /// An application keeps the version it was built with for as long as it is
@@ -8062,30 +8067,34 @@ mod tests {
     }
 
     #[test]
-    fn protocol_11_cannot_encode_or_decode_application_secret_requests() {
-        let request = Frame {
-            version: LEGACY_VERSION,
-            request_id: 9,
-            message: Message::DeviceRequest(DeviceRequest::SetSecret {
-                name: "zotero".to_owned(),
-                value: SecretValue::new("owner-value"),
-            }),
-        };
-        assert_eq!(
-            encode(&request),
-            Err(ProtocolError::InvalidValue("application secret"))
-        );
+    fn pre_folio_protocols_cannot_encode_or_decode_application_secret_requests() {
+        // Protocol 10 is read and answered as protocol 11 is, through the
+        // same pre-Folio gates, so every gate is held for both.
+        for version in crate::PRE_FOLIO_VERSIONS {
+            let request = Frame {
+                version,
+                request_id: 9,
+                message: Message::DeviceRequest(DeviceRequest::SetSecret {
+                    name: "zotero".to_owned(),
+                    value: SecretValue::new("owner-value"),
+                }),
+            };
+            assert_eq!(
+                encode(&request),
+                Err(ProtocolError::InvalidValue("application secret"))
+            );
 
-        let mut bytes = encode(&Frame {
-            version: VERSION,
-            ..request
-        })
-        .expect("protocol 12 secret request");
-        bytes[4] = LEGACY_VERSION;
-        assert_eq!(
-            decode(&bytes),
-            Err(ProtocolError::InvalidValue("device request"))
-        );
+            let mut bytes = encode(&Frame {
+                version: VERSION,
+                ..request
+            })
+            .expect("protocol 12 secret request");
+            bytes[4] = version;
+            assert_eq!(
+                decode(&bytes),
+                Err(ProtocolError::InvalidValue("device request"))
+            );
+        }
     }
 
     #[test]
@@ -8647,120 +8656,132 @@ mod tests {
     }
 
     #[test]
-    fn version_11_screen_frames_survive_the_0_3_4_compatibility_window() {
-        // Heading and body are unchanged v11 payloads, representative of an
-        // already-installed app. The peer version must select the legacy
-        // renderer rather than refuse an OTA user's application.
-        let nodes = vec![
-            Node::Heading {
-                id: NodeId(1),
-                text: "Existing app".into(),
-                level: 1,
-            },
-            Node::Text {
-                id: NodeId(2),
-                text: "Its local Atkinson measurements still apply.".into(),
-                links: Vec::new(),
-            },
-        ];
-        let screen = Screen::new(9, nodes.clone());
-        let frame = Frame {
-            version: LEGACY_VERSION,
-            request_id: 3,
-            message: Message::SetScreen(screen),
-        };
-        let bytes = encode(&frame).expect("v11 encoding");
-        let back = decode(&bytes).expect("v11 accepted");
-        assert_eq!(back.version, LEGACY_VERSION);
-        let Message::SetScreen(decoded) = back.message else {
-            panic!("expected screen");
-        };
-        assert!(decoded.legacy_typography);
-        assert_eq!(decoded.nodes, nodes);
-        assert!(decoded
-            .layout()
-            .nodes
-            .iter()
-            .any(|node| matches!(node.kind, kobo_ui::LayoutKind::Heading(1))));
+    fn pre_folio_screen_frames_keep_the_legacy_renderer() {
+        // Protocol 10 is read and answered as protocol 11 is, through the
+        // same pre-Folio gates, so every gate is held for both.
+        for version in crate::PRE_FOLIO_VERSIONS {
+            // Heading and body are unchanged v11 payloads, representative of an
+            // already-installed app. The peer version must select the legacy
+            // renderer rather than refuse an OTA user's application.
+            let nodes = vec![
+                Node::Heading {
+                    id: NodeId(1),
+                    text: "Existing app".into(),
+                    level: 1,
+                },
+                Node::Text {
+                    id: NodeId(2),
+                    text: "Its local Atkinson measurements still apply.".into(),
+                    links: Vec::new(),
+                },
+            ];
+            let screen = Screen::new(9, nodes.clone());
+            let frame = Frame {
+                version,
+                request_id: 3,
+                message: Message::SetScreen(screen),
+            };
+            let bytes = encode(&frame).expect("v11 encoding");
+            let back = decode(&bytes).expect("v11 accepted");
+            assert_eq!(back.version, version);
+            let Message::SetScreen(decoded) = back.message else {
+                panic!("expected screen");
+            };
+            assert!(decoded.legacy_typography);
+            assert_eq!(decoded.nodes, nodes);
+            assert!(decoded
+                .layout()
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, kobo_ui::LayoutKind::Heading(1))));
+        }
     }
 
     #[test]
-    fn version_11_sections_and_tiles_use_the_legacy_wire_layout() {
-        let nodes = vec![
-            Node::Section {
-                id: NodeId(1),
-                title: "Library".into(),
-                value: Some("12".into()),
-                link: None,
-            },
-            Node::TileGrid {
-                id: NodeId(2),
-                shape: TileShape::Portrait,
-                tiles: vec![Tile::new(ActionId(5), "Book", Glyph::Book)],
-            },
-        ];
-        let frame = Frame {
-            version: LEGACY_VERSION,
-            request_id: 7,
-            message: Message::SetScreen(Screen::new(10, nodes.clone())),
-        };
-        let Message::SetScreen(decoded) = decode(&encode(&frame).expect("v11 encoding"))
-            .expect("v11 decoding")
-            .message
-        else {
-            panic!("expected screen");
-        };
-        assert_eq!(decoded.nodes, nodes);
-    }
-
-    #[test]
-    fn version_11_encoder_rejects_folio_only_fields() {
-        let screens = [
-            Screen::new(
-                1,
-                vec![Node::Section {
+    fn pre_folio_sections_and_tiles_use_the_legacy_wire_layout() {
+        // Protocol 10 is read and answered as protocol 11 is, through the
+        // same pre-Folio gates, so every gate is held for both.
+        for version in crate::PRE_FOLIO_VERSIONS {
+            let nodes = vec![
+                Node::Section {
                     id: NodeId(1),
                     title: "Library".into(),
-                    value: None,
-                    link: Some(BarAction::new(ActionId(2), "View all")),
-                }],
-            ),
-            Screen::new(
-                1,
-                vec![Node::TileGrid {
-                    id: NodeId(1),
-                    shape: TileShape::Square,
-                    tiles: vec![Tile::new(ActionId(2), "Updates", Glyph::Download)
-                        .with_value("3")
-                        .with_menu(ActionId(3))],
-                }],
-            ),
-            Screen::new(
-                1,
-                vec![Node::TileGrid {
-                    id: NodeId(1),
-                    shape: TileShape::Card,
-                    tiles: Vec::new(),
-                }],
-            ),
-            Screen::new(
-                1,
-                vec![Node::PageRail {
-                    id: NodeId(1),
-                    page: 0,
-                    of: 2,
-                }],
-            ),
-        ];
-        for screen in screens {
-            assert!(matches!(
-                encode(&Frame {
-                    version: LEGACY_VERSION,
-                    request_id: 8,
-                    message: Message::SetScreen(screen),
-                }),
-                Err(ProtocolError::InvalidValue(_))
-            ));
+                    value: Some("12".into()),
+                    link: None,
+                },
+                Node::TileGrid {
+                    id: NodeId(2),
+                    shape: TileShape::Portrait,
+                    tiles: vec![Tile::new(ActionId(5), "Book", Glyph::Book)],
+                },
+            ];
+            let frame = Frame {
+                version,
+                request_id: 7,
+                message: Message::SetScreen(Screen::new(10, nodes.clone())),
+            };
+            let Message::SetScreen(decoded) = decode(&encode(&frame).expect("v11 encoding"))
+                .expect("v11 decoding")
+                .message
+            else {
+                panic!("expected screen");
+            };
+            assert_eq!(decoded.nodes, nodes);
+        }
+    }
+
+    #[test]
+    fn pre_folio_encoders_reject_folio_only_fields() {
+        // Protocol 10 is read and answered as protocol 11 is, through the
+        // same pre-Folio gates, so every gate is held for both.
+        for version in crate::PRE_FOLIO_VERSIONS {
+            let screens = [
+                Screen::new(
+                    1,
+                    vec![Node::Section {
+                        id: NodeId(1),
+                        title: "Library".into(),
+                        value: None,
+                        link: Some(BarAction::new(ActionId(2), "View all")),
+                    }],
+                ),
+                Screen::new(
+                    1,
+                    vec![Node::TileGrid {
+                        id: NodeId(1),
+                        shape: TileShape::Square,
+                        tiles: vec![Tile::new(ActionId(2), "Updates", Glyph::Download)
+                            .with_value("3")
+                            .with_menu(ActionId(3))],
+                    }],
+                ),
+                Screen::new(
+                    1,
+                    vec![Node::TileGrid {
+                        id: NodeId(1),
+                        shape: TileShape::Card,
+                        tiles: Vec::new(),
+                    }],
+                ),
+                Screen::new(
+                    1,
+                    vec![Node::PageRail {
+                        id: NodeId(1),
+                        page: 0,
+                        of: 2,
+                    }],
+                ),
+            ];
+            for screen in screens {
+                assert!(matches!(
+                    encode(&Frame {
+                        version,
+                        request_id: 8,
+                        message: Message::SetScreen(screen),
+                    }),
+                    Err(ProtocolError::InvalidValue(_))
+                ));
+            }
         }
     }
 
@@ -10766,16 +10787,20 @@ mod picture_tests {
     }
 
     #[test]
-    fn protocol_11_cannot_send_orientation_requests() {
-        let frame = Frame {
-            version: LEGACY_VERSION,
-            request_id: 4,
-            message: Message::SetOrientation(Orientation::Landscape),
-        };
-        assert_eq!(
-            encode(&frame),
-            Err(ProtocolError::InvalidValue("protocol 12 orientation"))
-        );
+    fn pre_folio_protocols_cannot_send_orientation_requests() {
+        // Protocol 10 is read and answered as protocol 11 is, through the
+        // same pre-Folio gates, so every gate is held for both.
+        for version in crate::PRE_FOLIO_VERSIONS {
+            let frame = Frame {
+                version,
+                request_id: 4,
+                message: Message::SetOrientation(Orientation::Landscape),
+            };
+            assert_eq!(
+                encode(&frame),
+                Err(ProtocolError::InvalidValue("protocol 12 orientation"))
+            );
+        }
     }
 
     #[test]
@@ -10842,7 +10867,12 @@ mod update_task_tests {
             let mut unknown = bytes.clone();
             unknown[HEADER_LEN + 5] = 2;
             assert!(decode(&unknown).is_err());
-            for version in [LEGACY_VERSION, FOLIO_VERSION, SELECTED_GRID_VERSION] {
+            for version in [
+                DICTIONARY_VERSION,
+                LEGACY_VERSION,
+                FOLIO_VERSION,
+                SELECTED_GRID_VERSION,
+            ] {
                 let mut older = frame.clone();
                 older.version = version;
                 assert!(encode(&older).is_err());
