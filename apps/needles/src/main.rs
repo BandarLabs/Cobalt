@@ -236,7 +236,12 @@ impl Needles {
     }
 
     fn project(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("needles-project").top_bar("Needles");
+        // Projects and the pattern library are places, so they are marks in
+        // the bar rather than two more boxes in a wall of eight.
+        let mut screen = ScreenBuilder::new("needles-project")
+            .top_bar("Needles")
+            .top_bar_glyph("library", "Library, queue and favorites", Glyph::Book)
+            .top_bar_glyph("projects", "Projects", Glyph::Folder);
         if let Some(note) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, note);
         }
@@ -275,15 +280,38 @@ impl Needles {
                     .try_into()
                     .unwrap_or(100)
             })
-            // Undo sits beside the increment it reverses: a miscount is fixed
-            // with a tap next to the tap that made it, not one a screen away.
-            .buttons([("plus", "+1 row"), ("undo", "Undo")])
+            // The count is what this screen is for, so the controls sit at
+            // the foot where a thumb rests between stitches, and +1 row is
+            // the one filled control: it is pressed a hundred times for every
+            // press of anything else, and it was the same small box as six
+            // things done once a project.
+            .rows([(
+                "read",
+                "Read synced pattern",
+                "The pattern sent from your computer",
+                Glyph::Note,
+            )])
+            .fill()
             .buttons([
                 ("section", "Change section"),
                 ("repeat-total", "Repeat length"),
             ])
-            .buttons([("read", "Read synced pattern"), ("projects", "Projects")])
-            .button("library", "Library, queue and favorites")
+            // Undo still sits beside the increment it reverses: a miscount is
+            // fixed with a tap next to the tap that made it.
+            .band(
+                kobo_sdk::BandAlign::Middle,
+                [
+                    (
+                        kobo_sdk::SlotWidth::Fill,
+                        Box::new(|slot: ScreenBuilder| slot.button("undo", "Undo"))
+                            as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                    ),
+                    (
+                        kobo_sdk::SlotWidth::Fill,
+                        Box::new(|slot: ScreenBuilder| slot.primary_button("plus", "+1 row")),
+                    ),
+                ],
+            )
             .build()
     }
 

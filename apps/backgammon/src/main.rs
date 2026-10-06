@@ -26,7 +26,16 @@ const BOARD_PICTURE: PictureHandle = PictureHandle(1);
 const BOARD_WIDTH: u32 = 960;
 /// How wide one point is on the drawn board.
 const POINT_WIDTH: i32 = 68;
-const BOARD_HEIGHT: u32 = 580;
+/// The height the board itself is drawn at.
+const DRAWN_HEIGHT: u32 = 580;
+/// A band above and below the board for the point numbers.
+///
+/// Both rows of points were numbered in the narrow gap between them, top row
+/// two pixels above bottom row, so 13 was drawn over 12 and 15 over 10, and
+/// the board read 18, 14, 18, 16, 87 along its middle. Each row is now
+/// numbered beside its own points, the way a printed board is.
+const LABEL_BAND: u32 = 30;
+const BOARD_HEIGHT: u32 = DRAWN_HEIGHT + 2 * LABEL_BAND;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Player {
@@ -1209,8 +1218,9 @@ fn displayed_points(game: &Game) -> Vec<usize> {
 }
 
 fn put_pixel(pixels: &mut [u8], x: i32, y: i32, tone: u8) {
+    let rows = pixels.len() / usize::try_from(BOARD_WIDTH).expect("width");
     if (0..i32::try_from(BOARD_WIDTH).expect("board width fits i32")).contains(&x)
-        && (0..i32::try_from(BOARD_HEIGHT).expect("board height fits i32")).contains(&y)
+        && (0..i32::try_from(rows).expect("board height fits i32")).contains(&y)
     {
         pixels[usize::try_from(y).expect("checked y")
             * usize::try_from(BOARD_WIDTH).expect("width")
@@ -1271,6 +1281,17 @@ fn triangle(pixels: &mut [u8], x: i32, width: i32, top: bool, dark: bool) {
     }
 }
 
+/// One digit's width, stroke and the gap between two digits, in board pixels.
+///
+/// The board is drawn at 960 pixels and shown at about 830 on a Clara, so a
+/// two pixel stroke came out at under two and the three pixel gap between
+/// the digits of 13 closed up: the 1's right edge read as the 3's missing
+/// left side, and 13 to 18 were read as 18 to 88.
+const DIGIT_WIDTH: i32 = 14;
+const DIGIT_HEIGHT: i32 = 24;
+const DIGIT_STROKE: i32 = 3;
+const DIGIT_GAP: i32 = 6;
+
 fn seven_segment_digit(pixels: &mut [u8], x: i32, y: i32, digit: u8, tone: u8) {
     const SEGMENTS: [[bool; 7]; 10] = [
         [true, true, true, true, true, true, false],
@@ -1284,15 +1305,17 @@ fn seven_segment_digit(pixels: &mut [u8], x: i32, y: i32, digit: u8, tone: u8) {
         [true, true, true, true, true, true, true],
         [true, true, true, true, false, true, true],
     ];
+    let (wide, tall, stroke) = (DIGIT_WIDTH, DIGIT_HEIGHT, DIGIT_STROKE);
+    let half = tall / 2;
     let segments = SEGMENTS[usize::from(digit)];
     let strokes = [
-        (x + 2, y, 8, 2),
-        (x + 10, y + 2, 2, 8),
-        (x + 10, y + 12, 2, 8),
-        (x + 2, y + 20, 8, 2),
-        (x, y + 12, 2, 8),
-        (x, y + 2, 2, 8),
-        (x + 2, y + 10, 8, 2),
+        (x + stroke, y, wide - 2 * stroke, stroke),
+        (x + wide - stroke, y + stroke, stroke, half - stroke),
+        (x + wide - stroke, y + half, stroke, half - stroke),
+        (x + stroke, y + tall - stroke, wide - 2 * stroke, stroke),
+        (x, y + half, stroke, half - stroke),
+        (x, y + stroke, stroke, half - stroke),
+        (x + stroke, y + half - stroke / 2, wide - 2 * stroke, stroke),
     ];
     for (on, (left, top, width, height)) in segments.into_iter().zip(strokes) {
         if on {
@@ -1301,13 +1324,15 @@ fn seven_segment_digit(pixels: &mut [u8], x: i32, y: i32, digit: u8, tone: u8) {
     }
 }
 
-fn number(pixels: &mut [u8], x: i32, y: i32, value: u8, tone: u8) {
+/// Draws a number of one or two digits centred on `centre`.
+fn number(pixels: &mut [u8], centre: i32, y: i32, value: u8, tone: u8) {
     let value = value.min(99);
     if value >= 10 {
-        seven_segment_digit(pixels, x, y, value / 10, tone);
-        seven_segment_digit(pixels, x + 15, y, value % 10, tone);
+        let left = centre - DIGIT_WIDTH - DIGIT_GAP / 2;
+        seven_segment_digit(pixels, left, y, value / 10, tone);
+        seven_segment_digit(pixels, left + DIGIT_WIDTH + DIGIT_GAP, y, value % 10, tone);
     } else {
-        seven_segment_digit(pixels, x, y, value, tone);
+        seven_segment_digit(pixels, centre - DIGIT_WIDTH / 2, y, value, tone);
     }
 }
 
@@ -1374,17 +1399,32 @@ fn draw_points(pixels: &mut [u8], game: &Game, order: &[usize]) {
             if count > shown {
                 number(
                     pixels,
-                    x + POINT_WIDTH / 2 - 7,
+                    x + POINT_WIDTH / 2,
                     if row == 0 { 214 } else { 344 },
                     count,
                     if white { 32 } else { 244 },
                 );
             }
         }
+    }
+}
+
+/// Numbers each point in the band beside its own row.
+fn draw_point_numbers(pixels: &mut [u8], order: &[usize]) {
+    let band = i32::try_from(LABEL_BAND).expect("band");
+    let bottom = i32::try_from(BOARD_HEIGHT).expect("height") - band;
+    for (slot, point) in order.iter().enumerate() {
+        let row = slot / 12;
+        let x = point_x(slot % 12) + POINT_WIDTH / 2;
+        let y = if row == 0 {
+            (band - DIGIT_HEIGHT) / 2
+        } else {
+            bottom + (band - DIGIT_HEIGHT) / 2
+        };
         number(
             pixels,
-            x + POINT_WIDTH / 2 - if *point + 1 >= 10 { 15 } else { 7 },
-            if row == 0 { 278 } else { 280 },
+            x,
+            y,
             u8::try_from(*point + 1).expect("point number fits"),
             44,
         );
@@ -1434,8 +1474,8 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
             checker(pixels, 480, y, player == Player::White);
             number(
                 pixels,
-                473,
-                y - 11,
+                480,
+                y - DIGIT_HEIGHT / 2,
                 count,
                 if player == Player::White { 32 } else { 244 },
             );
@@ -1451,13 +1491,7 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
     // the box rather than beside it.
     fill_rect(pixels, 440, 268, 80, 46, 232);
     stroke_rect(pixels, 440, 268, 80, 46, 40);
-    number(
-        pixels,
-        if game.cube >= 10 { 458 } else { 466 },
-        275,
-        game.cube,
-        32,
-    );
+    number(pixels, 480, 279, game.cube, 32);
 
     for (index, value) in game.dice.iter().take(4).enumerate() {
         let x = if index % 2 == 0 { 440 } else { 484 };
@@ -1467,11 +1501,8 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
 }
 
 fn board_pixels(game: &Game) -> Vec<u8> {
-    let mut pixels = vec![
-        248;
-        usize::try_from(BOARD_WIDTH).expect("width")
-            * usize::try_from(BOARD_HEIGHT).expect("height")
-    ];
+    let width = usize::try_from(BOARD_WIDTH).expect("width");
+    let mut pixels = vec![248; width * usize::try_from(DRAWN_HEIGHT).expect("height")];
     fill_rect(&mut pixels, 12, 12, 936, 556, 226);
     stroke_rect(&mut pixels, 12, 12, 936, 556, 30);
     fill_rect(&mut pixels, 434, 14, 92, 552, 148);
@@ -1480,7 +1511,12 @@ fn board_pixels(game: &Game) -> Vec<u8> {
     draw_points(&mut pixels, game, &order);
     draw_move_markers(&mut pixels, game, &order);
     draw_centre(&mut pixels, game);
-    pixels
+    let band = width * usize::try_from(LABEL_BAND).expect("band");
+    let mut framed = vec![248; band];
+    framed.extend_from_slice(&pixels);
+    framed.extend(std::iter::repeat_n(248, band));
+    draw_point_numbers(&mut framed, &order);
+    framed
 }
 
 #[cfg(test)]
@@ -1648,8 +1684,11 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>, height: u16) -> Scr
             ("off", checker_counter("Off", game.position.off)),
         ],
     );
+    // The board grows until the screen is full, so without this the point
+    // keys ended exactly on the bar's rule and lost their bottom edge to it.
     screen
         .grid(8, true, point_controls(game))
+        .spacer(kobo_sdk::Space::Small)
         .action_bar([("roll", "Roll"), ("double", "Double"), ("undo", "Undo")])
         .build()
 }
@@ -2463,7 +2502,7 @@ mod tests {
     fn numeric_renderer_caps_untrusted_values() {
         let mut pixels =
             vec![255; usize::try_from(BOARD_WIDTH * BOARD_HEIGHT).expect("board pixel count")];
-        number(&mut pixels, 2, 2, u8::MAX, 32);
+        number(&mut pixels, 40, 2, u8::MAX, 32);
         assert!(pixels.contains(&32));
     }
 
@@ -2548,8 +2587,9 @@ mod tests {
         let marked = |point: usize| {
             let (row, column) = point_slot(&game, point);
             let x = point_x(column) + POINT_WIDTH / 2;
-            let y = if row == 0 { 246 } else { 334 };
-            pixels[usize::try_from(y).expect("row") * usize::try_from(BOARD_WIDTH).expect("width")
+            // Drawn coordinates, below the band that numbers the top row.
+            let y = LABEL_BAND as usize + if row == 0 { 246 } else { 334 };
+            pixels[y * usize::try_from(BOARD_WIDTH).expect("width")
                 + usize::try_from(x).expect("column")]
         };
         // The checker in hand is marked solid; where it may go is marked with
@@ -3038,7 +3078,8 @@ mod tests {
         game.roll();
         let pixels = board_pixels(&game);
         assert_eq!(
-            pixels[320 * usize::try_from(BOARD_WIDTH).expect("width") + 480],
+            pixels
+                [(320 + LABEL_BAND as usize) * usize::try_from(BOARD_WIDTH).expect("width") + 480],
             148
         );
         assert!(pixels.contains(&38));
