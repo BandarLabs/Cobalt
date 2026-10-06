@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 description = "Real type for the Kobo application platform"
 
+[features]
+# Compiles Literata in for titles, headings and books. On for the runtime and
+# the simulator, which draw type; off for applications, which only measure it.
+bundled-serif = []
+
 [dependencies]
 fontdue = "=0.9.3"
 kobo-ui = { version = "0.3.2", path = "../kobo-ui" }

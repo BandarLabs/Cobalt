@@ -98,11 +98,16 @@ the artifacts that contain them.
 | --- | --- | --- |
 | Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
 | DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
+| Literata (Regular and SemiBold), runtime and simulator only | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt` |
 | Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |
 
 Both permit embedding and redistribution. The OFL forbids selling the font on
 its own and requires the reserved name to be kept, which embedding does not
 touch.
+
+Literata sits behind the `bundled-serif` feature of `kobo-text`, which only the
+runtime and the simulator enable, so applications that link the crate to
+measure text do not carry it.
 
 ## Flashcards host conversion
 
