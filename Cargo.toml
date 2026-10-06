@@ -76,6 +76,7 @@ members = [
     "apps/lichess",
     "apps/logicpack",
     "apps/morse",
+    "apps/muse-panel",
     "apps/musicstand",
     "apps/needles",
     "apps/nonograms",
