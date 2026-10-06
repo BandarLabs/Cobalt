@@ -18,8 +18,8 @@
 //! qualified display ABI evidence; consent cannot qualify an unknown driver.
 
 use crate::{
-    firmware_branch, DeviceProfile, DeviceSnapshot, FramebufferController, GeometryRule,
-    TouchTransform, SUPPORTED_PROFILES,
+    firmware_branch, CompletionWait, DeviceProfile, DeviceSnapshot, FramebufferController,
+    GeometryRule, TouchTransform, SUPPORTED_PROFILES,
 };
 
 /// The pixel density assumed when no measured profile shares this resolution.
@@ -84,6 +84,9 @@ pub fn profile_from_probe(
         compatible_fragments: &[],
         framebuffer_id: leak(framebuffer.id.clone()),
         framebuffer_controller: controller,
+        // An unmeasured board gets the ordinary wait. Bypassing it is a claim
+        // about one board's driver, made only once that board has shown it.
+        completion_wait: CompletionWait::ReliableIoctl,
         width: framebuffer.width,
         height: framebuffer.height,
         pixels_per_inch: assumed_density(framebuffer.width, framebuffer.height),
@@ -226,8 +229,9 @@ mod tests {
         }
     }
 
-    /// A reader with no entry in the table: an unmeasured i.MX6SLL panel size, and a
-    /// firmware branch nothing here has been measured on.
+    /// A reader with no entry in the table: a synthetic i.MX6SLL board, and a
+    /// firmware branch nothing here has been measured on. The panel is the
+    /// Nia's size, but the device tree is not the Nia's, so no profile claims it.
     fn unmeasured_snapshot() -> DeviceSnapshot {
         DeviceSnapshot {
             compatible: vec!["test,unmeasured".to_owned(), "fsl,imx6sll".to_owned()],
@@ -372,24 +376,22 @@ mod tests {
 
     #[test]
     fn density_is_borrowed_from_a_measured_profile_that_shares_the_resolution() {
-        let mut snapshot = unmeasured_snapshot();
-        assert_eq!(
+        let density = |width, height| {
+            let mut snapshot = unmeasured_snapshot();
+            if let Some(framebuffer) = snapshot.framebuffer.as_mut() {
+                framebuffer.width = width;
+                framebuffer.height = height;
+            }
             profile_from_probe(&snapshot, TouchTransform::Direct)
                 .expect("derivable")
-                .pixels_per_inch,
-            ASSUMED_PIXELS_PER_INCH
-        );
-
-        if let Some(framebuffer) = snapshot.framebuffer.as_mut() {
-            framebuffer.width = 1072;
-            framebuffer.height = 1448;
-        }
-        assert_eq!(
-            profile_from_probe(&snapshot, TouchTransform::Direct)
-                .expect("derivable")
-                .pixels_per_inch,
-            300
-        );
+                .pixels_per_inch
+        };
+        // No measured profile is 600x800, so nothing is borrowed.
+        assert_eq!(density(600, 800), ASSUMED_PIXELS_PER_INCH);
+        // The Nia's panel, and the one resolution where borrowing changes the
+        // answer away from the assumption.
+        assert_eq!(density(758, 1024), 212);
+        assert_eq!(density(1072, 1448), 300);
     }
 
     #[test]

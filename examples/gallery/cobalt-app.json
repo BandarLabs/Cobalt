@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Every enabled specimen control now answers its tap with a caption, so no control in the gallery feels dead."
+  "release_notes": "Every page is now checked against each supported reader's own type, including the Kobo Nia, at every text size."
 }

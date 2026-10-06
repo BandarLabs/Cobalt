@@ -2025,31 +2025,17 @@ mod tests {
         screens
     }
 
-    /// Every panel the runtime supports, portrait, at every size a reader can
-    /// choose the type to be.
-    ///
-    /// A page that fits a Clara BW at the default size is not a page that
-    /// fits: the smallest supported panel is shorter, and 170% type on it
-    /// takes nearly twice the room. Both ends are checked because a reference
-    /// that overflows anywhere is a reference somebody copies into an
-    /// application that overflows there too.
-    fn supported_panels() -> Vec<(String, DisplayMetrics)> {
-        kobo_profile::SUPPORTED_PROFILES
-            .iter()
-            .flat_map(|profile| {
-                kobo_ui::TextScale::STEPS.into_iter().map(move |scale| {
-                    (
-                        format!("{} at {scale:?}", profile.id),
-                        DisplayMetrics {
-                            width: i32::try_from(profile.width).expect("a panel fits a layout"),
-                            height: i32::try_from(profile.height).expect("a panel fits a layout"),
-                            pixels_per_inch: i32::from(profile.pixels_per_inch),
-                            text_scale: scale,
-                        },
-                    )
-                })
-            })
-            .collect()
+    /// The environment variable naming the one panel a child run lays out.
+    const PANEL_UNDER_TEST: &str = "KOBO_GALLERY_PANEL";
+
+    /// One supported panel, portrait, at the default type size.
+    fn panel_metrics(profile: &kobo_profile::DeviceProfile) -> DisplayMetrics {
+        DisplayMetrics {
+            width: i32::try_from(profile.width).expect("a panel fits a layout"),
+            height: i32::try_from(profile.height).expect("a panel fits a layout"),
+            pixels_per_inch: i32::from(profile.pixels_per_inch),
+            text_scale: kobo_ui::TextScale::Default,
+        }
     }
 
     /// Every warning the reference provokes, and what provokes it.
@@ -2097,10 +2083,74 @@ mod tests {
         assert!(unaccounted.is_empty(), "{unaccounted:#?}");
     }
 
+    /// Every panel the runtime supports, at every size a reader can choose the
+    /// type to be.
+    ///
+    /// A page that fits a Clara BW at the default size is not a page that
+    /// fits: the smallest supported panel is shorter, and 170% type on it
+    /// takes nearly twice the room. Both ends are checked because a reference
+    /// that overflows anywhere is a reference somebody copies into an
+    /// application that overflows there too.
+    ///
+    /// Each panel is laid out in a process of its own, with the real
+    /// typesetter installed at that panel's metrics, because that is what the
+    /// device draws with. The built-in bitmap fallback sizes type in pixels
+    /// calibrated for a 300 ppi panel, so on the Nia's 212 ppi it sets body
+    /// text two fifths larger than the device does and reports overflow that
+    /// is not there. The typesetter is installed once per process and cannot
+    /// be swapped, which is why this re-runs itself once per panel rather
+    /// than looping.
     #[test]
     fn every_page_fits_every_supported_panel_at_every_text_size() {
+        if let Ok(panel) = std::env::var(PANEL_UNDER_TEST) {
+            every_page_fits_one_panel(&panel);
+            return;
+        }
+        let executable = std::env::current_exe().expect("the test binary can find itself");
+        let children = kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .map(|profile| {
+                let child = std::process::Command::new(&executable)
+                    .args([
+                        "--exact",
+                        "tests::every_page_fits_every_supported_panel_at_every_text_size",
+                        "--test-threads=1",
+                    ])
+                    .env(PANEL_UNDER_TEST, profile.id)
+                    .output();
+                (profile.id, child)
+            })
+            .collect::<Vec<_>>();
+        let failures = children
+            .into_iter()
+            .filter_map(|(panel, child)| {
+                let child = child.expect("a panel run can be started");
+                (!child.status.success()).then(|| {
+                    format!(
+                        "{panel}:\n{}{}",
+                        String::from_utf8_lossy(&child.stdout),
+                        String::from_utf8_lossy(&child.stderr)
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// The child half of the test above: one panel, real type, every size.
+    fn every_page_fits_one_panel(panel: &str) {
+        let profile = kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .find(|profile| profile.id == panel)
+            .expect("the parent names a supported panel");
+        let base = panel_metrics(profile);
+        kobo_text::install(base).expect("the bundled faces load");
         let mut failures = Vec::new();
-        for (panel, metrics) in supported_panels() {
+        for scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..base
+            };
             for (name, screen) in every_page(metrics) {
                 let errors = screen
                     .diagnostics(&metrics, &Chrome::measuring(false))
@@ -2110,7 +2160,7 @@ mod tests {
                     .map(|issue| format!("{:?}", issue.kind))
                     .collect::<Vec<_>>();
                 if !errors.is_empty() {
-                    failures.push(format!("{panel}: {name}: {errors:?}"));
+                    failures.push(format!("{panel} at {scale:?}: {name}: {errors:?}"));
                 }
             }
         }

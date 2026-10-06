@@ -29,6 +29,7 @@ others. A branch that is not listed still runs, behind the notice.
 | Kobo Libra Colour | N428, code 390, firmware 4.45.23697, kernel 4.9.77 | Read-only probe, measured touch transform, all four bounded display stages, wait timing, guardian restoration, an end-to-end tap, page-button presses (upper 193 pages back, lower 194 forward, the Libra 2's mapping), and a clean stock-reader restart with no watchdog reset all complete on the owner's device. Evidence on [issue #28](https://github.com/BandarLabs/Cobalt/issues/28) and [PR #49](https://github.com/BandarLabs/Cobalt/pull/49). Colour path and suspend/resume not exercised | Fully tested |
 | Kobo Libra Colour | N428, code 390, firmware 4.46.23836, kernel 4.9.77 | Read-only doctor and physical touch match; all four bounded display stages, wait timing, guardian restoration, and a launcher hand-back test complete. Page buttons, colour path, and suspend/resume remain untested | Fully tested |
 | Kobo Libra H2O | N873, code 384, firmware 4.38.23697, kernel 4.1.15-00417-g0c800cffe1f9 | Read-only doctor match, measured touch transform across both verified rotations, all five bounded display stages, wait timing, guardian restoration, and a clean stock-reader restart with no kernel reset all complete on the owner's device. Evidence on [issue #184](https://github.com/BandarLabs/Cobalt/issues/184) and [PR #185](https://github.com/BandarLabs/Cobalt/pull/185) | Fully tested |
+| Kobo Nia | N306, code 382, firmware 4.38.23684, kernel 4.1.15-00463-g38afd5cea756 | Read-only doctor match, a measured touch, and owner footage of the launcher and apps running on the physical device ([PR #45](https://github.com/BandarLabs/Cobalt/pull/45)). The measured unit is `PCB='E60U20'`, `PCB_REV=0x10`, `PCB_LVL='A'`, `PMIC='RC5T619'`, `FL_PWM='LM3630x1a'`. Sandbox results and refresh timing with the completion wait bypassed are not yet recorded. A BD71828 revision ships under the same device code and is unmeasured | Supported (owner video) |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
@@ -598,6 +599,16 @@ failure; a Todo session rendered at 1404×1872 with physical taps reaching UI
 actions; release of panel and touch followed by a successful stock-reader
 restart; and suspend/resume with monotonic device uptime and no Cobalt process
 left running.
+
+[KOReader marks its KoboLuna/Nia profile](https://github.com/koreader/koreader/blob/master/frontend/device/kobo/device.lua#L372-L383)
+as having an unreliable `MXCFB_WAIT_FOR_UPDATE_COMPLETE` ioctl, and
+[FBInk carries the same quirk](https://github.com/NiLuJe/FBInk/blob/master/fbink_device_id.c#L974-L982)
+for device code 382. The Nia profile therefore never enters that ioctl: each
+completion fence pauses for the
+[2.5 ms KOReader's stub wait uses](https://github.com/koreader/koreader-base/blob/master/ffi/framebuffer_mxcfb.lua#L239-L244)
+and retires the marker. The frame-timing records name these `paced`, not
+`completed`, because a pause is not evidence the panel finished. Sustained
+timing over several hundred physical refreshes has not been recorded yet.
 
 Update markers are random and at least `0x40000000`, because markers are a
 global namespace shared with the stock reader and a low fixed marker could be

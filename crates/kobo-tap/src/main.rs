@@ -311,7 +311,7 @@ mod tests {
     use kobo_hal::touch::{InputEvent32, TouchDecoder, TouchEvent};
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, PanelPose,
-        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389,
+        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389, NIA_382,
     };
     use std::time::Duration;
 
@@ -392,6 +392,21 @@ mod tests {
         let pose = writable_pose(&snapshot)
             .expect("completed attended evidence authorizes synthetic touch");
         assert_eq!(pose.profile().id, ELIPSA_2E_389.id);
+    }
+
+    #[test]
+    fn reviewed_nia_with_exact_identity_can_receive_a_tap() {
+        let snapshot = snapshot_for(
+            &NIA_382,
+            IdentitySnapshot {
+                serial_prefix: Some("N306".into()),
+                firmware_version: Some("4.38.23684".into()),
+                kernel_release: Some("4.1.15-00463-g38afd5cea756".into()),
+                device_code: Some(382),
+            },
+        );
+        let pose = writable_pose(&snapshot).expect("a write-ready Nia receives synthetic touch");
+        assert_eq!(pose.profile().id, NIA_382.id);
     }
 
     #[test]
