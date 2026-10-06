@@ -869,8 +869,9 @@ mod large_text_tests {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(" ");
-            assert!(text.contains("Install its token with:"), "{text}");
-            assert!(text.contains("<reader>"), "{text}");
+            assert!(text.contains("On your computer:"), "{text}");
+            // The end of the command, so a clipped command fails here.
+            assert!(text.contains("token.txt"), "{text}");
         }
     }
 }

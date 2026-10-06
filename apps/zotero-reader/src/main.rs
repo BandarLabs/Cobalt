@@ -2122,7 +2122,7 @@ mod tests {
                         .join(" ");
                     assert!(text.to_ascii_lowercase().contains("read-only"));
                     assert!(
-                        text.contains("<address>"),
+                        text.contains("secret set zotero"),
                         "the installation command must not be clipped"
                     );
                 }
