@@ -293,7 +293,7 @@ impl Kitchen {
     fn fail(&mut self, error: kobo_sdk::TaskError) {
         match error {
             kobo_sdk::TaskError::NoCredential => self.problem(format!(
-                "No credential named `{}` yet. On your computer run `kobo secret set {}`.",
+                "No credential named {} yet. On your computer run kobo secret set {}.",
                 self.credential, self.credential
             )),
             kobo_sdk::TaskError::Offline => {
@@ -532,8 +532,11 @@ impl Kitchen {
             .splash(
                 Some(Glyph::Book),
                 "Connect Mealie",
-                "On your computer run `kobo secret set mealie`, then add the HTTPS address here.",
+                "Install your Mealie API token from a computer, then add the address here.",
             )
+            .section("On your computer")
+            .command("kobo pair")
+            .command("kobo secret set mealie")
             .primary_button("settings", "Add address")
             .build(),
             View::Tonight if self.recipes.is_empty() => {
@@ -686,7 +689,7 @@ impl Kitchen {
                 .field("server", &self.server, "https://mealie.example")
                 .field("credential", &self.credential, "mealie")
                 .secondary(
-                    "On your computer run `kobo secret set mealie` with a Mealie API token, then sync here.",
+                    "On your computer run kobo secret set mealie with a Mealie API token, then sync here.",
                 )
                 .build(),
         }

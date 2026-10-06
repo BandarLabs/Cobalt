@@ -368,7 +368,7 @@ fn guide_screen() -> Screen {
         .section("Pair one computer folder")
         .secondary("1. Install Syncthing on the computer with its package manager.")
         .secondary("2. Wake the reader on Wi-Fi, then on the computer run:")
-        .text("kobo sync setup ~/Documents/notes --folder vault --device <address>")
+        .text("kobo sync setup ~/Documents/notes --folder vault")
         .secondary("3. Resume Sync here. The first window runs within the cadence you choose; vault, frame and books arrive receive-only, so originals on the reader stay protected.")
         .secondary("Folders are fixed: sync/vault, sync/frame and sync/books arrive; sync/out leaves. Transferred packages import into Vault and Frame after each window.")
         .build()

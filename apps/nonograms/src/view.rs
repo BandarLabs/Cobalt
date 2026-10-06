@@ -277,7 +277,7 @@ impl Game {
 
 On your computer, run:
 
-kobo nonograms push IMAGE --size N --device READER
+kobo nonograms push IMAGE --name NAME --size N
 
 Replace IMAGE with your image file, N with a grid size from 5 to 25, and READER with your reader address. Choose the same size in Photo puzzles, then Import.
 

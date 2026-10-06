@@ -74,8 +74,11 @@ impl Birds {
                     .splash(
                         Some(Glyph::App),
                         "No birds yet",
-                        "On your computer, run `kobo birds listen --source http://HOST:PORT --device IP`.",
+                        "Birds shows what BirdNET-Go hears, mirrored from a computer.",
                     )
+                    .section("On your computer")
+                    .command("kobo pair")
+                    .command("kobo birds listen --source http://localhost:8080")
                     .buttons([(REFRESH, "Refresh")])
                     .build()
             };

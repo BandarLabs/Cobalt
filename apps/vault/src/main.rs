@@ -513,8 +513,12 @@ impl Vault {
                 .splash(
                     Some(Glyph::Note),
                     "No vault yet",
-                    "Run kobo vault init, then kobo vault push ~/Notes. Notes Sync delivers are ingested with kobo vault ingest.",
+                    "Send a folder of Markdown notes from a computer.",
                 )
+                .section("On your computer")
+                .command("kobo pair")
+                .command("kobo vault init")
+                .command("kobo vault push ~/Notes")
                 .button("about", "About Vault")
                 .build();
         }

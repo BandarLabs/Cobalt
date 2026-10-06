@@ -864,7 +864,7 @@ impl ReadingList {
             screen.secondary("Enter the numeric user ID shown beside your Zotero API key.")
         };
         screen
-            .secondary("Read-only: kobo secret set zotero --device <address>")
+            .secondary("Read-only: kobo secret set zotero")
             .field(
                 "zotero-user-id",
                 self.keyboard.text(),
@@ -1996,23 +1996,21 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
     if conversion_service {
         return match error {
             TaskError::NoCredential => {
-                "Install the conversion-service token with: kobo secret set zotero-bridge --device <address>."
+                "Install the conversion-service token with: kobo secret set zotero-bridge."
                     .to_owned()
             }
-            TaskError::Offline => "This reader is offline. Cached papers are still available.".to_owned(),
+            TaskError::Offline => {
+                "This reader is offline. Cached papers are still available.".to_owned()
+            }
             TaskError::Denied => {
                 "Stacks is not allowed to reach the conversion service.".to_owned()
             }
-            TaskError::Unauthorized => {
-                "The conversion service rejected its credential.".to_owned()
-            }
+            TaskError::Unauthorized => "The conversion service rejected its credential.".to_owned(),
             TaskError::TooLarge => {
                 "The conversion service response exceeded the app's safety limit.".to_owned()
             }
             TaskError::TimedOut => "The conversion service took too long to answer.".to_owned(),
-            TaskError::NotFound => {
-                "The requested conversion is no longer available.".to_owned()
-            }
+            TaskError::NotFound => "The requested conversion is no longer available.".to_owned(),
             TaskError::Unreachable => "The conversion service could not be reached.".to_owned(),
             TaskError::RateLimited(_) => {
                 "The conversion service asked this reader to slow down.".to_owned()
@@ -2022,8 +2020,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
 
     match error {
         TaskError::NoCredential => {
-            "Install a dedicated read-only Zotero key with: kobo secret set zotero --device <address>."
-                .to_owned()
+            "Install a dedicated read-only Zotero key with: kobo secret set zotero.".to_owned()
         }
         TaskError::Offline => {
             "This reader is offline. Cached papers are still available.".to_owned()

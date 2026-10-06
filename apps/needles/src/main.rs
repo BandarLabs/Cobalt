@@ -432,7 +432,7 @@ impl Needles {
         let mut screen = ScreenBuilder::new("needles-pattern")
             .top_bar("Pattern")
             .heading(title)
-            .text("Use `kobo needles push` on your computer to prepare and transfer a PDF you own. Text pages reflow here.")
+            .text("Use kobo needles push on your computer to prepare and transfer a PDF you own. Text pages reflow here.")
             .primary_button("follow", "Follow this pattern")
             .button("read", "Open synced pattern");
         if let Some(note) = &self.notice {
@@ -915,7 +915,7 @@ impl KoboApp for Needles {
                         }
                         Err(_) => {
                             self.notice = Some(
-                                "The transferred pattern is not readable Markdown or text. Run `kobo needles push` again."
+                                "The transferred pattern is not readable Markdown or text. Run kobo needles push again."
                                     .to_owned(),
                             );
                         }
@@ -924,7 +924,7 @@ impl KoboApp for Needles {
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
                     self.notice = Some(
-                        "No readable pattern is on this Kobo yet. Run `kobo needles push PATTERN.pdf --device <address>` on your computer."
+                        "No readable pattern is on this Kobo yet. Run kobo needles push PATTERN.pdf on your computer."
                             .to_owned(),
                     );
                 }
@@ -1052,10 +1052,9 @@ impl KoboApp for Needles {
                 "Ravelry returned a {} this version cannot read.",
                 collection.title().to_lowercase()
             )),
-            TaskOutcome::Failed(TaskError::NoCredential) => Some(
-                "Install your credential with `kobo secret set ravelry --device <address>`."
-                    .to_owned(),
-            ),
+            TaskOutcome::Failed(TaskError::NoCredential) => {
+                Some("Install your credential with kobo secret set ravelry.".to_owned())
+            }
             TaskOutcome::Failed(TaskError::Unauthorized) => {
                 Some("Ravelry did not accept the named Basic credential.".to_owned())
             }
