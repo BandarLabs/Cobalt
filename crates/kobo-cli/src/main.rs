@@ -7667,7 +7667,7 @@ fn print_help() {
            readlater login --server URL ...  Sign Read Later in to Wallabag\n\
            sync setup DIR --folder NAME | run | status | stop  Keep a folder in sync\n\
            export --app APP --out DIR  Receive a copy an app prepared for you\n\
-           sidekick setup | run | status | stop | sample | test  The Sidekick helper\n\
+           sidekick init | setup | run | status | stop | sample | test  The Sidekick helper\n\
            stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal\n\n\
          Credentials an app asks for by name:\n\
            secret set NAME [--from PATH] | list | remove NAME   Tokens and passwords\n\

@@ -194,10 +194,7 @@ impl Sidekick {
             // is true and useless: the thing that has to happen is that a
             // daemon is running on the computer, and this is what starts it
             // and prints the two things this screen is about to ask for.
-            .text(
-                "On your computer, run kobo-sidekickd init. It prints an address and a \
-                 six-character code.",
-            );
+            .text("On your computer, run kobo sidekick init. It prints an address and a code.");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -1477,7 +1474,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line.contains("kobo-sidekickd init")),
+                .any(|line| line.contains("kobo sidekick init")),
             "the screen never says what to run to get an address: {lines:?}"
         );
     }

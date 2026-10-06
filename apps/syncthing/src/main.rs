@@ -134,7 +134,7 @@ impl Sync {
         let mut facts = vec![
             ("State".to_owned(), transfer_state(&self.status)),
             (
-                "Bytes left".to_owned(),
+                "Left to sync".to_owned(),
                 if self.status.state == "running" {
                     format_bytes(self.status.bytes)
                 } else {
@@ -145,7 +145,7 @@ impl Sync {
                 "Peers".to_owned(),
                 self.status
                     .peers
-                    .map_or_else(|| "-".to_owned(), |peers| peers.to_string()),
+                    .map_or_else(|| "None yet".to_owned(), |peers| peers.to_string()),
             ),
             (
                 "Last success".to_owned(),
@@ -242,7 +242,7 @@ impl Sync {
                 (
                     "refresh",
                     "Refresh status".to_owned(),
-                    "Read the runtime-owned Sync status.".to_owned(),
+                    "Check how the last sync went.".to_owned(),
                     Glyph::Refresh,
                 ),
             ])
