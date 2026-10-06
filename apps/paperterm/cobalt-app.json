@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
+  "release_notes": "Pairing and terminal screens are now checked against each supported reader's own type, including the Kobo Nia, at every text size.",
   "setup": {
     "steps": [
       {
