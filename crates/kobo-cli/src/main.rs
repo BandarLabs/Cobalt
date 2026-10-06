@@ -921,10 +921,25 @@ fn send_preview(
 }
 
 fn run(arguments: &[String]) -> Result<(), String> {
+    let saved = readers::Store::load(&readers::store_path()).unwrap_or_default();
+    let names: Vec<&str> = saved
+        .readers
+        .iter()
+        .map(|reader| reader.nickname.as_str())
+        .collect();
+    let variable = env::var(targets::READER_VARIABLE).ok();
+    let filled = targets::with_reader(
+        arguments,
+        targets::default_reader(variable.as_deref(), &names),
+        targets::resolve_nickname,
+        |line| eprintln!("{line}"),
+    )?;
+    let arguments = filled.as_slice();
     let Some(command) = arguments.first().map(String::as_str) else {
         return run_owner_menu();
     };
     match canonical(command) {
+        "pair" => pair_command(&arguments[1..]),
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
         "dev" => dev(&arguments[1..]),
         "drive" => drive_command(&arguments[1..]),
@@ -999,6 +1014,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
+        "setup" if matches!(arguments.get(1).map(String::as_str), Some("--help" | "-h")) => {
+            println!("{SETUP_HELP}");
+            Ok(())
+        }
         "setup" => setup_device(&arguments[1..]),
         "apps" => apps::command(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
@@ -1396,6 +1415,53 @@ impl ReaderSearch {
 /// One reader is chosen without asking, because there is nothing to choose.
 /// Several are listed by what they are rather than by address alone, because
 /// "192.168.1.23" is not how anybody knows their own reader.
+/// Saves the reader on this network under a name, so companion commands can
+/// find it without being told its address.
+///
+/// Every app that is set up from a computer used to end its instructions with
+/// `--device IP`, and nothing on the reader says what that is. After this,
+/// `kobo frame push PHOTOS` goes to the reader saved here, and the reader is
+/// found again by its serial when its address changes.
+fn pair_command(arguments: &[String]) -> Result<(), String> {
+    let (target, rest) = targets::TargetArgs::parse(arguments)?;
+    let name = match rest.as_slice() {
+        [] => "kobo".to_owned(),
+        [name] if !name.starts_with('-') => name.clone(),
+        _ => return Err(console::usage("usage: kobo pair [NAME] [--device IP]")),
+    };
+    let address = if target.is_empty() {
+        match choose_reader() {
+            ReaderSearch::Found(address) => address,
+            other => {
+                return Err(format!(
+                    "{}\nName the one you mean: kobo pair {name} --device IP",
+                    other.explain()
+                ))
+            }
+        }
+    } else {
+        match target.resolve()? {
+            targets::Target::Address(address) => address,
+            targets::Target::Nickname(nickname) => targets::resolve_nickname(&nickname)?,
+            targets::Target::Simulator => {
+                return Err(console::usage("the simulator needs no pairing; use --sim"))
+            }
+        }
+    };
+    let identity = identify_device(&address)
+        .filter(connect::Identity::is_kobo)
+        .ok_or_else(|| format!("{address} did not answer as a Kobo"))?;
+    let path = readers::store_path();
+    let mut store = readers::Store::load(&path)?;
+    store.remember(&identity.serial, &address, Some(&name));
+    store.save(&path)?;
+    println!(
+        "Saved {} as \"{name}\" at {address}.\nCommands that act on a reader now use it, for example:\n  kobo frame push ~/Pictures/family",
+        identity.summary()
+    );
+    Ok(())
+}
+
 fn choose_reader() -> ReaderSearch {
     let Some(subnet) = connect::local_subnet() else {
         return ReaderSearch::NoRoute;
@@ -4734,6 +4800,29 @@ struct SetupOptions {
     sample: bool,
 }
 
+/// What `kobo setup --help` says. It used to answer "unknown option" to the
+/// one flag everybody tries first on a command they have not run before.
+const SETUP_HELP: &str = "usage: kobo setup [options]
+
+Prepares a reader connected over USB. Run it with no options and it finds the
+reader, says what it will change, and asks before changing anything.
+
+  --enable-ssh       Also turn on SSH, which the companion commands use
+  --no-key           Do not install this computer's SSH key
+  --volume PATH      The mounted reader, when more than one is connected
+  --undo             Remove what setup installed
+  --dry-run          Say what would change and change nothing
+  --yes              Answer yes to the confirmation
+  --non-interactive  Never ask; fail where a question would be needed
+  --wait-for-reader  Wait for a reader to be plugged in
+  --no-eject         Leave the reader mounted afterwards
+  --no-wait          Do not wait for the reader to come back
+  --menu, --no-menu  Add or skip the launcher's menu entry
+  --no-sample        Skip the welcome note
+  --release-dir PATH | --source  Install a verified release, or a source build
+
+Next: kobo pair, so the companion commands find this reader on Wi-Fi.";
+
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
         volume: None,
@@ -7552,107 +7641,67 @@ fn print_help() {
     println!(
         "{}",
         console.wrap(
-            "Kobo application SDK\n\n\
+            "Kobo: set up your reader, send things to its apps, and build new ones\n\n\
          Usage: kobo <command>\n\n\
-         Commands:\n\
-           apps [search WORD | setup APP]  Find apps and read offline setup guides\n\
+         Getting started:\n\
+           setup [--enable-ssh]   Prepare a reader over USB (run with no options to be asked)\n\
+           pair [NAME]            Save the reader on this network so the commands below find it\n\
+           apps [search WORD | setup APP]  Find apps and read their setup steps\n\
+           update [--channel stable|beta]  Update this kobo command\n\n\
+         Send things to your apps (these use your paired reader; add --reader NAME,\n\
+         --device IP or --sim to send somewhere else):\n\
+           send FILE [--app APP]  Send a file to whichever app opens it\n\
+           frame init | push PHOTOS [--fit crop|pad] | ls | rm ID   Photos for Frame\n\
+           musicstand init | push SCORE.pdf | ls | rm ID          Scores for Music Stand\n\
+           vault init | push NOTES_DIR | ingest DIR | ls | rm ID  Markdown notes for Vault\n\
+           flashcards --help      Import Anki decks and stage them for Flashcards\n\
+           fieldbook --help       Field packs in, eBird checklists out\n\
+           panels push COMIC.cbz  A comic for Panels\n\
+           needles push PATTERN.pdf  A knitting pattern you own, for Needles\n\
+           nonograms push IMAGE --name NAME --size 5|7|9  A photo puzzle for Nonograms\n\
+           parser push STORY [--replace]  An interactive story for Parser\n\
+           feeds check|push FILE.opml  Subscriptions for Feeds\n\
+           deck set PAD ... | ls | show | push  Lay out Deck's pads, then send them\n\
+           birds listen --source URL | status | stop  Mirror BirdNET-Go to Birds\n\
+           post login --gateway URL --token-file PATH  Sign Post in to a Hermes gateway\n\
+           readlater login --server URL ...  Sign Read Later in to Wallabag\n\
+           sync setup DIR --folder NAME | run | status | stop  Keep a folder in sync\n\
+           export --app APP --out DIR  Receive a copy an app prepared for you\n\
+           sidekick setup | run | status | stop | sample | test  The Sidekick helper\n\
+           stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal\n\n\
+         Credentials an app asks for by name:\n\
+           secret set NAME [--from PATH] | list | remove NAME   Tokens and passwords\n\
+           trust set NAME --from PATH | list | remove NAME      A private HTTPS root\n\n\
+         Build apps:\n\
            new <name>             Create a Rust application\n\
-           dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
-           dev --runtime [address] [--apps IDs]  Run launcher and selected local apps\n\
-           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
-           drive --script PATH --record DIR  ... and film it, no hardware needed\n\
-           deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
-           deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
-           deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
-           flashcards --help                     Prepare, verify, stage, and export card bundles\n\
-           musicstand --help                      Convert and send score pages
-\
-           post --help                            Check and install a Hermes account
-\
-           readlater --help                       Sign in to a Wallabag account
-\
-           birds listen|status|stop|push   Mirror a Fugleramme bird collage to the reader\n\
-           frame init (--sim | --device IP)      Create the Frame shelf\n\
-           frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
-                                             Prepare and atomically push Frame photos\n\
-           frame ls (--sim | --device IP)        List Frame shelf photos\n\
-           frame rm ID (--sim | --device IP)     Remove a Frame shelf photo\n\
-           vault init (--device IP | --sim)      Prepare the Vault store on the reader or simulator\n\
-           vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
-           sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
-           sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
-           export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
-           sync status|stop                      Inspect or stop that dedicated peer\n\
-           sidekick setup [AGENT]               Install the Sidekick hook for a coding agent\n\
-           sidekick run [--foreground]          Start the helper the reader answers through\n\
-           sidekick status|stop                 Inspect or stop that helper\n\
-           sidekick sample                      See it work with nothing else set up\n\
-           sidekick test                        Ask the reader a harmless question, print the answer\n\
-           feeds check FILE                     Read an OPML subscription list here\n\
-           feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
-           send FILE [--app APP]   Route a file to its companion (--sim | --device IP | --reader NAME)\n\
-           fieldbook --help                       Send field packs and receive eBird CSV files
-\
-           panels --help                          Inspect, preview and send CBZ comics
-\
-           needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
-           needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
-           nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
-                                             Prepare and atomically transfer a photo puzzle\n\
-           parser inspect FILE                 Show story identity and compatibility\n\
-           parser push FILE (--sim | --device IP) [--replace]\n\
-                                             Validate and publish a story to Parser\n\
-           stream init [--device IP]     Pair Paperterm, saving the reader under --reader NAME\n\
-           stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
-           shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
-           record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
-           build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
-           doctor [--device IP | --reader NAME] [--json]   Run read-only device diagnostics\n\
-           devices [--subnet A.B.C] [--json]  Find every reader on the local network\n\
-           app-link status|unpair --device IP  Inspect or revoke browser pairing\n\
-           session --device IP    Keep a device awake and on Wi-Fi while developing\n\
-           session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
-           wait (--device IP | --reader NAME)  Block until a device answers again\n\
-           logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           shell --device IP [command ...]  Advanced: run one arbitrary command on the\n\
-           \x20                             reader, or open a session when no command is\n\
-           \x20                             given. Exits with whatever the reader exited\n\
-           \x20                             with. Nothing typed here is checked first\n\
-           touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
-           guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
+           dev [address]          Run this app in the browser simulator\n\
+           dev --runtime [address] [--apps IDs]  Run the launcher and selected local apps\n\
+           drive --script PATH [--record DIR]  Tap through the simulator and save screenshots\n\
+           build [--device]       Build the host workspace or the device binaries\n\
+           deploy --device IP [--package PATH]  Install over Wi-Fi, no reboot\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           app-key --seed PATH     Print the Ed25519 public key for a release seed\n\
+           run --sim [--app NAME] Run SDK, IPC, daemon and one app on this computer\n\
+           inspect <package>      List a package and prove it writes nothing to the rootfs\n\
+           verify <arm-binary>    Verify static ARM hard-float format\n\n\
+         Look at a reader:\n\
+           devices [--subnet A.B.C] [--json]  Find every reader on the local network\n\
+           doctor [--json]        Read-only diagnostics\n\
+           shot                   Save a PNG of the panel (reader or simulator)\n\
+           record [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
+           logs [--follow] [--lines N]  Read the runtime trace\n\
+           session [--hold MINUTES]  Keep a reader awake and on Wi-Fi while developing\n\
+           wait                   Block until a reader answers again\n\
+           app-link status|unpair Inspect or revoke browser pairing\n\
+           touch-probe [--seconds N]  Watch touch, read-only, to check the transform\n\
+           guard-test --confirm ...  Prove the guardian restores the screen\n\
+           shell [command ...]    Advanced: run a command on the reader, unchecked. Exits\n\
+           \x20                      with whatever the reader exited with\n\n\
+         Publish to the Store:\n\
+           app-key --seed PATH    Print the Ed25519 public key for a release seed\n\
            app-bundle --manifest PATH --binary PATH --seed PATH --out PATH\n\
-                                   Build one signed, pathless .cobalt-app package\n\
            app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
-                                   Build and sign the public app catalog\n\
-           app-list --registry PATH\n\
-                                   List validated Store app packages as JSON\n\
-           app-check --registry PATH [--package PACKAGE] [--out PATH]\n\
-                                   Build and verify every registered Store app\n\
-           app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
-                                   Build and sign every registered Store app\n\
-           host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
-                                   Sign host release metadata for publishing\n\
-           host-release-verify --manifest PATH --signature PATH\n\
-                                   Verify signed host release metadata\n\
-           update [--channel stable|beta]\n\
-                                   Update only the installed host kobo command; Stable is default\n\
-           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] [--dry-run]\n\
-                 [--yes] [--non-interactive] [--release-dir PATH | --source]\n\
-                                   Prepare a reader over USB after default-no confirmation;\n\
-                                   installed builds use their verified prebuilt device package\n\
-           deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
-           secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
-           secret list --device IP   Name the installed credentials, never their values\n\
-           secret remove <name> --device IP   Take one credential off the reader\n\
-           trust set <name> [--from PATH] --device IP   Install an owner TLS root the runtime verifies against\n\
-           trust list --device IP   Name the installed trust roots\n\
-           trust remove <name> --device IP   Take one trust root off the reader\n\
-           inspect <package>       List a package and prove it writes nothing to the rootfs\n\
-           verify <arm-binary>     Verify static ARM hard-float format\n\
-           run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
-           run                    Device execution remains safety-gated\n\
+           app-list | app-check | app-release --registry PATH ...  Store packages\n\
+           host-release-sign | host-release-verify --manifest PATH ...\n\n\
            version                Print version"
         )
     );
