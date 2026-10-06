@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.6",
-  "release_notes": "Read long command output page by page without clipped lines, and return to the deck with the reader Back control.",
+  "version": "0.2.7",
+  "release_notes": "Pairing shows the two commands to run, kobo sidekick init and kobo sidekick run, instead of naming an app it never explained.",
   "glyph": "grid",
   "capabilities": [
     "network"

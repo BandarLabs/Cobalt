@@ -4,8 +4,8 @@
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.5",
-  "release_notes": "Repeated Refresh taps now share the active snapshot/image transfer instead of interrupting valid image chunks. Failed updates still preserve the last complete view and can be retried.",
+  "version": "0.1.6",
+  "release_notes": "The bar now says Birds, and an empty frame lists the exact commands to run on your computer.",
   "glyph": "app",
   "capabilities": [],
   "setup": {

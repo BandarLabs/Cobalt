@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.4",
-  "release_notes": "Page through discovered devices and wall tiles with connection notices visible. Older replies no longer hide newer action or setup results. Setup instructions and keyboard fit at large text sizes.",
+  "version": "0.2.5",
+  "release_notes": "The setup guide pairs your reader once, then needs no address, and installing a private certificate names the file it reads.",
   "glyph": "light",
   "capabilities": [
     "network"

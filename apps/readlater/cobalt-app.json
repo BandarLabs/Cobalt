@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.4",
-  "release_notes": "Every saved article stays reachable at all text sizes. Back keeps your list page, late sign-in refreshes respect navigation, and overlapping syncs preserve other tabs.",
+  "version": "0.2.5",
+  "release_notes": "Connecting Wallabag shows the sign-in command set apart and complete, with no address to look up.",
   "glyph": "bookmark",
   "capabilities": [
     "network"

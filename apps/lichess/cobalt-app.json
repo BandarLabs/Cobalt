@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.14",
-  "release_notes": "Setup steps now name the Cobalt version this app needs. No change to play.",
+  "version": "1.0.15",
+  "release_notes": "The home screen no longer shows 1 of 1 under a single page, and the setup guide needs no address.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

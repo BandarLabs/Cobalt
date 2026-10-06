@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.12",
-  "release_notes": "Every library story is reachable on measured pages. Back closes keys, resumes stories and cancels restore. Save and restore slots fit guidance and messages at large text sizes.",
+  "version": "0.1.13",
+  "release_notes": "The setup guide explains how to add your own story, and messages no longer ask for an IP address.",
   "glyph": "book",
   "capabilities": [],
   "setup": {
