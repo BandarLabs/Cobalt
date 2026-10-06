@@ -186,7 +186,10 @@ impl Sidekick {
     fn address_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("sidekick-address")
             .top_bar(TITLE)
-            .heading("Pair with your computer")
+            // A step's heading rather than a screen's: a keyboard takes half
+            // the panel, and the display size wrapped to two lines at the
+            // largest text setting and pushed the field off it.
+            .heading_at_level(2, "Pair with your computer")
             // The command, by name. "Open Sidekick in the Cobalt desktop app"
             // is true and useless: the thing that has to happen is that a
             // daemon is running on the computer, and this is what starts it
@@ -209,7 +212,7 @@ impl Sidekick {
     fn code_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("sidekick-code")
             .top_bar(TITLE)
-            .heading("Now the pairing code")
+            .heading_at_level(2, "Now the pairing code")
             // Short on purpose. The address is as long as somebody's network
             // makes it, and a sentence built around it ran off the panel at
             // the larger text sizes with a keyboard already taking the bottom
@@ -385,7 +388,10 @@ impl Sidekick {
         if ask.permission {
             screen = screen.buttons([(ALLOW, "Allow"), (DENY, "Deny")]);
         }
-        screen = screen.button(IGNORE, "Leave it for the terminal");
+        // Pinned rather than in the flow, so it is in the same place on every
+        // page of a long question: a page packed to the last line used to
+        // push it a few pixels lower than the page after it.
+        screen = screen.bottom_action(IGNORE, "Leave it for the terminal");
         Self::page_controls(screen, page, pages).build()
     }
 

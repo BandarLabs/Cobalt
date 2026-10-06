@@ -1559,6 +1559,25 @@ impl ScreenBuilder {
         }
     }
 
+    /// A command to type on a computer, set apart from the sentence about it.
+    ///
+    /// Apps set up from a computer used to put the command inside a sentence,
+    /// in backticks, where the line breaker treated every hyphen as a place to
+    /// wrap: "--device" arrived as "--" at the end of one line and "device" at
+    /// the start of the next, and nobody can type that back. Here the command
+    /// is indented under a rule, the way a book sets a quotation, its hyphens
+    /// are the non-breaking kind and every slash is joined to what follows it,
+    /// so it only ever wraps between words and never inside a flag or a path.
+    #[must_use]
+    pub fn command(self, text: impl AsRef<str>) -> Self {
+        self.quote(
+            1,
+            text.as_ref()
+                .replace('-', "\u{2011}")
+                .replace('/', "/\u{2060}"),
+        )
+    }
+
     /// Settings that are either on or off, one row each.
     ///
     /// Tapping a row is the switch: the application flips the value and

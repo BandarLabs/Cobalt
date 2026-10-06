@@ -872,6 +872,30 @@ impl Gallery {
             )
             .stepper_ends(self.chip > 0, self.chip < 2)
             .stepper_track(u8::try_from(self.chip * 50).unwrap_or(100))
+            .section("One value of a few, all in view")
+            .segmented(
+                self.chip,
+                [
+                    ("step-less", "Small"),
+                    ("segment-mid", "Medium"),
+                    ("step-more", "Large"),
+                ],
+            )
+            .picker(
+                "button-sort",
+                "Sort",
+                false,
+                0,
+                [("sort-newest", "Newest"), ("sort-title", "Title")],
+            )
+            .section("Settings that are on or off")
+            .toggles([(
+                "toggle-sleep",
+                "Keep awake",
+                "",
+                Glyph::Light,
+                self.chip > 0,
+            )])
             .action_bar([("bar-one", "First"), ("bar-two", "Second")])
     }
 
@@ -890,6 +914,7 @@ impl Gallery {
             .quote(1, "A reply, set in from what it answers.")
             .quote(2, "A reply to the reply, one level further in.")
             .quote(9, "Past the cap the indent stops moving.")
+            .command("kobo frame push ~/Pictures --fit pad")
             .divider()
             .secondary("A divider above, and the page position below the tab bar.")
             .page_position(2, 3)

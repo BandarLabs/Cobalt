@@ -147,3 +147,39 @@ fn a_picker_names_its_value_and_ticks_it_in_the_menu() {
         .issues
         .is_empty());
 }
+
+#[test]
+fn a_command_never_wraps_inside_a_flag() {
+    let screen = ScreenBuilder::new("setup")
+        .command("kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader/with/a/longer/path")
+        .build();
+    for (panel, metrics) in PANELS {
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        let lines: Vec<String> = layout
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect();
+        assert!(
+            lines.iter().all(|line| {
+                let line = line.trim_end().trim_end_matches('\u{2060}');
+                !line.ends_with('\u{2011}') && !line.ends_with('/')
+            }),
+            "{panel}: {lines:?}"
+        );
+    }
+}
+
+#[test]
+fn a_command_wider_than_the_panel_still_lays_out() {
+    let metrics = DisplayMetrics {
+        width: 758,
+        height: 1024,
+        pixels_per_inch: 212,
+        text_scale: kobo_ui::TextScale::Largest,
+    };
+    let screen = ScreenBuilder::new("setup")
+        .command("kobo stream --interactive-session-with-a-very-long-flag-name -- /bin/sh")
+        .build();
+    let _ = screen.layout_with(&metrics, &Chrome::default());
+}
