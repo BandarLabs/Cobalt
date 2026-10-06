@@ -7,5 +7,21 @@
   "version": "0.1.4",
   "release_notes": "Page through every import problem and open its full explanation. List page turns stop at the ends so Previous responds immediately after repeated Next taps.",
   "glyph": "note",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Create the note shelf on the reader.",
+        "command": "kobo vault init"
+      },
+      {
+        "text": "Send a folder of Markdown notes. Push again to update it.",
+        "command": "kobo vault push ~/Notes"
+      }
+    ]
+  }
 }

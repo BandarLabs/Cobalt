@@ -7,5 +7,20 @@
   "version": "0.2.5",
   "release_notes": "First launch without a collection now offers a built-in sample deck or walks you through staging one from your computer. Review settings explain how grades are kept in the local review log.",
   "glyph": "bookmark",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "Turn an Anki deck into a collection on this computer.",
+        "command": "kobo flashcards import deck.apkg --merge collection.cobfc"
+      },
+      {
+        "text": "Plug the Kobo in over USB and stage the collection on it.",
+        "command": "kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader"
+      },
+      {
+        "text": "Or start with the sample deck from the app, no computer needed."
+      }
+    ]
+  }
 }

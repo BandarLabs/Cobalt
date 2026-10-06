@@ -22,8 +22,12 @@
         }
       },
       {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
         "text": "Save the token in a private local file, then install it under the exact secret name lichess.",
-        "command": "kobo secret set lichess --from <token-file> --device <address>"
+        "command": "kobo secret set lichess --from token.txt"
       },
       {
         "text": "Use Cobalt 0.3.18 or newer."

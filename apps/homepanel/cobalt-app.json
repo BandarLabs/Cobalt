@@ -16,12 +16,16 @@
         "text": "Expose Home Assistant through HTTPS, using Nabu Casa or a reverse proxy with a trusted certificate."
       },
       {
-        "text": "Create a Home Assistant long-lived access token and install it under the exact name homeassistant.",
-        "command": "kobo secret set homeassistant --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
       },
       {
-        "text": "For a private certificate authority, install its root on the Kobo.",
-        "command": "kobo trust set homeassistant --device <address>"
+        "text": "Create a Home Assistant long-lived access token and install it under the exact name homeassistant.",
+        "command": "kobo secret set homeassistant"
+      },
+      {
+        "text": "For a private certificate authority, install its root on the Kobo, from the authority's PEM file.",
+        "command": "kobo trust set homeassistant --from root-ca.pem"
       }
     ]
   }

@@ -9,5 +9,21 @@
   "glyph": "note",
   "capabilities": [
     "keep-awake"
-  ]
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Create the score shelf on the reader.",
+        "command": "kobo musicstand init"
+      },
+      {
+        "text": "Send a PDF score or a folder of page images.",
+        "command": "kobo musicstand push score.pdf"
+      }
+    ]
+  }
 }

@@ -14,15 +14,16 @@
   "setup": {
     "steps": [
       {
-        "text": "Ravelry library sync requires an approved Ravelry API account and HTTP Basic credential."
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
       },
       {
-        "text": "Install the credential under the exact name ravelry.",
-        "command": "kobo secret set ravelry --device <address>"
+        "text": "Send a pattern you own. PDFs need Poppler's pdftotext on this computer.",
+        "command": "kobo needles push PATTERN.pdf"
       },
       {
-        "text": "Prepare and transfer a PDF you own with Poppler's pdftotext installed.",
-        "command": "kobo needles push PATTERN.pdf --device <address>"
+        "text": "Optional: Ravelry library sync needs an approved Ravelry API account. Install its credential under the name ravelry.",
+        "command": "kobo secret set ravelry"
       }
     ]
   }

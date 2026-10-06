@@ -14,16 +14,16 @@
   "setup": {
     "steps": [
       {
-        "text": "Enable SSH on the Kobo and install this computer's key.",
-        "command": "kobo setup --enable-ssh"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
       },
       {
-        "text": "Create Frame's photo folder on the Kobo.",
-        "command": "kobo frame init --device <address>"
+        "text": "Create Frame's photo folder on the reader.",
+        "command": "kobo frame init"
       },
       {
-        "text": "Send a photo or a folder of photos from this computer.",
-        "command": "kobo frame push ~/Pictures/family --device <address>"
+        "text": "Send a photo or a folder of photos.",
+        "command": "kobo frame push ~/Pictures/family"
       }
     ]
   }

@@ -13,11 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Deploy a compatible Hermes gateway behind HTTPS and note its public URL."
+        "text": "Deploy a compatible Hermes gateway behind HTTPS and note its address."
       },
       {
-        "text": "Install the gateway bearer token under the exact name hermes-post.",
-        "command": "kobo secret set hermes-post --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Sign Post in. The token is checked against the gateway before it is installed.",
+        "command": "kobo post login --gateway https://hermes.example.net --token-file token.txt"
       }
     ]
   }

@@ -24,8 +24,12 @@
         "text": "Copy the numeric user ID shown on the Zotero API key settings page. Stacks asks for it on first launch."
       },
       {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
         "text": "Install the API key on your Kobo under the exact secret name zotero.",
-        "command": "kobo secret set zotero --device <address>"
+        "command": "kobo secret set zotero"
       },
       {
         "text": "Launch Stacks, enter the numeric user ID, and select a collection."

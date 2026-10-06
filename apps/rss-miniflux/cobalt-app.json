@@ -13,11 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Have an HTTPS Miniflux instance, either self-hosted or hosted, and create an API token."
+        "text": "Have an HTTPS Miniflux instance, self-hosted or hosted, and create an API token in its settings."
       },
       {
-        "text": "Install the token under the exact name miniflux; the runtime sends it as X-Auth-Token.",
-        "command": "kobo secret set miniflux --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Install the token under the name miniflux, then add the address in the app.",
+        "command": "kobo secret set miniflux"
       }
     ]
   }

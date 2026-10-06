@@ -7,5 +7,20 @@
   "version": "0.1.9",
   "release_notes": "The play header drops cursor coordinates - the outlined square shows your place - and keeps the marks counter; zoomed windows still name their rows and columns when the focus leaves the view.",
   "glyph": "grid",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "The bundled puzzles play straight away. To make one from a photo:"
+      },
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Turn a photo into a puzzle and send it.",
+        "command": "kobo nonograms push photo.jpg --name Garden --size 9"
+      }
+    ]
+  }
 }

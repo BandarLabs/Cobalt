@@ -19,8 +19,12 @@
         "text": "Choose Sign in on the reader for a private library, or Use public library. Older named accounts should sign in again to bind the account to this server."
       },
       {
-        "text": "For a private certificate authority, install its trust root separately.",
-        "command": "kobo trust set calibre --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "For a private certificate authority, install its trust root separately, from the authority's PEM file.",
+        "command": "kobo trust set calibre --from root-ca.pem"
       }
     ]
   }
