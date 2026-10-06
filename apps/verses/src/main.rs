@@ -814,35 +814,7 @@ impl Verses {
         count: usize,
     ) -> Screen {
         let mut screen = self.online_prefix(context, poem, page);
-        // Lines of one stanza go together as one paragraph, at verse leading,
-        // exactly as a bundled poem is set. The page was measured a line at a
-        // time with paragraph spacing between, so it always has the room.
-        let mut stanza: Vec<&str> = Vec::new();
-        let mut opens = false;
-        let flush = |screen: ScreenBuilder, stanza: &mut Vec<&str>, opens: bool| {
-            if stanza.is_empty() {
-                return screen;
-            }
-            let text = stanza.join("\n");
-            stanza.clear();
-            screen.rich_text(
-                text,
-                Vec::new(),
-                kobo_sdk::ParagraphPresentation {
-                    margin_before_em: if opens { STANZA_AIR } else { 0 },
-                    line_height_percent: VERSE_LEADING,
-                    ..kobo_sdk::ParagraphPresentation::default()
-                },
-            )
-        };
-        for line in lines {
-            if line.stanza_start {
-                screen = flush(screen, &mut stanza, opens);
-                opens = true;
-            }
-            stanza.push(&line.text);
-        }
-        screen = flush(screen, &mut stanza, opens);
+        screen = set_online_verse(screen, lines);
         if page + 1 == count {
             screen = screen.secondary("From PoetryDB");
         }
@@ -854,7 +826,9 @@ impl Verses {
                     u16::try_from(count).unwrap_or(u16::MAX),
                 );
         }
-        screen.build()
+        // A fetched poem makes a card as a bundled one does: today's poem
+        // used to lose the card the day it began to come from PoetryDB.
+        screen.bottom_action("card", "Make a quote card").build()
     }
 
     /// Keep verse lines and stanza gaps, measuring the same rich-text nodes
@@ -892,7 +866,8 @@ impl Verses {
         let (capacity, gap) = kobo_ui::with_text_scale(metrics.text_scale, || {
             // Reading screens have no status strip. Reserve the same page
             // position band as the renderer, then the measured author/notice.
-            let area = metrics.prose_area_in(true, false, kobo_ui::Face::Reading);
+            // The card action takes the foot of the panel, as a bar would.
+            let area = metrics.prose_area_in(true, true, kobo_ui::Face::Reading);
             (
                 area.height
                     .saturating_sub(metrics.page_position_band())
@@ -1335,6 +1310,17 @@ impl Verses {
     /// taken from, so a card can be passed on without stripping the poem of
     /// its provenance on the way.
     fn quote_card(&self, context: &Context) -> Screen {
+        if let Some(poem) = self.current_online().filter(|_| self.card_from_online()) {
+            let pages = self.online_pages(context, poem);
+            let page = self.online_page.min(pages.len().saturating_sub(1));
+            let screen = ScreenBuilder::new("verses-card")
+                .top_bar(context.clamped_row(&poem.title, 1, false))
+                .reading(true);
+            return set_online_verse(screen, &pages[page])
+                .secondary(context.clamped_row(&poem.author, 1, false))
+                .secondary("From PoetryDB")
+                .build();
+        }
         let poem = CORPUS[self.poem];
         let pages = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
@@ -1370,15 +1356,17 @@ impl Verses {
             u32::try_from(metrics.height).unwrap_or(0),
             &surface.pixels,
         );
-        let poem = CORPUS[self.poem];
+        let name = match self.current_online().filter(|_| self.card_from_online()) {
+            Some(poem) => format!("{} by {}", poem.title, poem.author),
+            None => format!(
+                "{} by {}",
+                CORPUS[self.poem].title, CORPUS[self.poem].author
+            ),
+        };
         match picture
             .map_err(|error| format!("{error:?}"))
             .and_then(|bytes| {
-                kobo_sdk::exports::Export::new(
-                    &format!("{} by {}", poem.title, poem.author),
-                    kobo_sdk::exports::Format::Png,
-                    bytes,
-                )
+                kobo_sdk::exports::Export::new(&name, kobo_sdk::exports::Format::Png, bytes)
             }) {
             Ok(mut export) => {
                 export.begin(context);
@@ -1412,6 +1400,17 @@ impl Verses {
         }
     }
 
+    /// Whether the card being made is of a fetched poem rather than a bundled
+    /// one: the screen it was asked for from shows one.
+    fn card_from_online(&self) -> bool {
+        let from = if self.view == View::Card {
+            self.card_from
+        } else {
+            self.view
+        };
+        from == View::Online || (from == View::Today && self.daily_poem().is_some())
+    }
+
     /// Today's poem from `PoetryDB`, if one has arrived for today.
     fn daily_poem(&self) -> Option<&OnlinePoem> {
         self.saved
@@ -1423,7 +1422,9 @@ impl Verses {
 
     /// The fetched poem on screen: today's, or one opened from a search.
     fn current_online(&self) -> Option<&OnlinePoem> {
-        if self.view == View::Today {
+        let today =
+            self.view == View::Today || (self.view == View::Card && self.card_from == View::Today);
+        if today {
             self.daily_poem()
         } else {
             self.online.and_then(|index| self.results.get(index))
@@ -1597,7 +1598,9 @@ impl KoboApp for Verses {
                 let author = self.results[index].author.clone();
                 self.begin_search(context, &author, Scope::Poet);
             }
-        } else if action == action_id("card") && matches!(self.view, View::Today | View::Reading) {
+        } else if action == action_id("card")
+            && matches!(self.view, View::Today | View::Reading | View::Online)
+        {
             self.export_card(context);
         } else if action == action_id("export-confirm") || action == action_id("export-retry") {
             if let Some(export) = self.export.as_mut() {
@@ -1782,6 +1785,40 @@ impl KoboApp for Verses {
 }
 
 /// Split an exceptional line at the renderer's own line/grapheme boundaries.
+/// Sets fetched lines as stanzas, the way [`set_verse`] sets a bundled poem.
+///
+/// Lines of one stanza go together as one paragraph at verse leading. A page
+/// was measured a line at a time with paragraph spacing between, so it always
+/// has the room this takes.
+fn set_online_verse(mut screen: ScreenBuilder, lines: &[OnlineLine]) -> ScreenBuilder {
+    let mut stanza: Vec<&str> = Vec::new();
+    let mut opens = false;
+    let flush = |screen: ScreenBuilder, stanza: &mut Vec<&str>, opens: bool| {
+        if stanza.is_empty() {
+            return screen;
+        }
+        let text = stanza.join("\n");
+        stanza.clear();
+        screen.rich_text(
+            text,
+            Vec::new(),
+            kobo_sdk::ParagraphPresentation {
+                margin_before_em: if opens { STANZA_AIR } else { 0 },
+                line_height_percent: VERSE_LEADING,
+                ..kobo_sdk::ParagraphPresentation::default()
+            },
+        )
+    };
+    for line in lines {
+        if line.stanza_start {
+            screen = flush(screen, &mut stanza, opens);
+            opens = true;
+        }
+        stanza.push(&line.text);
+    }
+    flush(screen, &mut stanza, opens)
+}
+
 /// Sets the runs of a poem as stanzas: one paragraph each, a printed poem's
 /// leading inside it and the poet's space between them. The page and the card
 /// share this so a card is the page it was made from, line for line.
@@ -2215,6 +2252,35 @@ mod tests {
         // Kept for the day: a later action asks for nothing more.
         runner.action(action_id("poem-next"));
         assert!(runner.app().daily_task.is_none());
+    }
+
+    #[test]
+    fn todays_fetched_poem_still_makes_a_quote_card() {
+        let mut runner = AppRunner::new(Verses {
+            day: Some((2026, 10, 6)),
+            ..Verses::default()
+        });
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("asked");
+        let body = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another."],"linecount":"2"}]"#;
+        runner.task_outcome(task, TaskOutcome::Completed(body.to_vec()));
+        assert!(
+            format!("{:?}", runner.app().screen(&runner.context())).contains("Make a quote card")
+        );
+        let card = runner.app().quote_card(&runner.context());
+        let drawn = format!("{card:?}");
+        assert!(
+            drawn.contains("A Fetched Poem") && drawn.contains("A Poet"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("One line,"));
+        runner.action(action_id("card"));
+        assert_eq!(runner.app().view, View::Card);
+        assert!(runner.app().card_from_online());
     }
 
     #[test]

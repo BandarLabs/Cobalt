@@ -1,5 +1,4 @@
-wait 800
-expect Today
+wait-for Today's poem
 clean
 shot today
 tap Browse
@@ -7,6 +6,7 @@ expect Browse
 clean
 shot browse
 tap Search
-expect Search
+expect Search poetry
+expect Poets to start with
 clean
 shot search
