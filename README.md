@@ -35,7 +35,7 @@ over Wi-Fi, and your Kobo's own reader stays as it was.
 
 > [!IMPORTANT]
 > Tested on the Kobo Clara BW (N365 and the 2025 P365), Clara Colour, Clara HD,
-> Elipsa 2E, Libra 2, Libra Colour and Libra H2O, at the firmware listed in the
+> Elipsa 2E, Libra 2, Libra Colour, Libra H2O and Nia, at the firmware listed in the
 > [device support matrix](docs/DEVICES.md#device-support-matrix). Other Kobos
 > can run it too: Cobalt lists what has not been tested and asks once before
 > it starts. Kobo firmware 5.x is not supported. Cobalt is not affiliated with

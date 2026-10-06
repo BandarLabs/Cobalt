@@ -311,7 +311,7 @@ mod tests {
     use kobo_hal::touch::{InputEvent32, TouchDecoder, TouchEvent};
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, PanelPose,
-        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389, NIA_382, WRITE_EVIDENCE_PENDING,
+        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389, NIA_382,
     };
     use std::time::Duration;
 
@@ -394,10 +394,8 @@ mod tests {
         assert_eq!(pose.profile().id, ELIPSA_2E_389.id);
     }
 
-    /// The Nia matches exactly but its attended evidence is still under
-    /// review, so a synthetic tap is refused for that reason and no other.
     #[test]
-    fn pending_nia_with_exact_identity_cannot_receive_a_tap() {
+    fn reviewed_nia_with_exact_identity_can_receive_a_tap() {
         let snapshot = snapshot_for(
             &NIA_382,
             IdentitySnapshot {
@@ -407,8 +405,8 @@ mod tests {
                 device_code: Some(382),
             },
         );
-        let error = writable_pose(&snapshot).expect_err("pending evidence gates synthetic touch");
-        assert!(error.contains(WRITE_EVIDENCE_PENDING), "{error}");
+        let pose = writable_pose(&snapshot).expect("a write-ready Nia receives synthetic touch");
+        assert_eq!(pose.profile().id, NIA_382.id);
     }
 
     #[test]

@@ -900,16 +900,18 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
 ///
 /// Completion waits are bypassed; see [`CompletionWait::BypassUnreliableMxcfb`].
 ///
-/// Still pending, so `write_ready` is false:
+/// `write_ready` is true on maintainer sign-off, backed by the owner's
+/// footage of the launcher and apps running on the device, not by the
+/// attended evidence block in `docs/PORTING.md`. Still unmeasured:
 ///
-/// - The attended evidence block from `docs/PORTING.md`, including sandbox
-///   results on this 4.1.15 kernel and refresh timing over a few hundred
-///   updates with the bypass in place.
-/// - The hardware revision. The measured unit is `PCB='E60U20'`,
+/// - Sandbox results on this 4.1.15 kernel, and refresh timing over a few
+///   hundred updates with the completion wait bypassed.
+/// - The other hardware revision. The measured unit is `PCB='E60U20'`,
 ///   `PCB_REV=0x10`, `PCB_LVL='A'`, `PMIC='RC5T619'`, `FL_PWM='LM3630x1a'`.
-///   A later Nia ships a BD71828 PMIC under the same device code, and nothing
-///   in this profile's identity (serial prefix, firmware, kernel) tells the
-///   two apart. That revision is unmeasured.
+///   A later Nia ships a BD71828 PMIC under the same device code, with its
+///   power button on a separate `bd71828-pwrkey` input. The exact kernel
+///   match probably excludes it, since Kobo's published Nia kernel carries
+///   only the RC5T619 driver, but that has not been observed.
 pub const NIA_382: DeviceProfile = DeviceProfile {
     id: "nia-382",
     model: "Kobo Nia",
@@ -965,7 +967,8 @@ pub const NIA_382: DeviceProfile = DeviceProfile {
     serial_prefix: "N306",
     firmware_versions: &["4.38.23684"],
     kernel_release: "4.1.15-00463-g38afd5cea756",
-    write_ready: false,
+    // True per maintainer sign-off on owner footage; see the doc comment.
+    write_ready: true,
     // Unmeasured on this device.
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
@@ -3244,13 +3247,28 @@ mod tests {
     }
 
     #[test]
-    fn nia_doctor_snapshot_matches_but_stays_read_only_while_evidence_is_pending() {
+    fn nia_doctor_snapshot_matches_its_write_ready_profile() {
         let snapshot = measured_nia();
         let report = NIA_382.validate(&snapshot);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.readiness, Readiness::WriteReady);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
         assert!(NIA_382.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(identify_profile(&snapshot), Some(&NIA_382));
+        assert_eq!(write_ready_profile(&snapshot), Ok(&NIA_382));
+    }
+
+    /// A Nia on a kernel build nobody has run Cobalt on, which is what the
+    /// BD71828 revision is expected to report, matches read-only and is
+    /// refused writes.
+    #[test]
+    fn a_nia_on_another_kernel_build_is_refused_writes() {
+        let mut snapshot = measured_nia();
+        snapshot.identity.kernel_release = Some("4.1.15-00000-gunmeasured".into());
         assert_eq!(identify_profile(&snapshot), Some(&NIA_382));
         assert!(write_ready_profile(&snapshot).is_err());
     }
