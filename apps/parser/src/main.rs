@@ -148,7 +148,7 @@ impl Parser {
             return builder
                 .empty_state(
                     "No stories yet. Push a .z3, .z5 or .z8 story with \
-                     `kobo parser push FILE --device IP`; stories play completely offline.",
+                     kobo parser push FILE; stories play completely offline.",
                 )
                 .bottom_action("refresh", "Refresh library")
                 .build();

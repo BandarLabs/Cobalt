@@ -61,7 +61,9 @@ struct Birds {
 impl Birds {
     fn screen(&self) -> Screen {
         let Some(snapshot) = &self.snapshot else {
-            let screen = ScreenBuilder::new("birds-home");
+            // Named, so the bar says Birds rather than the app's id in lower
+            // case, which is what the shell falls back to without a title.
+            let screen = ScreenBuilder::new("birds-home").top_bar("Birds");
             return if self.loading {
                 screen.activity("Opening the latest birds", None).build()
             } else if let Some(notice) = &self.notice {
@@ -74,14 +76,17 @@ impl Birds {
                     .splash(
                         Some(Glyph::App),
                         "No birds yet",
-                        "On your computer, run `kobo birds listen --source http://HOST:PORT --device IP`.",
+                        "Birds shows what BirdNET-Go hears, mirrored from a computer.",
                     )
+                    .section("On your computer")
+                    .command("kobo pair")
+                    .command("kobo birds listen --source http://localhost:8080")
                     .buttons([(REFRESH, "Refresh")])
                     .build()
             };
         };
         let age = unix_seconds().saturating_sub(snapshot.generated_at);
-        let mut screen = ScreenBuilder::new("birds-home");
+        let mut screen = ScreenBuilder::new("birds-home").top_bar("Birds");
         if let Some(picture) = self.picture {
             // Fugleramme renders the names into the plate. The art is the
             // screen: no app bar over it and no margin around it, so the

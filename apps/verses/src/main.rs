@@ -40,6 +40,7 @@ struct Poem {
 }
 
 impl Poem {
+    #[cfg(test)]
     fn lines(self) -> impl Iterator<Item = &'static str> {
         self.stanzas
             .iter()
@@ -74,7 +75,7 @@ const CORPUS: &[Poem] = &[
                 "That kept so many warm.",
             ],
             &[
-                "I 've heard it in the chillest land,",
+                "I've heard it in the chillest land,",
                 "And on the strangest sea;",
                 "Yet, never, in extremity,",
                 "It asked a crumb of me.",
@@ -199,8 +200,120 @@ struct OnlinePoem {
     author: String,
     #[serde(default)]
     lines: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "count_text")]
     linecount: String,
+}
+
+/// `PoetryDB` sends a poem's line count as a string for some poems and as a
+/// number for others, Emily Dickinson's among them. Read as a string only, one
+/// numeric count failed the whole list, so searching for the most read poet in
+/// the collection reported that it held nothing by her.
+fn count_text<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Count {
+        Text(String),
+        Number(u64),
+    }
+    Ok(match Count::deserialize(deserializer)? {
+        Count::Text(text) => text,
+        Count::Number(number) => number.to_string(),
+    })
+}
+
+/// Orders titles the way a reader counts: "Sonnet 2" before "Sonnet 10",
+/// where a plain comparison of the text put every sonnet in the teens between
+/// the first and the second.
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn chunks(text: &str) -> Vec<(bool, &str)> {
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        let mut digits = None;
+        for (index, character) in text.char_indices() {
+            let digit = character.is_ascii_digit();
+            if digits != Some(digit) {
+                if let Some(was) = digits {
+                    chunks.push((was, &text[start..index]));
+                }
+                start = index;
+                digits = Some(digit);
+            }
+        }
+        if let Some(was) = digits {
+            chunks.push((was, &text[start..]));
+        }
+        chunks
+    }
+    // Quotation marks and apostrophes that open a title are not where it
+    // files: "Whose are the little beds" belongs under W.
+    fn file(text: &str) -> &str {
+        text.trim_start_matches(|c: char| !c.is_alphanumeric())
+    }
+    let (left, right) = (chunks(file(a)), chunks(file(b)));
+    for ((left_digits, left), (right_digits, right)) in left.iter().zip(&right) {
+        let order = if *left_digits && *right_digits {
+            let (l, r) = (left.trim_start_matches('0'), right.trim_start_matches('0'));
+            l.len().cmp(&r.len()).then_with(|| l.cmp(r))
+        } else {
+            left.to_lowercase().cmp(&right.to_lowercase())
+        };
+        if order != std::cmp::Ordering::Equal {
+            return order;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
+/// Where a search looks: everywhere, or in one field.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Scope {
+    #[default]
+    Anything,
+    Title,
+    Poet,
+    Line,
+}
+
+impl Scope {
+    const ALL: [(Self, &'static str, &'static str); 4] = [
+        (Self::Anything, "scope-any", "Anything"),
+        (Self::Title, "scope-title", "Title"),
+        (Self::Poet, "scope-poet", "Poet"),
+        (Self::Line, "scope-line", "Line"),
+    ];
+
+    const fn fields(self) -> &'static str {
+        match self {
+            Self::Anything => "author,title,lines",
+            Self::Title => "title",
+            Self::Poet => "author",
+            Self::Line => "lines",
+        }
+    }
+}
+
+/// Poets to start from, offered while the search box is empty. All of them
+/// are well represented in `PoetryDB`, so a tap never lands on an empty page.
+const SUGGESTED_POETS: [&str; 6] = [
+    "Emily Dickinson",
+    "William Blake",
+    "John Keats",
+    "Christina Rossetti",
+    "Walt Whitman",
+    "William Shakespeare",
+];
+
+/// "a minute", "three minutes": how long a poem takes, at a reading pace of
+/// about twenty lines a minute aloud.
+fn reading_time(lines: &str) -> String {
+    let lines = lines.trim().parse::<u32>().unwrap_or(0);
+    match lines.div_ceil(20).max(1) {
+        1 => "a minute".to_owned(),
+        2 => "two minutes".to_owned(),
+        3 => "three minutes".to_owned(),
+        4 => "four minutes".to_owned(),
+        minutes => format!("{minutes} minutes"),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -210,11 +323,13 @@ struct OnlineLine {
 }
 
 type OnlinePages = Vec<Vec<OnlineLine>>;
+/// A bundled poem's pages, with the poem and panel they were measured for.
+type PoemLayout = (usize, kobo_ui::DisplayMetrics, Vec<Vec<VerseRun>>);
 type OnlineLayout = (kobo_sdk::DisplayMetrics, u64, OnlinePages);
 
 #[derive(Clone)]
 struct PoemRow {
-    section: Option<&'static str>,
+    section: Option<String>,
     action: String,
     title: String,
     detail: String,
@@ -228,6 +343,41 @@ struct Saved {
     favorites: BTreeSet<String>,
     online_favorites: Vec<OnlinePoem>,
     sleep: bool,
+    /// Today's poem from `PoetryDB`, and the day it was chosen for.
+    #[serde(default)]
+    daily: Option<DailyPoem>,
+}
+
+/// A poem fetched for one day, kept so the day's poem is the same poem all
+/// day and still there when the reader goes offline.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DailyPoem {
+    day: (u16, u8, u8),
+    poem: OnlinePoem,
+}
+
+/// Lengths a daily poem is drawn from, so it is a poem for a page or two and
+/// never one of `PoetryDB`'s thousand line epics.
+const DAILY_LENGTHS: [u16; 5] = [12, 14, 16, 20, 24];
+
+/// A ceiling on what is accepted as a daily poem, whatever the service sends.
+const MAX_DAILY_LINES: usize = 60;
+
+/// Asks `PoetryDB` for one poem of a readable length. A random one, so each
+/// reader meets a different poem from the thousands it holds rather than the
+/// same few bundled ones on rotation.
+fn daily_task(day: (u16, u8, u8)) -> Task {
+    let (year, month, date) = day;
+    let length = DAILY_LENGTHS[daily_index(year, month, date) % DAILY_LENGTHS.len()];
+    Task::Fetch {
+        url: format!(
+            "https://poetrydb.org/linecount,random/{length};1/author,title,lines,linecount"
+        ),
+        offset: 0,
+        max_bytes: SEARCH_LIMIT,
+        credential: None,
+        headers: vec![Header::new("User-Agent", USER_AGENT)],
+    }
 }
 
 /// What the shelf wrote before poems had names: favourites as positions.
@@ -248,6 +398,9 @@ struct LegacySaved {
 /// The air between two stanzas, in hundredths of an em: three quarters of a
 /// line, which is what a printed book of verse leaves.
 const STANZA_AIR: u16 = 75;
+
+/// Verse leading, as a percentage of the reading face's line height.
+const VERSE_LEADING: u16 = 88;
 
 /// The size verse is set at: one step above whatever the reader chose.
 ///
@@ -298,6 +451,11 @@ struct Verses {
     online: Option<usize>,
     online_page: usize,
     online_layout: std::cell::RefCell<Option<OnlineLayout>>,
+    /// The pages of the bundled poem last measured, and what they were
+    /// measured for. Paging lays each page out to see what fits, which is
+    /// worth doing once per poem and panel rather than on every repaint of a
+    /// single core reader.
+    poem_layout: std::cell::RefCell<Option<PoemLayout>>,
     browse_page: usize,
     results_page: usize,
     online_from: View,
@@ -305,7 +463,13 @@ struct Verses {
     saved: Saved,
     keyboard: Keyboard,
     results: Vec<OnlinePoem>,
+    /// Where the next search looks, and what the last one asked for.
+    scope: Scope,
+    query: String,
     task: Option<TaskId>,
+    /// The fetch for today's poem, separate from searches so a search does
+    /// not cancel it and it does not hold up a search.
+    daily_task: Option<TaskId>,
     pending: Option<Pending>,
     notice: Option<String>,
     loaded: bool,
@@ -335,6 +499,7 @@ impl Default for Verses {
             online: None,
             online_page: 0,
             online_layout: std::cell::RefCell::new(None),
+            poem_layout: std::cell::RefCell::new(None),
             browse_page: 0,
             results_page: 0,
             online_from: View::Results,
@@ -342,7 +507,10 @@ impl Default for Verses {
             saved: Saved::default(),
             keyboard: Keyboard::new(),
             results: Vec::new(),
+            scope: Scope::Anything,
+            query: String::new(),
             task: None,
+            daily_task: None,
             pending: None,
             notice: None,
             loaded: false,
@@ -413,12 +581,8 @@ fn escape(text: &str) -> String {
     out
 }
 
-fn search_task(query: &str, author_only: bool) -> Task {
-    let fields = if author_only {
-        "author"
-    } else {
-        "author,title,lines"
-    };
+fn search_task(query: &str, scope: Scope) -> Task {
+    let fields = scope.fields();
     Task::Fetch {
         url: format!(
             "https://poetrydb.org/{fields}/{}/author,title,linecount",
@@ -447,17 +611,32 @@ fn poem_task(title: &str) -> Task {
 impl Verses {
     /// One page of a poem, set the way a poem is set.
     ///
-    /// The whole thing used to be handed over as one block of text with the
-    /// poet's name and the word "Today" pushed into the top of it, in the same
-    /// face and size as the verse, so the page opened with two lines that were
-    /// not part of the poem. The lines are centred on the page now, a stanza
-    /// keeps the space the poet put after it, and who wrote it and where it
-    /// comes from sit under the poem rather than in it.
+    /// The title and the poet head the first page in the display serif, and
+    /// the poem follows flush left in the book face, a stanza to a paragraph
+    /// with the poet's space between stanzas and none between their lines.
+    /// Where it came from closes the last page. A poem that fits on one page
+    /// sits in the middle of it: hung from the top it left half the panel
+    /// empty beneath twelve lines, which read as a page that had failed to
+    /// load the rest.
     fn local_poem(&self, context: &Context) -> Screen {
-        let poem = CORPUS[self.poem];
         let pages = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
-        let mut screen = ScreenBuilder::new("verses-poem").top_bar(poem.title);
+        self.poem_page_screen(context, &pages[page], page, pages.len())
+    }
+
+    fn poem_page_screen(
+        &self,
+        context: &Context,
+        runs: &[VerseRun],
+        page: usize,
+        count: usize,
+    ) -> Screen {
+        let poem = CORPUS[self.poem];
+        let mut screen = ScreenBuilder::new("verses-poem").top_bar(if self.view == View::Today {
+            "Today's poem"
+        } else {
+            poem.author
+        });
         if self.view == View::Today {
             screen = screen.top_bar_glyph("browse", "Browse", Glyph::Grid);
         }
@@ -470,169 +649,160 @@ impl Verses {
             },
             Glyph::Heart,
         );
-        if self.view == View::Today {
-            screen = screen.secondary("Today");
+        let centred = count == 1;
+        if centred {
+            screen = screen.fill();
+        }
+        if page == 0 {
+            screen = screen
+                .heading_at_level(2, poem.title)
+                .secondary(format!("{} · {}", poem.author, poem.year));
         }
         screen = screen.reading(true).text_scale(poem_scale(context));
-        for (index, run) in pages[page].iter().enumerate() {
-            for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
-                .iter()
-                .enumerate()
-            {
-                screen = screen.rich_text(
-                    (*text).to_owned(),
-                    Vec::new(),
-                    kobo_sdk::ParagraphPresentation {
-                        alignment: kobo_sdk::ParagraphAlignment::Center,
-                        // The space a poet leaves between stanzas, and none
-                        // between the lines inside one. A stanza carried over
-                        // from the page before opens without one. The unit is
-                        // hundredths of an em, so a whole line of air is 100
-                        // and the 1 this first carried was invisible.
-                        margin_before_em: if index > 0 && line == 0 && run.from == 0 {
-                            STANZA_AIR
-                        } else {
-                            0
-                        },
-                        ..kobo_sdk::ParagraphPresentation::default()
-                    },
-                );
-            }
+        screen = set_verse(screen, poem, runs);
+        if page + 1 == count {
+            screen = screen.secondary(format!("From {}", poem.source));
         }
-        // Who wrote it, when, and which edition this text is taken from. A
-        // reader who meets a poem here can go and find it.
-        if page + 1 == pages.len() {
-            screen = screen.secondary(format!("{} · {} · {}", poem.author, poem.year, poem.source));
+        if centred {
+            screen = screen.fill();
         }
-        // The card sits at the foot rather than in the bar: the bar holds two
-        // controls at most, for the reason the platform gives, and a card is
-        // something a reader does with a poem they have just read rather than
-        // chrome that belongs beside its title.
-        if pages.len() > 1 {
+        if count > 1 {
             screen = screen
+                .page_turns("poem-previous", "poem-next")
                 .page_position(
                     u16::try_from(page + 1).unwrap_or(1),
-                    u16::try_from(pages.len()).unwrap_or(1),
-                )
-                .action_bar([
-                    ("poem-previous", "Previous"),
-                    ("card", "Quote card"),
-                    ("poem-next", "Next"),
-                ]);
-        } else {
-            screen = screen.bottom_action("card", "Quote card");
+                    u16::try_from(count).unwrap_or(1),
+                );
         }
-        screen.build()
+        screen.bottom_action("card", "Make a quote card").build()
     }
 
-    /// Which lines fit on a page, measured against the panel.
+    /// Which lines go on which page, measured against the panel.
     ///
-    /// A page is a list of runs, each a stanza and the lines of it that belong
-    /// on this page. Breaks are taken at stanza boundaries wherever the panel
-    /// allows, because a stanza is the unit a poem is written in. A stanza too
-    /// tall for one page is carried over rather than dropped: a fourteen line
-    /// sonnet does not fit a six inch panel at the larger text settings, and
-    /// Ozymandias was drawn through the bottom edge until this said so.
+    /// Each page is filled by laying it out and keeping whatever still fits,
+    /// a whole stanza at a time, so the measure is the page the reader will
+    /// see rather than an estimate of it. The estimate this replaced held a
+    /// line back for the attribution, charged every gap between stanzas a
+    /// whole line, and moved a stanza that did not fit the remainder to the
+    /// next page: Hope, twelve lines in three stanzas, came out as two pages
+    /// with four lines on the second and the bottom half of the first empty.
     ///
-    /// Measured a line at a time rather than a stanza at a time. Handing the
-    /// poem over as prose and counting paragraphs put four lines of The Tiger
-    /// under the bottom edge at the smallest text size, because prose wrapping
-    /// says nothing about how many separate verse lines fit: each line here is
-    /// its own paragraph on the screen, so each line is its own paragraph in
-    /// the measurement too.
+    /// A stanza is only split when it is taller than a page on its own, which
+    /// a sonnet is at the largest text sizes, and then line by line so nothing
+    /// is lost.
     fn poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
-        let poem = CORPUS[self.poem];
-        // One paragraph per line, because a page is counted here in lines of
-        // verse and paginate counts paragraphs. Measured at the size the poem
-        // is drawn at: a page measured at one size and set at another loses
-        // its last lines.
-        let one_per_paragraph = poem.lines().collect::<Vec<_>>().join("\n\n");
-        let measured = context.paginate_at(&one_per_paragraph, true, poem_scale(context));
-        // The fullest page the panel offered. Taking the smallest instead read
-        // the remainder page as the panel's capacity and put one stanza on
-        // each of six pages with four fifths of every page empty.
-        // One line is held back for the day's label or the attribution, which
-        // are set in the same column as the verse. That reservation is why
-        // Ozymandias, fourteen lines that the panel measures as fitting,
-        // paginates as thirteen and strands its last line. Removing it was
-        // tried and the page then clipped: fourteen lines and an attribution
-        // genuinely do not both fit. Giving that line back needs the
-        // attribution to leave the verse column, which is a design change
-        // rather than an arithmetic one.
-        let capacity = measured
-            .iter()
-            .map(Vec::len)
-            .max()
-            .unwrap_or(1)
-            .saturating_sub(1)
-            .max(1);
+        let metrics = context.metrics();
+        if let Some((poem, measured, pages)) = self.poem_layout.borrow().as_ref() {
+            if *poem == self.poem && *measured == metrics {
+                return pages.clone();
+            }
+        }
+        let pages = self.measure_poem_pages(context);
+        *self.poem_layout.borrow_mut() = Some((self.poem, metrics, pages.clone()));
+        pages
+    }
 
+    fn measure_poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
+        let poem = CORPUS[self.poem];
+        // Measured as a page of a longer poem, with the page position and the
+        // attribution both present, so a page that fits here fits wherever it
+        // lands.
+        let fits = |runs: &[VerseRun], first: bool| {
+            self.poem_page_screen(context, runs, usize::from(!first), 2)
+                .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+                .issues
+                .is_empty()
+        };
         let mut pages: Vec<Vec<VerseRun>> = Vec::new();
         let mut current: Vec<VerseRun> = Vec::new();
-        let mut used = 0usize;
         for (stanza, lines) in poem.stanzas.iter().enumerate() {
-            let mut from = 0usize;
+            let mut from = 0;
             while from < lines.len() {
-                let gap = usize::from(!current.is_empty());
-                let room = capacity.saturating_sub(used + gap);
-                let left = lines.len() - from;
-                // Start a new page rather than split a stanza that would fit
-                // whole on one. Splitting whenever the current page happened
-                // to be nearly full left a single line stranded at the foot.
-                let splittable = left > capacity;
-                if !current.is_empty() && (room == 0 || (left > room && !splittable)) {
-                    pages.push(std::mem::take(&mut current));
-                    used = 0;
-                    continue;
-                }
-                let take = left.min(room.max(1));
-                used += take + gap;
-                current.push(VerseRun {
+                let first = pages.is_empty();
+                let mut whole = current.clone();
+                whole.push(VerseRun {
                     stanza,
                     from,
-                    to: from + take,
+                    to: lines.len(),
                 });
-                from += take;
+                if fits(&whole, first) {
+                    current = whole;
+                    break;
+                }
+                if !current.is_empty() {
+                    pages.push(std::mem::take(&mut current));
+                    continue;
+                }
+                // Alone on a page and still too tall: take as many lines as
+                // fit, and never fewer than one, so the poem always moves on.
+                let mut to = from + 1;
+                while to < lines.len()
+                    && fits(
+                        &[VerseRun {
+                            stanza,
+                            from,
+                            to: to + 1,
+                        }],
+                        first,
+                    )
+                {
+                    to += 1;
+                }
+                pages.push(vec![VerseRun { stanza, from, to }]);
+                from = to;
             }
         }
         if !current.is_empty() {
             pages.push(current);
         }
         if pages.is_empty() {
-            vec![vec![VerseRun {
+            pages.push(vec![VerseRun {
                 stanza: 0,
                 from: 0,
                 to: poem.stanzas.first().map_or(0, |lines| lines.len()),
-            }]]
-        } else {
-            pages
+            }]);
         }
+        pages
     }
 
-    fn online_prefix(&self, context: &Context, poem: &OnlinePoem) -> ScreenBuilder {
+    fn online_prefix(&self, context: &Context, poem: &OnlinePoem, page: usize) -> ScreenBuilder {
         let favorite = self
             .saved
             .online_favorites
             .iter()
             .any(|saved| saved.title == poem.title && saved.author == poem.author);
-        let mut screen = ScreenBuilder::new("verses-online")
-            .top_bar(poem.title.clone())
-            .top_bar_glyph("more-by-author", "More by this poet", Glyph::Person)
-            .top_bar_glyph(
-                "favorite",
-                if favorite {
-                    "Remove favorite"
-                } else {
-                    "Favorite"
-                },
-                Glyph::Heart,
-            )
-            .reading(true)
-            .secondary(context.clamped_row(&poem.author, 2, false));
+        let today = self.view == View::Today;
+        let mut screen = ScreenBuilder::new("verses-online").top_bar(if today {
+            "Today's poem".to_owned()
+        } else {
+            context.clamped_row(&poem.author, 1, false)
+        });
+        screen = if today {
+            screen.top_bar_glyph("browse", "Browse", Glyph::Grid)
+        } else {
+            screen.top_bar_glyph("more-by-author", "More by this poet", Glyph::Person)
+        };
+        screen = screen.top_bar_glyph(
+            "favorite",
+            if favorite {
+                "Remove favorite"
+            } else {
+                "Favorite"
+            },
+            Glyph::Heart,
+        );
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
-        screen
+        if page == 0 {
+            // The same head as a bundled poem: its title in the display serif
+            // and who wrote it beneath, instead of the title squeezed into the
+            // bar and the poet set as the first line of the page.
+            screen = screen
+                .heading_at_level(2, context.clamped_row(&poem.title, 2, true))
+                .secondary(context.clamped_row(&poem.author, 2, false));
+        }
+        screen.reading(true)
     }
 
     fn online_page_screen(
@@ -643,16 +813,10 @@ impl Verses {
         page: usize,
         count: usize,
     ) -> Screen {
-        let mut screen = self.online_prefix(context, poem);
-        for line in lines {
-            screen = screen.rich_text(
-                line.text.clone(),
-                Vec::new(),
-                kobo_sdk::ParagraphPresentation {
-                    margin_before_em: if line.stanza_start { STANZA_AIR } else { 0 },
-                    ..kobo_sdk::ParagraphPresentation::default()
-                },
-            );
+        let mut screen = self.online_prefix(context, poem, page);
+        screen = set_online_verse(screen, lines);
+        if page + 1 == count {
+            screen = screen.secondary("From PoetryDB");
         }
         if count > 1 {
             screen = screen
@@ -662,7 +826,9 @@ impl Verses {
                     u16::try_from(count).unwrap_or(u16::MAX),
                 );
         }
-        screen.build()
+        // A fetched poem makes a card as a bundled one does: today's poem
+        // used to lose the card the day it began to come from PoetryDB.
+        screen.bottom_action("card", "Make a quote card").build()
     }
 
     /// Keep verse lines and stanza gaps, measuring the same rich-text nodes
@@ -691,6 +857,8 @@ impl Verses {
             stanza_start = false;
         }
         let metrics = context.metrics();
+        // Measured with the first page's heading and the attribution, so every
+        // page has at least the room the fullest one needs.
         let prefix = self.online_page_screen(context, poem, &[], 0, 2);
         let chrome =
             kobo_ui::Chrome::for_screen(&prefix, false, kobo_ui::Chrome::measuring(true).status);
@@ -698,7 +866,8 @@ impl Verses {
         let (capacity, gap) = kobo_ui::with_text_scale(metrics.text_scale, || {
             // Reading screens have no status strip. Reserve the same page
             // position band as the renderer, then the measured author/notice.
-            let area = metrics.prose_area_in(true, false, kobo_ui::Face::Reading);
+            // The card action takes the foot of the panel, as a bar would.
+            let area = metrics.prose_area_in(true, true, kobo_ui::Face::Reading);
             (
                 area.height
                     .saturating_sub(metrics.page_position_band())
@@ -770,7 +939,7 @@ impl Verses {
     }
 
     fn online_poem(&self, context: &Context) -> Screen {
-        let Some(poem) = self.online.and_then(|index| self.results.get(index)) else {
+        let Some(poem) = self.current_online() else {
             return ScreenBuilder::new("verses-online")
                 .top_bar("Verses")
                 .splash(
@@ -793,7 +962,13 @@ impl Verses {
     ) -> (Screen, usize) {
         let labels = rows
             .iter()
-            .map(|row| (row.section, row.title.as_str(), row.detail.as_str()))
+            .map(|row| {
+                (
+                    row.section.as_deref(),
+                    row.title.as_str(),
+                    row.detail.as_str(),
+                )
+            })
             .collect::<Vec<_>>();
         let pages = context.paginate_rows_in_sections_under(
             &labels,
@@ -810,7 +985,7 @@ impl Verses {
         let mut start = 0;
         while start < visible.len() {
             let first = &rows[visible[start]];
-            if let Some(section) = first.section {
+            if let Some(section) = &first.section {
                 screen = screen.section(section);
             }
             let end = ((start + 1)..visible.len())
@@ -879,10 +1054,10 @@ impl Verses {
                 }),
         );
         if let Some(first) = rows.first_mut() {
-            first.section = Some("Favorites");
+            first.section = Some("Favorites".to_owned());
         }
         rows.extend(CORPUS.iter().enumerate().map(|(index, poem)| PoemRow {
-            section: (index == 0).then_some("Poems"),
+            section: (index == 0).then(|| "Poems".to_owned()),
             action: format!("poem-{index}"),
             title: context.clamped_row(poem.title, 2, false),
             detail: format!("{} · {}", poem.author, poem.tags),
@@ -896,10 +1071,34 @@ impl Verses {
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice.clone());
         }
-        screen
-            .typed(&self.keyboard, "Title, poet, or a line")
-            .keyboard(&self.keyboard, "Search")
-            .build()
+        let selected = Scope::ALL
+            .iter()
+            .position(|&(scope, _, _)| scope == self.scope)
+            .unwrap_or(0);
+        screen = screen
+            .segmented(
+                selected,
+                Scope::ALL.iter().map(|&(_, name, label)| (name, label)),
+            )
+            .typed(
+                &self.keyboard,
+                match self.scope {
+                    Scope::Anything => "A title, a poet, or a line you remember",
+                    Scope::Title => "A poem's title",
+                    Scope::Poet => "A poet's name",
+                    Scope::Line => "Words from a line",
+                },
+            );
+        // Somewhere to start, while there is nothing typed: the whole of
+        // PoetryDB is behind this box and an empty one says nothing about it.
+        if self.keyboard.text().is_empty() {
+            screen = screen.section("Poets to start with").chips(
+                SUGGESTED_POETS
+                    .iter()
+                    .map(|poet| (format!("suggest-{poet}"), *poet, false)),
+            );
+        }
+        screen.keyboard(&self.keyboard, "Search").build()
     }
 
     fn results(&self, context: &Context) -> (Screen, usize) {
@@ -936,18 +1135,48 @@ impl Verses {
                 1,
             );
         }
-        let rows = self
-            .results
-            .iter()
-            .enumerate()
-            .map(|(index, poem)| PoemRow {
-                section: None,
-                action: format!("result-{index}"),
-                title: context.clamped_row(&poem.title, 2, false),
-                detail: poem.author.clone(),
-                glyph: Glyph::Note,
+        // Grouped by poet, the way an anthology's contents are, so a search
+        // for a word that several poets used reads as who used it rather than
+        // as a list where the poet is the small print under every title.
+        let mut order: Vec<usize> = (0..self.results.len()).collect();
+        order.sort_by(|&a, &b| {
+            let (a, b) = (&self.results[a], &self.results[b]);
+            a.author
+                .cmp(&b.author)
+                .then_with(|| natural_order(&a.title, &b.title))
+        });
+        let mut previous: Option<&str> = None;
+        let rows = order
+            .into_iter()
+            .map(|index| {
+                let poem = &self.results[index];
+                let first = previous != Some(poem.author.as_str());
+                previous = Some(poem.author.as_str());
+                PoemRow {
+                    section: first.then(|| poem.author.clone()),
+                    action: format!("result-{index}"),
+                    title: context.clamped_row(&poem.title, 2, false),
+                    detail: if poem.linecount.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "{} lines · {}",
+                            poem.linecount.trim(),
+                            reading_time(&poem.linecount)
+                        )
+                    },
+                    glyph: Glyph::Note,
+                }
             })
             .collect::<Vec<_>>();
+        screen = screen.secondary(format!(
+            "{} for \u{201c}{}\u{201d}",
+            match self.results.len() {
+                1 => "1 poem".to_owned(),
+                count => format!("{count} poems"),
+            },
+            self.query
+        ));
         Self::paged_poems(context, screen, &rows, self.results_page)
     }
 
@@ -971,7 +1200,7 @@ impl Verses {
     }
 
     fn turn_online(&mut self, context: &Context, forward: bool) {
-        let Some(poem) = self.online.and_then(|index| self.results.get(index)) else {
+        let Some(poem) = self.current_online() else {
             return;
         };
         let last = self.online_pages(context, poem).len().saturating_sub(1);
@@ -1018,6 +1247,7 @@ impl Verses {
 
     fn screen(&self, context: &Context) -> Screen {
         match self.view {
+            View::Today if self.daily_poem().is_some() => self.online_poem(context),
             View::Today | View::Reading => self.local_poem(context),
             // The export's own screen: what is being written, where it goes,
             // and a way to try again if the computer is not listening.
@@ -1052,7 +1282,7 @@ impl Verses {
         context.set_screen(screen);
     }
 
-    fn begin_search(&mut self, context: &mut Context, query: &str, author_only: bool) {
+    fn begin_search(&mut self, context: &mut Context, query: &str, scope: Scope) {
         if query.trim().is_empty() {
             self.notice = Some("Type something to search for.".into());
             return;
@@ -1064,7 +1294,8 @@ impl Verses {
         self.online_page = 0;
         self.results_page = 0;
         self.view = View::Results;
-        self.task = context.spawn(search_task(query.trim(), author_only));
+        query.trim().clone_into(&mut self.query);
+        self.task = context.spawn(search_task(query.trim(), scope));
         self.pending = self.task.map(|_| Pending::Search);
         if self.task.is_none() {
             self.notice = Some("Search is busy. Try again in a moment.".into());
@@ -1079,6 +1310,17 @@ impl Verses {
     /// taken from, so a card can be passed on without stripping the poem of
     /// its provenance on the way.
     fn quote_card(&self, context: &Context) -> Screen {
+        if let Some(poem) = self.current_online().filter(|_| self.card_from_online()) {
+            let pages = self.online_pages(context, poem);
+            let page = self.online_page.min(pages.len().saturating_sub(1));
+            let screen = ScreenBuilder::new("verses-card")
+                .top_bar(context.clamped_row(&poem.title, 1, false))
+                .reading(true);
+            return set_online_verse(screen, &pages[page])
+                .secondary(context.clamped_row(&poem.author, 1, false))
+                .secondary("From PoetryDB")
+                .build();
+        }
         let poem = CORPUS[self.poem];
         let pages = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
@@ -1090,26 +1332,7 @@ impl Verses {
             .top_bar(poem.title)
             .reading(true)
             .text_scale(poem_scale(context));
-        for (index, run) in pages[page].iter().enumerate() {
-            for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
-                .iter()
-                .enumerate()
-            {
-                screen = screen.rich_text(
-                    (*text).to_owned(),
-                    Vec::new(),
-                    kobo_sdk::ParagraphPresentation {
-                        alignment: kobo_sdk::ParagraphAlignment::Center,
-                        margin_before_em: if index > 0 && line == 0 && run.from == 0 {
-                            STANZA_AIR
-                        } else {
-                            0
-                        },
-                        ..kobo_sdk::ParagraphPresentation::default()
-                    },
-                );
-            }
-        }
+        screen = set_verse(screen, poem, &pages[page]);
         screen
             .secondary(format!("{} · {}", poem.author, poem.year))
             .secondary(poem.source.to_owned())
@@ -1133,15 +1356,17 @@ impl Verses {
             u32::try_from(metrics.height).unwrap_or(0),
             &surface.pixels,
         );
-        let poem = CORPUS[self.poem];
+        let name = match self.current_online().filter(|_| self.card_from_online()) {
+            Some(poem) => format!("{} by {}", poem.title, poem.author),
+            None => format!(
+                "{} by {}",
+                CORPUS[self.poem].title, CORPUS[self.poem].author
+            ),
+        };
         match picture
             .map_err(|error| format!("{error:?}"))
             .and_then(|bytes| {
-                kobo_sdk::exports::Export::new(
-                    &format!("{} by {}", poem.title, poem.author),
-                    kobo_sdk::exports::Format::Png,
-                    bytes,
-                )
+                kobo_sdk::exports::Export::new(&name, kobo_sdk::exports::Format::Png, bytes)
             }) {
             Ok(mut export) => {
                 export.begin(context);
@@ -1175,10 +1400,52 @@ impl Verses {
         }
     }
 
+    /// Whether the card being made is of a fetched poem rather than a bundled
+    /// one: the screen it was asked for from shows one.
+    fn card_from_online(&self) -> bool {
+        let from = if self.view == View::Card {
+            self.card_from
+        } else {
+            self.view
+        };
+        from == View::Online || (from == View::Today && self.daily_poem().is_some())
+    }
+
+    /// Today's poem from `PoetryDB`, if one has arrived for today.
+    fn daily_poem(&self) -> Option<&OnlinePoem> {
+        self.saved
+            .daily
+            .as_ref()
+            .filter(|daily| Some(daily.day) == self.day)
+            .map(|daily| &daily.poem)
+    }
+
+    /// The fetched poem on screen: today's, or one opened from a search.
+    fn current_online(&self) -> Option<&OnlinePoem> {
+        let today =
+            self.view == View::Today || (self.view == View::Card && self.card_from == View::Today);
+        if today {
+            self.daily_poem()
+        } else {
+            self.online.and_then(|index| self.results.get(index))
+        }
+    }
+
+    /// Asks for today's poem once the shelf has loaded and the day has none.
+    /// Offline it simply fails, and the day keeps its bundled poem.
+    fn fetch_daily(&mut self, context: &mut Context) {
+        let Some(day) = self.day else { return };
+        if !self.loaded || self.daily_task.is_some() || self.daily_poem().is_some() {
+            return;
+        }
+        self.daily_task = context.spawn(daily_task(day));
+    }
+
     fn toggle_favorite(&mut self) {
-        if self.view == View::Online {
-            let Some(index) = self.online else { return };
-            let poem = self.results[index].clone();
+        if self.view == View::Online || (self.view == View::Today && self.daily_poem().is_some()) {
+            let Some(poem) = self.current_online().cloned() else {
+                return;
+            };
             if let Some(saved) = self
                 .saved
                 .online_favorites
@@ -1268,19 +1535,33 @@ impl KoboApp for Verses {
                         .collect(),
                     online_favorites: legacy.online_favorites,
                     sleep: legacy.sleep,
+                    daily: None,
                 };
             }
         }
         self.loaded = true;
+        self.fetch_daily(context);
         self.show(context);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         self.advance_day(reader_clock().as_ref());
+        self.fetch_daily(context);
         if self.view == View::Search && action != ActionId::BACK {
-            if let Some(Pressed::Submitted) = self.keyboard.press(action) {
+            if let Some(&(scope, _, _)) = Scope::ALL
+                .iter()
+                .find(|(_, name, _)| action == action_id(name))
+            {
+                self.scope = scope;
+            } else if let Some(poet) = SUGGESTED_POETS
+                .iter()
+                .find(|poet| action == action_id(&format!("suggest-{poet}")))
+            {
+                self.begin_search(context, poet, Scope::Poet);
+            } else if let Some(Pressed::Submitted) = self.keyboard.press(action) {
                 let query = self.keyboard.take();
-                self.begin_search(context, &query, false);
+                self.begin_search(context, &query, self.scope);
             }
             self.show(context);
             return;
@@ -1315,9 +1596,11 @@ impl KoboApp for Verses {
         } else if action == action_id("more-by-author") {
             if let Some(index) = self.online {
                 let author = self.results[index].author.clone();
-                self.begin_search(context, &author, true);
+                self.begin_search(context, &author, Scope::Poet);
             }
-        } else if action == action_id("card") && matches!(self.view, View::Today | View::Reading) {
+        } else if action == action_id("card")
+            && matches!(self.view, View::Today | View::Reading | View::Online)
+        {
             self.export_card(context);
         } else if action == action_id("export-confirm") || action == action_id("export-retry") {
             if let Some(export) = self.export.as_mut() {
@@ -1383,6 +1666,7 @@ impl KoboApp for Verses {
         match self.view {
             View::Browse | View::Results => self.turn_list(context, forward),
             View::Online => self.turn_online(context, forward),
+            View::Today if self.daily_poem().is_some() => self.turn_online(context, forward),
             View::Today | View::Reading => {
                 let last = self.poem_pages(context).len().saturating_sub(1);
                 self.poem_page = if forward {
@@ -1397,6 +1681,26 @@ impl KoboApp for Verses {
     }
 
     fn on_task(&mut self, context: &mut Context, id: TaskId, outcome: TaskOutcome) {
+        if self.daily_task == Some(id) {
+            self.daily_task = None;
+            let fetched = match outcome {
+                TaskOutcome::Completed(bytes) => serde_json::from_slice::<Vec<OnlinePoem>>(&bytes)
+                    .ok()
+                    .and_then(|poems| {
+                        poems.into_iter().find(|poem| {
+                            !poem.lines.is_empty() && poem.lines.len() <= MAX_DAILY_LINES
+                        })
+                    }),
+                _ => None,
+            };
+            if let (Some(poem), Some(day)) = (fetched, self.day) {
+                self.saved.daily = Some(DailyPoem { day, poem });
+                self.online_page = 0;
+                self.save(context);
+                self.show(context);
+            }
+            return;
+        }
         if self.task != Some(id) {
             return;
         }
@@ -1481,6 +1785,69 @@ impl KoboApp for Verses {
 }
 
 /// Split an exceptional line at the renderer's own line/grapheme boundaries.
+/// Sets fetched lines as stanzas, the way [`set_verse`] sets a bundled poem.
+///
+/// Lines of one stanza go together as one paragraph at verse leading. A page
+/// was measured a line at a time with paragraph spacing between, so it always
+/// has the room this takes.
+fn set_online_verse(mut screen: ScreenBuilder, lines: &[OnlineLine]) -> ScreenBuilder {
+    let mut stanza: Vec<&str> = Vec::new();
+    let mut opens = false;
+    let flush = |screen: ScreenBuilder, stanza: &mut Vec<&str>, opens: bool| {
+        if stanza.is_empty() {
+            return screen;
+        }
+        let text = stanza.join("\n");
+        stanza.clear();
+        screen.rich_text(
+            text,
+            Vec::new(),
+            kobo_sdk::ParagraphPresentation {
+                margin_before_em: if opens { STANZA_AIR } else { 0 },
+                line_height_percent: VERSE_LEADING,
+                ..kobo_sdk::ParagraphPresentation::default()
+            },
+        )
+    };
+    for line in lines {
+        if line.stanza_start {
+            screen = flush(screen, &mut stanza, opens);
+            opens = true;
+        }
+        stanza.push(&line.text);
+    }
+    flush(screen, &mut stanza, opens)
+}
+
+/// Sets the runs of a poem as stanzas: one paragraph each, a printed poem's
+/// leading inside it and the poet's space between them. The page and the card
+/// share this so a card is the page it was made from, line for line.
+fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> ScreenBuilder {
+    for (index, run) in runs.iter().enumerate() {
+        let lines = &poem.stanzas[run.stanza][run.from..run.to];
+        screen = screen.rich_text(
+            lines.join("\n"),
+            Vec::new(),
+            kobo_sdk::ParagraphPresentation {
+                // A stanza carried over from the page before opens without
+                // the space. The unit is hundredths of an em.
+                margin_before_em: if index > 0 && run.from == 0 {
+                    STANZA_AIR
+                } else {
+                    0
+                },
+                // A printed poem's leading rather than a novel's. The reading
+                // face opens lines up for an hour of prose, which set a short
+                // stanza almost double spaced and pushed the last stanza of
+                // Hope onto a page of its own.
+                line_height_percent: VERSE_LEADING,
+                ..kobo_sdk::ParagraphPresentation::default()
+            },
+        );
+    }
+    screen
+}
+
 fn split_online_line(text: &str, context: &Context) -> Option<(String, String)> {
     let metrics = context.metrics();
     let lines = kobo_ui::with_text_scale(metrics.text_scale, || {
@@ -1710,7 +2077,7 @@ mod tests {
 
     #[test]
     fn poetrydb_searches_titles_authors_and_lines() {
-        let Task::Fetch { url, .. } = search_task("hope & spring", false) else {
+        let Task::Fetch { url, .. } = search_task("hope & spring", Scope::Anything) else {
             panic!("search must use the network");
         };
         assert_eq!(
@@ -1858,6 +2225,136 @@ mod tests {
         assert!(!app.saving);
         let notice = app.notice.clone().unwrap_or_default();
         assert!(notice.to_lowercase().contains("favourite"), "{notice}");
+    }
+
+    #[test]
+    fn todays_poem_comes_from_poetrydb_and_stays_for_the_day() {
+        let mut runner = AppRunner::new(Verses {
+            day: Some((2026, 10, 6)),
+            ..Verses::default()
+        });
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("today's poem was asked for");
+        let Task::Fetch { url, .. } = daily_task((2026, 10, 6)) else {
+            panic!("a fetch");
+        };
+        assert!(url.contains("linecount,random/"), "{url}");
+        let body = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another.","","A second stanza."],"linecount":"3"}]"#;
+        runner.task_outcome(task, TaskOutcome::Completed(body.to_vec()));
+        let shown = format!("{:?}", runner.app().screen(&runner.context()));
+        assert!(shown.contains("A Fetched Poem"), "{shown}");
+        assert!(shown.contains("From PoetryDB"));
+        assert!(shown.contains("Today's poem"));
+        // Kept for the day: a later action asks for nothing more.
+        runner.action(action_id("poem-next"));
+        assert!(runner.app().daily_task.is_none());
+    }
+
+    #[test]
+    fn todays_fetched_poem_still_makes_a_quote_card() {
+        let mut runner = AppRunner::new(Verses {
+            day: Some((2026, 10, 6)),
+            ..Verses::default()
+        });
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("asked");
+        let body = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another."],"linecount":"2"}]"#;
+        runner.task_outcome(task, TaskOutcome::Completed(body.to_vec()));
+        assert!(
+            format!("{:?}", runner.app().screen(&runner.context())).contains("Make a quote card")
+        );
+        let card = runner.app().quote_card(&runner.context());
+        let drawn = format!("{card:?}");
+        assert!(
+            drawn.contains("A Fetched Poem") && drawn.contains("A Poet"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("One line,"));
+        runner.action(action_id("card"));
+        assert_eq!(runner.app().view, View::Card);
+        assert!(runner.app().card_from_online());
+    }
+
+    #[test]
+    fn offline_the_day_keeps_its_bundled_poem() {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("asked once");
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        let shown = format!("{:?}", runner.app().screen(&runner.context()));
+        assert!(shown.contains(CORPUS[runner.app().poem].title));
+        assert!(
+            runner.app().notice.is_none(),
+            "offline is not an error here"
+        );
+    }
+
+    #[test]
+    fn a_numeric_line_count_does_not_empty_the_results() {
+        let body = br#"[{"title":"I'm nobody!  Who are you?","author":"Emily Dickinson","linecount":8},{"title":"Ozymandias","author":"Percy Bysshe Shelley","linecount":"14"}]"#;
+        let poems: Vec<OnlinePoem> = serde_json::from_slice(body).expect("both forms read");
+        assert_eq!(poems[0].linecount, "8");
+        assert_eq!(poems[1].linecount, "14");
+    }
+
+    #[test]
+    fn search_looks_where_the_reader_asked_and_groups_by_poet() {
+        for (scope, fields) in [
+            (Scope::Anything, "/author,title,lines/"),
+            (Scope::Title, "/title/"),
+            (Scope::Poet, "/author/"),
+            (Scope::Line, "/lines/"),
+        ] {
+            let Task::Fetch { url, .. } = search_task("sea", scope) else {
+                panic!("a fetch");
+            };
+            assert!(url.contains(fields), "{url}");
+        }
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.action(action_id("browse"));
+        runner.action(action_id("search"));
+        runner.action(action_id("scope-poet"));
+        assert_eq!(runner.app().scope, Scope::Poet);
+        assert!(format!("{:?}", runner.app().screen(&runner.context())).contains("Emily Dickinson"));
+        runner.action(action_id("suggest-John Keats"));
+        assert_eq!(runner.app().view, View::Results);
+        let app = runner.app_mut();
+        app.task = None;
+        app.pending = None;
+        app.notice = None;
+        app.results = vec![
+            OnlinePoem {
+                title: "Ode to a Nightingale".into(),
+                author: "John Keats".into(),
+                lines: Vec::new(),
+                linecount: "80".into(),
+            },
+            OnlinePoem {
+                title: "Bright Star".into(),
+                author: "John Keats".into(),
+                lines: Vec::new(),
+                linecount: "14".into(),
+            },
+        ];
+        let shown = format!("{:?}", runner.app().screen(&runner.context()));
+        assert!(shown.contains("2 poems for"), "{shown}");
+        assert!(shown.contains("14 lines · a minute"));
+        assert!(shown.contains("80 lines · four minutes"));
+        // Sorted within the poet: Bright Star before the Nightingale.
+        assert!(shown.find("Bright Star") < shown.find("Ode to a Nightingale"));
     }
 
     #[test]

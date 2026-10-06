@@ -4,8 +4,8 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.12",
-  "release_notes": "Categories select the exact visible choice at every text size. Back preserves setup choices and cancels renaming. Four-player setup keeps names and Start round reachable in both layouts.",
+  "version": "0.1.13",
+  "release_notes": "With friends, everyone answers each question before a reveal that shows who chose what. Setup shows how many questions match, rounds are never one question long, Back asks first, and the offline pack has thirty questions.",
   "glyph": "chat",
   "capabilities": [
     "network"

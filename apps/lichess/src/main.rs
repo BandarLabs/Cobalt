@@ -608,10 +608,15 @@ impl Lichess {
                 .collect();
             screen = Self::home_card_row(screen, tiles, columns);
         }
-        screen
-            .page_turns("home-previous", "home-next")
-            .page_position(page_number, page_count)
-            .build()
+        // A position only where there is somewhere to turn to: "1 of 1" under
+        // a home screen that fits on one page reads as a list that failed to
+        // load the rest.
+        if page_count > 1 {
+            screen = screen
+                .page_turns("home-previous", "home-next")
+                .page_position(page_number, page_count);
+        }
+        screen.build()
     }
 
     fn puzzles_screen(&self) -> Screen {

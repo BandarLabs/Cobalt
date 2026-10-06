@@ -4,8 +4,8 @@
   "short_label": "Post",
   "summary": "Read and reply to letters from Hermes.",
   "page_description": "Read and reply to letters from your own Hermes Agent. The inbox and your drafts stay readable offline, and replies are sent when the gateway is back.",
-  "version": "0.2.4",
-  "release_notes": "Read complete letters with fixed page and reply controls, including delivery notices. Inbox rows use measured display pages independently of gateway batches. Setup keeps the login instructions visible at large text sizes.",
+  "version": "0.2.5",
+  "release_notes": "Setup shows the login command set apart and complete, with no reader address to look up.",
   "glyph": "chat",
   "capabilities": [
     "network"
@@ -13,11 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Deploy a compatible Hermes gateway behind HTTPS and note its public URL."
+        "text": "Deploy a compatible Hermes gateway behind HTTPS and note its address."
       },
       {
-        "text": "Install the gateway bearer token under the exact name hermes-post.",
-        "command": "kobo secret set hermes-post --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Sign Post in. The token is checked against the gateway before it is installed.",
+        "command": "kobo post login --gateway https://hermes.example.net --token-file token.txt"
       }
     ]
   }

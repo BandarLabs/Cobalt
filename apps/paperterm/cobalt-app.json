@@ -3,16 +3,25 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
+  "release_notes": "Connecting a computer shows each command set apart and complete, with shorter steps.",
   "setup": {
     "steps": [
       {
-        "text": "Run kobo stream init on the computer, install its stream trust root on the Kobo, then start kobo stream."
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Pair Paperterm. This trusts the computer and prints the address and code to enter on the reader.",
+        "command": "kobo stream init"
+      },
+      {
+        "text": "Start a session and leave the terminal open.",
+        "command": "kobo stream --interactive -- /bin/sh"
       }
     ]
   },

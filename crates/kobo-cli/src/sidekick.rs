@@ -34,11 +34,12 @@ const TEST_PATIENCE: Duration = Duration::from_secs(600);
 const START_PATIENCE: Duration = Duration::from_secs(10);
 
 const USAGE: &str =
-    "usage: kobo sidekick setup [AGENT] | run [--foreground] | status | stop | sample | test";
+    "usage: kobo sidekick init | setup [AGENT] | run [--foreground] | status | stop | sample | test";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     match arguments.split_first() {
         Some((verb, rest)) => match (verb.as_str(), rest) {
+            ("init", extra) => init(extra),
             ("setup", extra) => setup(extra),
             ("run", extra) => run(extra),
             ("status", []) => {
@@ -51,6 +52,28 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             _ => Err(USAGE.to_owned()),
         },
         None => Err(USAGE.to_owned()),
+    }
+}
+
+/// Mints the helper's identity and prints the address and pairing code a
+/// reader asks for.
+///
+/// Deck and Sidekick both ask for that address and code, and both used to
+/// send their owners to a second binary, kobo-sidekickd, that nothing else
+/// in the companion mentioned. This is the same step under the name every
+/// other step already has.
+fn init(arguments: &[String]) -> Result<(), String> {
+    let helper = locate()?;
+    let status = Command::new(&helper)
+        .arg("init")
+        .args(arguments)
+        .status()
+        .map_err(|error| format!("run {}: {error}", helper.display()))?;
+    if status.success() {
+        println!("Start the helper with 'kobo sidekick run', then enter the address and code on the reader.");
+        Ok(())
+    } else {
+        Err(format!("the helper exited with {status}"))
     }
 }
 

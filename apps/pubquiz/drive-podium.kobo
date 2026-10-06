@@ -1,9 +1,8 @@
-wait 800
-expect Pub Quiz
+wait-for Play solo
 tap-id solo
-expect setup
+expect Difficulty
 tap-id continue-setup
-expect Science
+expect Solo round
 tap-id answer-0
 tap-id continue
 tap-id answer-0
@@ -23,12 +22,11 @@ tap-id continue
 tap-id answer-0
 tap-id continue
 tap-id answer-0
-expect Podium
 tap-id continue
-expect Podium
+expect Results
 clean
 shot podium
 tap-id save-scorecard
-expect Saved to reader
+expect Saved
 clean
 shot scorecard

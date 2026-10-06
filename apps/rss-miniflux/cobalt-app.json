@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.4",
-  "release_notes": "Suggested feeds returns to the screen it was opened from. Leaving settings keeps your place in the article list, with one consistent Back control.",
+  "version": "0.1.5",
+  "release_notes": "Connecting Miniflux lists the commands to run on your computer, with no address to look up.",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -13,11 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Have an HTTPS Miniflux instance, either self-hosted or hosted, and create an API token."
+        "text": "Have an HTTPS Miniflux instance, self-hosted or hosted, and create an API token in its settings."
       },
       {
-        "text": "Install the token under the exact name miniflux; the runtime sends it as X-Auth-Token.",
-        "command": "kobo secret set miniflux --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Install the token under the name miniflux, then add the address in the app.",
+        "command": "kobo secret set miniflux"
       }
     ]
   }

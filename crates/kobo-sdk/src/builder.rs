@@ -490,8 +490,11 @@ impl ScreenBuilder {
     ///
     /// A modal rather than a popover, deliberately: an outside tap does not
     /// close this one, because "did you mean to delete it" answered by
-    /// accidentally brushing the panel is not an answer. The affirmative is
-    /// the filled control and comes first, the way out is plain and second.
+    /// accidentally brushing the panel is not an answer. The two answers sit
+    /// side by side at the same width, the way out first and the affirmative
+    /// filled and trailing, as a phone or the reader's own dialogues set them:
+    /// stacked, the filled one was a slab across the sheet and the other a
+    /// small box under it, which read as one answer and an afterthought.
     ///
     /// Every application that deletes, unfollows or overwrites something was
     /// about to build this by hand out of `modal` plus two buttons, and they
@@ -508,10 +511,22 @@ impl ScreenBuilder {
         let (confirm_name, confirm_label) = (confirm.0.as_ref().to_owned(), confirm.1.into());
         let (cancel_name, cancel_label) = (cancel.0.as_ref().to_owned(), cancel.1.into());
         self.modal(title, move |builder| {
-            builder
-                .text(question)
-                .primary_button(confirm_name, confirm_label)
-                .button(cancel_name, cancel_label)
+            builder.text(question).band(
+                BandAlign::Middle,
+                [
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |slot: Self| slot.button(cancel_name, cancel_label))
+                            as Box<dyn FnOnce(Self) -> Self>,
+                    ),
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |slot: Self| {
+                            slot.primary_button(confirm_name, confirm_label)
+                        }),
+                    ),
+                ],
+            )
         })
     }
 
@@ -1456,6 +1471,130 @@ impl ScreenBuilder {
             .collect();
         self.nodes.push(Node::Chips { id, chips });
         self
+    }
+
+    /// Offers one value out of two to five, side by side, with the current one
+    /// filled.
+    ///
+    /// The segmented control of both phone platforms, for a setting whose few
+    /// values are all worth seeing at once: a player count, a difficulty, a
+    /// sort order. Three outlined buttons with a sentence saying which one is
+    /// current made the reader read to find out what they had chosen; a filled
+    /// segment says it before anything is read.
+    ///
+    /// Each option is its own action, so a tap names the value directly and the
+    /// application has nothing to cycle. The renderer gives every segment the
+    /// same width and falls back to a wrapping run of chips when a label will
+    /// not fit its share. An index naming no option fills none.
+    #[must_use]
+    pub fn segmented<I, N, L>(self, selected: usize, options: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let options: Vec<(String, String)> = options
+            .into_iter()
+            .map(|(name, label)| (name.as_ref().to_owned(), label.into()))
+            .collect();
+        if options.is_empty() {
+            return self;
+        }
+        // Built from a band slot holding chips rather than from a node of its
+        // own, so a screen that uses it still reads on every runtime that
+        // speaks this protocol: an older renderer draws the same chips,
+        // wrapped, with the same one filled.
+        self.band(
+            BandAlign::Middle,
+            [(SlotWidth::Fill, move |slot: Self| {
+                slot.chips(
+                    options
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (name, label))| (name, label, index == selected)),
+                )
+            })],
+        )
+    }
+
+    /// A filter or sort control: the current value on a chip, and the other
+    /// values in a menu that hangs from it while `open`.
+    ///
+    /// "Sort: Newest" says what the list is doing before anyone taps, which a
+    /// button labelled "Sort" cannot, and the menu ticks the current value so
+    /// the reader can see what they are changing from. Tapping the chip is
+    /// `name`; each option is its own action, so choosing one names its value
+    /// and the application closes the menu. Like every menu here it closes on
+    /// a tap that misses it.
+    #[must_use]
+    pub fn picker<I, N, L>(
+        self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        open: bool,
+        selected: usize,
+        options: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let name = name.as_ref().to_owned();
+        let label = label.into();
+        let options: Vec<(String, String)> = options
+            .into_iter()
+            .map(|(option, text)| (option.as_ref().to_owned(), text.into()))
+            .collect();
+        let current = options
+            .get(selected)
+            .map_or_else(|| label.clone(), |(_, text)| format!("{label}: {text}"));
+        let screen = self.chips([(name.as_str(), current, open)]);
+        if open {
+            screen.popover(&name, move |menu| {
+                menu.choose(label, options).chosen(selected)
+            })
+        } else {
+            screen
+        }
+    }
+
+    /// A command to type on a computer, set apart from the sentence about it.
+    ///
+    /// Apps set up from a computer used to put the command inside a sentence,
+    /// in backticks, where the line breaker treated every hyphen as a place to
+    /// wrap: "--device" arrived as "--" at the end of one line and "device" at
+    /// the start of the next, and nobody can type that back. Here the command
+    /// is indented under a rule, the way a book sets a quotation, its hyphens
+    /// are the non-breaking kind and every slash is joined to what follows it,
+    /// so it only ever wraps between words and never inside a flag or a path.
+    #[must_use]
+    pub fn command(self, text: impl AsRef<str>) -> Self {
+        self.quote(
+            1,
+            text.as_ref()
+                .replace('-', "\u{2011}")
+                .replace('/', "/\u{2060}"),
+        )
+    }
+
+    /// Settings that are either on or off, one row each.
+    ///
+    /// Tapping a row is the switch: the application flips the value and
+    /// rebuilds. The state is written at the trailing edge, where a phone puts
+    /// its switch, rather than folded into the title, so a column of settings
+    /// can be read down its right-hand side without reading any of the names.
+    #[must_use]
+    pub fn toggles<I, N, T, S>(self, items: I) -> Self
+    where
+        I: IntoIterator<Item = (N, T, S, Glyph, bool)>,
+        N: AsRef<str>,
+        T: Into<String>,
+        S: Into<String>,
+    {
+        self.rows_with_trailing(items.into_iter().map(|(name, title, summary, glyph, on)| {
+            (name, title, summary, glyph, if on { "On" } else { "Off" })
+        }))
     }
 
     /// Adds up to [`crate::MAX_TABS`] peer views of the current screen.

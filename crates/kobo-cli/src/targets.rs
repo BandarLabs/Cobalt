@@ -126,6 +126,144 @@ fn sweep_serials() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The companion commands that act on a reader, by subcommand.
+///
+/// An empty list means the command itself acts on a reader whatever follows
+/// it. Anything not listed is left exactly as it was typed: a preview, an
+/// inspection or a status check has no reader to name.
+const ACTS_ON_A_READER: &[(&str, &[&str])] = &[
+    ("frame", &["init", "push", "ls", "rm"]),
+    ("musicstand", &["init", "push", "plan", "ls", "rm"]),
+    ("vault", &["init", "push", "plan", "ingest", "ls", "rm"]),
+    ("fieldbook", &["push", "ls", "export"]),
+    ("needles", &["push"]),
+    ("nonograms", &["push"]),
+    ("parser", &["push"]),
+    ("panels", &["push"]),
+    ("post", &["login"]),
+    ("readlater", &["login"]),
+    ("birds", &["listen", "push"]),
+    ("feeds", &["push"]),
+    ("deck", &["push"]),
+    ("secret", &["set", "list", "remove"]),
+    ("trust", &["set", "list", "remove"]),
+    ("sync", &["setup"]),
+    ("export", &[]),
+];
+
+/// Flags that already say where a command's result goes.
+const TARGETS: &[&str] = &[
+    "--sim",
+    "--device",
+    "-s",
+    "--reader",
+    "--out",
+    "--volume",
+    "--kobo-root",
+];
+
+/// The environment variable that names the reader to use when none is given.
+pub const READER_VARIABLE: &str = "KOBO_READER";
+
+/// Where a command with no target goes, if anywhere.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DefaultReader {
+    /// `KOBO_READER` named an address.
+    Address(String),
+    /// `KOBO_READER` named a saved reader, or exactly one reader is saved.
+    Nickname(String),
+}
+
+/// The reader a command with no target acts on.
+///
+/// `KOBO_READER` first, then the one reader this computer has saved. Never a
+/// reader found on the network: a shared network can hold a neighbour's Kobo,
+/// and content sent to the wrong one is not a mistake anyone can see. Two
+/// saved readers and no variable is a question only the owner can answer.
+#[must_use]
+pub fn default_reader(variable: Option<&str>, saved: &[&str]) -> Option<DefaultReader> {
+    if let Some(value) = variable.map(str::trim).filter(|value| !value.is_empty()) {
+        return Some(if value.contains('.') || value.contains(':') {
+            DefaultReader::Address(value.to_owned())
+        } else {
+            DefaultReader::Nickname(value.to_owned())
+        });
+    }
+    match saved {
+        [only] => Some(DefaultReader::Nickname((*only).to_owned())),
+        _ => None,
+    }
+}
+
+/// Whether this command line acts on a reader.
+fn acts_on_a_reader(arguments: &[String]) -> bool {
+    let Some(command) = arguments.first() else {
+        return false;
+    };
+    ACTS_ON_A_READER.iter().any(|(name, subcommands)| {
+        name == command
+            && (subcommands.is_empty()
+                || arguments
+                    .get(1)
+                    .is_some_and(|sub| subcommands.contains(&sub.as_str())))
+    })
+}
+
+/// The command line with its reader filled in, so every companion command
+/// accepts `--reader NAME` and needs no target at all once a reader is saved.
+///
+/// Apps used to tell their owners to run `kobo frame push PHOTOS --device IP`
+/// and nothing on the reader says what its IP is. With a reader saved by
+/// `kobo pair`, the same push is `kobo frame push PHOTOS`. A command that
+/// names a target keeps it; `--reader NAME` becomes the address that reader
+/// answers at, because most companion commands only read `--device`.
+///
+/// `resolve` turns a saved name into an address; `said` reports what was
+/// chosen, so the owner always sees which reader a command went to.
+pub fn with_reader(
+    arguments: &[String],
+    default: Option<DefaultReader>,
+    mut resolve: impl FnMut(&str) -> Result<String, String>,
+    mut said: impl FnMut(String),
+) -> Result<Vec<String>, String> {
+    if !acts_on_a_reader(arguments) {
+        return Ok(arguments.to_vec());
+    }
+    if let Some(position) = arguments.iter().position(|argument| argument == "--reader") {
+        let Some(name) = arguments.get(position + 1) else {
+            return Err(crate::console::usage("--reader takes a name"));
+        };
+        let address = resolve(name)?;
+        let mut rewritten = arguments.to_vec();
+        rewritten.splice(position..=position + 1, ["--device".to_owned(), address]);
+        return Ok(rewritten);
+    }
+    if arguments
+        .iter()
+        .any(|argument| TARGETS.contains(&argument.as_str()))
+    {
+        return Ok(arguments.to_vec());
+    }
+    let address = match default {
+        Some(DefaultReader::Address(address)) => {
+            said(format!(
+                "Using the reader at {address} ({READER_VARIABLE})."
+            ));
+            address
+        }
+        Some(DefaultReader::Nickname(name)) => {
+            let address = resolve(&name)?;
+            said(format!("Using your saved reader \"{name}\" at {address}."));
+            address
+        }
+        None => return Ok(arguments.to_vec()),
+    };
+    let mut rewritten = arguments.to_vec();
+    rewritten.push("--device".to_owned());
+    rewritten.push(address);
+    Ok(rewritten)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +332,78 @@ mod tests {
         let error = resolve_nickname("clara").expect_err("no store yet");
         assert_eq!(console::category_of(&error), console::EXIT_TARGET);
         assert!(console::display(&error).contains("clara"), "{error}");
+    }
+
+    fn words(text: &str) -> Vec<String> {
+        text.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_companion_command_with_no_target_goes_to_the_saved_reader() {
+        let mut said = Vec::new();
+        let filled = with_reader(
+            &words("frame push photos"),
+            default_reader(None, &["clara"]),
+            |name| Ok(format!("addr-of-{name}")),
+            |line| said.push(line),
+        )
+        .unwrap();
+        assert_eq!(filled, words("frame push photos --device addr-of-clara"));
+        assert!(said[0].contains("\"clara\""));
+    }
+
+    #[test]
+    fn a_named_reader_becomes_its_address_and_a_target_given_is_kept() {
+        let resolve = |name: &str| Ok(format!("addr-of-{name}"));
+        assert_eq!(
+            with_reader(
+                &words("vault push notes --reader study"),
+                None,
+                resolve,
+                |_| {}
+            )
+            .unwrap(),
+            words("vault push notes --device addr-of-study")
+        );
+        for kept in [
+            "frame push p --sim",
+            "frame push p --device 10.0.0.2",
+            "nonograms push i --out d",
+        ] {
+            assert_eq!(
+                with_reader(
+                    &words(kept),
+                    default_reader(None, &["clara"]),
+                    resolve,
+                    |_| {}
+                )
+                .unwrap(),
+                words(kept)
+            );
+        }
+    }
+
+    #[test]
+    fn previews_and_two_saved_readers_are_left_alone() {
+        let resolve = |name: &str| Ok(format!("addr-of-{name}"));
+        assert_eq!(
+            with_reader(
+                &words("vault preview a.md"),
+                default_reader(None, &["clara"]),
+                resolve,
+                |_| {}
+            )
+            .unwrap(),
+            words("vault preview a.md")
+        );
+        assert_eq!(default_reader(None, &["clara", "libra"]), None);
+        assert_eq!(
+            default_reader(Some("192.168.1.9"), &["clara", "libra"]),
+            Some(DefaultReader::Address("192.168.1.9".into()))
+        );
+        assert_eq!(
+            default_reader(Some("libra"), &["clara", "libra"]),
+            Some(DefaultReader::Nickname("libra".into()))
+        );
     }
 }

@@ -67,8 +67,8 @@ impl Post {
         let mut screen = ScreenBuilder::new("post-setup")
             .top_bar("Post")
             .section("Connect a gateway")
-            .secondary("Post reads letters from a Hermes gateway you run. Install its token with:")
-            .secondary("kobo post login --gateway <address> --token-file <path> --device <reader>");
+            .secondary("Post reads letters from a Hermes gateway you run. On your computer:")
+            .command("kobo post login --gateway https://hermes.example.net --token-file token.txt");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -351,7 +351,7 @@ impl Post {
             }
             TaskOutcome::Failed(TaskError::NoCredential) => {
                 self.notice =
-                    Some("Finish Post setup on your computer with `kobo post login`.".into());
+                    Some("Finish Post setup on your computer with kobo post login.".into());
             }
             TaskOutcome::Failed(e) => {
                 self.notice = Some(format!(
@@ -399,7 +399,7 @@ impl Post {
             TaskOutcome::Failed(TaskError::NoCredential | TaskError::Unauthorized) => {
                 sent.state = ReplyState::Queued;
                 self.notice =
-                    Some("Finish Post setup on your computer with `kobo post login`.".into());
+                    Some("Finish Post setup on your computer with kobo post login.".into());
             }
             TaskOutcome::Failed(TaskError::RateLimited(_)) => {
                 sent.state = ReplyState::Queued;
@@ -869,8 +869,9 @@ mod large_text_tests {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(" ");
-            assert!(text.contains("Install its token with:"), "{text}");
-            assert!(text.contains("<reader>"), "{text}");
+            assert!(text.contains("On your computer:"), "{text}");
+            // The end of the command, so a clipped command fails here.
+            assert!(text.contains("token.txt"), "{text}");
         }
     }
 }

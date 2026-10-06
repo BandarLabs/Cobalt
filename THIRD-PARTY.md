@@ -88,7 +88,7 @@ travels too, which is what the file above is for.
 
 ## Fonts
 
-Two typefaces are embedded in the `kobo-text` crate and end up inside every
+Three typefaces are embedded in the `kobo-text` crate and end up inside every
 binary. Atkinson Hyperlegible is embedded in two weights, which the one licence
 below covers. Flashcards additionally embeds the bounded Cobalt Japanese font
 subset in its own host/device dependency closure. Their licences ship beside
@@ -98,6 +98,7 @@ the artifacts that contain them.
 | --- | --- | --- |
 | Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
 | DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
+| Literata (Regular and SemiBold, Latin subset) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt`; subset recipe in `licenses/SOURCE-Literata.md` |
 | Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |
 
 Both permit embedding and redistribution. The OFL forbids selling the font on

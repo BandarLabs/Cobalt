@@ -5,8 +5,8 @@
   "summary": "Four offline mini crosswords with clue navigation and saved progress.",
   "page_description": "Solve four original mini crosswords offline. Tap a square or a clue, type an answer, and check or reveal letters when you want help. Each puzzle keeps its progress and undo history.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.7",
-  "release_notes": "Clearer description in the Store. No change to how the app works.",
+  "version": "0.1.8",
+  "release_notes": "The direction control says Across or Down instead of showing a bare arrow. Buttons in a row are now the same width, headings are set in a serif, and dialogs show their two answers side by side.",
   "glyph": "grid",
   "capabilities": []
 }

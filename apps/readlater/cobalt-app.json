@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.4",
-  "release_notes": "Every saved article stays reachable at all text sizes. Back keeps your list page, late sign-in refreshes respect navigation, and overlapping syncs preserve other tabs.",
+  "version": "0.2.5",
+  "release_notes": "Connecting Wallabag shows the sign-in command set apart and complete, with no address to look up.",
   "glyph": "bookmark",
   "capabilities": [
     "network"
@@ -13,11 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Have an HTTPS Wallabag instance and a bearer credential accepted by its API."
+        "text": "Create an API client on your Wallabag server (on wallabag.it: Settings, API clients)."
       },
       {
-        "text": "Install that credential under the exact name wallabag.",
-        "command": "kobo secret set wallabag --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Sign Read Later in. The password is read from KOBO_WALLABAG_PASSWORD, never the command line.",
+        "command": "kobo readlater login --server https://app.wallabag.it --client-id ID --client-secret-file secret.txt --username you@example.com"
       }
     ]
   }

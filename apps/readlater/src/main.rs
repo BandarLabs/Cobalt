@@ -281,7 +281,7 @@ impl ReadLater {
                 let page = ScreenBuilder::new("readlater").top_bar("Read Later settings");
                 let page = if let Some(session) = &self.session {
                     page.secondary(format!(
-                        "Signed in to {}. Run `kobo readlater login` on your computer to switch accounts.",
+                        "Signed in to {}. Run kobo readlater login on your computer to switch accounts.",
                         session.server
                     ))
                 } else {
@@ -378,8 +378,11 @@ impl ReadLater {
                 .splash(
                     Some(Glyph::Bookmark),
                     "Connect Wallabag",
-                    "On your computer run `kobo readlater login`, or install a credential named wallabag and add the HTTPS address here.",
+                    "Sign in from a computer; it asks for your server and account.",
                 )
+                .section("On your computer")
+                .command("kobo pair")
+                .command("kobo readlater login --server https://app.wallabag.it")
                 .primary_button("settings", "Add address")
                 .build();
         }
@@ -717,7 +720,7 @@ impl KoboApp for ReadLater {
                     }
                     None => {
                         self.notice = Some(
-                            "The session file could not be read. Run `kobo readlater login` again."
+                            "The session file could not be read. Run kobo readlater login again."
                                 .into(),
                         );
                     }
@@ -943,7 +946,7 @@ impl KoboApp for ReadLater {
                     self.refreshing = false;
                     self.resume = None;
                     self.notice = Some(
-                        "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
+                        "The Wallabag sign-in could not be renewed. Run kobo readlater login again."
                             .into(),
                     );
                 }
@@ -952,7 +955,7 @@ impl KoboApp for ReadLater {
                 self.refreshing = false;
                 self.resume = None;
                 self.notice = Some(
-                    "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
+                    "The Wallabag sign-in could not be renewed. Run kobo readlater login again."
                         .into(),
                 );
             }
@@ -963,7 +966,7 @@ impl KoboApp for ReadLater {
                     self.refresh(context, kind);
                 } else {
                     self.notice = Some(
-                        "Wallabag refused the installed credential. Run `kobo readlater login` again."
+                        "Wallabag refused the installed credential. Run kobo readlater login again."
                             .into(),
                     );
                 }
@@ -1714,7 +1717,7 @@ mod tests {
                     .splash(
                         Some(Glyph::Bookmark),
                         "Connect Wallabag",
-                        "On your computer run `kobo secret set wallabag`, then add the HTTPS address here.",
+                        "On your computer run kobo secret set wallabag, then add the HTTPS address here.",
                     )
                     .primary_button("settings", "Add address")
                     .build()

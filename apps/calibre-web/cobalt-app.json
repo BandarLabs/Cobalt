@@ -4,8 +4,8 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.4",
-  "release_notes": "Renamed from calibre-web to Library, so the app carries its own name rather than the name of the server software it reads from.",
+  "version": "0.1.5",
+  "release_notes": "The setup guide pairs your reader once, then needs no address, and installing a private certificate names the file it reads.",
   "glyph": "book",
   "capabilities": [
     "network"
@@ -19,8 +19,12 @@
         "text": "Choose Sign in on the reader for a private library, or Use public library. Older named accounts should sign in again to bind the account to this server."
       },
       {
-        "text": "For a private certificate authority, install its trust root separately.",
-        "command": "kobo trust set calibre --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "For a private certificate authority, install its trust root separately, from the authority's PEM file.",
+        "command": "kobo trust set calibre --from root-ca.pem"
       }
     ]
   }

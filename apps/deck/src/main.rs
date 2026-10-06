@@ -121,7 +121,9 @@ impl App {
             View::Address => ScreenBuilder::new("deck-address")
                 .top_bar("Deck")
                 .heading("Pair with your computer")
-                .text("Start Sidekick on your computer. It shows an address and a code.")
+                .text("On your computer, run these. The first prints an address and a code.")
+                .command("kobo sidekick init")
+                .command("kobo sidekick run")
                 .primary_button("enter-address", "Enter the address")
                 .build(),
             View::Code if self.entry.is_open() => ScreenBuilder::new("deck-code")

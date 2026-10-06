@@ -3429,7 +3429,18 @@ impl Screen {
                     prose,
                     gap,
                 );
-                cursor = max(cursor, content_bottom.saturating_sub(trailing));
+                // Fills share the room between them, so content set between
+                // two of them is centred on the page: a twelve line poem in
+                // the middle of the paper rather than hung from the top with
+                // half a panel of white beneath it. A single fill still takes
+                // all of it, which is the foot-of-the-panel case.
+                let later = self.nodes[position + 1..]
+                    .iter()
+                    .filter(|node| matches!(node, Node::Flex { .. }))
+                    .count();
+                let free = content_bottom.saturating_sub(trailing).saturating_sub(cursor);
+                let share = free / (i32::try_from(later).unwrap_or(0) + 1);
+                cursor = max(cursor, cursor.saturating_add(share));
                 layout.flow_height = cursor.saturating_sub(content_top).max(0);
                 continue;
             }
@@ -5305,6 +5316,11 @@ impl Chip {
 /// The most chips one run will lay out. Past this it is a list, and a list is
 /// [`Node::Rows`].
 pub const MAX_CHIPS: usize = 16;
+
+/// The most options a segmented control shows as one row. Past five a row of
+/// equal segments is too narrow to read on the six inch panels, and the
+/// choice belongs in a list with a tick.
+pub const MAX_SEGMENTS: usize = 5;
 
 /// The most tabs one strip will lay out.
 ///
@@ -7640,12 +7656,15 @@ fn layout_node(
             // A primary control is deliberately dominant. Ordinary controls
             // stay content-width unless their label would leave too little
             // surrounding paper to read as a deliberate target.
-            let button_width =
-                if legacy || *emphasis == Emphasis::Primary || desired >= width * 4 / 5 {
-                    width
-                } else {
-                    desired.min(width)
-                };
+            let button_width = if legacy
+                || *emphasis == Emphasis::Primary
+                || in_band_slot()
+                || desired >= width * 4 / 5
+            {
+                width
+            } else {
+                desired.min(width)
+            };
             let button_x = if button_width == width {
                 x
             } else {
@@ -7765,6 +7784,51 @@ fn layout_node(
                 kind: LayoutKind::Spacer,
                 text_lines: Vec::new(),
             });
+            // Inside a band slot a run of chips is one choice among a few, the
+            // segmented control of both phone platforms: one row, every
+            // segment the same width, the chosen one inverted. Equal widths
+            // are what make it read as a single control with a current value
+            // rather than as tags that happen to sit together. Only when every
+            // label fits its share; otherwise the run wraps as it always has,
+            // because a truncated option is not one anybody can choose.
+            let shown = chips.len().min(MAX_CHIPS);
+            if in_band_slot() && (2..=MAX_SEGMENTS).contains(&shown) {
+                let gap = metrics.space(Space::Small);
+                let count = shown as i32;
+                let each = width.saturating_sub(gap * (count - 1)) / count;
+                let fits = each >= metrics.touch_target_minimum()
+                    && chips.iter().take(shown).all(|chip| {
+                        measure_text(&chip.label, FontSize::Caption).0 + pad * 2 <= each
+                    });
+                if fits {
+                    for (position, chip) in chips.iter().take(shown).enumerate() {
+                        if layout.nodes.len() >= MAX_LAYOUT_NODES {
+                            break;
+                        }
+                        let segment_x = x + (each + gap) * position as i32;
+                        // The last segment takes the rounding, so the row
+                        // always ends exactly at the slot's edge.
+                        let segment_width = if position + 1 == shown {
+                            x + width - segment_x
+                        } else {
+                            each
+                        };
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x: segment_x,
+                                y,
+                                width: segment_width,
+                                height,
+                            },
+                            kind: LayoutKind::Chip(chip.action, chip.selected),
+                            text_lines: vec![chip.label.clone()],
+                        });
+                    }
+                    layout.nodes[index].rect.height = height;
+                    return y.saturating_add(height);
+                }
+            }
             let mut cursor_x = x;
             let mut cursor_y = y;
             let mut rows = 1;
@@ -8000,17 +8064,19 @@ fn layout_node(
                             gap,
                         );
                         cursor = with_flow_height_bound(node_bottom < bottom, || {
-                            layout_flow_node(
-                                node,
-                                x,
-                                cursor,
-                                width,
-                                node_bottom,
-                                depth + 1,
-                                metrics,
-                                prose,
-                                layout,
-                            )
+                            with_band_slot(|| {
+                                layout_flow_node(
+                                    node,
+                                    x,
+                                    cursor,
+                                    width,
+                                    node_bottom,
+                                    depth + 1,
+                                    metrics,
+                                    prose,
+                                    layout,
+                                )
+                            })
                         });
                     }
                 }
@@ -8038,17 +8104,19 @@ fn layout_node(
                             gap,
                         );
                         end = with_flow_height_bound(node_bottom < bottom, || {
-                            layout_flow_node(
-                                node,
-                                slot_x,
-                                end,
-                                widths[slot_index],
-                                node_bottom,
-                                depth + 1,
-                                metrics,
-                                prose,
-                                layout,
-                            )
+                            with_band_slot(|| {
+                                layout_flow_node(
+                                    node,
+                                    slot_x,
+                                    end,
+                                    widths[slot_index],
+                                    node_bottom,
+                                    depth + 1,
+                                    metrics,
+                                    prose,
+                                    layout,
+                                )
+                            })
                         });
                     }
                     placed.push((first, layout.nodes.len(), end.saturating_sub(y)));
@@ -10037,6 +10105,30 @@ thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
     static LEGACY_TYPOGRAPHY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FLOW_HEIGHT_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static IN_BAND_SLOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Lays out one band slot with its buttons filling the slot.
+///
+/// A row of buttons is a set, and a set reads as one when its members are the
+/// same size. Left at their own widths, "Solo round" and "How to play" each sat
+/// in the middle of half a panel with different paper either side, so two rows
+/// of two made a ragged pyramid rather than a grid, and a stacked band became
+/// a column of boxes of four different widths.
+fn with_band_slot<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            IN_BAND_SLOT.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = IN_BAND_SLOT.with(|slot| slot.replace(true));
+    let _restore = Restore(previous);
+    body()
+}
+
+fn in_band_slot() -> bool {
+    IN_BAND_SLOT.with(std::cell::Cell::get)
 }
 
 fn with_flow_height_bound<T>(bounded: bool, body: impl FnOnce() -> T) -> T {
@@ -14345,13 +14437,34 @@ fn render_all_with_selected_font(
             // available to say so without shading everything else are the
             // brightest tone on the panel and a line thick enough to read as
             // an edge.
+            // A sheet lifted off the page: rounded like the controls on it, a
+            // hairline edge, and a grey shadow along the bottom and trailing
+            // sides. The heavy black box it replaces read as a warning frame
+            // round every menu and question. The shadow is drawn inside the
+            // overlay's own rectangle, so the refresh that clears the overlay
+            // clears it too and the panel keeps no grey residue.
             LayoutKind::Overlay => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                let lift = max(2, metrics.rule_thickness() * 3);
+                let sheet = Rect {
+                    width: node.rect.width - lift,
+                    height: node.rect.height - lift,
+                    ..node.rect
+                };
+                let shadow = Rect {
+                    x: node.rect.x + lift,
+                    y: node.rect.y + lift,
+                    ..sheet
+                };
                 fill_clipped(surface, node.rect, tone::PAPER, clip);
-                stroke_clipped(
+                fill_rounded_clipped(surface, shadow, radius, tone::RULE, clip);
+                fill_rounded_clipped(surface, sheet, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
                     surface,
-                    node.rect,
+                    sheet,
+                    radius,
                     tone::INK,
-                    metrics.rule_thickness() * 2,
+                    metrics.rule_thickness(),
                     clip,
                 );
             }

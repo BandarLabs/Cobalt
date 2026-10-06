@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.6",
-  "release_notes": "Read long command output page by page without clipped lines, and return to the deck with the reader Back control.",
+  "version": "0.2.7",
+  "release_notes": "Pairing shows the two commands to run, kobo sidekick init and kobo sidekick run, instead of naming an app it never explained.",
   "glyph": "grid",
   "capabilities": [
     "network"
@@ -13,15 +13,24 @@
   "setup": {
     "steps": [
       {
-        "text": "Create ~/.config/kobo/sidekick/deck.toml with the pages and controls you want on the reader."
+        "text": "Lay out your pads on the computer.",
+        "command": "kobo deck init"
       },
       {
-        "text": "Initialize the companion daemon to obtain its address, certificate, and pairing code.",
-        "command": "kobo-sidekickd init"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
       },
       {
-        "text": "Install the daemon certificate on the Kobo before pairing.",
-        "command": "kobo trust set sidekick --device <address>"
+        "text": "Prepare the helper. It prints the address and code Deck asks for.",
+        "command": "kobo sidekick init"
+      },
+      {
+        "text": "Start the helper, then enter the address and code on the reader.",
+        "command": "kobo sidekick run"
+      },
+      {
+        "text": "Send the layout to the reader.",
+        "command": "kobo deck push"
       }
     ]
   }

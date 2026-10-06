@@ -11,11 +11,11 @@ expect-state /activity#/effects/post 0
 shot preview
 tap-id welcome
 tap-id setup
-expect Prepare the computer
+expect Pair the computer
 clean
 shot setup
 tap-id trust
-expect Trust this computer
+expect Trust the computer
 clean
 shot trust
 tap-id start
