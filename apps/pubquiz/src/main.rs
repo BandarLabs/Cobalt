@@ -93,6 +93,7 @@ fn question(
 /// of its own and a first evening without Wi-Fi is three rounds rather than
 /// one. Ten questions in nine categories made every category a round of one
 /// or two questions.
+#[allow(clippy::too_many_lines)]
 fn bundled_questions() -> Vec<Question> {
     [
         question(
@@ -1397,6 +1398,7 @@ impl KoboApp for Quiz {
             );
         }
     }
+    #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.rename_action(context, action) {
             return;

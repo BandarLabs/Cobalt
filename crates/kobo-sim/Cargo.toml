@@ -17,7 +17,7 @@ kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
 kobo-profile = { path = "../kobo-profile" }
 kobo-shell = { path = "../kobo-shell" }
-kobo-text = { path = "../kobo-text", features = ["bundled-serif"] }
+kobo-text = { path = "../kobo-text" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobo-ui = { path = "../kobo-ui" }
 

@@ -92,28 +92,28 @@ pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regul
 /// `fonts/LICENSE-AtkinsonHyperlegible.txt`.
 pub const DISPLAY_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
 
-/// The serif for titles, headings and books, compiled into the runtime.
+/// The serif for titles, headings and books where the reader carries none.
 ///
 /// Stock Kobo sets its section headings and book titles in a serif and its
 /// chrome in a sans, and that contrast is most of why its screens read as
-/// composed. Ours had a serif only where the firmware happened to carry Bitter
-/// or Vollkorn, and only on the panel: the simulator fell back to Atkinson Bold
-/// for every heading, so what was previewed was a flatter page than what
-/// shipped, and what shipped was a slab serif drawn for small screens a decade
-/// ago.
+/// composed. Ours had a serif only where the firmware carried Bitter or
+/// Vollkorn; everywhere else, the simulator included, every heading and every
+/// poem fell back to Atkinson, so what was previewed was a flatter page than
+/// what shipped.
+///
+/// The reader's own serif still comes first. Applications measure text in
+/// their own process with these same faces, so the face a runtime draws with
+/// has to be the face an installed application measured with: a runtime that
+/// preferred this over the panel's Bitter would draw every heading of every
+/// application built before it in a face it was not measured in, and refuse
+/// the screens that no longer fit.
 ///
 /// Literata was drawn for Google Play Books to be read on screens for hours,
-/// including on e-ink, so it holds up at the panel's few tones where a
-/// hairline serif breaks apart. Bundled rather than looked for so the preview
-/// and the reader agree to the pixel. Behind a feature because only the
-/// runtime and the simulator draw type; an application that links this crate
-/// to measure text does not need to carry it. See
-/// `fonts/LICENSE-Literata.txt`, which travels with it.
-#[cfg(feature = "bundled-serif")]
+/// e-ink included. Subset to Latin to keep it small; the recipe is in
+/// `licenses/SOURCE-Literata.md` and the licence in `fonts/LICENSE-Literata.txt`.
 pub const SERIF_FONT: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
 
 /// The semibold cut of the same serif, for the size that heads a screen.
-#[cfg(feature = "bundled-serif")]
 pub const SERIF_HEADING_FONT: &[u8] = include_bytes!("../fonts/Literata-SemiBold.ttf");
 
 /// Bold is looked for on the device first, so a firmware that carries the cut
@@ -310,9 +310,6 @@ impl Typeface {
         if let Some(override_path) = std::env::var_os(READING_FONT_OVERRIDE) {
             return Self::load(PathBuf::from(override_path), metrics);
         }
-        if let Some(face) = Self::bundled_serif(metrics, false) {
-            return Ok(face);
-        }
         for candidate in READING_FONT_CANDIDATES {
             let path = Path::new(candidate);
             if path.exists() {
@@ -321,14 +318,12 @@ impl Typeface {
                 }
             }
         }
-        // Not an error. A machine with no serif still reads perfectly well in
-        // the interface face, and refusing to start over typography would be
-        // absurd.
-        Self::discover(metrics)
+        // Not an error. A machine with no serif of its own reads in the
+        // bundled one, and if even that will not load, in the interface face.
+        Self::bundled_serif(metrics, false).map_or_else(|| Self::discover(metrics), Ok)
     }
 
-    /// The compiled-in serif, when this build carries it.
-    #[cfg(feature = "bundled-serif")]
+    /// The compiled-in serif.
     fn bundled_serif(metrics: DisplayMetrics, heading: bool) -> Option<Self> {
         let (bytes, name) = if heading {
             (SERIF_HEADING_FONT, "Literata-SemiBold.ttf")
@@ -336,11 +331,6 @@ impl Typeface {
             (SERIF_FONT, "Literata-Regular.ttf")
         };
         Self::from_bytes(bytes, name, metrics).ok()
-    }
-
-    #[cfg(not(feature = "bundled-serif"))]
-    const fn bundled_serif(_metrics: DisplayMetrics, _heading: bool) -> Option<Self> {
-        None
     }
 
     /// Loads one specific face.
@@ -750,18 +740,21 @@ impl SystemFonts {
             text,
             legacy_display: Typeface::discover_display(metrics)
                 .or_else(|_| Typeface::discover(metrics))?,
-            // The bundled serif first, so the simulator and the panel set the
-            // same headings; then the panel's own serif; then Atkinson Bold.
-            display_title: match Typeface::bundled_serif(metrics, false) {
-                Some(face) => face,
-                None => Typeface::discover_display_serif(metrics, DISPLAY_SERIF_REGULAR_CANDIDATES)
-                    .or_else(|_| Typeface::discover_display(metrics))?,
-            },
-            display_heading: match Typeface::bundled_serif(metrics, true) {
-                Some(face) => face,
-                None => Typeface::discover_display_serif(metrics, DISPLAY_SERIF_BOLD_CANDIDATES)
-                    .or_else(|_| Typeface::discover_display(metrics))?,
-            },
+            // The panel's own serif, then the bundled one, then Atkinson Bold.
+            display_title: Typeface::discover_display_serif(
+                metrics,
+                DISPLAY_SERIF_REGULAR_CANDIDATES,
+            )
+            .ok()
+            .or_else(|| Typeface::bundled_serif(metrics, false))
+            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+            display_heading: Typeface::discover_display_serif(
+                metrics,
+                DISPLAY_SERIF_BOLD_CANDIDATES,
+            )
+            .ok()
+            .or_else(|| Typeface::bundled_serif(metrics, true))
+            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
             mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
             reading,
         })

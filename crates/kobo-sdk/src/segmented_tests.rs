@@ -34,17 +34,17 @@ fn a_segmented_control_is_one_row_of_equal_segments_with_the_current_one_filled(
             .segmented(1, [("two", "2"), ("three", "3"), ("four", "4")])
             .build();
         let chips = chip_rects(&screen, &metrics);
-        assert_eq!(chips.len(), 3, "{}", panel);
-        assert!(chips.iter().all(|&(_, y, _)| y == chips[0].1), "{}", panel);
+        assert_eq!(chips.len(), 3, "{panel}");
+        assert!(chips.iter().all(|&(_, y, _)| y == chips[0].1), "{panel}");
         // Equal to the pixel, apart from the rounding the last one takes.
         assert!(
             chips[..2].iter().all(|&(width, _, _)| width == chips[0].0),
             "{}",
             panel
         );
-        assert!((chips[2].0 - chips[0].0).abs() < 3, "{}", panel);
+        assert!((chips[2].0 - chips[0].0).abs() < 3, "{panel}");
         let filled: Vec<bool> = chips.iter().map(|&(_, _, selected)| selected).collect();
-        assert_eq!(filled, [false, true, false], "{}", panel);
+        assert_eq!(filled, [false, true, false], "{panel}");
         assert!(screen
             .diagnostics(&metrics, &Chrome::default())
             .issues
@@ -104,7 +104,7 @@ fn buttons_in_a_row_are_the_same_width() {
         let layout = screen.layout_with(&metrics, &Chrome::default());
         let solo = layout.rect_of_action(action_id("solo")).unwrap();
         let about = layout.rect_of_action(action_id("about")).unwrap();
-        assert!((solo.width - about.width).abs() < 3, "{}", panel);
+        assert!((solo.width - about.width).abs() < 3, "{panel}");
     }
 }
 

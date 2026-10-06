@@ -3429,7 +3429,18 @@ impl Screen {
                     prose,
                     gap,
                 );
-                cursor = max(cursor, content_bottom.saturating_sub(trailing));
+                // Fills share the room between them, so content set between
+                // two of them is centred on the page: a twelve line poem in
+                // the middle of the paper rather than hung from the top with
+                // half a panel of white beneath it. A single fill still takes
+                // all of it, which is the foot-of-the-panel case.
+                let later = self.nodes[position + 1..]
+                    .iter()
+                    .filter(|node| matches!(node, Node::Flex { .. }))
+                    .count();
+                let free = content_bottom.saturating_sub(trailing).saturating_sub(cursor);
+                let share = free / (i32::try_from(later).unwrap_or(0) + 1);
+                cursor = max(cursor, cursor.saturating_add(share));
                 layout.flow_height = cursor.saturating_sub(content_top).max(0);
                 continue;
             }
