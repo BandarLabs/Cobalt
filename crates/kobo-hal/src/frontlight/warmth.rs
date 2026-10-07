@@ -25,6 +25,11 @@ impl Frontlight {
                 "warmth topology mismatch",
             ));
         }
+        let (balance, raw) = self.current_balance()?;
+        Ok((balance, direction, raw))
+    }
+
+    pub(super) fn current_balance(&self) -> io::Result<(Balance, u32)> {
         let balance = self.balance.ok_or_else(|| {
             io::Error::new(io::ErrorKind::Unsupported, "no captured warmth control")
         })?;
@@ -35,7 +40,18 @@ impl Frontlight {
         {
             return Err(io::Error::other("warmth control changed since capture"));
         }
-        Ok((balance, direction, raw))
+        Ok((balance, raw))
+    }
+
+    pub(super) fn current_brightness(&self) -> io::Result<u32> {
+        let brightness = read_number(&self.control.join("brightness"))
+            .ok_or_else(|| io::Error::other("missing or invalid brightness control"))?;
+        if read_number(&self.control.join("max_brightness")) != Some(self.maximum)
+            || brightness > self.maximum
+        {
+            return Err(io::Error::other("brightness control changed since capture"));
+        }
+        Ok(brightness)
     }
 
     /// Read device-neutral warmth: 0 coolest, 100 warmest, rounded to nearest.
@@ -60,17 +76,12 @@ impl Frontlight {
     /// A driver failure can leave a partial change; session recovery still owns
     /// the original values, and a successful color write remains explicit.
     pub fn set_warmth(&self, mapping: Option<WarmthControl>, percent: u8) -> io::Result<u8> {
+        let mut explicit = self.warmth_override()?;
         let (balance, direction, _) = self.warmth_control(mapping)?;
-        let brightness = read_number(&self.control.join("brightness"))
-            .ok_or_else(|| io::Error::other("missing or invalid brightness control"))?;
-        if read_number(&self.control.join("max_brightness")) != Some(self.maximum)
-            || brightness > self.maximum
-        {
-            return Err(io::Error::other("brightness control changed since capture"));
-        }
+        let brightness = self.current_brightness()?;
         let raw = from_direction(to_raw(percent, balance.maximum), balance.maximum, direction);
         self.balance(raw)?;
-        self.explicit_warmth.set(Some(raw));
+        *explicit = Some(raw);
         // The driver applies color when brightness is written. Preserve its
         // exact raw value, including off (0), without percentage rounding.
         fs::OpenOptions::new()
@@ -230,7 +241,87 @@ mod tests {
             assert!(light.set_warmth(mapping, 100).is_err());
             assert_eq!(light.percent(), Some(17));
             assert_eq!(fs::read_to_string(path).ok().as_deref(), value);
-            assert_eq!(light.explicit_warmth.get(), None);
+            assert_eq!(*light.warmth_override().unwrap(), None);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clones_share_explicit_warmth_and_restoration_clears_every_handle() {
+        let root = scratch("warmth-clones");
+        control(&root, PREFERRED, "1", "255");
+        banks(&root, PREFERRED, "3", "10");
+        let mapping = profile(WarmthDirection::Increasing).warmth;
+        let light = Frontlight::open_in(&root).unwrap();
+        let before = light.clone();
+        light.set_warmth(mapping, 80).unwrap();
+        before.set(100).unwrap();
+        assert_eq!(light.warmth(mapping).unwrap(), 80);
+        let after = light.clone();
+        after.set_warmth(mapping, 20).unwrap();
+        before.set(60).unwrap();
+        assert_eq!(light.warmth(mapping).unwrap(), 20);
+        after.restore().unwrap();
+        assert_eq!(
+            read_number(&root.join(PREFERRED).join("brightness")),
+            Some(1)
+        );
+        assert_eq!(light.warmth(mapping).unwrap(), 30);
+        // Both pre-set and post-set clones must observe the cleared override.
+        light.set(100).unwrap();
+        assert_eq!(before.warmth(mapping).unwrap(), 50);
+        before.set(60).unwrap();
+        assert_eq!(after.warmth(mapping).unwrap(), 30);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn brightness_after_explicit_warmth_refuses_changed_controls_before_either_write() {
+        let root = scratch("warmth-brightness-validation");
+        let files = ["brightness", "max_brightness", "color", "max_color"];
+        let mapping = profile(WarmthDirection::Increasing).warmth;
+        for (file, value) in [
+            ("color", None),
+            ("color", Some("bad")),
+            ("color", Some("11")),
+            ("max_color", None),
+            ("max_color", Some("bad")),
+            ("max_color", Some("0")),
+            ("max_color", Some("20")),
+            ("brightness", None),
+            ("brightness", Some("bad")),
+            ("brightness", Some("101")),
+            ("max_brightness", None),
+            ("max_brightness", Some("bad")),
+            ("max_brightness", Some("0")),
+            ("max_brightness", Some("200")),
+        ] {
+            control(&root, PREFERRED, "17", "100");
+            banks(&root, PREFERRED, "3", "10");
+            let light = Frontlight::open_in(&root).unwrap();
+            light.set_warmth(mapping, 80).unwrap();
+            let clone = light.clone();
+            let path = root.join(PREFERRED).join(file);
+            if let Some(value) = value {
+                fs::write(&path, value).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
+            let snapshot = || files.map(|file| fs::read(root.join(PREFERRED).join(file)).ok());
+            let before = snapshot();
+            for percent in [60, 100] {
+                assert!(clone.set(percent).is_err(), "{file} = {value:?}");
+                assert_eq!(
+                    snapshot(),
+                    before,
+                    "neither control may be written or recreated"
+                );
+            }
+            // A refusal must not discard the shared explicit intent.
+            control(&root, PREFERRED, "17", "100");
+            banks(&root, PREFERRED, "8", "10");
+            clone.set(60).unwrap();
+            assert_eq!(light.warmth(mapping).unwrap(), 80);
         }
         fs::remove_dir_all(root).unwrap();
     }

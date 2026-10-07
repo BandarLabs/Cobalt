@@ -62,10 +62,10 @@
 //! remembered and put back by [`Frontlight::restore`] exactly as the brightness
 //! is, so a session that ends leaves nothing moved.
 
-use std::cell::Cell;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 mod recovery;
 mod warmth;
@@ -96,8 +96,9 @@ pub struct Frontlight {
     /// [`None`] on a light with a single bank, and on any device that does not
     /// publish the file, which is why nothing here requires it.
     balance: Option<Balance>,
-    /// Last explicit app setting, separate from the immutable owner capture.
-    explicit_warmth: Cell<Option<u32>>,
+    /// Last explicit app setting, shared by every clone of this session handle.
+    /// The lock also serializes their writes/restoration; owner capture is immutable.
+    explicit_warmth: Arc<Mutex<Option<u32>>>,
 }
 
 /// The balance between the two banks of a light that has two.
@@ -160,7 +161,7 @@ impl Frontlight {
             original,
             original_raw: raw,
             balance,
-            explicit_warmth: Cell::new(None),
+            explicit_warmth: Arc::default(),
         })
     }
 
@@ -187,7 +188,8 @@ impl Frontlight {
     /// same integer, and an application that redraws a slider from the returned
     /// value stays honest about it.
     ///
-    /// An explicit warmth setting wins at every brightness. Otherwise,
+    /// An explicit warmth setting wins at every brightness, across clones.
+    /// Both controls are revalidated before replaying that setting. Otherwise,
     /// at the top of the range every bank is lit; below it the owner's balance
     /// between them is left alone. The balance is written on every call rather
     /// than only on the way past 100, so that stepping back down from the top
@@ -196,12 +198,20 @@ impl Frontlight {
     ///
     /// # Errors
     ///
-    /// When the control cannot be written, which on this device means the file
-    /// vanished or the process is not root.
+    /// When a control cannot be written or the shared state lock is poisoned.
+    /// With explicit warmth, also refuses missing/invalid control readings or
+    /// changed ranges before writing either control.
     pub fn set(&self, percent: u8) -> io::Result<u8> {
+        let explicit = self.warmth_override()?;
         let percent = percent.min(100);
+        if explicit.is_some() {
+            // Replaying a raw override is safe only while both controls still
+            // match the captured ranges. Refuse before writing either one.
+            self.current_balance()?;
+            self.current_brightness()?;
+        }
         if let Some(balance) = self.balance {
-            self.balance(self.explicit_warmth.get().unwrap_or_else(|| {
+            self.balance(explicit.unwrap_or_else(|| {
                 if percent == 100 {
                     balance.even()
                 } else {
@@ -210,6 +220,12 @@ impl Frontlight {
             }))?;
         }
         self.brightness(percent)
+    }
+
+    fn warmth_override(&self) -> io::Result<MutexGuard<'_, Option<u32>>> {
+        self.explicit_warmth
+            .lock()
+            .map_err(|_| io::Error::other("front light state lock poisoned"))
     }
 
     /// Writes the balance between the banks.
@@ -244,6 +260,7 @@ impl Frontlight {
     ///
     /// As [`Self::set`].
     pub fn restore(&self) -> io::Result<u8> {
+        let mut explicit = self.warmth_override()?;
         if read_number(&self.control.join("max_brightness")) != Some(self.maximum) {
             return Err(io::Error::other("front light range changed since capture"));
         }
@@ -279,7 +296,7 @@ impl Frontlight {
         });
         balance_result?;
         let restored = brightness_result?;
-        self.explicit_warmth.set(None);
+        *explicit = None;
         Ok(restored)
     }
 }
