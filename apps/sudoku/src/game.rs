@@ -8,6 +8,7 @@ pub enum Level {
     Easy,
     Medium,
     Hard,
+    Imported,
 }
 impl Level {
     pub const ALL: [Self; 3] = [Self::Easy, Self::Medium, Self::Hard];
@@ -16,6 +17,7 @@ impl Level {
             Self::Easy => "Easy",
             Self::Medium => "Medium",
             Self::Hard => "Hard",
+            Self::Imported => "Imported",
         }
     }
     pub fn key(self) -> String {
@@ -68,6 +70,7 @@ pub struct Position {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Game {
     pub puzzle: usize,
+    pub imported: Option<Puzzle>,
     pub position: Position,
     pub undo: VecDeque<Position>,
     pub pencil: bool,
@@ -78,6 +81,7 @@ impl Game {
     pub fn new(puzzle: usize, puzzles: &[Puzzle]) -> Self {
         Self {
             puzzle,
+            imported: None,
             position: Position {
                 board: puzzles[puzzle].clues,
                 notes: [0; CELLS],
@@ -90,11 +94,21 @@ impl Game {
             landscape: false,
         }
     }
+    pub fn imported(spec: Puzzle) -> Self {
+        let mut game = Self::new(0, std::slice::from_ref(&spec));
+        game.imported = Some(spec);
+        game
+    }
+    pub fn spec<'a>(&'a self, puzzles: &'a [Puzzle]) -> &'a Puzzle {
+        self.imported
+            .as_ref()
+            .unwrap_or_else(|| &puzzles[self.puzzle])
+    }
     pub fn solved(&self, puzzles: &[Puzzle]) -> bool {
-        self.position.board == puzzles[self.puzzle].solution
+        self.position.board == self.spec(puzzles).solution
     }
     pub fn editable(&self, cell: usize, puzzles: &[Puzzle]) -> bool {
-        cell < CELLS && puzzles[self.puzzle].clues[cell] == 0
+        cell < CELLS && self.spec(puzzles).clues[cell] == 0
     }
     pub fn remember(&mut self) {
         self.undo.push_back(self.position.clone());
@@ -145,12 +159,12 @@ impl Game {
             return false;
         };
         if !self.editable(cell, puzzles)
-            || self.position.board[cell] == puzzles[self.puzzle].solution[cell]
+            || self.position.board[cell] == self.spec(puzzles).solution[cell]
         {
             return false;
         }
         self.remember();
-        self.position.board[cell] = puzzles[self.puzzle].solution[cell];
+        self.position.board[cell] = self.spec(puzzles).solution[cell];
         self.position.notes[cell] = 0;
         self.position.hints = self.position.hints.saturating_add(1);
         true
@@ -165,9 +179,20 @@ impl Game {
     }
     pub fn reset(&mut self, puzzles: &[Puzzle]) {
         self.remember();
-        self.position = Self::new(self.puzzle, puzzles).position;
+        self.position = Position {
+            board: self.spec(puzzles).clues,
+            notes: [0; CELLS],
+            selected: None,
+            hints: 0,
+        };
     }
     pub fn next(&self, level: Level, puzzles: &[Puzzle]) -> usize {
+        if self.imported.is_some() {
+            return puzzles
+                .iter()
+                .position(|p| p.level == level)
+                .expect("pack has every level");
+        }
         (1..=puzzles.len())
             .map(|step| (self.puzzle + step) % puzzles.len())
             .find(|&i| puzzles[i].level == level)

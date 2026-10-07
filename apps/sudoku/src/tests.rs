@@ -174,7 +174,7 @@ fn invalid_future_and_changed_puzzle_records_preserve_source_without_writes() {
         b"".to_vec(),
         b"{}".to_vec(),
         vec![0; saved::LIMIT + 1],
-        text.replace("\"version\":1", "\"version\":2").into_bytes(),
+        text.replace("\"version\":2", "\"version\":3").into_bytes(),
         text.replace("\"puzzle\":\"0\"", "\"puzzle\":\"1\"")
             .into_bytes(),
         text.replace("\"selected\":\"none\"", "\"selected\":\"81\"")
@@ -434,4 +434,271 @@ fn long_game_titles_notes_completion_failures_and_every_help_page_fit() {
             }
         }
     }
+}
+
+// SDM examples on the Open Sudoku project's own download page use this encoding.
+const SDM: &str =
+    "073002000000006037000000420800001000020600900900000870209410000007000000010000068";
+fn read_import(r: &mut AppRunner<Sudoku>, bytes: &[u8]) -> Vec<Command> {
+    tap(r, "more");
+    tap(r, "new-game");
+    tap(r, "import");
+    let commands = tap(r, "import-read");
+    assert!(commands.iter().any(|c| matches!(c, Command::Store(StoreRequest::ShelfRead { name, .. }) if name == import::FILE)));
+    r.store_result(StoreResult::ShelfRead {
+        name: import::FILE.into(),
+        offset: 0,
+        bytes: bytes.to_vec(),
+        size: u32::try_from(bytes.len()).unwrap(),
+    })
+}
+#[test]
+fn sdm_parser_bounds_and_line_format() {
+    let clues = game::digits(SDM).unwrap();
+    assert_eq!(import::parse(SDM.as_bytes()).unwrap(), vec![clues]);
+    assert_eq!(
+        import::parse(format!("{SDM}\r\n{SDM}\r\n").as_bytes()).unwrap(),
+        vec![clues; 2]
+    );
+    for bytes in [
+        vec![],
+        vec![b'0'; 80],
+        vec![b'0'; 82],
+        vec![255; 81],
+        vec![b'.'; 81],
+        vec![b'0'; import::BYTE_LIMIT + 1],
+        format!("{SDM}\n\n{SDM}").into_bytes(),
+        b"<opensudoku/>".to_vec(),
+        b"https://example.org/puzzles.sdm".to_vec(),
+        format!("{SDM}\n").repeat(1001).into_bytes(),
+    ] {
+        assert!(import::parse(&bytes).is_err());
+    }
+    assert_eq!(
+        import::parse(format!("{SDM}\n").repeat(1000).as_bytes())
+            .unwrap()
+            .len(),
+        1000
+    );
+    assert!(import::validate(clues).is_ok());
+    // No immediate duplicate, but row zero needs 9 where the column already has 9.
+    let impossible = game::digits(&format!("123456780000000009{}", "0".repeat(63))).unwrap();
+    assert!(import::validate(impossible)
+        .unwrap_err()
+        .contains("no solution"));
+}
+#[test]
+fn imported_game_save_reopen_undo_and_bundled_return() {
+    let mut r = ready();
+    let before = r.app().game.clone();
+    assert!(!read_import(&mut r, SDM.as_bytes())
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))));
+    assert_eq!(r.app().game, before); // preview never replaces the current game
+    let commands = tap(&mut r, "import-start");
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))));
+    r.store_result(ack());
+    assert_eq!(r.app().heading(), "Imported");
+    let clues = game::digits(SDM).unwrap();
+    assert_eq!(r.app().game.spec(&r.app().puzzles).clues, clues);
+    let cell = clues.iter().position(|&n| n == 0).unwrap();
+    tap(&mut r, &cell_name(cell));
+    r.store_result(ack());
+    tap(&mut r, "pencil");
+    r.store_result(ack());
+    tap(&mut r, "digit-2");
+    r.store_result(ack());
+    tap(&mut r, "more");
+    tap(&mut r, "hint");
+    tap(&mut r, "confirm-hint");
+    r.store_result(ack());
+    let latest = r.app().game.clone();
+    let bytes = saved::encode(&latest, &r.app().puzzles).unwrap();
+    // Reopening needs no source file, nor a bundled index/solution.
+    assert_eq!(saved::decode(&bytes, &[]).unwrap(), latest);
+    let mut reopened = AppRunner::new(Sudoku::default());
+    reopened.start();
+    reopened.store_result(load(Some(bytes)));
+    assert_eq!(reopened.app().game, latest);
+    tap(&mut reopened, "undo");
+    assert_eq!(reopened.app().game.position.board[cell], 0);
+    assert_eq!(reopened.app().game.position.notes[cell], 2);
+    tap(&mut reopened, "more");
+    tap(&mut reopened, "restart");
+    tap(&mut reopened, "confirm-restart");
+    assert_eq!(reopened.app().game.position.board, clues);
+    tap(&mut reopened, "undo");
+    assert_eq!(reopened.app().game.position.notes[cell], 2);
+    tap(&mut reopened, "more");
+    tap(&mut reopened, "new-game");
+    tap(&mut reopened, "new-hard");
+    assert!(reopened.app().game.imported.is_none());
+    assert_eq!(
+        reopened.app().game.spec(&reopened.app().puzzles).level,
+        Level::Hard
+    );
+}
+#[test]
+fn legacy_bundled_save_migrates_with_history() {
+    let puzzles = game::pack();
+    let mut game = Game::new(17, &puzzles);
+    game.position.selected = Some(blank(&game, &puzzles));
+    game.enter(3, &puzzles);
+    // Version 1 uses the same bundled payload; only version 2 allows SDM identity.
+    let bytes = String::from_utf8(saved::encode(&game, &puzzles).unwrap())
+        .unwrap()
+        .replace("\"version\":2", "\"version\":1");
+    let mut restored = saved::decode(bytes.as_bytes(), &puzzles).unwrap();
+    assert_eq!(restored, game);
+    assert!(restored.undo());
+    assert_eq!(restored.position.board, puzzles[17].clues);
+}
+#[test]
+fn failed_and_cancelled_imports_keep_game_and_ignore_late_reads() {
+    for bytes in [b"invalid".to_vec(), vec![b'0'; 81]] {
+        let mut r = ready();
+        let before = r.app().game.clone();
+        read_import(&mut r, &bytes);
+        let commands = tap(&mut r, "import-start");
+        assert_eq!(r.app().game, before);
+        assert!(!commands
+            .iter()
+            .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))));
+    }
+    let mut r = ready();
+    tap(&mut r, "more");
+    tap(&mut r, "new-game");
+    tap(&mut r, "import");
+    tap(&mut r, "import-read");
+    let before = r.app().game.clone();
+    tap(&mut r, "play");
+    r.store_result(StoreResult::ShelfRead {
+        name: import::FILE.into(),
+        offset: 0,
+        bytes: SDM.as_bytes().to_vec(),
+        size: 81,
+    });
+    assert_eq!(r.app().view, View::Play);
+    assert_eq!(r.app().game, before);
+    // A declared oversized file is refused without requesting another chunk.
+    tap(&mut r, "more");
+    tap(&mut r, "new-game");
+    tap(&mut r, "import");
+    tap(&mut r, "import-read");
+    let commands = r.store_result(StoreResult::ShelfRead {
+        name: import::FILE.into(),
+        offset: 0,
+        bytes: vec![],
+        size: u32::try_from(import::BYTE_LIMIT + 1).unwrap(),
+    });
+    assert!(!commands.iter().any(|c| matches!(c, Command::Store(_))));
+    assert_eq!(r.app().game, before);
+    assert!(tap(&mut r, "import-read")
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::ShelfRead { .. }))));
+    r.store_result(StoreResult::Denied(StoreError::Missing));
+    assert_eq!(r.app().game, before);
+}
+#[test]
+fn imported_record_revalidates_clues_and_all_history() {
+    let puzzles = game::pack();
+    let mut game = Game::imported(import::validate(game::digits(SDM).unwrap()).unwrap());
+    game.position.selected = Some(0);
+    game.enter(3, &puzzles);
+    let bytes = saved::encode(&game, &puzzles).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    let corrupt = text.replace(
+        &format!("\"clues\":\"{SDM}\""),
+        &format!("\"clues\":\"{}\"", "0".repeat(81)),
+    );
+    assert!(saved::decode(corrupt.as_bytes(), &puzzles).is_err());
+    game.undo[0].board[1] = 0; // a given changed in history
+    assert!(saved::decode(&saved::encode(&game, &puzzles).unwrap(), &puzzles).is_err());
+}
+#[test]
+fn import_routes_fit_and_keep_actions_reachable() {
+    for landscape in [false, true] {
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut r = AppRunner::with_metrics(Sudoku::default(), metrics);
+            r.start();
+            r.store_result(load(None));
+            r.store_result(ack());
+            r.app_mut().game.landscape = landscape;
+            let rendered = if landscape {
+                DisplayMetrics {
+                    width: metrics.height,
+                    height: metrics.width,
+                    ..metrics
+                }
+            } else {
+                metrics
+            };
+            let check = |r: &AppRunner<Sudoku>| {
+                let screen = r.app().screen(&r.context());
+                assert!(
+                    screen
+                        .diagnostics(&rendered, &Chrome::with_back(true))
+                        .issues
+                        .is_empty(),
+                    "{landscape} {scale:?}: {:?}",
+                    screen
+                        .diagnostics(&rendered, &Chrome::with_back(true))
+                        .issues
+                );
+            };
+            tap(&mut r, "more");
+            tap(&mut r, "new-game");
+            check(&r);
+            tap(&mut r, "import");
+            check(&r);
+            tap(&mut r, "import-read");
+            check(&r);
+            r.store_result(StoreResult::Denied(StoreError::Missing));
+            check(&r);
+            tap(&mut r, "play");
+            read_import(&mut r, format!("{SDM}\n{}", "0".repeat(81)).as_bytes());
+            check(&r);
+            tap(&mut r, "import-next");
+            tap(&mut r, "import-start");
+            check(&r);
+            assert!(r.app().game.imported.is_none());
+            tap(&mut r, "import-previous");
+            tap(&mut r, "import-start");
+            check(&r);
+            assert!(r.app().game.imported.is_some());
+        }
+    }
+}
+#[test]
+fn imported_save_failure_retry_preserves_full_history() {
+    let mut r = ready();
+    read_import(&mut r, SDM.as_bytes());
+    tap(&mut r, "import-start");
+    r.store_result(StoreResult::Denied(StoreError::NoRoom));
+    assert!(!r.app().can_suspend());
+    tap(&mut r, "cell-0");
+    tap(&mut r, "pencil");
+    for _ in 0..100 {
+        tap(&mut r, "digit-3");
+    }
+    let latest = r.app().game.clone();
+    assert_eq!(latest.undo.len(), game::HISTORY);
+    tap(&mut r, "more");
+    let bytes = tap(&mut r, "retry-save")
+        .into_iter()
+        .find_map(|c| match c {
+            Command::Store(StoreRequest::Save { value, .. }) => Some(value),
+            _ => None,
+        })
+        .unwrap();
+    assert!(bytes.len() < saved::LIMIT);
+    assert_eq!(saved::decode(&bytes, &[]).unwrap(), latest);
+    r.store_result(ack());
+    assert!(r.app().can_suspend());
 }
