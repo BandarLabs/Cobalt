@@ -2365,6 +2365,21 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadFrontlight);
     }
 
+    /// Set device-neutral warmth (0 coolest, 100 warmest), clamped to 0..=100.
+    /// Requires `frontlight-control`; unmapped profiles return `Unsupported`.
+    /// An explicit setting survives brightness changes until session restoration.
+    /// Requires the unreleased warmth API; older runtimes refuse its new tags.
+    pub fn set_warmth(&mut self, percent: u8) {
+        self.request(DeviceRequest::SetWarmth {
+            percent: percent.min(100),
+        });
+    }
+
+    /// Read warmth as `DeviceResult::Warmth`, or a refusal on unmapped devices.
+    pub fn read_warmth(&mut self) {
+        self.request(DeviceRequest::ReadWarmth);
+    }
+
     /// Asks whether Bluetooth is available and powered, including remembered
     /// devices when the backend can enumerate them without scanning.
     pub fn read_bluetooth(&mut self) {
@@ -3546,6 +3561,20 @@ mod tests {
             .filter(|command| matches!(command, Command::Device(DeviceRequest::Update { .. })))
             .count();
         assert_eq!(queued, 1, "only the well-formed request may be queued");
+    }
+
+    #[test]
+    fn warmth_helpers_queue_bounded_device_requests() {
+        let mut context = Context::default();
+        context.device().set_warmth(255);
+        context.device().read_warmth();
+        assert_eq!(
+            context.take_commands(),
+            vec![
+                Command::Device(DeviceRequest::SetWarmth { percent: 100 }),
+                Command::Device(DeviceRequest::ReadWarmth),
+            ]
+        );
     }
 
     #[test]
