@@ -2,11 +2,11 @@
   "id": "sudoku",
   "display_name": "Sudoku",
   "short_label": "Sudoku",
-  "summary": "Play 36 original Sudoku puzzles with pencil notes, undo and saved games.",
-  "version": "1.0.14",
+  "summary": "Play Sudoku with local SDM imports, 36 original puzzles, notes and saved games.",
+  "version": "1.0.16",
   "glyph": "grid",
   "capabilities": [],
-  "release_notes": "Adds a page description so the app directory listing reads properly in search results.",
+  "release_notes": "Import local Open Sudoku SDM puzzles copied by USB. Validated imported games keep their clues, notes and undo history after reopening.",
   "minimum_cobalt_version": "0.3.18",
-  "page_description": "Play 36 original Sudoku puzzles across three difficulties, each with exactly one solution. Pencil notes, undo, checking preference, and saved games survive reopening."
+  "page_description": "Play 36 original Sudoku puzzles or import local Open Sudoku SDM files copied by USB. Imported puzzles are checked for a unique solution. Pencil notes, undo, checking and saved games survive reopening without the source file."
 }

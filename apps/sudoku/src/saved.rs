@@ -7,7 +7,7 @@ use std::fmt::Write;
 pub const KEY: &str = "game";
 pub const LIMIT: usize = 48 * 1024;
 fn schema() -> Schema {
-    Schema::new("sudoku.game", 1, LIMIT).expect("fixed schema")
+    Schema::new("sudoku.game", 2, LIMIT).expect("fixed schema")
 }
 fn position_value(position: &Position) -> Value {
     let mut notes = String::new();
@@ -29,8 +29,15 @@ fn position_value(position: &Position) -> Value {
 pub fn encode(game: &Game, puzzles: &[Puzzle]) -> Result<Vec<u8>, Error> {
     schema().encode(
         &ObjectBuilder::new()
-            .set("puzzle", game.puzzle.to_string())
-            .set("clues", digit_text(&puzzles[game.puzzle].clues))
+            .set(
+                "puzzle",
+                if game.imported.is_some() {
+                    "sdm".into()
+                } else {
+                    game.puzzle.to_string()
+                },
+            )
+            .set("clues", digit_text(&game.spec(puzzles).clues))
             .set("position", position_value(&game.position))
             .set("pencil", game.pencil)
             .set("checking", game.checking)
@@ -90,13 +97,31 @@ fn position(v: &Value, puzzle: &Puzzle) -> Result<Position, Error> {
 }
 pub fn decode(bytes: &[u8], puzzles: &[Puzzle]) -> Result<Game, Error> {
     let value = schema()
-        .restore(Some(bytes), |_, _| Err(Error::MigrationUnavailable))?
+        .restore(Some(bytes), |version, payload| {
+            if version == 1 {
+                Ok(payload)
+            } else {
+                Err(Error::MigrationUnavailable)
+            }
+        })?
         .ok_or(Error::Corrupt)?
         .payload;
-    let puzzle = text(&value, "puzzle")?
-        .parse::<usize>()
-        .map_err(|_| Error::Corrupt)?;
-    let spec = puzzles.get(puzzle).ok_or(Error::Corrupt)?;
+    let identity = text(&value, "puzzle")?;
+    let imported = if identity == "sdm" {
+        let clues = digits(text(&value, "clues")?).ok_or(Error::Corrupt)?;
+        Some(super::import::validate(clues).map_err(|_| Error::Corrupt)?)
+    } else {
+        None
+    };
+    let puzzle = if imported.is_some() {
+        0
+    } else {
+        identity.parse::<usize>().map_err(|_| Error::Corrupt)?
+    };
+    let spec = imported
+        .as_ref()
+        .or_else(|| puzzles.get(puzzle))
+        .ok_or(Error::Corrupt)?;
     if text(&value, "clues")? != digit_text(&spec.clues) {
         return Err(Error::Corrupt);
     }
@@ -120,6 +145,7 @@ pub fn decode(bytes: &[u8], puzzles: &[Puzzle]) -> Result<Game, Error> {
     };
     Ok(Game {
         puzzle,
+        imported,
         position: current,
         undo,
         pencil: flag("pencil")?,

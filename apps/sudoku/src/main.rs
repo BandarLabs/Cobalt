@@ -1,5 +1,6 @@
 //! Offline Sudoku with acknowledged saves, optional checking and reversible edits.
 mod game;
+mod import;
 mod saved;
 #[cfg(test)]
 mod tests;
@@ -22,9 +23,11 @@ enum View {
     Help,
     Hint,
     Display,
+    Import,
 }
 struct Sudoku {
     puzzles: Vec<Puzzle>,
+    import: import::Selection,
     game: Game,
     view: View,
     draft: Draft,
@@ -41,6 +44,7 @@ impl Default for Sudoku {
         Self {
             game: Game::new(0, &puzzles),
             puzzles,
+            import: import::Selection::default(),
             view: View::Play,
             draft: Draft::restored(Vec::new(), saved::LIMIT).expect("bounded empty draft"),
             active: None,
@@ -66,6 +70,15 @@ fn digit_name(digit: u8) -> String {
     format!("digit-{digit}")
 }
 impl Sudoku {
+    fn import_action(&mut self, context: &mut Context, action: ActionId) {
+        if let Some(spec) = self.import.action(context, action) {
+            let landscape = self.game.landscape;
+            self.game = Game::imported(spec);
+            self.game.landscape = landscape;
+            self.import.cancel();
+            self.view = View::Play;
+        }
+    }
     fn save(&mut self, context: &mut Context) {
         let bytes =
             saved::encode(&self.game, &self.puzzles).expect("validated game fits record bound");
@@ -92,6 +105,9 @@ impl Sudoku {
         }
     }
     fn heading(&self) -> String {
+        if self.game.imported.is_some() {
+            return "Imported".into();
+        }
         format!(
             "{} · {}/12",
             self.puzzles[self.game.puzzle].level.name(),
@@ -109,7 +125,7 @@ impl Sudoku {
             return notice.clone();
         }
         if let Some(cell) = self.game.position.selected {
-            let spec = &self.puzzles[self.game.puzzle];
+            let spec = self.game.spec(&self.puzzles);
             if spec.clues[cell] != 0 {
                 return format!("{} · Given", self.progress_label());
             }
@@ -130,7 +146,7 @@ impl Sudoku {
     }
     fn board(&self, builder: ScreenBuilder) -> ScreenBuilder {
         let selected = self.game.position.selected;
-        let spec = &self.puzzles[self.game.puzzle];
+        let spec = self.game.spec(&self.puzzles);
         let marks = (0..CELLS)
             .map(|cell| {
                 let n = self.game.position.board[cell];
@@ -206,11 +222,15 @@ impl Sudoku {
     }
     fn screen(&self, context: &Context) -> Screen {
         let title = if self.loaded && self.view == View::Play {
-            format!(
-                "Sudoku · {} {}",
-                self.puzzles[self.game.puzzle].level.name(),
-                self.game.puzzle % 12 + 1
-            )
+            if self.game.imported.is_some() {
+                "Sudoku · Imported".into()
+            } else {
+                format!(
+                    "Sudoku · {} {}",
+                    self.puzzles[self.game.puzzle].level.name(),
+                    self.game.puzzle % 12 + 1
+                )
+            }
         } else {
             "Sudoku".into()
         };
@@ -231,12 +251,14 @@ impl Sudoku {
         match self.view {
             View::Play => self.play_screen(builder),
             View::Menu => self.menu_screen(builder),
+            View::Import => self.import.screen(builder),
             View::New => builder
                 .heading("New puzzle")
                 .secondary("Replaces this game and its history.")
                 .button("new-easy", "Easy")
                 .button("new-medium", "Medium")
                 .button("new-hard", "Hard")
+                .button("import", "Import SDM")
                 .bottom_action("play", "Keep playing")
                 .build(),
             View::Restart => builder
@@ -359,8 +381,7 @@ impl Sudoku {
                     "Reveal",
                     editable
                         && cell.is_some_and(|c| {
-                            self.game.position.board[c]
-                                != self.puzzles[self.game.puzzle].solution[c]
+                            self.game.position.board[c] != self.game.spec(&self.puzzles).solution[c]
                         }),
                 ),
                 ("new-game", "New", true),
@@ -455,6 +476,11 @@ impl KoboApp for Sudoku {
             self.show(context);
         }
     }
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if name == import::FILE && self.import.receive(context, &result) {
+            self.show(context);
+        }
+    }
     fn on_background(&mut self, context: &mut Context) {
         self.pump(context);
     }
@@ -473,6 +499,7 @@ impl KoboApp for Sudoku {
         let before = self.game.clone();
         self.notice = None;
         if is("play") || action == ActionId::BACK {
+            self.import.cancel();
             self.view = View::Play;
         } else {
             match self.view {
@@ -510,8 +537,11 @@ impl KoboApp for Sudoku {
                         self.view = View::Display;
                     }
                 }
+                View::Import => self.import_action(context, action),
                 View::New => {
-                    if let Some(level) = Level::ALL
+                    if is("import") {
+                        self.view = View::Import;
+                    } else if let Some(level) = Level::ALL
                         .into_iter()
                         .find(|l| is(&format!("new-{}", l.key())))
                     {
