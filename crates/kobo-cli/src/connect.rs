@@ -244,10 +244,14 @@ impl Identity {
         identity
     }
 
-    /// True when this answer names a reviewed Kobo or converted Tolino model.
+    /// True when this answer's serial is shaped like a Kobo identity, or is
+    /// the converted Tolino Shine 5's exact `T302` prefix.
     ///
-    /// Kobo serials begin with `N` or `P` and three digits. The converted
-    /// Tolino Shine 5 keeps its `T302` prefix in `.kobo/version`.
+    /// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+    /// passes here, including model codes with no profile, because profile
+    /// support is checked separately once the device is matched. The
+    /// converted Tolino Shine 5 keeps its `T302` prefix in `.kobo/version`
+    /// and is the one non-Kobo shape accepted.
     #[must_use]
     pub fn is_kobo(&self) -> bool {
         let bytes = self.serial.as_bytes();

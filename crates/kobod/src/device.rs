@@ -749,23 +749,17 @@ pub fn present(
     // T302 reports KEY_POWER on a separate PMIC input node. Its gpio-keys
     // node carries the cover signal but no power key, so listening only there
     // makes the physical button appear dead during a Cobalt session.
-    let mut power_key = if profile.serial_prefix == "T302" {
-        match gpio::discover_power_path() {
-            Some(path) => match GpioSession::acquire_power(&path) {
-                Ok(session) => Some(session),
-                Err(error) => {
-                    trace(&format!("power key unavailable: {error}"));
-                    None
-                }
-            },
-            None => {
-                trace("power key unavailable: bd71828-pwrkey not found");
-                None
+    let mut power_key = None;
+    if profile.serial_prefix == "T302" {
+        if let Some(path) = gpio::discover_power_path() {
+            match GpioSession::acquire_power(&path) {
+                Ok(session) => power_key = Some(session),
+                Err(error) => trace(&format!("power key unavailable: {error}")),
             }
+        } else {
+            trace("power key unavailable: bd71828-pwrkey not found");
         }
-    } else {
-        None
-    };
+    }
     if let Some(session) = power_key.as_mut() {
         pump_gpio(session, &taps);
     }

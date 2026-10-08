@@ -217,10 +217,14 @@ pub fn parse_version(line: &str) -> (String, String) {
     (serial, firmware)
 }
 
-/// True when a serial has a reviewed Kobo or converted Tolino model prefix.
+/// True when a serial is shaped like a Kobo identity, or carries the
+/// converted Tolino Shine 5's exact `T302` prefix.
 ///
-/// Kobo serials begin with `N` or `P` and three digits. The converted
-/// Tolino Shine 5 keeps its `T302` prefix in `.kobo/version`.
+/// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+/// passes here, including model codes with no profile, because profile
+/// support is checked separately once the device is matched. The converted
+/// Tolino Shine 5 keeps its `T302` prefix in `.kobo/version` and is the one
+/// non-Kobo shape accepted.
 #[must_use]
 pub fn is_kobo_serial(serial: &str) -> bool {
     let bytes = serial.as_bytes();
