@@ -1,10 +1,10 @@
 //! The physical buttons and the orientation channel.
 //!
-//! On NTX hardware the `gpio-keys` node carries three unrelated things: the
-//! page-turn keys, the power button, and the kernel's digested accelerometer
-//! verdicts (`EV_MSC`/`MSC_RAW` with one value per orientation). One session
-//! reads the node and hands all of them to the runtime, which decides what
-//! each means.
+//! On NTX hardware the `gpio-keys` node carries page-turn keys and the
+//! kernel's digested accelerometer verdicts (`EV_MSC`/`MSC_RAW`). It carries
+//! the power button on some readers; the Tolino Shine 5 instead reports that
+//! button from a separate `bd71828-pwrkey` node. Both are read without a grab
+//! and handed to the runtime, which decides what each event means.
 //!
 //! Unlike the touch panel this device is never grabbed. Inside a panel
 //! session nothing else consumes buttons — the stock reader is stopped, and
@@ -31,6 +31,7 @@ const READ_CHUNK_EVENTS: usize = 64;
 
 /// The device name this module owns. Every NTX Kobo ships it.
 const DEVICE_NAME: &str = "gpio-keys";
+const POWER_DEVICE_NAME: &str = "bd71828-pwrkey";
 
 /// A physical button, named by what it is rather than what it means.
 ///
@@ -124,11 +125,26 @@ pub fn discover_buttons_path() -> Option<PathBuf> {
 }
 
 fn discover_buttons_path_from(content: &str) -> Option<PathBuf> {
+    discover_named_path_from(content, DEVICE_NAME)
+}
+
+/// Finds the Tolino Shine 5's separate power-key node, if present.
+#[must_use]
+pub fn discover_power_path() -> Option<PathBuf> {
+    let content = std::fs::read_to_string("/proc/bus/input/devices").ok()?;
+    discover_power_path_from(&content)
+}
+
+fn discover_power_path_from(content: &str) -> Option<PathBuf> {
+    discover_named_path_from(content, POWER_DEVICE_NAME)
+}
+
+fn discover_named_path_from(content: &str, expected: &str) -> Option<PathBuf> {
     content.split("\n\n").find_map(|block| {
         let name_matches = block
             .lines()
             .find(|line| line.starts_with("N: Name="))
-            .is_some_and(|line| line.contains(DEVICE_NAME));
+            .is_some_and(|line| line == format!("N: Name=\"{expected}\""));
         if !name_matches {
             return None;
         }
@@ -147,6 +163,7 @@ fn discover_buttons_path_from(content: &str) -> Option<PathBuf> {
 pub enum GpioError {
     /// The device at this path is not the button device.
     WrongDevice {
+        expected: &'static str,
         found: String,
     },
     Io(io::Error),
@@ -155,9 +172,9 @@ pub enum GpioError {
 impl fmt::Display for GpioError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::WrongDevice { found } => write!(
+            Self::WrongDevice { expected, found } => write!(
                 formatter,
-                "button device is {found:?}, but this module requires {DEVICE_NAME:?}"
+                "button device is {found:?}, but this module requires {expected:?}"
             ),
             Self::Io(error) => write!(formatter, "{error}"),
         }
@@ -188,10 +205,30 @@ impl GpioSession {
     /// Returns an error when the device cannot be opened or is not
     /// `gpio-keys`.
     pub fn acquire(path: &Path) -> Result<Self, GpioError> {
+        Self::acquire_named(path, DEVICE_NAME, false)
+    }
+
+    /// Opens the separate power-key device and forwards only power events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the node cannot be opened or has another name.
+    pub fn acquire_power(path: &Path) -> Result<Self, GpioError> {
+        Self::acquire_named(path, POWER_DEVICE_NAME, true)
+    }
+
+    fn acquire_named(
+        path: &Path,
+        expected: &'static str,
+        power_only: bool,
+    ) -> Result<Self, GpioError> {
         let device = File::open(path)?;
         let name = input::device_name(&device)?;
-        if name != DEVICE_NAME {
-            return Err(GpioError::WrongDevice { found: name });
+        if name != expected {
+            return Err(GpioError::WrongDevice {
+                expected,
+                found: name,
+            });
         }
         let (sender, events) = mpsc::channel();
         thread::spawn(move || {
@@ -208,6 +245,17 @@ impl GpioSession {
                     let Some(event) = InputEvent32::decode(chunk).and_then(decode) else {
                         continue;
                     };
+                    if power_only
+                        && !matches!(
+                            event,
+                            GpioEvent::Button {
+                                button: Button::Power,
+                                ..
+                            }
+                        )
+                    {
+                        continue;
+                    }
                     if sender.send(event).is_err() {
                         return;
                     }
@@ -229,7 +277,10 @@ impl GpioSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, discover_buttons_path_from, Button, GpioEvent, Orientation};
+    use super::{
+        decode, discover_buttons_path_from, discover_power_path_from, Button, GpioEvent,
+        Orientation,
+    };
     use crate::touch::InputEvent32;
     use std::path::Path;
 
@@ -340,6 +391,26 @@ H: Handlers=event1\n";
         assert_eq!(
             discover_buttons_path_from(fixture).as_deref(),
             Some(Path::new("/dev/input/event0"))
+        );
+    }
+
+    #[test]
+    fn the_t302_power_key_is_found_on_its_separate_node() {
+        let fixture = "N: Name=\"gpio-keys\"\n\
+H: Handlers=event0 perfmgr\n\
+B: KEY=8 0\n\n\
+N: Name=\"cyttsp5_mt\"\n\
+H: Handlers=event1 perfmgr\n\n\
+N: Name=\"bd71828-pwrkey\"\n\
+H: Handlers=event2 perfmgr\n\
+B: KEY=100000 0 0 0\n";
+        assert_eq!(
+            discover_buttons_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event0"))
+        );
+        assert_eq!(
+            discover_power_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event2"))
         );
     }
 }

@@ -244,17 +244,17 @@ impl Identity {
         identity
     }
 
-    /// True when this answer came from something that is recognisably a Kobo.
+    /// True when this answer names a reviewed Kobo or converted Tolino model.
     ///
-    /// Every known Kobo serial begins with an `N` or `P` followed by three digits, and no
-    /// other machine on a home network has a `/mnt/onboard/.kobo/version` at
-    /// all, so the presence of the file is most of the evidence.
+    /// Kobo serials begin with `N` or `P` and three digits. The converted
+    /// Tolino Shine 5 keeps its `T302` prefix in `.kobo/version`.
     #[must_use]
     pub fn is_kobo(&self) -> bool {
         let bytes = self.serial.as_bytes();
         bytes.len() >= 4
-            && (bytes[0] == b'N' || bytes[0] == b'P')
-            && bytes[1..4].iter().all(u8::is_ascii_digit)
+            && (((bytes[0] == b'N' || bytes[0] == b'P')
+                && bytes[1..4].iter().all(u8::is_ascii_digit))
+                || bytes.starts_with(b"T302"))
     }
 
     /// The four-character model code, which is what a device profile matches.
@@ -370,6 +370,15 @@ mod tests {
             Identity::parse("serial=P365410043013\nfirmware=4.45.23697\nmodel=\ncobalt=\n");
         assert!(identity.is_kobo());
         assert_eq!(identity.model_code(), "P365");
+    }
+
+    #[test]
+    fn only_the_reviewed_tolino_prefix_is_recognised_over_the_network() {
+        let tolino = Identity::parse("serial=T302000000000\nfirmware=4.45.23697\n");
+        assert!(tolino.is_kobo());
+        assert_eq!(tolino.model_code(), "T302");
+        let other = Identity::parse("serial=T303000000000\nfirmware=4.45.23697\n");
+        assert!(!other.is_kobo());
     }
 
     #[test]
