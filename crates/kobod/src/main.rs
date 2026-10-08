@@ -320,14 +320,19 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Reads the button device without grabbing it and prints every event.
+/// Reads the button devices without grabbing them and prints every event.
 ///
 /// The point is to learn the keycodes the page-turn and power buttons emit
 /// on hardware nobody has captured yet, at both poses. Numeric codes are
 /// printed verbatim so nothing is lost to an incomplete name table.
+///
+/// The Tolino Shine 5 reports its power key on a separate PMIC input node
+/// rather than on `gpio-keys`, so that node is read alongside the button
+/// device whenever it exists. Each line names the node the event came from.
 fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     use kobo_hal::touch::InputEvent32;
     use std::io::Read;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
@@ -335,44 +340,67 @@ fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let content = std::fs::read_to_string("/proc/bus/input/devices")?;
     let path = discover_key_path(&content)
         .ok_or_else(|| "no gpio-keys device found in /proc/bus/input/devices".to_owned())?;
-    let mut device = std::fs::File::open(&path)?;
-    let name = kobo_abi::input::device_name(&device)?;
-    println!("button device: {} ({name})", path.display());
+    let mut sources = vec![("button", path)];
+    if let Some(power) = kobo_hal::gpio::discover_power_path() {
+        sources.push(("power", power));
+    }
+
+    // One reader thread per node, because a blocking read on either would
+    // starve the other. The threads are left blocked at exit; nothing is
+    // grabbed, so the process ending leaves the devices exactly as found.
+    let (sender, events) = mpsc::channel();
+    for (label, path) in sources {
+        let mut device = std::fs::File::open(&path)?;
+        let name = kobo_abi::input::device_name(&device)?;
+        println!("{label} device: {} ({name})", path.display());
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let mut buffer = [0_u8; 16 * 64];
+            loop {
+                let Ok(read) = device.read(&mut buffer) else {
+                    return;
+                };
+                if read == 0 {
+                    return;
+                }
+                for chunk in buffer[..read].chunks_exact(16) {
+                    let Some(event) = InputEvent32::decode(chunk) else {
+                        continue;
+                    };
+                    if sender.send((label, event)).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+    drop(sender);
     println!("reading for {seconds}s, no grab; press each button, at both poses");
 
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let started = Instant::now();
-    let mut buffer = [0_u8; 16 * 64];
     let mut count = 0_u32;
-    while Instant::now() < deadline {
-        // A blocking read sits here until a press arrives; the deadline is
-        // only checked between reads, so the capture ends on the first
-        // event after time is up, or at the final press of Enter... it does
-        // not, so the run simply overshoots by however long the last quiet
-        // stretch lasts. Acceptable for an owner-attended probe.
-        let read = device.read(&mut buffer)?;
-        for chunk in buffer[..read].chunks_exact(16) {
-            let Some(event) = InputEvent32::decode(chunk) else {
-                continue;
-            };
-            count += 1;
-            let at = started.elapsed().as_millis();
-            let kind = match event.kind {
-                0 => "SYN",
-                1 => "KEY",
-                _ => "???",
-            };
-            let action = match (event.kind, event.value) {
-                (1, 0) => " up",
-                (1, 1) => " down",
-                (1, 2) => " repeat",
-                _ => "",
-            };
-            println!(
-                "{at:>7} ms  {kind} code={} value={}{action}",
-                event.code, event.value
-            );
-        }
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let Ok((label, event)) = events.recv_timeout(remaining) else {
+            break;
+        };
+        count += 1;
+        let at = started.elapsed().as_millis();
+        let kind = match event.kind {
+            0 => "SYN",
+            1 => "KEY",
+            _ => "???",
+        };
+        let action = match (event.kind, event.value) {
+            (1, 0) => " up",
+            (1, 1) => " down",
+            (1, 2) => " repeat",
+            _ => "",
+        };
+        println!(
+            "{at:>7} ms  {label:<6} {kind} code={} value={}{action}",
+            event.code, event.value
+        );
     }
     println!("captured {count} events");
     Ok(())

@@ -217,17 +217,20 @@ pub fn parse_version(line: &str) -> (String, String) {
     (serial, firmware)
 }
 
-/// True when a serial is recognisably a Kobo's.
+/// True when a serial is shaped like a Kobo identity, or carries the
+/// converted Tolino Shine 5's exact `T302` prefix.
 ///
-/// Every known Kobo serial begins with `N` or `P` and three digits. This is the same test
-/// [`crate::connect::Identity::is_kobo`] applies over the network, kept
-/// separate because the evidence arrives by a different route.
+/// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+/// passes here, including model codes with no profile, because profile
+/// support is checked separately once the device is matched. The converted
+/// Tolino Shine 5 keeps its `T302` prefix in `.kobo/version` and is the one
+/// non-Kobo shape accepted.
 #[must_use]
 pub fn is_kobo_serial(serial: &str) -> bool {
     let bytes = serial.as_bytes();
     bytes.len() >= 4
-        && (bytes[0] == b'N' || bytes[0] == b'P')
-        && bytes[1..4].iter().all(u8::is_ascii_digit)
+        && (((bytes[0] == b'N' || bytes[0] == b'P') && bytes[1..4].iter().all(u8::is_ascii_digit))
+            || bytes.starts_with(b"T302"))
 }
 
 /// Every place a removable volume is mounted on this operating system.
@@ -1987,6 +1990,13 @@ mod tests {
         assert_eq!(profile.model, "Kobo Clara BW");
         assert_eq!(profile.device_code, 391);
         assert_eq!(profile.id, "clara-bw-391");
+
+        let tolino = Mounted {
+            serial: "T302000000000".to_owned(),
+            ..reader
+        };
+        let refusal = install_profile(&tolino).expect_err("T302 awaiting review");
+        assert!(refusal.contains("not enabled for installation"));
     }
 
     #[test]
@@ -2052,9 +2062,11 @@ mod tests {
     }
 
     #[test]
-    fn only_a_known_prefix_and_three_digits_is_a_reader() {
+    fn only_reviewed_reader_prefixes_are_accepted() {
         assert!(is_kobo_serial("N365410043013"));
         assert!(is_kobo_serial("P365410043013"));
+        assert!(is_kobo_serial("T302000000000"));
+        assert!(!is_kobo_serial("T303000000000"));
         assert!(!is_kobo_serial("Macintosh HD"));
         assert!(!is_kobo_serial("N36"));
         assert!(!is_kobo_serial("NABC410043013"));

@@ -302,6 +302,16 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     colour_panel: false,
 };
 
+/// Tolino Shine 5 T302 running the Kobo Clara BW 391 software stack.
+/// Owner-attended evidence is captured; maintainer review is pending.
+pub const TOLINO_SHINE_5_T302: DeviceProfile = DeviceProfile {
+    id: "tolino-shine-5-t302",
+    model: "Tolino Shine 5",
+    serial_prefix: "T302",
+    write_ready: false,
+    ..CLARA_BW_391
+};
+
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
 /// under the same product; this profile records the distinct device code and
 /// `TPV board` identity reported by the refreshed hardware.
@@ -854,6 +864,7 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
+    &TOLINO_SHINE_5_T302,
     &CLARA_BW_395,
     &CLARA_HD_376,
     &CLARA_COLOUR_393,
@@ -2322,6 +2333,7 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", &["/usr/bin/wmt_launcher"][..]),
+                ("tolino-shine-5-t302", &["/usr/bin/wmt_launcher"][..]),
                 ("clara-bw-395", &[][..]),
                 ("clara-hd-376", &[][..]),
                 ("clara-colour-393", &[][..]),
@@ -2344,6 +2356,7 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", true),
+                ("tolino-shine-5-t302", true),
                 ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
