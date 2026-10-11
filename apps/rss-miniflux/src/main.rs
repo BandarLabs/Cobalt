@@ -491,8 +491,11 @@ impl Reader {
                 .splash(
                     Some(Glyph::Rss),
                     "Connect Miniflux",
-                    "On your computer run `kobo secret set miniflux`, then add the HTTPS address here.",
+                    "Install your Miniflux API token from a computer, then add the address here.",
                 )
+                .section("On your computer")
+                .command("kobo pair")
+                .command("kobo secret set miniflux")
                 .primary_button("settings", "Add address")
                 .button("directory", "Suggested feeds")
                 .build(),

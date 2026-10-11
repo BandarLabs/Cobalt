@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/birds.png">
 <meta name="twitter:image:alt" content="A labelled collage of public-domain bird plates filling a Kobo screen.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-o0+2XzMqVZnTbDJO9PdjSu6/Nmp+rGgHH4uKge+yyMM='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-q+MhRFNxQhhjSDz26snfm6HrBqY51eE7D0jr9/QLwjE='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.5",
+      "softwareVersion": "0.1.6",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Birds</h1>
       <p class="summary">See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.5</dd></div>
+        <div><dt>Version</dt><dd>0.1.6</dd></div>
         <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -118,17 +118,18 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.5</h2>
-    <p>Repeated Refresh taps now share the active snapshot/image transfer instead of interrupting valid image chunks. Failed updates still preserve the last complete view and can be retried.</p>
+    <h2>New in 0.1.6</h2>
+    <p>The bar now says Birds, and an empty frame lists the exact commands to run on your computer.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Run BirdNET-Go and Fugleramme on a Mac or Linux computer with a microphone.
-        <code class="setup-command">See apps/birds/README.md</code></li>
-      <li>Enable SSH with kobo setup --enable-ssh, then start the companion on the computer.
-        <code class="setup-command">kobo birds listen --source http://&lt;host&gt;:8080 --device &lt;reader&gt;</code></li>
+      <li>Run BirdNET-Go and Fugleramme on a Mac or Linux computer with a microphone. See apps/birds/README.md.</li>
+      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
+        <code class="setup-command">kobo pair</code></li>
+      <li>Start mirroring what BirdNET-Go hears to the reader.
+        <code class="setup-command">kobo birds listen --source http://localhost:8080</code></li>
     </ol>
   </section>
   <section class="panel get-cobalt" id="setup-panel">

@@ -4,10 +4,26 @@
   "short_label": "Music",
   "summary": "Read music scores with setlists and half-page turns.",
   "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
-  "version": "0.1.6",
-  "release_notes": "Music libraries, setlists, and their scores now page to fit the reader. Navigation and collection controls stay reachable, and Back returns through the collection views.",
+  "version": "0.1.7",
+  "release_notes": "An empty stand lists the commands that send a score, with no IP address to look up.",
   "glyph": "note",
   "capabilities": [
     "keep-awake"
-  ]
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Create the score shelf on the reader.",
+        "command": "kobo musicstand init"
+      },
+      {
+        "text": "Send a PDF score or a folder of page images.",
+        "command": "kobo musicstand push score.pdf"
+      }
+    ]
+  }
 }

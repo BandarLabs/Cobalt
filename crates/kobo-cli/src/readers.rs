@@ -156,6 +156,37 @@ impl Store {
         });
     }
 
+    /// Saves this serial under `nickname`, as the owner just asked.
+    ///
+    /// Unlike [`Store::remember`], which records a sighting and so keeps the
+    /// name a reader already has, this is the owner naming it: a reader saved
+    /// as `kobo` and paired again as `study` is `study` afterwards. A name
+    /// another serial already holds is refused, because `--reader kobo` finds
+    /// the first reader of that name and the second would never be reached,
+    /// while everything meant for it went to the first.
+    pub fn name(&mut self, serial: &str, address: &str, nickname: &str) -> Result<(), String> {
+        if let Some(other) = self
+            .readers
+            .iter()
+            .find(|reader| reader.nickname == nickname && reader.serial != serial)
+        {
+            return Err(crate::console::usage(format!(
+                "\"{nickname}\" is already the name of another reader (serial {}…). \
+                 Give this one its own: kobo pair NAME",
+                other.serial.get(..4).unwrap_or(&other.serial)
+            )));
+        }
+        self.remember(serial, address, Some(nickname));
+        if let Some(reader) = self
+            .readers
+            .iter_mut()
+            .find(|reader| reader.serial == serial)
+        {
+            nickname.clone_into(&mut reader.nickname);
+        }
+        Ok(())
+    }
+
     /// Marks this serial paired, remembering where it answered.
     pub fn record_pairing(&mut self, serial: &str, address: &str, nickname: Option<&str>) {
         self.remember(serial, address, nickname);
@@ -289,6 +320,39 @@ mod tests {
         assert!(store.readers.is_empty());
         store.record_pairing("N365410043013", "192.168.1.23", Some("clara"));
         assert!(store.find("clara").unwrap().paired);
+    }
+
+    #[test]
+    fn naming_a_reader_again_renames_it_and_keeps_its_pairing() {
+        let mut store = store();
+        store
+            .name("N365410043013", "192.168.1.99", "study")
+            .expect("its own serial may take a new name");
+        assert!(store.find("clara").is_none());
+        let study = store.find("study").unwrap();
+        assert_eq!(study.addresses[0], "192.168.1.99");
+        assert!(study.paired, "a new name must not forget the pairing");
+        assert_eq!(store.readers.len(), 2);
+    }
+
+    #[test]
+    fn a_name_another_reader_holds_is_refused_and_nothing_is_saved() {
+        let mut store = store();
+        let before = store.clone();
+        let error = store
+            .name("N500000000001", "192.168.1.50", "clara")
+            .expect_err("clara is somebody else");
+        assert_eq!(
+            crate::console::category_of(&error),
+            crate::console::EXIT_USAGE
+        );
+        assert!(error.contains("kobo pair NAME"), "{error}");
+        assert_eq!(store, before);
+
+        store
+            .name("N500000000001", "192.168.1.50", "kitchen")
+            .expect("a free name is taken");
+        assert_eq!(store.find("kitchen").unwrap().serial, "N500000000001");
     }
 
     #[test]

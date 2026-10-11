@@ -144,7 +144,20 @@ fn every_line_and_stanza_remains_readable_at_all_text_sizes() {
             .map(String::as_str)
             .collect();
         assert_eq!(actual, expected);
-        assert!(pages.iter().flatten().any(|line| line.stanza_start));
+        // Each stanza break survives paging: it opens a page, where no space is
+        // left above it, or it carries the space.
+        let breaks = [10, 21].map(|index| expected[index]);
+        for page in &pages {
+            for (position, line) in page.iter().enumerate() {
+                if breaks.contains(&line.text.as_str()) {
+                    assert!(
+                        position == 0 || line.stanza_start,
+                        "{text_scale:?} {}",
+                        line.text
+                    );
+                }
+            }
+        }
         for page in 0..pages.len() {
             assert_eq!(runner.app().online_page, page);
             let drawn = screen(&runner);

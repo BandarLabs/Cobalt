@@ -1,12 +1,11 @@
-# Today's poem is bundled and rotates by date, so the route asserts the
-# chrome: the pager, and Quote card rendering the poem as a shareable copy.
-wait-for Quote card
-expect Today
-expect Previous
-expect Next
+# Today's poem is PoetryDB's when the reader is online and a bundled one when
+# it is not, so the route asserts what both share: the day's heading and a
+# quote card made from the page on screen.
+wait-for Make a quote card
+expect Today's poem
 clean
 shot verses-today
-tap Quote card
+tap Make a quote card
 wait-for Save a copy
 expect Ready for your computer.
 clean

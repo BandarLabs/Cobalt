@@ -4,8 +4,8 @@
   "short_label": "Sync",
   "summary": "Sync folders between your computer and Kobo with Syncthing, on a schedule.",
   "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.",
-  "version": "0.3.2",
-  "release_notes": "The reader Back control returns from setup, folders and About to Sync status without changing the running transfer or schedule.",
+  "version": "0.3.3",
+  "release_notes": "Status reads in plain words: Check how the last sync went, Left to sync, and None yet for peers.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"
@@ -13,14 +13,18 @@
   "setup": {
     "steps": [
       {
-        "text": "The first time Sync runs it downloads its engine over Wi-Fi and checks it against the digest the runtime requires, so the Kobo needs to be online once. Your computer needs a package-manager-installed Syncthing binary."
+        "text": "The first time Sync runs it downloads its engine over Wi-Fi, so the reader needs to be online once. This computer needs a package-manager-installed Syncthing."
       },
       {
-        "text": "Pair exactly one local directory to a fixed safe folder while the Kobo is awake on Wi-Fi.",
-        "command": "kobo sync setup LOCAL_DIR --folder vault --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
       },
       {
-        "text": "Resume Sync on the Kobo, then start the private host peer. It does not modify another Syncthing installation.",
+        "text": "Pair one folder on this computer with a fixed folder on the reader.",
+        "command": "kobo sync setup ~/Documents/notes --folder vault"
+      },
+      {
+        "text": "Resume Sync on the reader, then start this computer's private peer.",
         "command": "kobo sync run"
       }
     ]

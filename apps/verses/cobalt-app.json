@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.8",
-  "release_notes": "Long online poems, search results, and favorites now turn pages instead of stopping at the screen edge. Author search opens safely, Back cancels pending searches, and returning from a poem or quote card restores its source view.",
+  "version": "0.1.9",
+  "release_notes": "Poems fill the page and short ones sit in its middle, under a serif title. Today's poem comes from PoetryDB when online, search looks in titles, poets or lines and groups by poet, and any poem can become a quote card.",
   "glyph": "note",
   "capabilities": [
     "network"

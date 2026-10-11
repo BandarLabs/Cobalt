@@ -156,8 +156,12 @@ impl Frame {
                 .splash(
                     Some(Glyph::App),
                     "Your frame is empty",
-                    "On your computer, run `kobo frame init --device IP`, then `kobo frame push PHOTO_OR_FOLDER --device IP`.",
+                    "Send photos from a computer. A folder becomes a slideshow.",
                 )
+                .section("On your computer")
+                .command("kobo pair")
+                .command("kobo frame init")
+                .command("kobo frame push ~/Pictures/family")
                 .build();
         }
         let index = self.settings.position % self.photos.len().max(1) + 1;

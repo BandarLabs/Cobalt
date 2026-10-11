@@ -3,10 +3,10 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo.",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Long requests, answer choices and waiting terminals paginate without hiding decision controls. Page turns retain selected answers, and incomplete pairing codes stay editable."
+  "release_notes": "Pairing names kobo sidekick init, and Leave it for the terminal stays in the same place on every page of a long question."
 }

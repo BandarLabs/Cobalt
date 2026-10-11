@@ -4,19 +4,22 @@
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.5",
-  "release_notes": "Repeated Refresh taps now share the active snapshot/image transfer instead of interrupting valid image chunks. Failed updates still preserve the last complete view and can be retried.",
+  "version": "0.1.6",
+  "release_notes": "The bar now says Birds, and an empty frame lists the exact commands to run on your computer.",
   "glyph": "app",
   "capabilities": [],
   "setup": {
     "steps": [
       {
-        "text": "Run BirdNET-Go and Fugleramme on a Mac or Linux computer with a microphone.",
-        "command": "See apps/birds/README.md"
+        "text": "Run BirdNET-Go and Fugleramme on a Mac or Linux computer with a microphone. See apps/birds/README.md."
       },
       {
-        "text": "Enable SSH with kobo setup --enable-ssh, then start the companion on the computer.",
-        "command": "kobo birds listen --source http://<host>:8080 --device <reader>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Start mirroring what BirdNET-Go hears to the reader.",
+        "command": "kobo birds listen --source http://localhost:8080"
       }
     ]
   }

@@ -42,21 +42,35 @@ pub const DEVICE_DEPENDENCY_LICENSES: &str =
 pub const ATKINSON_LICENSE: &str =
     include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt");
 pub const DEJAVU_LICENSE: &str = include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt");
+pub const LITERATA_LICENSE: &str = include_str!("../../kobo-text/fonts/LICENSE-Literata.txt");
+/// The terms of every Latin face the device application draws with, as one
+/// document under a heading each.
+///
+/// One entry rather than three, because the reader's Licences & about list is
+/// a row per document, and with Literata added as the serif fallback a row
+/// each no longer fit a six-inch panel.
+pub const FONT_LICENSES: &str = concat!(
+    "Atkinson Hyperlegible\n\n",
+    include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt"),
+    "\nDejaVu Sans\n\n",
+    include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt"),
+    "\nLiterata\n\n",
+    include_str!("../../kobo-text/fonts/LICENSE-Literata.txt"),
+);
 pub const JAPANESE_FONT: &[u8] = include_bytes!("../fonts/CobaltJapanese-Regular.otf");
 pub const JAPANESE_FONT_LICENSE: &str =
     include_str!("../../../licenses/LICENSE-Cobalt-Japanese-font.txt");
 pub const JAPANESE_FONT_SOURCE: &str =
     include_str!("../../../licenses/SOURCE-Cobalt-Japanese-font.md");
 
-pub const DEVICE_DISTRIBUTION_DOCUMENTS: [(&str, &str); 7] = [
+pub const DEVICE_DISTRIBUTION_DOCUMENTS: [(&str, &str); 6] = [
     ("Flashcards device notice", DEVICE_NOTICE),
     ("resvg licence", RESVG_LICENSE),
     (
         "Flashcards device dependency licences",
         DEVICE_DEPENDENCY_LICENSES,
     ),
-    ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
-    ("DejaVu licence", DEJAVU_LICENSE),
+    ("Font licences", FONT_LICENSES),
     ("Cobalt Japanese font licence", JAPANESE_FONT_LICENSE),
     ("Cobalt Japanese font source", JAPANESE_FONT_SOURCE),
 ];

@@ -281,7 +281,7 @@ impl ReadLater {
                 let page = ScreenBuilder::new("readlater").top_bar("Read Later settings");
                 let page = if let Some(session) = &self.session {
                     page.secondary(format!(
-                        "Signed in to {}. Run `kobo readlater login` on your computer to switch accounts.",
+                        "Signed in to {}. Run kobo readlater login on your computer to switch accounts.",
                         session.server
                     ))
                 } else {
@@ -375,11 +375,20 @@ impl ReadLater {
         if !self.ready() {
             return ScreenBuilder::new("readlater")
                 .top_bar("Read Later")
+                // The login asks for nothing once it starts: the server, the
+                // API client and the account all go on its command line, and
+                // the password comes from the environment. A shorter command
+                // here read better and failed with a usage line, and the whole
+                // of it wraps past the foot of the panel at the larger text
+                // sizes, so this sends the reader to the guide that prints it
+                // complete, beside what each value is.
                 .splash(
                     Some(Glyph::Bookmark),
                     "Connect Wallabag",
-                    "On your computer run `kobo readlater login`, or install a credential named wallabag and add the HTTPS address here.",
+                    "Sign in from a computer. The command below lists each step, starting with a Wallabag API client.",
                 )
+                .section("On your computer")
+                .command("kobo apps setup readlater")
                 .primary_button("settings", "Add address")
                 .build();
         }
@@ -717,7 +726,7 @@ impl KoboApp for ReadLater {
                     }
                     None => {
                         self.notice = Some(
-                            "The session file could not be read. Run `kobo readlater login` again."
+                            "The session file could not be read. Run kobo readlater login again."
                                 .into(),
                         );
                     }
@@ -943,7 +952,7 @@ impl KoboApp for ReadLater {
                     self.refreshing = false;
                     self.resume = None;
                     self.notice = Some(
-                        "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
+                        "The Wallabag sign-in could not be renewed. Run kobo readlater login again."
                             .into(),
                     );
                 }
@@ -952,7 +961,7 @@ impl KoboApp for ReadLater {
                 self.refreshing = false;
                 self.resume = None;
                 self.notice = Some(
-                    "The Wallabag sign-in could not be renewed. Run `kobo readlater login` again."
+                    "The Wallabag sign-in could not be renewed. Run kobo readlater login again."
                         .into(),
                 );
             }
@@ -963,7 +972,7 @@ impl KoboApp for ReadLater {
                     self.refresh(context, kind);
                 } else {
                     self.notice = Some(
-                        "Wallabag refused the installed credential. Run `kobo readlater login` again."
+                        "Wallabag refused the installed credential. Run kobo readlater login again."
                             .into(),
                     );
                 }
@@ -1630,6 +1639,45 @@ mod tests {
         }
     }
     #[test]
+    fn before_connecting_the_reader_is_sent_to_a_guide_whose_sign_in_works_as_written() {
+        // The guide the screen names is the one `kobo apps setup` prints, and
+        // each of these is a flag the companion's login refuses to run
+        // without, so a guide missing one would fail as typed.
+        let guide = include_str!("../cobalt-app.json");
+        let login = guide
+            .lines()
+            .find(|line| line.contains("kobo readlater login"))
+            .expect("the guide gives the sign-in");
+        for flag in [
+            "--server",
+            "--client-id",
+            "--client-secret-file",
+            "--username",
+        ] {
+            assert!(login.contains(flag), "{flag}: {login}");
+        }
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(ReadLater::default(), metrics);
+            let app = runner.app();
+            assert!(!app.ready());
+            let screen = app.queue_screen(&runner.context());
+            let shown = format!("{screen:?}");
+            assert!(!shown.contains("asks for"), "the login prompts for nothing");
+            assert!(shown.contains("kobo apps setup readlater"), "{shown}");
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
+    }
+
+    #[test]
     fn article_screens_fit_the_clara_panel() {
         let with_body = ScreenBuilder::new("readlater")
             .top_bar("Read Later")
@@ -1714,7 +1762,7 @@ mod tests {
                     .splash(
                         Some(Glyph::Bookmark),
                         "Connect Wallabag",
-                        "On your computer run `kobo secret set wallabag`, then add the HTTPS address here.",
+                        "On your computer run kobo secret set wallabag, then add the HTTPS address here.",
                     )
                     .primary_button("settings", "Add address")
                     .build()

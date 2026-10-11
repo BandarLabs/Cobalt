@@ -4,8 +4,8 @@
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
   "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
-  "version": "0.1.6",
-  "release_notes": "Page through every recipe and ingredient, and keep your cooking step when switching between Steps and Ingredients.",
+  "version": "0.1.7",
+  "release_notes": "Connecting Mealie lists the commands to run on your computer, with no address to look up.",
   "glyph": "reader",
   "capabilities": [
     "network",
@@ -14,11 +14,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Make the Mealie API available to the Kobo at https://mealie.local."
+        "text": "Create an API token in Mealie's user settings."
       },
       {
-        "text": "Create a long-lived Mealie API token and install it under the exact name mealie.",
-        "command": "kobo secret set mealie --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Install the token under the name mealie, then add the address in the app.",
+        "command": "kobo secret set mealie"
       }
     ]
   }
