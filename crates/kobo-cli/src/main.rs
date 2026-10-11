@@ -4752,6 +4752,19 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt"),
         false,
     ));
+    // The serif every application falls back to when the reader has none of
+    // its own. Like the two faces above it is compiled into binaries this
+    // package installs, and the Open Font License travels with every copy.
+    members.push(text_member(
+        "licenses/LICENSE-Literata.txt",
+        include_str!("../../kobo-text/fonts/LICENSE-Literata.txt"),
+        false,
+    ));
+    members.push(text_member(
+        "licenses/SOURCE-Literata.md",
+        include_str!("../../../licenses/SOURCE-Literata.md"),
+        false,
+    ));
     members.push(text_member(
         "VERSION",
         &format!("{}\n", env!("CARGO_PKG_VERSION")),
