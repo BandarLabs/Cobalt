@@ -1420,11 +1420,28 @@ impl Verses {
             .map(|daily| &daily.poem)
     }
 
+    /// Whether today's poem is on screen, itself or as the card made of it.
+    fn showing_today(&self) -> bool {
+        self.view == View::Today || (self.view == View::Card && self.card_from == View::Today)
+    }
+
+    /// Moves to `view`, starting today's poem at its first page when the
+    /// reader comes to it from somewhere else.
+    ///
+    /// Today's poem and a poem opened from a search turn on the same page
+    /// cursor, so arriving at Today from a searched poem's fifth page used to
+    /// open today's poem at its fifth page too. Coming back from today's own
+    /// card is not arriving from somewhere else, and keeps its page.
+    fn arrive_at(&mut self, view: View) {
+        if view == View::Today && !self.showing_today() {
+            self.online_page = 0;
+        }
+        self.view = view;
+    }
+
     /// The fetched poem on screen: today's, or one opened from a search.
     fn current_online(&self) -> Option<&OnlinePoem> {
-        let today =
-            self.view == View::Today || (self.view == View::Card && self.card_from == View::Today);
-        if today {
+        if self.showing_today() {
             self.daily_poem()
         } else {
             self.online.and_then(|index| self.results.get(index))
@@ -1570,7 +1587,7 @@ impl KoboApp for Verses {
         if action == ActionId::BACK {
             self.cancel_request(context);
             self.notice = None;
-            self.view = match self.view {
+            let back = match self.view {
                 View::Online => self.online_from,
                 View::Reading | View::Results | View::Search => View::Browse,
                 View::Card => {
@@ -1579,9 +1596,10 @@ impl KoboApp for Verses {
                 }
                 _ => View::Today,
             };
+            self.arrive_at(back);
         } else if action == action_id("today") {
             self.cancel_request(context);
-            self.view = View::Today;
+            self.arrive_at(View::Today);
         } else if action == action_id("browse") {
             self.cancel_request(context);
             self.view = View::Browse;
@@ -1695,7 +1713,15 @@ impl KoboApp for Verses {
             };
             if let (Some(poem), Some(day)) = (fetched, self.day) {
                 self.saved.daily = Some(DailyPoem { day, poem });
-                self.online_page = 0;
+                // The cursor is shared with a poem opened from a search, and
+                // this answer arrives whenever the network gets round to it.
+                // Starting today's poem at its first page is right only when
+                // today's poem is what the reader is looking at; anywhere
+                // else it would throw a searched poem back to page one under
+                // the reader's thumb.
+                if self.showing_today() {
+                    self.online_page = 0;
+                }
                 self.save(context);
                 self.show(context);
             }
@@ -2227,19 +2253,21 @@ mod tests {
         assert!(notice.to_lowercase().contains("favourite"), "{notice}");
     }
 
+    // These start on the reader's real day rather than a fixed one. Every tap
+    // moves the app on to the clock's day before handling it, so a test pinned
+    // to the day it was written passed on that day only, and on every later
+    // one asked for a second poem and lost the first.
     #[test]
     fn todays_poem_comes_from_poetrydb_and_stays_for_the_day() {
-        let mut runner = AppRunner::new(Verses {
-            day: Some((2026, 10, 6)),
-            ..Verses::default()
-        });
+        let mut runner = AppRunner::new(Verses::default());
         runner.start();
         runner.store_result(StoreResult::Loaded {
             key: SETTINGS.into(),
             value: None,
         });
         let task = runner.app().daily_task.expect("today's poem was asked for");
-        let Task::Fetch { url, .. } = daily_task((2026, 10, 6)) else {
+        let Task::Fetch { url, .. } = daily_task(runner.app().day.expect("the reader's day"))
+        else {
             panic!("a fetch");
         };
         assert!(url.contains("linecount,random/"), "{url}");
@@ -2256,10 +2284,7 @@ mod tests {
 
     #[test]
     fn todays_fetched_poem_still_makes_a_quote_card() {
-        let mut runner = AppRunner::new(Verses {
-            day: Some((2026, 10, 6)),
-            ..Verses::default()
-        });
+        let mut runner = AppRunner::new(Verses::default());
         runner.start();
         runner.store_result(StoreResult::Loaded {
             key: SETTINGS.into(),
@@ -2281,6 +2306,73 @@ mod tests {
         runner.action(action_id("card"));
         assert_eq!(runner.app().view, View::Card);
         assert!(runner.app().card_from_online());
+    }
+
+    /// A reader on the second page of a long poem opened from a search, with
+    /// today's poem still on its way.
+    fn a_searched_poem_on_its_second_page() -> (AppRunner<Verses>, TaskId) {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let daily = runner.app().daily_task.expect("today's poem was asked for");
+        runner.app_mut().results = vec![OnlinePoem {
+            title: "A Long Searched Poem".into(),
+            author: "A Poet".into(),
+            lines: (1..=200)
+                .map(|line| format!("Line {line} of the poem"))
+                .collect(),
+            linecount: "200".into(),
+        }];
+        runner.action(action_id("result-0"));
+        assert_eq!(runner.app().view, View::Online);
+        runner.action(action_id("online-next"));
+        assert_eq!(runner.app().online_page, 1, "the poem has a second page");
+        (runner, daily)
+    }
+
+    const DAILY_BODY: &[u8] = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another."],"linecount":"2"}]"#;
+
+    #[test]
+    fn todays_poem_arriving_late_does_not_move_a_searched_poem_back_to_its_first_page() {
+        let (mut runner, daily) = a_searched_poem_on_its_second_page();
+        runner.task_outcome(daily, TaskOutcome::Completed(DAILY_BODY.to_vec()));
+        assert!(runner.app().daily_poem().is_some(), "today's poem was kept");
+        assert_eq!(runner.app().view, View::Online);
+        assert_eq!(runner.app().online_page, 1);
+
+        // Arriving while the searched poem's card is up, it leaves the card's
+        // poem where it was too, so going back lands on the same page.
+        let (mut runner, daily) = a_searched_poem_on_its_second_page();
+        runner.action(action_id("card"));
+        assert_eq!(runner.app().view, View::Card);
+        runner.task_outcome(daily, TaskOutcome::Completed(DAILY_BODY.to_vec()));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Online);
+        assert_eq!(runner.app().online_page, 1);
+
+        // Today's poem, opened afterwards, starts at its own first page rather
+        // than at the page the searched poem was left on.
+        runner.action(action_id("today"));
+        assert_eq!(runner.app().view, View::Today);
+        assert_eq!(runner.app().online_page, 0);
+    }
+
+    #[test]
+    fn todays_poem_arriving_on_the_today_screen_starts_at_its_first_page() {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let daily = runner.app().daily_task.expect("today's poem was asked for");
+        assert_eq!(runner.app().view, View::Today);
+        runner.app_mut().online_page = 3;
+        runner.task_outcome(daily, TaskOutcome::Completed(DAILY_BODY.to_vec()));
+        assert_eq!(runner.app().online_page, 0);
     }
 
     #[test]
