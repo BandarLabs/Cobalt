@@ -430,6 +430,13 @@ fn main() -> ExitCode {
     // make `kobo shell` the one thing here that cannot be tested for in a
     // script.
     if arguments.first().map(|command| canonical(command)) == Some("shell") {
+        let arguments = match with_default_reader(&arguments) {
+            Ok(filled) => filled,
+            Err(error) => {
+                eprintln!("kobo: {}", console::display(&error));
+                return ExitCode::from(console::category_of(&error));
+            }
+        };
         return match shell_command(&arguments[1..]) {
             Ok(code) => code,
             Err(error) => {
@@ -920,20 +927,26 @@ fn send_preview(
     }
 }
 
-fn run(arguments: &[String]) -> Result<(), String> {
-    let saved = readers::Store::load(&readers::store_path()).unwrap_or_default();
-    let names: Vec<&str> = saved
-        .readers
-        .iter()
-        .map(|reader| reader.nickname.as_str())
-        .collect();
-    let variable = env::var(targets::READER_VARIABLE).ok();
-    let filled = targets::with_reader(
-        arguments,
-        targets::default_reader(variable.as_deref(), &names),
+/// The command line as it will run: an alias spelled out, and the reader it
+/// acts on filled in from `kobo pair` or `KOBO_READER` when none is named.
+///
+/// The alias goes first so `kobo logcat` finds the same reader `kobo logs`
+/// does, rather than being the one spelling that still asks for an address.
+fn with_default_reader(arguments: &[String]) -> Result<Vec<String>, String> {
+    let mut line = arguments.to_vec();
+    if let Some(first) = line.first_mut() {
+        *first = canonical(first).to_owned();
+    }
+    targets::with_reader(
+        &line,
+        targets::configured_default(),
         targets::resolve_nickname,
-        |line| eprintln!("{line}"),
-    )?;
+        |said| eprintln!("{said}"),
+    )
+}
+
+fn run(arguments: &[String]) -> Result<(), String> {
+    let filled = with_default_reader(arguments)?;
     let arguments = filled.as_slice();
     let Some(command) = arguments.first().map(String::as_str) else {
         return run_owner_menu();
@@ -1285,7 +1298,9 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 /// So it finds this computer's address, finds the readers on the same network
 /// and names them, and installs the trust root on the one that was chosen. A
 /// reader can still be named outright with --device, and --host still overrides
-/// the address the certificate is minted for.
+/// the address the certificate is minted for. Once a reader is saved with
+/// `kobo pair` it is that reader, found by its serial, and never whichever
+/// reader happens to answer.
 fn stream_init(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str =
         "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]";
@@ -1320,7 +1335,7 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
             }
             ReaderSearch::Found(host)
         }
-        None => choose_reader(),
+        None => saved_reader_search(nickname.as_deref())?,
     };
     // The certificate has to name an address the reader can reach. Without
     // --host that is this computer's own address, which it can find.
@@ -1365,6 +1380,38 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
         kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
     );
     Ok(())
+}
+
+/// The reader `stream init` pairs when no address is given.
+///
+/// A saved reader is found by its serial and nowhere else. This used to sweep
+/// every time, so with the paired reader asleep and a neighbour's Kobo awake,
+/// the neighbour's was the one that answered and the trust root went onto it.
+/// A sweep is left for the first pairing, when nothing is saved to look for,
+/// and for a name not saved yet, which is the owner asking for a new one.
+fn saved_reader_search(nickname: Option<&str>) -> Result<ReaderSearch, String> {
+    let store = readers::Store::load(&readers::store_path())?;
+    let default = match nickname {
+        Some(name) if store.find(name).is_some() => {
+            Some(targets::DefaultReader::Nickname(name.to_owned()))
+        }
+        Some(_) => None,
+        None => targets::configured_default(),
+    };
+    match default {
+        Some(targets::DefaultReader::Address(address)) => Ok(ReaderSearch::Found(address)),
+        Some(targets::DefaultReader::Nickname(name)) => {
+            let address = targets::resolve_nickname(&name)?;
+            println!("Using your saved reader \"{name}\" at {address}.");
+            Ok(ReaderSearch::Found(address))
+        }
+        None if nickname.is_none() && !store.readers.is_empty() => Err(console::target(format!(
+            "{} readers are saved on this computer, so this will not guess which one to \
+                 pair. Name it: kobo stream init --reader NAME",
+            store.readers.len()
+        ))),
+        None => Ok(choose_reader()),
+    }
 }
 
 /// What a sweep for readers concluded.
@@ -1453,7 +1500,7 @@ fn pair_command(arguments: &[String]) -> Result<(), String> {
         .ok_or_else(|| format!("{address} did not answer as a Kobo"))?;
     let path = readers::store_path();
     let mut store = readers::Store::load(&path)?;
-    store.remember(&identity.serial, &address, Some(&name));
+    store.name(&identity.serial, &address, &name)?;
     store.save(&path)?;
     println!(
         "Saved {} as \"{name}\" at {address}.\nCommands that act on a reader now use it, for example:\n  kobo frame push ~/Pictures/family",
@@ -7683,17 +7730,17 @@ fn print_help() {
            run --sim [--app NAME] Run SDK, IPC, daemon and one app on this computer\n\
            inspect <package>      List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>    Verify static ARM hard-float format\n\n\
-         Look at a reader:\n\
+         Look at a reader (your paired reader too, unless shown with a target):\n\
            devices [--subnet A.B.C] [--json]  Find every reader on the local network\n\
-           doctor [--json]        Read-only diagnostics\n\
-           shot                   Save a PNG of the panel (reader or simulator)\n\
+           doctor --reader NAME [--json]  Read-only diagnostics\n\
+           shot [--reader NAME]   Save a PNG of a reader's panel, or the simulator's\n\
            record [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            logs [--follow] [--lines N]  Read the runtime trace\n\
            session [--hold MINUTES]  Keep a reader awake and on Wi-Fi while developing\n\
            wait                   Block until a reader answers again\n\
            app-link status|unpair Inspect or revoke browser pairing\n\
            touch-probe [--seconds N]  Watch touch, read-only, to check the transform\n\
-           guard-test --confirm ...  Prove the guardian restores the screen\n\
+           guard-test --device IP --confirm ...  Prove the guardian restores the screen\n\
            shell [command ...]    Advanced: run a command on the reader, unchecked. Exits\n\
            \x20                      with whatever the reader exited with\n\n\
          Publish to the Store:\n\
