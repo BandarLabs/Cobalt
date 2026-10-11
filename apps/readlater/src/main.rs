@@ -375,14 +375,20 @@ impl ReadLater {
         if !self.ready() {
             return ScreenBuilder::new("readlater")
                 .top_bar("Read Later")
+                // The login asks for nothing once it starts: the server, the
+                // API client and the account all go on its command line, and
+                // the password comes from the environment. A shorter command
+                // here read better and failed with a usage line, and the whole
+                // of it wraps past the foot of the panel at the larger text
+                // sizes, so this sends the reader to the guide that prints it
+                // complete, beside what each value is.
                 .splash(
                     Some(Glyph::Bookmark),
                     "Connect Wallabag",
-                    "Sign in from a computer; it asks for your server and account.",
+                    "Sign in from a computer. The command below lists each step, starting with a Wallabag API client.",
                 )
                 .section("On your computer")
-                .command("kobo pair")
-                .command("kobo readlater login --server https://app.wallabag.it")
+                .command("kobo apps setup readlater")
                 .primary_button("settings", "Add address")
                 .build();
         }
@@ -1632,6 +1638,45 @@ mod tests {
             assert!(app.sync_rect().width >= CLARA_BW_METRICS.touch_target_minimum());
         }
     }
+    #[test]
+    fn before_connecting_the_reader_is_sent_to_a_guide_whose_sign_in_works_as_written() {
+        // The guide the screen names is the one `kobo apps setup` prints, and
+        // each of these is a flag the companion's login refuses to run
+        // without, so a guide missing one would fail as typed.
+        let guide = include_str!("../cobalt-app.json");
+        let login = guide
+            .lines()
+            .find(|line| line.contains("kobo readlater login"))
+            .expect("the guide gives the sign-in");
+        for flag in [
+            "--server",
+            "--client-id",
+            "--client-secret-file",
+            "--username",
+        ] {
+            assert!(login.contains(flag), "{flag}: {login}");
+        }
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(ReadLater::default(), metrics);
+            let app = runner.app();
+            assert!(!app.ready());
+            let screen = app.queue_screen(&runner.context());
+            let shown = format!("{screen:?}");
+            assert!(!shown.contains("asks for"), "the login prompts for nothing");
+            assert!(shown.contains("kobo apps setup readlater"), "{shown}");
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
+    }
+
     #[test]
     fn article_screens_fit_the_clara_panel() {
         let with_body = ScreenBuilder::new("readlater")

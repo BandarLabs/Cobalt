@@ -1006,7 +1006,8 @@ impl KoboApp for Game {
             }
             (Some(PhotoRead::Photo), TaskOutcome::Failed(kobo_sdk::TaskError::NotFound)) => {
                 self.notice = Some(
-                    "No imported photo found. Run kobo nonograms push IMAGE --size 9.".to_owned(),
+                    "No imported photo found. Run kobo nonograms push IMAGE --name NAME --size 9."
+                        .to_owned(),
                 );
             }
             (Some(PhotoRead::Photo), TaskOutcome::Failed(error)) => {
