@@ -68,6 +68,24 @@ Commands every app can use:
   prepared with its export or **Save a copy** button.
 - `kobo apps setup APP` shows an app's setup steps.
 
+### Server-bound accounts
+
+For approved app/account pairs, the CLI can bind a token to an HTTPS server:
+
+```sh
+kobo secret set readeck --app readeck --server https://readeck.example \
+  --from /path/to/private-token --device <address>
+```
+
+Close Cobalt normally first and wait for teardown. Use a private token file
+(`chmod 600`), or pipe the token with `--stdin` instead of `--from`. Do not put
+the token in command-line arguments. This mode uses owner SSH, requires a
+runtime with the app's credential policy, and does not validate the token with
+the server. It installs only the account; configure the matching server in the
+app. Readeck offers **Use saved token** for this step. Other apps may need their
+own setup UI support. Existing unbound `secret` commands are unchanged; `list`
+and `remove` do not manage server-bound accounts.
+
 ## Sync folders
 
 `kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP` pairs one

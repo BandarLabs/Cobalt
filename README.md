@@ -144,18 +144,23 @@ Screenshots are from a Kobo Clara BW or its simulator.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/readlater/README.md"><img width="230" src="docs/media/site/apps/readlater.png" alt="Read Later's unread queue of synced Wallabag articles with reading times."></a><br><b><a href="apps/readlater/README.md">Read Later</a></b><br>Read your Wallabag articles anywhere.</td>
+<td width="33%" valign="top"><a href="apps/readeck/README.md"><img width="230" src="docs/media/site/apps/readeck/inbox.png" alt="Readeck inbox with sample articles, rendered by Cobalt at Clara BW dimensions; not a device capture."></a><br><b><a href="apps/readeck/README.md">Readeck</a></b><br>Read and search your saved Readeck articles.</td>
 <td width="33%" valign="top"><a href="apps/sidekick/README.md"><img width="230" src="docs/media/site/apps/sidekick.png" alt="Sidekick showing several coding-agent sessions and their pending approvals."></a><br><b><a href="apps/sidekick/README.md">Sidekick</a></b><br>Answer coding-agent permission prompts from your Kobo.</td>
-<td width="33%" valign="top"><a href="apps/zotero-reader/README.md"><img width="230" src="docs/media/site/apps/zotero-reader.png" alt="Reading a paper with structured layout and Zotero metadata on a Kobo"></a><br><b><a href="apps/zotero-reader/README.md">Stacks</a></b><br>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="apps/zotero-reader/README.md"><img width="230" src="docs/media/site/apps/zotero-reader.png" alt="Reading a paper with structured layout and Zotero metadata on a Kobo"></a><br><b><a href="apps/zotero-reader/README.md">Stacks</a></b><br>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.</td>
 <td width="33%" valign="top"><a href="apps/sudoku/README.md"><img width="230" src="docs/media/site/apps/sudoku.png" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"></a><br><b><a href="apps/sudoku/README.md">Sudoku</a></b><br>Play 36 original Sudoku puzzles with pencil notes, undo and saved games.</td>
 <td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders: vault, frame and books receive, out sends."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Sync folders between your computer and Kobo with Syncthing, on a schedule.</td>
-<td width="33%" valign="top"><a href="apps/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="apps/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="apps/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="apps/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
 <td width="33%" valign="top"><a href="apps/todo/README.md"><img width="230" src="docs/media/site/apps/todo.png" alt="A to-do list with one open item on a Kobo"></a><br><b><a href="apps/todo/README.md">Todo</a></b><br>Keep a simple to-do list that stays on your Kobo.</td>
 <td width="33%" valign="top"><a href="apps/vault/README.md"><img width="230" src="docs/media/site/apps/vault.png" alt="Vault home on a Kobo with four synced notes and Browse, Tags, Recent and Search rows."></a><br><b><a href="apps/vault/README.md">Vault</a></b><br>Browse your notes by folder, tag, link, and backlink.</td>
+</tr>
+<tr>
 <td width="33%" valign="top"><a href="apps/verses/README.md"><img width="230" src="docs/media/site/apps/verses.png" alt="Verses displaying a public-domain daily poem in a spacious Kobo reading layout."></a><br><b><a href="apps/verses/README.md">Verses</a></b><br>Read a public-domain poem each day.</td>
+<td></td>
+<td></td>
 </tr>
 </table>
 <!-- store-apps:end -->
