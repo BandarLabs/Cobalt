@@ -1567,7 +1567,16 @@ impl ScreenBuilder {
     /// the start of the next, and nobody can type that back. Here the command
     /// is indented under a rule, the way a book sets a quotation, its hyphens
     /// are the non-breaking kind and every slash is joined to what follows it,
-    /// so it only ever wraps between words and never inside a flag or a path.
+    /// so it wraps between words and not inside a flag or a path.
+    ///
+    /// The one word this cannot keep whole is a word wider than the column
+    /// itself, which on a six-inch panel at the largest text size is a long
+    /// absolute path. There is nowhere to put it on one line, so the runtime
+    /// breaks it between two characters, the way a terminal does, and every
+    /// character is still drawn. That break is the only one in a command
+    /// with no space at it, and it falls at a full line, so write paths the
+    /// way an owner would type them (`~/Pictures`, not the path under
+    /// `/Users`) and it never comes up.
     #[must_use]
     pub fn command(self, text: impl AsRef<str>) -> Self {
         self.quote(

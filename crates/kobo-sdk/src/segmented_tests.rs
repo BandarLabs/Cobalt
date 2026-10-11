@@ -170,16 +170,73 @@ fn a_command_never_wraps_inside_a_flag() {
     }
 }
 
+/// The lines a command was set on, with the characters `command` swapped in
+/// to stop breaks turned back into the ones an owner types.
+fn command_lines(text: &str, metrics: &DisplayMetrics) -> Vec<String> {
+    ScreenBuilder::new("setup")
+        .command(text)
+        .build()
+        .layout_with(metrics, &Chrome::default())
+        .nodes
+        .iter()
+        .flat_map(|node| node.text_lines.clone())
+        .map(|line| {
+            line.replace('\u{2011}', "-")
+                .replace('\u{2060}', "")
+                .trim()
+                .to_owned()
+        })
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
 #[test]
-fn a_command_wider_than_the_panel_still_lays_out() {
+fn a_command_whose_words_fit_wraps_only_where_it_has_a_space() {
+    let command = "kobo nonograms push ~/Pictures/cat.jpg --name Whiskers --size 7";
+    for (panel, base) in PANELS {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics { text_scale, ..base };
+            let lines = command_lines(command, &metrics);
+            // Joined back at a space each, the lines are the command exactly,
+            // so every break fell at a space and none inside a word.
+            assert_eq!(
+                lines.join(" "),
+                command,
+                "{panel} {text_scale:?}: {lines:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_word_wider_than_the_column_is_broken_inside_and_nothing_is_lost() {
     let metrics = DisplayMetrics {
         width: 758,
         height: 1024,
         pixels_per_inch: 212,
         text_scale: kobo_ui::TextScale::Largest,
     };
-    let screen = ScreenBuilder::new("setup")
-        .command("kobo stream --interactive-session-with-a-very-long-flag-name -- /bin/sh")
-        .build();
-    let _ = screen.layout_with(&metrics, &Chrome::default());
+    let long = "--interactive-session-with-a-very-long-flag-name";
+    let command = format!("kobo stream {long} -- /bin/sh");
+    let lines = command_lines(&command, &metrics);
+    assert!(
+        lines.len() > 2,
+        "the flag should not fit one line: {lines:?}"
+    );
+    // Every other word is still whole, and the flag is every character of
+    // itself, in order, across the lines it had to be broken over.
+    assert_eq!(lines[0], "kobo stream", "{lines:?}");
+    assert!(
+        lines
+            .last()
+            .is_some_and(|line| line.ends_with("-- /bin/sh")),
+        "{lines:?}"
+    );
+    let flag: String = lines[1..lines.len() - 1].concat()
+        + lines
+            .last()
+            .and_then(|line| line.strip_suffix("-- /bin/sh"))
+            .unwrap_or_default()
+            .trim_end();
+    assert_eq!(flag, long, "{lines:?}");
 }
