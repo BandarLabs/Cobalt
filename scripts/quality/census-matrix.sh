@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Device census matrix: every catalog app in a fresh simulator at every
-# supported device profile x every text scale. 27 cells = 9 profiles
+# supported device profile x every text scale. 30 cells = 10 profiles
 # (kobo-profile SUPPORTED_PROFILES) x 3 scales (default, large, extra-large).
 #
 # Results land OUT_ROOT/<profile>-<scale>/out/results.json and the aggregate
@@ -21,7 +21,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT_ROOT="${1:-/tmp/census/matrix}"
-PROFILES="clara-bw-391 clara-bw-395 clara-hd-376 clara-colour-393 elipsa-2e-389 libra-2-388 libra-colour-390 libra-colour-390-4.46.23836 libra-h2o-384"
+PROFILES="clara-bw-391 tolino-shine-5-t302 clara-bw-395 clara-hd-376 clara-colour-393 elipsa-2e-389 libra-2-388 libra-colour-390 libra-colour-390-4.46.23836 libra-h2o-384"
 SCALES="default large extra-large"
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
 run_cell() {

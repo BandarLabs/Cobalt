@@ -746,6 +746,25 @@ pub fn present(
         pump_gpio(session, &taps);
     }
 
+    // Readers on the BD71828 PMIC (the T302, and per `cover.rs` the Clara BW)
+    // report KEY_POWER on a separate `bd71828-pwrkey` node, while gpio-keys
+    // carries the cover signal and no power key. Listening only there makes
+    // the physical button appear dead during a Cobalt session. The node is
+    // opened whenever it exists and gpio-keys does not already report the
+    // power key, so no reader can receive one press twice.
+    let mut power_key = None;
+    if !gpio::buttons_report_power() {
+        if let Some(path) = gpio::discover_power_path() {
+            match GpioSession::acquire_power(&path) {
+                Ok(session) => power_key = Some(session),
+                Err(error) => trace(&format!("power key unavailable: {error}")),
+            }
+        }
+    }
+    if let Some(session) = power_key.as_mut() {
+        pump_gpio(session, &taps);
+    }
+
     // Which page key means "forward" depends on how the reader is held. At
     // the profile's reference pose (buttons on the right, on the Libra 2)
     // key 194 pages forward and 193 pages back, read off the hardware: with

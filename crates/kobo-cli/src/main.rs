@@ -5266,7 +5266,11 @@ fn setup_device_with_confirmation(
 ) -> Result<(), String> {
     let options = parse_setup(arguments)?;
     let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
-    let profile = setup::install_profile(&reader)?;
+    let profile = if options.mode == SetupMode::Undo {
+        setup::undo_profile(&reader)?
+    } else {
+        setup::install_profile(&reader)?
+    };
     let payload = if options.mode == SetupMode::Undo {
         SetupPayload::Source
     } else {

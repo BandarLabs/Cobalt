@@ -302,6 +302,16 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     colour_panel: false,
 };
 
+/// Tolino Shine 5 T302 running the Kobo Clara BW 391 software stack.
+/// Owner-attended evidence is captured; maintainer review is pending.
+pub const TOLINO_SHINE_5_T302: DeviceProfile = DeviceProfile {
+    id: "tolino-shine-5-t302",
+    model: "Tolino Shine 5",
+    serial_prefix: "T302",
+    write_ready: false,
+    ..CLARA_BW_391
+};
+
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
 /// under the same product; this profile records the distinct device code and
 /// `TPV board` identity reported by the refreshed hardware.
@@ -854,6 +864,7 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
+    &TOLINO_SHINE_5_T302,
     &CLARA_BW_395,
     &CLARA_HD_376,
     &CLARA_COLOUR_393,
@@ -878,6 +889,10 @@ pub const WRITE_EVIDENCE_PENDING: &str =
 pub enum Standing {
     /// A measured profile claims this model, on a firmware branch it covers.
     Measured,
+    /// A profile claims this model on a firmware branch it covers, but its
+    /// owner-attended evidence is still awaiting review, so it is not
+    /// write-ready. The firmware is not the reason for any notice.
+    AwaitingReview,
     /// A measured profile claims this model, but not this firmware branch.
     UntestedFirmware,
     /// No profile claims this reader, so one was derived from its own probe.
@@ -943,6 +958,9 @@ pub fn write_ready_profile(
 /// the same geometry and controller interfaces as Clara BW.
 ///
 /// The fallback to a geometry-only match is deliberate and read-only-safe.
+/// Before it, a profile whose device code and serial prefix agree is
+/// preferred, so a reader on firmware nobody measured is still recognised as
+/// itself rather than as the first profile that shares its panel.
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
     let geometry_matched = |profile: &&'static DeviceProfile| {
@@ -954,7 +972,47 @@ pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProf
         .find(|profile| {
             geometry_matched(profile) && profile.write_identity_blockers(snapshot).is_empty()
         })
+        .or_else(|| claimed_profile(snapshot))
         .or_else(|| SUPPORTED_PROFILES.iter().copied().find(geometry_matched))
+}
+
+/// The profile that claims this reader by identity: the geometry matches and
+/// the device code and serial prefix agree. The firmware may differ, and the
+/// profile need not be write-ready.
+///
+/// This is what recognises a reader as itself, as opposed to a profile that
+/// merely shares its panel. Recovery uses it too: it has to undo what a
+/// session changed, and an owner can run a session on a profile that is not
+/// yet write-ready.
+#[must_use]
+pub fn claimed_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
+    let identity = &snapshot.identity;
+    SUPPORTED_PROFILES.iter().copied().find(|profile| {
+        identity.device_code == Some(profile.device_code)
+            && identity.serial_prefix.as_deref() == Some(profile.serial_prefix)
+            && profile.validate(snapshot).readiness != Readiness::Rejected
+    })
+}
+
+/// True when a serial is shaped like an identity Cobalt can match.
+///
+/// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+/// passes, including model codes with no profile, because profile support is
+/// checked once the device is matched. The only other shapes accepted are the
+/// exact serial prefixes of supported profiles that are not Kobo-shaped,
+/// which today is the converted Tolino Shine 5's `T302`.
+#[must_use]
+pub fn is_matchable_serial(serial: &str) -> bool {
+    fn kobo_shaped(bytes: &[u8]) -> bool {
+        bytes.len() >= 4
+            && (bytes[0] == b'N' || bytes[0] == b'P')
+            && bytes[1..4].iter().all(u8::is_ascii_digit)
+    }
+    kobo_shaped(serial.as_bytes())
+        || SUPPORTED_PROFILES.iter().any(|profile| {
+            !kobo_shaped(profile.serial_prefix.as_bytes())
+                && serial.starts_with(profile.serial_prefix)
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2322,6 +2380,7 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", &["/usr/bin/wmt_launcher"][..]),
+                ("tolino-shine-5-t302", &["/usr/bin/wmt_launcher"][..]),
                 ("clara-bw-395", &[][..]),
                 ("clara-hd-376", &[][..]),
                 ("clara-colour-393", &[][..]),
@@ -2344,6 +2403,7 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", true),
+                ("tolino-shine-5-t302", true),
                 ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
@@ -3379,6 +3439,46 @@ mod tests {
         let mut identity = clara_bw_identity();
         identity.firmware_version = Some(version.into());
         clara_panel_snapshot(identity)
+    }
+
+    fn t302_on_firmware(version: &str) -> DeviceSnapshot {
+        let mut snapshot = clara_bw_on_firmware(version);
+        snapshot.identity.serial_prefix = Some("T302".into());
+        snapshot
+    }
+
+    #[test]
+    fn a_t302_is_recognised_as_itself_on_firmware_nobody_measured() {
+        // The T302 shares the Clara BW 391 panel and sits after it in the
+        // table. On an unmeasured build the geometry fallback used to return
+        // the Clara BW, whose serial prefix then disowned the reader and sent
+        // it to a provisional profile with a guessed touch mapping.
+        for version in ["4.45.23697", "4.46.23836"] {
+            assert_eq!(
+                super::identify_profile(&t302_on_firmware(version)).map(|profile| profile.id),
+                Some(super::TOLINO_SHINE_5_T302.id),
+                "{version}"
+            );
+        }
+        assert_eq!(
+            super::claimed_profile(&t302_on_firmware("4.46.23836")).map(|profile| profile.id),
+            Some(super::TOLINO_SHINE_5_T302.id)
+        );
+        assert_eq!(
+            super::identify_profile(&clara_bw_on_firmware("4.46.23836")).map(|profile| profile.id),
+            Some(CLARA_BW_391.id)
+        );
+    }
+
+    #[test]
+    fn matchable_serials_are_kobo_shaped_or_a_supported_prefix() {
+        assert!(super::is_matchable_serial("N365410043013"));
+        assert!(super::is_matchable_serial("P365000000000"));
+        assert!(super::is_matchable_serial("N999000000000"));
+        assert!(super::is_matchable_serial("T302593005757"));
+        assert!(!super::is_matchable_serial("T303000000000"));
+        assert!(!super::is_matchable_serial("X365000000000"));
+        assert!(!super::is_matchable_serial("N36"));
     }
 
     #[test]
