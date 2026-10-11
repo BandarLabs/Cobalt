@@ -123,6 +123,7 @@ impl App {
                 .heading("Pair with your computer")
                 .text("On your computer, run these. The first prints an address and a code.")
                 .command("kobo sidekick init")
+                .command("kobo trust set sidekick")
                 .command("kobo sidekick run")
                 .primary_button("enter-address", "Enter the address")
                 .build(),

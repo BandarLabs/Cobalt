@@ -5,7 +5,7 @@
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
   "version": "0.2.7",
-  "release_notes": "Pairing shows the two commands to run, kobo sidekick init and kobo sidekick run, instead of naming an app it never explained.",
+  "release_notes": "Pairing shows the commands to run on your computer, including the one that lets the reader trust the helper, instead of naming an app it never explained.",
   "glyph": "grid",
   "capabilities": [
     "network"
@@ -23,6 +23,10 @@
       {
         "text": "Prepare the helper. It prints the address and code Deck asks for.",
         "command": "kobo sidekick init"
+      },
+      {
+        "text": "Let the reader trust the helper, so Deck can check it is talking to your computer.",
+        "command": "kobo trust set sidekick"
       },
       {
         "text": "Start the helper, then enter the address and code on the reader.",

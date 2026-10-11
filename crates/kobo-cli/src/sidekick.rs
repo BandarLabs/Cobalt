@@ -70,7 +70,14 @@ fn init(arguments: &[String]) -> Result<(), String> {
         .status()
         .map_err(|error| format!("run {}: {error}", helper.display()))?;
     if status.success() {
-        println!("Start the helper with 'kobo sidekick run', then enter the address and code on the reader.");
+        // The helper's certificate is on this computer and nowhere else, and
+        // a reader that cannot check it refuses to pair. `kobo setup` carries
+        // it over USB, but only when setup runs after this, which is not the
+        // order the apps' guides put them in.
+        println!(
+            "Next: let the reader trust the helper with 'kobo trust set sidekick', start it with \
+             'kobo sidekick run', then enter the address and code on the reader."
+        );
         Ok(())
     } else {
         Err(format!("the helper exited with {status}"))
