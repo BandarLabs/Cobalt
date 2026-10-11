@@ -1027,10 +1027,6 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
-        "setup" if matches!(arguments.get(1).map(String::as_str), Some("--help" | "-h")) => {
-            println!("{SETUP_HELP}");
-            Ok(())
-        }
         "setup" => setup_device(&arguments[1..]),
         "apps" => apps::command(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
@@ -5251,6 +5247,11 @@ fn choose_reader_list(mut found: Vec<setup::Mounted>) -> Result<setup::Mounted, 
 /// SSH server, and the setting that keeps the radio up. Everything after this
 /// happens over Wi-Fi, so everything before it has to happen here.
 fn setup_device(arguments: &[String]) -> Result<(), String> {
+    // Only a first argument of --help, because a bare setup is the guided
+    // run and must not print usage instead of starting.
+    if matches!(arguments.first().map(String::as_str), Some("--help" | "-h")) {
+        return print_command_help(SETUP_HELP);
+    }
     setup_device_with_confirmation(arguments, confirmed_setup)
 }
 
