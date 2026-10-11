@@ -1472,9 +1472,7 @@ mod tests {
         assert!(fetched(&commands).is_none(), "polled before pairing");
         let lines = shown(&painted(&commands).expect("a screen"));
         assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("kobo sidekick init")),
+            lines.iter().any(|line| line.contains("kobo sidekick init")),
             "the screen never says what to run to get an address: {lines:?}"
         );
     }

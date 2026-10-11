@@ -3438,7 +3438,9 @@ impl Screen {
                     .iter()
                     .filter(|node| matches!(node, Node::Flex { .. }))
                     .count();
-                let free = content_bottom.saturating_sub(trailing).saturating_sub(cursor);
+                let free = content_bottom
+                    .saturating_sub(trailing)
+                    .saturating_sub(cursor);
                 let share = free / (i32::try_from(later).unwrap_or(0) + 1);
                 cursor = max(cursor, cursor.saturating_add(share));
                 layout.flow_height = cursor.saturating_sub(content_top).max(0);
