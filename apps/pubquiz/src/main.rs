@@ -561,6 +561,9 @@ impl Quiz {
                 .map(|title| (title.as_str(), ""))
                 .collect::<Vec<_>>();
             context.paginate_rows(&rows, true).len()
+        } else if self.view == View::Reveal {
+            let question = &self.round_questions[self.question % self.round_questions.len()];
+            reveal_paged(self, question, context).map_or(1, |pages| pages.len())
         } else {
             context.paginate(&question_text(self), true).len()
         }
@@ -1193,78 +1196,221 @@ fn players_screen(quiz: &Quiz) -> Screen {
         .build()
 }
 
-fn reveal_screen(quiz: &Quiz, question: &Question) -> Screen {
+/// One piece of the reveal, in the order the table reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Revealed {
+    /// The category and the headline that says who got it.
+    Verdict,
+    /// The question, or as much of it as one page holds.
+    Question(String),
+    /// One answer, ticked when it was right, with who chose it.
+    Answer(usize),
+    /// The scores so far.
+    Scores,
+}
+
+/// The headline that says who got the question.
+fn verdict(quiz: &Quiz, question: &Question) -> String {
     let players = if quiz.party { quiz.players } else { 1 };
     let right: Vec<&str> = (0..players)
         .filter(|&i| quiz.answers[i] == Some(question.correct))
         .map(|i| quiz.name_for(i))
         .collect();
-    let headline = match (quiz.party, right.len()) {
+    match (quiz.party, right.len()) {
         (false, 0) => "Not this time".to_owned(),
         (false, _) => "Correct".to_owned(),
         (true, 0) => "Nobody got it".to_owned(),
         (true, n) if n == players => "Everyone got it".to_owned(),
         (true, _) => format!("{} got it", join_names(&right)),
-    };
-    // Each answer with who chose it, and the right one ticked: the arguing
-    // screen, where the table can see exactly how everyone went wrong.
-    let answers = question.answers.iter().enumerate().map(|(index, answer)| {
-        let chose: Vec<&str> = (0..players)
-            .filter(|&i| quiz.answers[i] == Some(index))
-            .map(|i| quiz.name_for(i))
-            .collect();
-        (
-            format!("reveal-{index}"),
-            answer.clone(),
-            if index == question.correct {
-                "Right answer".to_owned()
-            } else {
-                String::new()
-            },
-            if index == question.correct {
-                Glyph::Check
-            } else {
-                Glyph::Circle
-            },
-            if quiz.party {
-                join_names(&chose)
-            } else if chose.is_empty() {
-                String::new()
-            } else {
-                "Your answer".to_owned()
-            },
-        )
-    });
-    let mut builder = ScreenBuilder::new("pubquiz-reveal")
-        .top_bar(format!(
-            "Question {} of {}",
-            quiz.question + 1,
-            quiz.round_questions.len()
-        ))
-        .owns_back(true)
-        .secondary(&question.category)
-        .heading(headline)
-        .text(&question.text)
-        .rows_with_trailing(answers);
-    if quiz.party {
-        builder = builder
-            .section("Scores")
-            .facts((0..players).map(|i| (quiz.name_for(i), points_label(quiz.scores[i]))));
+    }
+}
+
+/// One answer row: ticked when it was right, and saying who chose it.
+///
+/// The arguing screen, where the table can see exactly how everyone went
+/// wrong. Who chose it is in the row's summary rather than against its right
+/// edge: that edge is for a short value, and four players' names there left
+/// the answer itself a column a few pixels wide.
+fn reveal_row(quiz: &Quiz, question: &Question, index: usize) -> (String, String, String, Glyph) {
+    let players = if quiz.party { quiz.players } else { 1 };
+    let chose: Vec<&str> = (0..players)
+        .filter(|&i| quiz.answers[i] == Some(index))
+        .map(|i| quiz.name_for(i))
+        .collect();
+    let right = index == question.correct;
+    let who = if quiz.party {
+        join_names(&chose)
+    } else if chose.is_empty() {
+        String::new()
     } else {
-        builder = builder.section_with_value(
-            "Score",
-            format!("{} of {}", quiz.scores[0], quiz.question + 1),
-        );
+        "Your answer".to_owned()
+    };
+    let summary = match (right, who.is_empty()) {
+        (true, true) => "Right answer".to_owned(),
+        (true, false) => format!("Right answer · {who}"),
+        (false, _) => who,
+    };
+    (
+        format!("reveal-{index}"),
+        question.answers[index].clone(),
+        summary,
+        if right { Glyph::Check } else { Glyph::Circle },
+    )
+}
+
+/// The reveal's pieces, laid one after another on a page.
+///
+/// Answers next to each other are one list rather than a list each, so a page
+/// holding all four draws them exactly as the single list it always was.
+fn reveal_parts(
+    quiz: &Quiz,
+    question: &Question,
+    parts: &[Revealed],
+    mut builder: ScreenBuilder,
+) -> ScreenBuilder {
+    let mut index = 0;
+    while index < parts.len() {
+        match &parts[index] {
+            Revealed::Verdict => {
+                builder = builder
+                    .secondary(&question.category)
+                    .heading(verdict(quiz, question));
+            }
+            Revealed::Question(text) => builder = builder.text(text),
+            Revealed::Answer(_) => {
+                let mut rows = Vec::new();
+                while let Some(Revealed::Answer(answer)) = parts.get(index) {
+                    rows.push(reveal_row(quiz, question, *answer));
+                    index += 1;
+                }
+                builder = builder.rows(rows);
+                continue;
+            }
+            Revealed::Scores if quiz.party => {
+                builder = builder.section("Scores").facts(
+                    (0..quiz.players).map(|i| (quiz.name_for(i), points_label(quiz.scores[i]))),
+                );
+            }
+            Revealed::Scores => {
+                builder = builder.section_with_value(
+                    "Score",
+                    format!("{} of {}", quiz.scores[0], quiz.question + 1),
+                );
+            }
+        }
+        index += 1;
     }
     builder
-        .bottom_action(
-            "continue",
-            if quiz.question + 1 == quiz.round_questions.len() {
-                "See results"
-            } else {
-                "Next question"
-            },
-        )
+}
+
+/// One page of the reveal, without the leave prompt.
+///
+/// `pages` is `None` for the reveal that fits whole, which has no page
+/// controls to draw. Continue is the bottom action on every page, so a table
+/// that has seen enough never has to page to the end to move on.
+fn reveal_page(
+    quiz: &Quiz,
+    question: &Question,
+    parts: &[Revealed],
+    pages: Option<(usize, usize)>,
+) -> ScreenBuilder {
+    let mut builder = reveal_parts(
+        quiz,
+        question,
+        parts,
+        ScreenBuilder::new("pubquiz-reveal")
+            .top_bar(format!(
+                "Question {} of {}",
+                quiz.question + 1,
+                quiz.round_questions.len()
+            ))
+            .owns_back(true),
+    );
+    if let Some((page, count)) = pages {
+        builder = builder
+            .page_turns("previous-page", "next-page")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            );
+    }
+    builder.bottom_action(
+        "continue",
+        if quiz.question + 1 == quiz.round_questions.len() {
+            "See results"
+        } else {
+            "Next question"
+        },
+    )
+}
+
+/// Every piece of the reveal, whole.
+fn reveal_all(question: &Question, text: Vec<String>) -> Vec<Revealed> {
+    let mut parts = vec![Revealed::Verdict];
+    parts.extend(text.into_iter().map(Revealed::Question));
+    parts.extend((0..question.answers.len()).map(Revealed::Answer));
+    parts.push(Revealed::Scores);
+    parts
+}
+
+/// The reveal cut into pages that each fit this panel.
+///
+/// A synced question can run to 240 characters with four answers of 80, and
+/// the reveal shows all of it beside who chose what and the scores: at the
+/// largest text sizes on a small panel that ran off the foot with no way to
+/// reach the rest. Each piece goes on the current page while the page still
+/// measures clean with the runtime's own layout, and starts the next page when
+/// it would not. The question itself is first broken by the same prose
+/// pagination the question screen uses, so not even it is too tall for a page.
+fn reveal_pages(quiz: &Quiz, question: &Question, context: &Context) -> Vec<Vec<Revealed>> {
+    let fits = |parts: &[Revealed]| {
+        reveal_page(quiz, question, parts, Some((0, 2)))
+            .build()
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+            .issues
+            .is_empty()
+    };
+    let text = context.paginate(&question.text, true).into_iter().flatten();
+    let mut pages = Vec::new();
+    let mut page = Vec::new();
+    for part in reveal_all(question, text.collect()) {
+        page.push(part);
+        // A piece alone on a page stays there, because a page without it would
+        // be no closer to fitting; the layout tests are what keep that from
+        // ever being needed.
+        if page.len() > 1 && !fits(&page) {
+            let part = page.pop().expect("a piece was just placed");
+            pages.push(std::mem::take(&mut page));
+            page.push(part);
+        }
+    }
+    pages.push(page);
+    pages
+}
+
+/// The reveal's pages, or `None` when it fits whole on one screen.
+///
+/// Measured without the leave prompt, for the same reason as the question: a
+/// dialogue over the reveal is not the reveal failing to fit.
+fn reveal_paged(quiz: &Quiz, question: &Question, context: &Context) -> Option<Vec<Vec<Revealed>>> {
+    let whole = reveal_all(question, vec![question.text.clone()]);
+    let fits = reveal_page(quiz, question, &whole, None)
+        .build()
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .issues
+        .is_empty();
+    (!fits).then(|| reveal_pages(quiz, question, context))
+}
+
+fn reveal_screen(quiz: &Quiz, question: &Question, context: &Context) -> Screen {
+    let Some(pages) = reveal_paged(quiz, question, context) else {
+        let whole = reveal_all(question, vec![question.text.clone()]);
+        return reveal_page(quiz, question, &whole, None)
+            .compose(|b| leave_prompt(quiz, b))
+            .build();
+    };
+    let page = quiz.page.min(pages.len().saturating_sub(1));
+    reveal_page(quiz, question, &pages[page], Some((page, pages.len())))
         .compose(|b| leave_prompt(quiz, b))
         .build()
 }
@@ -1286,7 +1432,7 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
         View::Question => question_screen(quiz, context),
         View::Choices => choices_screen(quiz, context),
         View::Pass => pass_screen(quiz),
-        View::Reveal => reveal_screen(quiz, question),
+        View::Reveal => reveal_screen(quiz, question, context),
         View::Podium => podium_screen(quiz),
         View::HowTo => ScreenBuilder::new("pubquiz-help")
             .top_bar("How to play")
@@ -1425,14 +1571,14 @@ impl KoboApp for Quiz {
         } else if action == action_id("question") && self.view == View::Choices {
             self.view = View::Question;
             self.page = 0;
-        } else if matches!(self.view, View::Question | View::Choices)
+        } else if matches!(self.view, View::Question | View::Choices | View::Reveal)
             && action == action_id("next-page")
         {
             self.page = self
                 .page
                 .saturating_add(1)
                 .min(self.page_count(context).saturating_sub(1));
-        } else if matches!(self.view, View::Question | View::Choices)
+        } else if matches!(self.view, View::Question | View::Choices | View::Reveal)
             && action == action_id("previous-page")
         {
             self.page = self.page.saturating_sub(1);
@@ -1812,21 +1958,21 @@ mod tests {
         let question = quiz.round_questions[0].clone();
         let wrong = (question.correct + 1) % 4;
         quiz.answers = [Some(question.correct), Some(wrong), Some(wrong), None];
-        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        let shown = format!("{:?}", reveal_screen(&quiz, &question, &Context::default()));
         assert!(shown.contains("Ada got it"));
         assert!(shown.contains("Right answer"));
         assert!(shown.contains("Bert and Cleo"));
         assert!(shown.contains(&format!("Question 1 of {}", quiz.round_questions.len())));
 
         quiz.answers = [Some(wrong); 4];
-        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        let shown = format!("{:?}", reveal_screen(&quiz, &question, &Context::default()));
         assert!(shown.contains("Nobody got it"));
 
         let mut solo = Quiz::default();
         solo.begin(false);
         let question = solo.round_questions[0].clone();
         solo.answers[0] = Some(question.correct);
-        let shown = format!("{:?}", reveal_screen(&solo, &question));
+        let shown = format!("{:?}", reveal_screen(&solo, &question, &Context::default()));
         assert!(shown.contains("Correct"));
         assert!(shown.contains("Your answer"));
     }
@@ -1841,13 +1987,13 @@ mod tests {
         quiz.question = quiz.round_questions.len() - 1;
         let question = quiz.round_questions[quiz.question].clone();
         quiz.answers[0] = Some(question.correct);
-        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        let shown = format!("{:?}", reveal_screen(&quiz, &question, &Context::default()));
         assert!(shown.contains("See results"));
         let mut full = Quiz::default();
         full.begin(false);
         let first = full.round_questions[0].clone();
         full.answers[0] = Some(first.correct);
-        let shown = format!("{:?}", reveal_screen(&full, &first));
+        let shown = format!("{:?}", reveal_screen(&full, &first, &Context::default()));
         assert!(shown.contains("Next question"));
     }
 
@@ -2232,10 +2378,12 @@ mod regression_tests {
         assert_eq!(runner.app().round_questions[0].category, "New pack");
     }
 
-    #[test]
-    fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
+    /// A round whose first question is as long as a synced pack allows: 240
+    /// characters, and four answers of 80 that share everything but their
+    /// endings.
+    fn long_question_round(party: bool) -> Quiz {
         let mut quiz = Quiz::default();
-        quiz.begin(false);
+        quiz.begin(party);
         quiz.round_questions[0].text =
             "A long question about the people involved in a historical event. "
                 .repeat(4)
@@ -2255,6 +2403,63 @@ mod regression_tests {
             .rev()
             .collect()
         });
+        quiz
+    }
+
+    /// Pages through the reveal as the reader would, and checks that every
+    /// page fits, that Continue is on every one of them, and that the verdict,
+    /// the whole question, every answer and the scores are each on some page.
+    fn assert_the_reveal_pages_reach_everything(quiz: Quiz, metrics: DisplayMetrics) {
+        let question = quiz.round_questions[0].clone();
+        let mut runner = AppRunner::with_metrics(quiz, metrics);
+        runner.app_mut().view = View::Reveal;
+        runner.app_mut().page = 0;
+        let context = runner.context();
+        let pages = reveal_paged(runner.app(), &question, &context)
+            .unwrap_or_else(|| vec![reveal_all(&question, vec![question.text.clone()])]);
+        let mut answers = [false; 4];
+        for page in 0..pages.len() {
+            assert_eq!(runner.app().page, page, "{metrics:?}");
+            let screen = reveal_screen(runner.app(), &question, &context);
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{metrics:?} page {page}: {:?}",
+                diagnostics.issues
+            );
+            let layout = screen.layout_with(&metrics, &Chrome::default());
+            assert!(
+                layout.rect_of_action(action_id("continue")).is_some(),
+                "{metrics:?} page {page} has no way on"
+            );
+            for (index, found) in answers.iter_mut().enumerate() {
+                *found |= layout
+                    .rect_of_action(action_id(&format!("reveal-{index}")))
+                    .is_some();
+            }
+            runner.action(action_id("next-page"));
+        }
+        // Paging past the end stays on the last page rather than wrapping.
+        assert_eq!(runner.app().page, pages.len() - 1, "{metrics:?}");
+        assert!(answers.into_iter().all(|found| found), "{metrics:?}");
+        let parts = pages.concat();
+        assert!(parts.contains(&Revealed::Verdict), "{metrics:?}");
+        assert!(parts.contains(&Revealed::Scores), "{metrics:?}");
+        let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let asked = parts
+            .iter()
+            .filter_map(|part| match part {
+                Revealed::Question(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(words(&asked), words(&question.text), "{metrics:?}");
+    }
+
+    #[test]
+    fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
+        let mut quiz = long_question_round(false);
         for (width, height, pixels_per_inch) in
             [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
         {
@@ -2293,6 +2498,22 @@ mod regression_tests {
                     }
                 }
                 assert!(seen.into_iter().all(|found| found));
+
+                // The reveal adds who chose what and the scores to all of it.
+                // A solo round, and a full table of the longest names a player
+                // can have, every one of them on the same wrong answer so its
+                // row carries the longest list of who chose it.
+                let mut solo = long_question_round(false);
+                solo.answers[0] = Some(solo.round_questions[0].correct);
+                assert_the_reveal_pages_reach_everything(solo, metrics);
+                let mut table = long_question_round(true);
+                table.names =
+                    ["Wilhelmina A", "Bartholomew", "Maximiliana", "Christopher"].map(String::from);
+                let wrong = (table.round_questions[0].correct + 1) % 4;
+                table.answers = [Some(wrong); 4];
+                table.scores = [9; 4];
+                table.player = 3;
+                assert_the_reveal_pages_reach_everything(table, metrics);
             }
         }
     }
