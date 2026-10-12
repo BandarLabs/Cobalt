@@ -309,12 +309,15 @@ impl Sudoku {
     fn menu_screen(&self, builder: ScreenBuilder) -> Screen {
         let mut b = if matches!(self.draft.status(), Status::Failed(_)) {
             builder
-                .heading("Not saved")
+                .section("Not saved")
                 .secondary("Free some storage, then retry.")
                 .button("retry-save", "Retry save")
         } else {
+            // A label over the game's details rather than a display heading:
+            // the menu is six buttons, and a heading two lines tall at the
+            // largest text size pushed the last of them off a landscape panel.
             builder
-                .heading(if self.game.solved(&self.puzzles) {
+                .section(if self.game.solved(&self.puzzles) {
                     "Puzzle complete"
                 } else {
                     "This game"

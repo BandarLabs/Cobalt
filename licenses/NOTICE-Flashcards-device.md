@@ -17,9 +17,9 @@ metadata as inert data and never executes or resolves it.
 The device links resvg/usvg only to verify that SVG sources referenced by the
 bounded due queue reproduce their digest-addressed PNG bytes. It displays the
 PNG rather than executing or resolving SVG content. Applicable resvg,
-Atkinson, DejaVu, Cobalt Japanese, and Rust dependency terms and source pins
-are included in the adjacent device licence documents and exposed by the
-application's **Licences & about** screen.
+Atkinson, DejaVu, Literata, Cobalt Japanese, and Rust dependency terms and
+source pins are included in the adjacent device licence documents and exposed
+by the application's **Licences & about** screen.
 
 Flashcards and the `CBFLASH` format are Cobalt components licensed under
 AGPL-3.0-only.

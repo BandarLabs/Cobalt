@@ -8,7 +8,7 @@ Wi-Fi, Bluetooth, battery details and Cobalt updates.
 <td width="50%" valign="top"><img width="300" src="screenshots/battery.png" alt="Battery details"><br>Battery details</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/wifi.png" alt="Wi-Fi networks, with names hidden"><br>Wi-Fi networks, with names hidden</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/wifi.png" alt="Wi-Fi networks in range, with the one joined"><br>Wi-Fi networks in range, with the one joined</td>
 </tr>
 </table>
 

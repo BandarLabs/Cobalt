@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
 <meta name="twitter:image:alt" content="Sync folders: vault, frame and books receive, out sends.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-YPW1QlpKicw19uKjgz9+rY6ki5xEpHLYjgH8BSefn8U='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-sl8+WgQWFR7jq99jNkQ/mcyCrAzSCJ5kxdsJRF9hn1M='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.3.1",
+      "softwareVersion": "0.3.3",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Sync</h1>
       <p class="summary">Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.3.1</dd></div>
+        <div><dt>Version</dt><dd>0.3.3</dd></div>
         <div><dt>Permissions</dt><dd>scheduled-wake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -118,17 +118,19 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.3.1</h2>
-    <p>Clearer description and setup steps in the Store. No change to how the app works.</p>
+    <h2>New in 0.3.3</h2>
+    <p>Status reads in plain words: Check how the last sync went, Left to sync, and None yet for peers.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>The first time Sync runs it downloads its engine over Wi-Fi and checks it against the digest the runtime requires, so the Kobo needs to be online once. Your computer needs a package-manager-installed Syncthing binary.</li>
-      <li>Pair exactly one local directory to a fixed safe folder while the Kobo is awake on Wi-Fi.
-        <code class="setup-command">kobo sync setup LOCAL_DIR --folder vault --device &lt;address&gt;</code></li>
-      <li>Resume Sync on the Kobo, then start the private host peer. It does not modify another Syncthing installation.
+      <li>The first time Sync runs it downloads its engine over Wi-Fi, so the reader needs to be online once. This computer needs a package-manager-installed Syncthing.</li>
+      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
+        <code class="setup-command">kobo pair</code></li>
+      <li>Pair one folder on this computer with a fixed folder on the reader.
+        <code class="setup-command">kobo sync setup ~/Documents/notes --folder vault</code></li>
+      <li>Resume Sync on the reader, then start this computer's private peer.
         <code class="setup-command">kobo sync run</code></li>
     </ol>
   </section>

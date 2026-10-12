@@ -10,6 +10,7 @@ pub fn may_set(app: &str, name: &str) -> bool {
         || (app == "calibre-web" && name == "calibre")
         || (app == "rss-miniflux" && name == "miniflux")
         || (app == "readlater" && name == "wallabag")
+        || (app == "readeck" && name == "readeck")
         || (app == "post" && name == "hermes-post")
 }
 
@@ -138,6 +139,7 @@ mod tests {
             ("calibre-web", "calibre"),
             ("rss-miniflux", "miniflux"),
             ("readlater", "wallabag"),
+            ("readeck", "readeck"),
         ] {
             assert!(may_set(app, name), "{app}/{name}");
             assert!(!may_set(app, "other"), "{app} set an undeclared name");

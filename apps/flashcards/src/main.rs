@@ -1228,11 +1228,15 @@ fn first_use_screen(menu_open: bool) -> Screen {
         .top_bar("Flashcards")
         .top_bar_overflow("more", menu_open, [("notices", "Licences & about")])
         .heading("No collection yet")
-        .text("Start with the sample deck, or stage your own collection from your computer.")
-        .text(
-            "With Cobalt on your computer: kobo flashcards import deck.apkg --merge              collection.cobfc, then kobo flashcards stage collection.cobfc.",
-        )
-        .buttons([("sample", "Start with the sample")])
+        .text("Start with the sample deck, or bring your own Anki deck from a computer.")
+        .primary_button("sample", "Start with the sample")
+        // The two commands, each set apart and whole. The sentence these
+        // replace carried a run of spaces in the middle of a filename and left
+        // out where the bundle goes, so typing it as shown failed.
+        .section("Your own deck")
+        .command("kobo flashcards import deck.apkg --merge collection.cobfc")
+        .text("Then, with the Kobo plugged in over USB:")
+        .command("kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader")
         .bottom_action("retry", "Read collection again")
         .build()
 }
@@ -1986,6 +1990,9 @@ mod tests {
             | kobo_sdk::Node::Text { text, .. }
             | kobo_sdk::Node::Secondary { text, .. }
             | kobo_sdk::Node::RichText { text, .. } => text.contains(needle),
+            // A command is set with non-breaking hyphens so it never wraps
+            // inside a flag; it reads the same.
+            kobo_sdk::Node::Quote { text, .. } => text.replace('\u{2011}', "-").contains(needle),
             kobo_sdk::Node::Rows { rows, .. } => rows
                 .iter()
                 .any(|row| row.title.contains(needle) || row.summary.contains(needle)),

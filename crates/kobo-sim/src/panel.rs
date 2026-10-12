@@ -16,6 +16,10 @@ pub(super) struct PanelPreview {
     desired: Option<Surface>,
     pending: Option<Pending>,
     held: bool,
+    /// Synthetic model: a pending frame finishes only when the fixture clock advances.
+    delay_ms: u64,
+    fixture_ms: u64,
+    due_ms: Option<u64>,
     failed: bool,
     known: bool,
     submitted: u64,
@@ -39,6 +43,9 @@ impl PanelPreview {
             desired: None,
             pending: None,
             held: false,
+            delay_ms: 0,
+            fixture_ms: 0,
+            due_ms: None,
             failed: false,
             known: false,
             submitted: 0,
@@ -77,7 +84,8 @@ impl PanelPreview {
         self.submitted = self.submitted.saturating_add(1);
         self.submitted_at = Some(self.millis());
         self.finished_at = None;
-        if !self.held {
+        self.due_ms = (self.delay_ms > 0).then(|| self.fixture_ms.saturating_add(self.delay_ms));
+        if !self.held && self.delay_ms == 0 {
             self.complete_pending();
         }
     }
@@ -86,6 +94,7 @@ impl PanelPreview {
         let Some(pending) = self.pending.take() else {
             return;
         };
+        self.due_ms = None;
         if !self.planner.commit(&pending.surface, &pending.transition) {
             self.planner.invalidate();
             self.failed = true;
@@ -118,11 +127,41 @@ impl PanelPreview {
     }
 
     pub fn control(&mut self, command: &str) -> io::Result<()> {
-        match command.trim() {
+        let command = command.trim();
+        if let Some(value) = command.strip_prefix("delay ") {
+            let milliseconds = value
+                .parse::<u64>()
+                .map_err(|_| io::Error::other("delay expects 0..5000 milliseconds"))?;
+            if milliseconds > 5_000 || self.pending.is_some() || self.failed {
+                return Err(io::Error::other(
+                    "delay expects 0..5000 milliseconds while idle",
+                ));
+            }
+            self.delay_ms = milliseconds;
+            return Ok(());
+        }
+        if let Some(value) = command.strip_prefix("advance ") {
+            let milliseconds = value
+                .parse::<u64>()
+                .map_err(|_| io::Error::other("advance expects 0..60000 milliseconds"))?;
+            if milliseconds > 60_000 || self.held {
+                return Err(io::Error::other(
+                    "advance expects 0..60000 milliseconds outside hold",
+                ));
+            }
+            self.fixture_ms = self.fixture_ms.saturating_add(milliseconds);
+            // An update queued while busy gets its own new deadline on submit.
+            while self.due_ms.is_some_and(|due| due <= self.fixture_ms) {
+                self.complete_pending();
+            }
+            return Ok(());
+        }
+        match command {
             "hold" => self.held = true,
             "auto" if self.pending.is_none() && !self.failed => self.held = false,
             "complete" if self.pending.is_some() => self.complete_pending(),
             "fail" if self.pending.take().is_some() => {
+                self.due_ms = None;
                 self.failed = true;
                 self.known = false;
                 self.failures = self.failures.saturating_add(1);
@@ -130,7 +169,7 @@ impl PanelPreview {
                 self.planner.invalidate();
             },
             "retry" if self.failed => { self.failed = false; self.submit_latest(); },
-            _ => return Err(io::Error::other("panel expects hold, auto (when idle), complete or fail (when busy), or retry (after failure)")),
+            _ => return Err(io::Error::other("panel expects hold, auto (when idle), delay 0..5000 (when idle), advance 0..60000, complete or fail (when busy), or retry (after failure)")),
         }
         Ok(())
     }
@@ -142,7 +181,19 @@ impl PanelPreview {
             })
         };
         kobo_json::ObjectBuilder::new()
-            .set("mode", if self.held { "held" } else { "automatic" })
+            .set(
+                "mode",
+                if self.held {
+                    "held"
+                } else if self.delay_ms > 0 {
+                    "synthetic-delay"
+                } else {
+                    "automatic"
+                },
+            )
+            .set("fixtureClockMillis", self.fixture_ms.to_string())
+            .set("syntheticDelayMillis", self.delay_ms.to_string())
+            .set("dueAtFixtureMillis", stamp(self.due_ms))
             .set(
                 "status",
                 if self.failed {
@@ -259,6 +310,33 @@ struct Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn synthetic_delay_keeps_panel_busy_and_replays_failure_recovery() {
+        let mut panel = PanelPreview::new();
+        let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
+        panel.update(&surface);
+        panel.control("delay 120").unwrap();
+        surface.pixels[0] = 0;
+        panel.update(&surface);
+        assert!(!panel.accepts_input());
+        let before = panel.frame(false).to_vec();
+        panel.control("advance 119").unwrap();
+        assert_eq!(panel.frame(false), before);
+        assert!(!panel.accepts_input());
+        panel.control("fail").unwrap();
+        panel.control("advance 1").unwrap();
+        assert!(!panel.accepts_input());
+        panel.control("retry").unwrap();
+        assert!(panel.pending.as_ref().unwrap().transition.full);
+        panel.control("advance 119").unwrap();
+        assert!(!panel.accepts_input());
+        panel.control("advance 1").unwrap();
+        assert!(panel.accepts_input());
+        assert_eq!(panel.frame(false), surface.pixels);
+        assert_eq!(panel.failures, 1);
+        assert!(panel.control("delay 5001").is_err());
+        assert!(panel.control("advance 60001").is_err());
+    }
     #[test]
     fn ideal_colour_keeps_channels_while_monochrome_uses_luminance_and_reads_do_not_commit() {
         let mut panel = PanelPreview::new();

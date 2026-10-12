@@ -456,9 +456,9 @@ impl Feeds {
                 .build();
         }
         if self.subscription_save.failed {
-            screen = screen.top_bar_action("retry-subscriptions", "Retry saving");
+            screen = screen.top_bar_glyph("retry-subscriptions", "Retry saving", Glyph::Refresh);
         } else if self.statuses.failed {
-            screen = screen.top_bar_action("retry-status", "Retry saving");
+            screen = screen.top_bar_glyph("retry-status", "Retry saving", Glyph::Refresh);
         }
         let notice = if self.subscription_save.failed {
             Some("Subscriptions were not saved. Retry saving before closing Feeds.")
@@ -473,7 +473,7 @@ impl Feeds {
         if !self.loaded {
             return screen.activity("Opening your feeds", None).build();
         }
-        screen = screen.top_bar_action("search-saved", "Search saved");
+        screen = screen.top_bar_glyph("search-saved", "Search saved", Glyph::Search);
         if self.subscriptions.is_empty() {
             // Centred under a mark rather than ranged left at the top: this
             // is the first screen anybody sees, and a lone paragraph in the
@@ -2185,6 +2185,58 @@ mod tests {
             title: "A Journal".to_owned(),
             site: "https://example.com/".to_owned(),
         }]
+    }
+
+    #[test]
+    fn failed_save_and_search_keep_the_shelf_title_visible_at_every_text_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let context = AppRunner::with_metrics(Feeds::default(), metrics).context();
+            for subscription_failed in [true, false] {
+                let mut app = Feeds {
+                    loaded: true,
+                    ..Feeds::default()
+                };
+                app.subscription_save.failed = subscription_failed;
+                app.statuses.failed = !subscription_failed;
+                let screen = app.shelf(&context);
+                let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?}: {:?}",
+                    diagnostics.issues
+                );
+                for action in [
+                    if subscription_failed {
+                        "retry-subscriptions"
+                    } else {
+                        "retry-status"
+                    },
+                    "search-saved",
+                ] {
+                    let action = action_id(action);
+                    let rect = diagnostics
+                        .layout
+                        .rect_of_action(action)
+                        .expect("the recovery action remains visible");
+                    assert_eq!(
+                        diagnostics
+                            .layout
+                            .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                        Some(action)
+                    );
+                }
+                assert!(diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .flat_map(|node| &node.text_lines)
+                    .any(|line| line == "Feeds"));
+            }
+        }
     }
 
     #[test]

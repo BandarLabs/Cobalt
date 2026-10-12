@@ -210,7 +210,15 @@ enum Floating {
     Confirm,
     /// The menu behind one row's overflow mark, by position in the list.
     RowMenu(usize),
+    /// The sort picker's menu, hanging from its chip.
+    Sort,
 }
+
+/// The orders the sort picker offers, by action and label.
+///
+/// One table for the picker and its handler, so an order the menu draws is
+/// always an order a tap on it can choose.
+const SORTS: [(&str, &str); 2] = [("sort-newest", "Newest"), ("sort-title", "Title")];
 
 /// What an enabled specimen says when it is pressed. Disabled specimens
 /// stay silent: saying no by being drawn unavailable is their whole point.
@@ -238,6 +246,10 @@ const SPECIMENS: &[(&str, &str)] = &[
     ("hold-here", "You held there."),
 ];
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each specimen's on or off is its own, and folding them into one state would make two of them unable to be shown at once"
+)]
 struct Gallery {
     tab: Tab,
     /// Which page of the current tab is showing.
@@ -271,6 +283,14 @@ struct Gallery {
     ticked: [bool; 2],
     /// Which filter chip is on.
     chip: usize,
+    /// Which of [`SORTS`] the sort picker says the list is in.
+    sort: usize,
+    /// Whether the keep-awake setting is on.
+    ///
+    /// Its own value rather than one read off `chip`. A switch whose state
+    /// follows an unrelated control is a switch that cannot be switched, and
+    /// a reference that draws one teaches the opposite of what it is for.
+    keep_awake: bool,
     /// Whether the pushed detail screen is showing.
     detail: bool,
     /// What, if anything, is floating above the screen.
@@ -306,6 +326,8 @@ impl Default for Gallery {
             shown: 0,
             ticked: [true, false],
             chip: 0,
+            sort: 0,
+            keep_awake: false,
             detail: false,
             floating: None,
             received: 1_150_000,
@@ -872,6 +894,33 @@ impl Gallery {
             )
             .stepper_ends(self.chip > 0, self.chip < 2)
             .stepper_track(u8::try_from(self.chip * 50).unwrap_or(100))
+            .section("One value of a few, all in view")
+            // The same value the stepper steps and the filter chips choose, so
+            // each segment is the chip that names it. A segment is a tap that
+            // names its value outright, and the chip handlers already do that.
+            .segmented(
+                self.chip,
+                [
+                    ("chip-0", "Small"),
+                    ("chip-1", "Medium"),
+                    ("chip-2", "Large"),
+                ],
+            )
+            .picker(
+                "button-sort",
+                "Sort",
+                self.floating == Some(Floating::Sort),
+                self.sort,
+                SORTS,
+            )
+            .section("Settings that are on or off")
+            .toggles([(
+                "toggle-sleep",
+                "Keep awake",
+                "",
+                Glyph::Light,
+                self.keep_awake,
+            )])
             .action_bar([("bar-one", "First"), ("bar-two", "Second")])
     }
 
@@ -890,6 +939,7 @@ impl Gallery {
             .quote(1, "A reply, set in from what it answers.")
             .quote(2, "A reply to the reply, one level further in.")
             .quote(9, "Past the cap the indent stops moving.")
+            .command("kobo frame push ~/Pictures --fit pad")
             .divider()
             .secondary("A divider above, and the page position below the tab bar.")
             .page_position(2, 3)
@@ -1611,6 +1661,10 @@ impl Gallery {
             Some(Floating::Sheet)
         } else if action == action_id("open-confirm") {
             Some(Floating::Confirm)
+        } else if action == action_id("button-sort") {
+            // The chip is the menu's handle both ways: a second tap on it puts
+            // the menu away, as a tap anywhere else already does.
+            (self.floating != Some(Floating::Sort)).then_some(Floating::Sort)
         } else if action == action_id("sheet-close")
             || action == action_id("menu-rename")
             || action == action_id("menu-delete")
@@ -1625,6 +1679,35 @@ impl Gallery {
             return false;
         };
         self.floating = floating;
+        self.show(context);
+        true
+    }
+
+    /// The filter chips and the segments, the stepper, the sort menu's
+    /// choices and the keep-awake switch, which each change a value the page
+    /// then draws.
+    ///
+    /// Returns whether it took the tap.
+    fn settings(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if let Some(index) = (0..3).find(|index| action == action_id(&format!("chip-{index}"))) {
+            // A chip and a segment both name their value outright.
+            self.chip = index;
+        } else if action == action_id("step-less") {
+            // The ends stop at the ends, which the stepper draws as
+            // unavailable rather than as a tap that quietly does nothing.
+            self.chip = self.chip.saturating_sub(1);
+        } else if action == action_id("step-more") {
+            self.chip = (self.chip + 1).min(2);
+        } else if action == action_id("toggle-sleep") {
+            self.keep_awake = !self.keep_awake;
+        } else if let Some(index) = SORTS.iter().position(|(name, _)| action == action_id(name)) {
+            // Choosing an order is the whole of what the menu is for, so the
+            // choice closes it as well as making it.
+            self.sort = index;
+            self.floating = None;
+        } else {
+            return false;
+        }
         self.show(context);
         true
     }
@@ -1826,21 +1909,16 @@ impl KoboApp for Gallery {
             }
         }
 
-        for index in 0..3 {
-            if action == action_id(&format!("chip-{index}")) {
-                self.chip = index;
-                self.show(context);
-                return;
-            }
-        }
-
         if let Some((_, caption)) = SPECIMENS.iter().find(|(id, _)| action == action_id(id)) {
             self.pressed = Some(caption);
             self.show(context);
             return;
         }
 
-        if self.overlays(context, action) || self.transfers(context, action) {
+        if self.settings(context, action)
+            || self.overlays(context, action)
+            || self.transfers(context, action)
+        {
             return;
         }
 
@@ -1979,6 +2057,16 @@ mod tests {
                     gallery.detail = true;
                     screens.push(("page-detail".to_owned(), painted(&gallery)));
                     gallery.detail = false;
+                    // The sort menu hangs off a chip partway down the page, so
+                    // it is measured on every panel the page was dealt onto
+                    // while it is open, not only on the first.
+                    gallery.floating = Some(super::Floating::Sort);
+                    for panel in 0..gallery.panels(metrics, index).len() {
+                        gallery.shown = panel;
+                        screens.push((format!("page-buttons-sort-{panel}"), painted(&gallery)));
+                    }
+                    gallery.shown = 0;
+                    gallery.floating = None;
                 }
                 if tab == Tab::Input && index == 1 {
                     gallery.floating = Some(super::Floating::Confirm);
@@ -2089,7 +2177,12 @@ mod tests {
                 let kind = format!("{:?}", issue.kind);
                 if !WARNINGS.iter().any(|(known, _)| kind.starts_with(known)) {
                     unaccounted.push(format!("{name}: {kind}"));
-                } else if kind.starts_with("MultiplePrimaryActions") && name != "page-buttons" {
+                } else if kind.starts_with("MultiplePrimaryActions")
+                    && name != "page-buttons"
+                    && !name.starts_with("page-buttons-")
+                {
+                    // The buttons page with its sort menu open is still the
+                    // buttons page, drawing the same two verbs.
                     unaccounted.push(format!("{name}: {kind} belongs to the buttons page"));
                 }
             }
@@ -2296,6 +2389,142 @@ mod tests {
         gallery.on_action(&mut context, kobo_sdk::ActionId::BACK);
         assert_eq!(gallery.floating, None, "the menu stayed up");
         assert!(painted(&gallery, CLARA_BW_METRICS).overlay.is_none());
+    }
+
+    /// The panel of the buttons page that holds the stepper, the segments,
+    /// the sort picker and the switch, wherever the panel in hand dealt it.
+    fn settings_panel(runner: &kobo_sdk::AppRunner<Gallery>, gallery: &mut Gallery) -> Screen {
+        for panel in 0..gallery.panels(CLARA_BW_METRICS, gallery.page()).len() {
+            gallery.shown = panel;
+            let mut context = runner.context();
+            gallery.show(&mut context);
+            let screen = context
+                .take_commands()
+                .into_iter()
+                .rev()
+                .find_map(|command| match command {
+                    Command::SetScreen(screen) => Some(screen),
+                    _ => None,
+                })
+                .expect("a screen was painted");
+            if keep_awake(&screen).is_some() {
+                return screen;
+            }
+        }
+        panic!("no panel of the buttons page holds the settings");
+    }
+
+    /// What the keep-awake row says at its trailing edge.
+    fn keep_awake(screen: &Screen) -> Option<String> {
+        screen.nodes.iter().find_map(|node| match node {
+            Node::Rows { rows, .. } => rows
+                .iter()
+                .find(|row| row.title == "Keep awake")
+                .and_then(|row| row.trailing.clone()),
+            _ => None,
+        })
+    }
+
+    /// The segments that are drawn filled, by the action each one sends.
+    fn filled_segments(screen: &Screen) -> Vec<kobo_sdk::ActionId> {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(false))
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                kobo_ui::LayoutKind::Chip(action, true) => Some(action),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn on_the_buttons_page() -> (Gallery, Context) {
+        let mut gallery = Gallery::default();
+        let mut context = Context::default();
+        gallery.on_start(&mut context);
+        gallery.on_action(&mut context, action_id("tab-input"));
+        gallery.on_action(&mut context, action_id("page-buttons"));
+        (gallery, context)
+    }
+
+    /// A segment is the value it names. This is a regression: the segments
+    /// sent actions nothing answered, so a tap on Large left Small filled.
+    #[test]
+    fn tapping_a_segment_fills_the_value_it_names() {
+        let runner = kobo_sdk::AppRunner::with_metrics(Gallery::default(), CLARA_BW_METRICS);
+        let (mut gallery, mut context) = on_the_buttons_page();
+        assert_eq!(
+            filled_segments(&settings_panel(&runner, &mut gallery)),
+            [action_id("chip-0")]
+        );
+        gallery.on_action(&mut context, action_id("chip-2"));
+        assert_eq!(gallery.chip, 2);
+        assert_eq!(
+            filled_segments(&settings_panel(&runner, &mut gallery)),
+            [action_id("chip-2")],
+            "the segment tapped is not the one filled"
+        );
+        gallery.on_action(&mut context, action_id("step-less"));
+        assert_eq!(gallery.chip, 1, "the stepper does not move the same value");
+    }
+
+    /// The picker opens from its chip, takes a choice, says it, and closes,
+    /// and a tap that misses the menu closes it without choosing.
+    #[test]
+    fn the_sort_picker_opens_takes_a_choice_and_closes() {
+        let runner = kobo_sdk::AppRunner::with_metrics(Gallery::default(), CLARA_BW_METRICS);
+        let (mut gallery, mut context) = on_the_buttons_page();
+        gallery.on_action(&mut context, action_id("button-sort"));
+        assert_eq!(gallery.floating, Some(super::Floating::Sort));
+        assert!(
+            settings_panel(&runner, &mut gallery).overlay.is_some(),
+            "the chip opened no menu"
+        );
+        gallery.on_action(&mut context, action_id("sort-title"));
+        assert_eq!(gallery.sort, 1);
+        assert_eq!(gallery.floating, None, "choosing left the menu open");
+        let shut = settings_panel(&runner, &mut gallery);
+        assert!(shut.overlay.is_none());
+        assert!(format!("{shut:?}").contains("Sort: Title"), "{shut:?}");
+
+        gallery.on_action(&mut context, action_id("button-sort"));
+        gallery.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        assert_eq!(gallery.floating, None, "a missed tap left the menu up");
+        assert_eq!(gallery.sort, 1, "dismissing the menu chose something");
+
+        gallery.on_action(&mut context, action_id("button-sort"));
+        gallery.on_action(&mut context, action_id("button-sort"));
+        assert_eq!(
+            gallery.floating, None,
+            "a second tap on the chip kept it open"
+        );
+    }
+
+    /// The keep-awake row is its own switch. This is a regression: it had no
+    /// handler, and what it said followed the filter chips instead.
+    #[test]
+    fn the_keep_awake_row_switches_itself_and_nothing_else_switches_it() {
+        let runner = kobo_sdk::AppRunner::with_metrics(Gallery::default(), CLARA_BW_METRICS);
+        let (mut gallery, mut context) = on_the_buttons_page();
+        assert_eq!(
+            keep_awake(&settings_panel(&runner, &mut gallery)).as_deref(),
+            Some("Off")
+        );
+        gallery.on_action(&mut context, action_id("toggle-sleep"));
+        assert_eq!(
+            keep_awake(&settings_panel(&runner, &mut gallery)).as_deref(),
+            Some("On")
+        );
+        gallery.on_action(&mut context, action_id("chip-0"));
+        assert!(
+            gallery.keep_awake,
+            "choosing a segment turned the switch off"
+        );
+        gallery.on_action(&mut context, action_id("toggle-sleep"));
+        assert_eq!(
+            keep_awake(&settings_panel(&runner, &mut gallery)).as_deref(),
+            Some("Off")
+        );
     }
 
     #[test]

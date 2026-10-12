@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Study with large reveal and answer controls designed for a Kobo screen. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/flashcards.png">
 <meta name="twitter:image:alt" content="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-bIAigtJilgAOJBJSBUrZfSZMCjABZbzVsJiLMV/y9Ck='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-4I03l2n44bhKYQw3OgwSLgMJ4/8aSVFCG/CB2KecJ9o='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.2.5",
+      "softwareVersion": "0.2.6",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Flashcards</h1>
       <p class="summary">Study with large reveal and answer controls designed for a Kobo screen.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.2.5</dd></div>
+        <div><dt>Version</dt><dd>0.2.6</dd></div>
         <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -119,8 +119,19 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.2.5</h2>
-    <p>First launch without a collection now offers a built-in sample deck or walks you through staging one from your computer. Review settings explain how grades are kept in the local review log.</p>
+    <h2>New in 0.2.6</h2>
+    <p>The first screen shows the import and staging commands set apart and complete, including the --kobo-root a USB stage needs, and starting with the sample deck is the main action.</p>
+  </section>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>Turn an Anki deck into a collection on this computer.
+        <code class="setup-command">kobo flashcards import deck.apkg --merge collection.cobfc</code></li>
+      <li>Plug the Kobo in over USB and stage the collection on it.
+        <code class="setup-command">kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader</code></li>
+      <li>Or start with the sample deck from the app, no computer needed.</li>
+    </ol>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

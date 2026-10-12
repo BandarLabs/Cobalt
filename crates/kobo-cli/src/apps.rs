@@ -217,7 +217,7 @@ mod tests {
         let apps = kobo_catalog::bundled().unwrap();
         let guide = card(apps.iter().find(|app| app.id == "lichess").unwrap());
         assert!(guide.contains("board:play"));
-        assert!(guide.contains("kobo secret set lichess --from <token-file> --device <address>"));
+        assert!(guide.contains("kobo secret set lichess --from token.txt"));
         assert!(guide.contains("Can keep the reader awake"));
         assert!(guide.contains("does not check installation"));
     }

@@ -361,7 +361,7 @@ impl Hn {
         // first and to the launcher second. Claimed only when a thread is
         // genuinely open, so the fallback back to the list does not cost the
         // reader a tap that redraws what they are already looking at.
-        let owns_back = self.view == View::Thread && self.open.is_some();
+        let owns_back = self.menu.is_some() || (self.view == View::Thread && self.open.is_some());
         context.set_screen(screen.with_own_back(owns_back));
     }
 
@@ -1543,6 +1543,12 @@ impl KoboApp for Hn {
             self.show(context);
             return;
         }
+        if action == ActionId::BACK && self.menu.take().is_some() {
+            // Dismissing an overlay is not a navigation step. Keep the list's
+            // position and notices, then release Back to the runtime again.
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK {
             // Only ever delivered on a screen that asked for it, so this is
             // always a thread returning to the list it was opened from.
@@ -1929,6 +1935,53 @@ mod tests {
             .task
             .map(|(task, _)| task)
             .expect("a request is in flight")
+    }
+
+    #[test]
+    fn dismissing_a_saved_row_menu_keeps_the_list_and_releases_runtime_back() {
+        let mut runner = loaded();
+        runner.app_mut().tab = Tab::Saved;
+        runner.app_mut().problem = Some("Saved articles remain available offline.".into());
+        let context = runner.context();
+        runner.app_mut().repaginate_saved(&context);
+        let screen_of = |commands: Vec<Command>| {
+            commands
+                .into_iter()
+                .rev()
+                .find_map(|command| {
+                    if let Command::SetScreen(screen) = command {
+                        Some(screen)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        for _ in 0..3 {
+            let opened = screen_of(runner.action(action_id("saved-menu-0")));
+            assert!(
+                opened.owns_back,
+                "an open popover must receive the runtime Back action"
+            );
+            let layout = opened.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+            assert_eq!(
+                layout.hit_test(1, CLARA_BW_METRICS.height / 2),
+                Some(ActionId::BACK)
+            );
+            let page = runner.app().page;
+            let dismissed = screen_of(runner.action(ActionId::BACK));
+            assert!(runner.app().menu.is_none());
+            assert_eq!(runner.app().view, View::List);
+            assert_eq!(runner.app().page, page);
+            assert_eq!(
+                runner.app().problem.as_deref(),
+                Some("Saved articles remain available offline.")
+            );
+            assert!(
+                !dismissed.owns_back,
+                "the plain saved list must let Back leave the app"
+            );
+        }
     }
 
     #[test]

@@ -59,3 +59,6 @@ pub use probe::{probe_device, ProbeError};
 pub use refresh::{Backend, Rect, RefreshIntent, RefreshPlan, UpdateMarker};
 pub use surface::{read_region, RegionPlacement, RegionSnapshot, SurfaceError, SurfaceGeometry};
 pub use touch::{InputEvent32, TouchDecoder, TouchEvent};
+
+#[cfg(feature = "device-write")]
+mod wifi_process;

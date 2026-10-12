@@ -3,10 +3,10 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "glyph": "rss",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Search saved looks across every subscription already on the reader. Idle article images are removed from the shelf once it passes 128 copies or 8 MB."
+  "release_notes": "Search and retry-saving controls leave the Feeds title visible at every text size, including failed subscription and refresh-history saves."
 }

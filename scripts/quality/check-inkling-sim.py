@@ -28,6 +28,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scale", default="default")
+    parser.add_argument("--profile", default="clara-bw-391")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -39,13 +40,13 @@ def main():
         env = dict(os.environ, TMPDIR=str(private), RUSTUP_TOOLCHAIN="1.85.1",
                    CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_DEBUG="0",
                    CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="1",
-                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391",
+                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE=args.profile,
                    KOBO_INKLING_DAY=PINNED_DAY)
         env.pop("KOBO_SIM_OFFLINE", None)
 
         process = None
         address = None
-        result = dict(provenance=provenance, scale=args.scale,
+        result = dict(provenance=provenance, scale=args.scale, profile=args.profile,
                       pinned_day=PINNED_DAY, checks=[])
         with (out / "simulator.log").open("w") as log:
             def stop():
@@ -108,7 +109,7 @@ def main():
 
                 # Statistics carry the win and its distribution slot.
                 drive("tap Stats", "wait-for Played 1. Won 1.",
-                      "wait-for Solved in 2 of 6: 1",
+                      "wait-for 2 guesses: 1",
                       "wait-for Today is September 1, 2026.")
                 capture("inkling-stats")
 
@@ -123,6 +124,20 @@ def main():
                 assert "[G] [R] [A] [V] [Y]" in text, text
                 assert "Played 1. Won 1." in text, text
                 assert "Solved in 2: 1" in text, text
+                received = private / "received"
+                subprocess.run([str(cli), "export", "--app", "inkling", "--sim",
+                                "--out", str(received)], cwd=ROOT, env=env,
+                               stdout=log, stderr=log, check=True, timeout=30)
+                copies = list(received.glob("*.txt"))
+                assert len(copies) == 1 and copies[0].read_text() == text
+                copies[0].write_text("An existing owner copy.\n")
+                second = subprocess.run([str(cli), "export", "--app", "inkling", "--sim",
+                                           "--out", str(received)], cwd=ROOT, env=env,
+                                          stdout=log, stderr=log, timeout=30)
+                assert second.returncode == 0
+                assert len(list(received.glob("*.txt"))) == 2
+                assert (received / "Inkling result (2).txt").read_text() == text
+                assert copies[0].read_text() == "An existing owner copy.\n"
                 drive("tap Play", "wait-for Inkling · Sep 1")
 
                 # Archive play solves a past day without touching statistics.
@@ -144,13 +159,13 @@ def main():
                 drive("wait-for Solved.")
                 capture("inkling-restored")
                 drive("tap Stats", "wait-for Played 1. Won 1.",
-                      "wait-for Solved in 2 of 6: 1")
+                      "wait-for 2 guesses: 1")
 
                 result["checks"].append(dict(
                     name="inkling journey",
                     detail="real date title, help, first-guess empty knowledge, "
                            "typing letter knowledge, uppercase shape-marked solve, "
-                           "statistics with distribution, export verified on disk, "
+                           "statistics with distribution, export received byte-for-byte by CLI, no overwrite, "
                            "archive solve with statistics untouched, daily game and "
                            "statistics proven across a restart",
                     status="passed"))

@@ -5,7 +5,7 @@ Every Cobalt interface component on one device, for checking by eye.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/text.png" alt="Headings, text, rules and facts"><br>Headings, text, rules and facts</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/controls.png" alt="The standard empty state"><br>The standard empty state</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/controls.png" alt="Buttons, from the one primary action down"><br>Buttons, from the one primary action down</td>
 </tr>
 </table>
 

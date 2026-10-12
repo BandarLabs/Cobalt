@@ -1554,6 +1554,7 @@ A script is one step per line; `#` is a comment.
 | `shot NAME` | writes `NAME.png` into the shots folder |
 | `dump` | prints every node and its text, for writing the next step |
 | `scenario NAME` | switches to a deterministic failure scenario |
+| `wifi FAULT` | makes the simulated radio fail: `absent`, `hung`, `unresponsive`, `wrong-password`, or `none` |
 | `lifecycle background` / `foreground` | delivers a real lifecycle message |
 | `wait MS` | waits |
 

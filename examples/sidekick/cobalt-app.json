@@ -3,10 +3,10 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo.",
-  "version": "1.0.10",
+  "version": "1.0.12",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "A question says which terminal on which computer is asking, two arriving at once are both on the board, and an answer that came too late is not reported as a decision."
+  "release_notes": "Pairing names kobo sidekick init, and Leave it for the terminal stays in the same place on every page of a long question."
 }

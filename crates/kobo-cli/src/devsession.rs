@@ -112,8 +112,18 @@ pub fn status_script() -> String {
          printf 'wake_lock: '\n\
          cat /sys/power/wake_lock 2>/dev/null || printf '<unreadable>'\n\
          printf '\\n'\n\
+         wifi_links=''\n\
+         for wireless in /sys/class/net/*/wireless; do\n\
+           [ -d \"$wireless\" ] && wifi_links=\"$wifi_links ${{wireless%/wireless}}\"\n\
+         done\n\
+         set -- $wifi_links\n\
          printf 'wifi_operstate: '\n\
-         cat /sys/class/net/wlan0/operstate 2>/dev/null || printf '<absent>'\n\
+         case $# in\n\
+           0) printf '<absent>' ;;\n\
+           1) wifi_state=$(cat \"$1/operstate\" 2>/dev/null) || wifi_state='<unreadable>'\n\
+              printf '%s %s' \"${{1##*/}}\" \"$wifi_state\" ;;\n\
+           *) printf '<ambiguous>' ;;\n\
+         esac\n\
          printf '\\n'\n\
          echo \"suspend_events: $(dmesg | grep -c 'PM: suspend entry' || true)\"\n\
          uptime_seconds=$(cut -d' ' -f1 /proc/uptime | cut -d. -f1)\n\
@@ -809,6 +819,16 @@ mod tests {
         assert!(!status.contains("cat \"$tmp\""));
         assert!(status.contains("/sys/power/wake_lock"));
         assert!(status.contains("operstate"));
+        // The radio is whichever interface the kernel marks wireless. A Libra
+        // H2O names it eth0, and a hardcoded wlan0 reported a working radio
+        // as absent there.
+        assert!(!status.contains("wlan0"));
+        assert!(status.contains("/sys/class/net/*/wireless"));
+        let parsed = std::process::Command::new("sh")
+            .args(["-n", "-c", &status])
+            .status()
+            .expect("sh runs");
+        assert!(parsed.success(), "the status script does not parse");
 
         let restore = restore_config_script();
         assert!(restore.contains("no backup to restore"));

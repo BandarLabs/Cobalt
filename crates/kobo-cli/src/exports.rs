@@ -44,8 +44,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             bounded_file(&root.join(key), maximum)
         }
     };
-    let offer = Offer::restore(&read_offer(OFFER_KEY, MAX_OFFER_BYTES, false)?)?;
-    let bytes = read_offer(&offer.digest, offer.bytes, true)?;
+    let (offer, bytes) = receive(app, read_offer)?;
     if !offer.matches(&bytes) {
         return Err("The received copy is incomplete or changed. Choose Export in the app and try again. Your existing files were kept.".into());
     }
@@ -55,6 +54,36 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         destination.display()
     );
     Ok(())
+}
+
+fn receive(
+    app: &str,
+    read: impl Fn(&str, usize, bool) -> Result<Vec<u8>, String>,
+) -> Result<(Offer, Vec<u8>), String> {
+    // Inkling predates shelf-backed offers and saves this fixed, small text
+    // result in its private state. Never derive a reader path from its content.
+    if app == "inkling" {
+        let bytes = read("export-result.txt", 4096, false)?;
+        if bytes.len() > 4096
+            || !std::str::from_utf8(&bytes)
+                .is_ok_and(|text| text.starts_with("Inkling, ") && text.ends_with('\n'))
+        {
+            return Err(
+                "The Inkling result is incomplete or invalid. Choose Export in the app again."
+                    .into(),
+            );
+        }
+        let offer = Offer {
+            title: "Inkling result".into(),
+            format: kobo_sdk::exports::Format::Text,
+            digest: kobo_net::sha256::hex_digest(&bytes),
+            bytes: bytes.len(),
+        };
+        return Ok((offer, bytes));
+    }
+    let offer = Offer::restore(&read(OFFER_KEY, MAX_OFFER_BYTES, false)?)?;
+    let bytes = read(&offer.digest, offer.bytes, true)?;
+    Ok((offer, bytes))
 }
 
 fn bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
@@ -225,6 +254,53 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
 mod tests {
     use super::*;
     use kobo_sdk::exports::Format;
+
+    #[test]
+    fn inkling_receives_the_apps_plain_state_export_without_an_offer() {
+        // Fixture matches Game::export_text for the pinned 2026-09-01 puzzle.
+        let bytes = "Inkling, September 1, 2026\nSolved in 2 of 6.\n[G] [R] [A] P× E×\n[G] [R] [A] [V] [Y]\n\nPlayed 1. Won 1.\nSolved in 2: 1\n";
+        let (offer, received) = receive("inkling", |key, maximum, data| {
+            assert_eq!(key, "export-result.txt");
+            assert_eq!(maximum, 4096);
+            assert!(!data, "Inkling exports to state, not its data shelf");
+            Ok(bytes.as_bytes().to_vec())
+        })
+        .unwrap();
+        assert_eq!(offer.title, "Inkling result");
+        assert_eq!(offer.format, Format::Text);
+        assert!(offer.matches(bytes.as_bytes()));
+        assert_eq!(received, bytes.as_bytes());
+    }
+
+    #[test]
+    fn inkling_refuses_missing_invalid_and_oversized_result_fixtures() {
+        assert!(receive("inkling", |_, _, _| Err("No export is ready".into())).is_err());
+        for bytes in [
+            Vec::new(),
+            b"not an Inkling result\n".to_vec(),
+            b"Inkling, September 1, 2026".to_vec(),
+            b"Inkling, \xff\n".to_vec(),
+            format!("Inkling, {}\n", "x".repeat(4096)).into_bytes(),
+        ] {
+            assert!(receive("inkling", |_, _, _| Ok(bytes.clone())).is_err());
+        }
+    }
+
+    #[test]
+    fn other_apps_still_require_a_verified_offer() {
+        assert!(receive("todo", |key, maximum, data| {
+            assert_eq!(key, OFFER_KEY);
+            assert_eq!(maximum, MAX_OFFER_BYTES);
+            assert!(!data);
+            Ok(b"Inkling, September 1, 2026\n".to_vec())
+        })
+        .is_err());
+        let script = remote_script("inkling", "export-result.txt", 4096, false);
+        assert!(script.contains("/state/inkling/export-result.txt"));
+        assert!(script.contains("test ! -L"));
+        assert!(script.contains("head -c 4097"));
+        assert!(!script.contains("/data/inkling"));
+    }
 
     #[test]
     fn receive_keeps_existing_files_and_reuses_a_complete_identical_copy() {

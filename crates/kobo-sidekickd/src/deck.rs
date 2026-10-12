@@ -422,18 +422,27 @@ fn run_command(command: &str, home: &Path, limit: Duration, grace: Duration) -> 
     let stdout = child.inner().stdout.take().map(read_in_thread);
     let stderr = child.inner().stderr.take().map(read_in_thread);
     let deadline = Instant::now() + limit;
+    let mut status = None;
     let (status, timed_out) = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break (Some(status), false),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
+        if status.is_none() {
+            if let Ok(value) = child.try_wait() {
+                status = value;
+            } else {
                 terminate(&mut child, grace);
-                break (child.wait().ok(), true);
+                break (None, false);
             }
-            Err(_) => break (None, false),
         }
+        if status.is_some()
+            && readers_finished(stdout.as_ref(), stderr.as_ref())
+            && !group_running(child.id())
+        {
+            break (status, false);
+        }
+        if Instant::now() >= deadline {
+            terminate(&mut child, grace);
+            break (status.or_else(|| child.wait().ok()), true);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     };
     let mut output = Vec::new();
     if let Some(reader) = stdout {
@@ -494,15 +503,66 @@ fn append_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
     tail.extend_from_slice(bytes);
 }
 
-fn terminate(child: &mut GroupChild, grace: Duration) {
-    let _ = child.signal(Signal::SIGTERM);
-    let deadline = Instant::now() + grace;
-    while Instant::now() < deadline {
-        if child.try_wait().ok().flatten().is_some() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(25));
+fn readers_finished(
+    stdout: Option<&std::thread::JoinHandle<Vec<u8>>>,
+    stderr: Option<&std::thread::JoinHandle<Vec<u8>>>,
+) -> bool {
+    stdout.is_none_or(std::thread::JoinHandle::is_finished)
+        && stderr.is_none_or(std::thread::JoinHandle::is_finished)
+}
+
+// The shell can exit and close both pipes while redirected descendants keep
+// running. Probe their group independently instead of using EOF as ownership.
+fn group_running(id: u32) -> bool {
+    let Ok(id) = i32::try_from(id) else {
+        return true;
+    };
+    if nix::sys::signal::killpg(nix::unistd::Pid::from_raw(id), None)
+        == Err(nix::errno::Errno::ESRCH)
+    {
+        return false;
     }
+    #[cfg(target_os = "linux")]
+    {
+        // A zombie still answers kill(group, 0), but cannot perform work or
+        // receive signals. Container PID 1 may never reap orphan zombies.
+        // Fall back conservatively to the group probe if /proc is unavailable.
+        let Ok(entries) = fs::read_dir("/proc") else {
+            return true;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else { return true };
+            if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
+                continue;
+            }
+            let stat = match fs::read_to_string(entry.path().join("stat")) {
+                Ok(stat) => stat,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(_) => return true,
+            };
+            // comm may contain spaces and parentheses; fields after its final
+            // ')' start with state, ppid, pgrp.
+            let Some((_, fields)) = stat.rsplit_once(')') else {
+                return true;
+            };
+            let mut fields = fields.split_whitespace();
+            let state = fields.next();
+            let group = fields.nth(1).and_then(|field| field.parse::<i32>().ok());
+            if group == Some(id) && !matches!(state, Some("Z" | "X")) {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
+fn terminate(child: &mut GroupChild, grace: Duration) {
+    // A reaped leader does not mean its descendants have exited. Give the
+    // entire group its grace period, then kill it even if try_wait saw an exit.
+    let _ = child.signal(Signal::SIGTERM);
+    std::thread::sleep(grace);
     let _ = child.kill();
 }
 
@@ -550,12 +610,110 @@ fn finished(status: &'static str, exit: i32, tail: String) -> ResultRecord {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn redirected_descendants_remain_subject_to_the_deadline() {
+        let directory = directory();
+        let started = Instant::now();
+        let result = run_command(
+            "(trap '' TERM; sleep 0.8; touch escaped) >/dev/null 2>&1 &",
+            &directory,
+            Duration::from_millis(100),
+            Duration::from_millis(30),
+        );
+        // Wait beyond the descendant's bounded natural lifetime so this also
+        // detects an incorrectly reported timeout that leaves it running.
+        std::thread::sleep(Duration::from_millis(900));
+        let escaped = directory.join("escaped").exists();
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(result.status, "failed");
+        assert!(result.tail.contains("Killed after"));
+        assert!(!escaped, "redirected descendant survived the deadline");
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn short_lived_redirected_descendants_finish_before_reporting_success() {
+        let directory = directory();
+        let result = run_command(
+            "(sleep 0.15; touch completed) >/dev/null 2>&1 &",
+            &directory,
+            Duration::from_secs(2),
+            Duration::from_millis(20),
+        );
+        let completed = directory.join("completed").exists();
+        // Leave the fixture available until an escaped pre-fix child exits.
+        std::thread::sleep(Duration::from_millis(200));
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.exit, 0);
+        assert!(
+            completed,
+            "reported success while descendant was still running"
+        );
+    }
+
+    #[test]
+    fn descendants_ignoring_term_are_killed_after_grace() {
+        let directory = directory();
+        let started = Instant::now();
+        let result = run_command(
+            "(trap '' TERM; sleep 2) &",
+            &directory,
+            Duration::from_millis(100),
+            Duration::from_millis(30),
+        );
+        assert_eq!(result.status, "failed");
+        assert!(result.tail.contains("Killed after"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn command_results_preserve_status_and_bound_noisy_output() {
+        let directory = directory();
+        for (command, expected, code) in [
+            ("printf ok", "ok", 0),
+            ("printf failed >&2; exit 7", "failed", 7),
+            ("yes x | head -c 100000", "ok", 0),
+        ] {
+            let result = run_command(
+                command,
+                &directory,
+                Duration::from_secs(2),
+                Duration::from_millis(20),
+            );
+            assert_eq!(result.status, expected);
+            assert_eq!(result.exit, code);
+            assert!(result.tail.len() <= super::MAX_OUTPUT);
+        }
+        fs::remove_dir_all(&directory).unwrap();
+        let result = run_command("true", &directory, Duration::from_secs(1), Duration::ZERO);
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.exit, -1);
+        assert_eq!(result.tail, "Could not start the command.");
+    }
+    #[test]
+    fn inherited_pipes_remain_subject_to_the_deadline() {
+        let directory = directory();
+        let started = Instant::now();
+        let result = run_command(
+            "sleep 0.6 &",
+            &directory,
+            Duration::from_millis(50),
+            Duration::from_millis(20),
+        );
+        assert_eq!(result.status, "failed");
+        assert!(started.elapsed() < Duration::from_millis(500));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     use std::fmt::Write as _;
 
-    use super::{clean_output, parse_config, stable_id, Deck, PressOutcome};
+    use super::{clean_output, parse_config, run_command, stable_id, Deck, PressOutcome};
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn directory() -> PathBuf {
         let path = std::env::temp_dir().join(format!(

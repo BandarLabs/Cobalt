@@ -66,6 +66,7 @@ struct App {
     /// The key this reader started, until its finish is acknowledged.
     watching: Option<String>,
     result: Option<(String, RunResult)>,
+    result_page: usize,
     /// Whether the computer answered the last thing it was asked.
     ///
     /// A deck whose computer has gone away looks exactly like a deck whose
@@ -93,6 +94,7 @@ impl Default for App {
             confirming: None,
             watching: None,
             result: None,
+            result_page: 0,
             reachable: true,
             last: None,
         }
@@ -100,9 +102,9 @@ impl Default for App {
 }
 impl App {
     fn show(&self, cx: &mut Context) {
-        cx.set_screen(self.screen());
+        cx.set_screen(self.screen(cx));
     }
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Opening => ScreenBuilder::new("deck-opening")
                 .top_bar("Deck")
@@ -119,7 +121,10 @@ impl App {
             View::Address => ScreenBuilder::new("deck-address")
                 .top_bar("Deck")
                 .heading("Pair with your computer")
-                .text("Start Sidekick on your computer. It shows an address and a code.")
+                .text("On your computer, run these. The first prints an address and a code.")
+                .command("kobo sidekick init")
+                .command("kobo trust set sidekick")
+                .command("kobo sidekick run")
                 .primary_button("enter-address", "Enter the address")
                 .build(),
             View::Code if self.entry.is_open() => ScreenBuilder::new("deck-code")
@@ -132,7 +137,7 @@ impl App {
                 .primary_button("enter-code", "Enter the code")
                 .build(),
             View::Grid => self.grid(),
-            View::Result => self.result_screen(),
+            View::Result => self.result_screen(context),
         }
     }
     fn grid(&self) -> Screen {
@@ -203,13 +208,12 @@ impl App {
         }
     }
 
-    fn result_screen(&self) -> Screen {
+    fn result_prefix(&self) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("deck-result")
+            .top_bar("Deck")
+            .owns_back(true);
         let Some((label, result)) = &self.result else {
-            return ScreenBuilder::new("deck-result")
-                .top_bar("Deck")
-                .heading("No result")
-                .button("back", "Back to controls")
-                .build();
+            return screen.heading("No result");
         };
         let status = match (result.status.as_str(), result.exit) {
             ("running", _) => "Still running".to_owned(),
@@ -218,17 +222,59 @@ impl App {
             ("ok", None) => "Finished".to_owned(),
             _ => "Failed".to_owned(),
         };
-        ScreenBuilder::new("deck-result")
-            .top_bar("Deck")
-            .heading(label)
-            .secondary(status)
-            .text(if result.tail.is_empty() {
-                "This command produced no output."
-            } else {
-                result.tail.as_str()
-            })
-            .button("back", "Back to controls")
-            .build()
+        screen.heading(label).secondary(status)
+    }
+
+    fn result_pages(&self, context: &Context) -> Vec<Vec<String>> {
+        let Some((_, result)) = &self.result else {
+            return Vec::new();
+        };
+        let text = if result.tail.is_empty() {
+            "This command produced no output."
+        } else {
+            &result.tail
+        };
+        let paragraphs: Vec<_> = text
+            .split('\n')
+            .map(|paragraph| (0, 0, kobo_sdk::QuoteRole::Body, paragraph))
+            .collect();
+        context
+            .paginate_tagged_under(&paragraphs, false, &self.result_prefix().build())
+            .into_iter()
+            .map(|page| page.into_iter().map(|(_, _, _, text)| text).collect())
+            .collect()
+    }
+
+    fn result_screen(&self, context: &Context) -> Screen {
+        let pages = self.result_pages(context);
+        let page = self.result_page.min(pages.len().saturating_sub(1));
+        // The heading and exit status occupy the first page; continuation
+        // pages keep the command name in chrome, matching the SDK paginator.
+        let mut screen = if page == 0 {
+            self.result_prefix()
+        } else {
+            ScreenBuilder::new("deck-result")
+                .top_bar(
+                    self.result
+                        .as_ref()
+                        .map_or("Deck", |(label, _)| label.as_str()),
+                )
+                .owns_back(true)
+        };
+        if let Some(paragraphs) = pages.get(page) {
+            for paragraph in paragraphs {
+                screen = screen.text(paragraph);
+            }
+        }
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("result-previous", "result-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
     }
     /// Leaves the computer alone for a moment, then looks again.
     fn wait(&mut self, cx: &mut Context) {
@@ -431,6 +477,7 @@ impl KoboApp for App {
                                 .map_or_else(|| "Command".to_owned(), |key| key.label.clone());
                             self.last = Some(summarise(&label, &result));
                             self.result = Some((label, result));
+                            self.result_page = 0;
                             self.view = View::Result;
                         } else {
                             self.notice = Some("That result is no longer available.".into());
@@ -513,9 +560,23 @@ impl KoboApp for App {
             self.show(cx);
             return;
         }
-        if a == action_id("back") {
+        if self.view == View::Result
+            && (a == action_id("result-previous") || a == action_id("result-next"))
+        {
+            let last = self.result_pages(cx).len().saturating_sub(1);
+            let current = self.result_page.min(last);
+            self.result_page = if a == action_id("result-next") {
+                current.saturating_add(1).min(last)
+            } else {
+                current.saturating_sub(1)
+            };
+            self.show(cx);
+            return;
+        }
+        if a == action_id("back") || (a == ActionId::BACK && self.view == View::Result) {
             self.view = View::Grid;
             self.result = None;
+            self.result_page = 0;
             self.poll(cx);
             self.show(cx);
             return;
@@ -746,7 +807,7 @@ mod tests {
         );
         assert_eq!(runner.app().view, View::Result);
         assert_eq!(runner.app().last.as_deref(), Some("Test finished."));
-        let drawn = format!("{:?}", runner.app().screen());
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
         assert!(drawn.contains("14 tests passed"), "{drawn}");
     }
 
@@ -777,7 +838,7 @@ mod tests {
             view: View::Grid,
             ..App::default()
         };
-        let drawn = format!("{:?}", app.screen());
+        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
         assert!(
             drawn.contains("Test") && drawn.contains("Deploy"),
             "{drawn}"
@@ -787,3 +848,6 @@ mod tests {
         assert_eq!(drawn.matches("label: \"\"").count(), 0, "{drawn}");
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

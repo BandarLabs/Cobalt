@@ -30,9 +30,8 @@ use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, QuoteRole, RowLead, Screen,
-    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId,
-    TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
+    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -323,6 +322,35 @@ struct Kept {
     progress: Option<u8>,
 }
 
+#[derive(Clone, Debug)]
+enum AbstractBlock {
+    Title(String),
+    Fact(String),
+    Body(String),
+}
+
+impl AbstractBlock {
+    fn text(&self) -> &str {
+        match self {
+            Self::Title(text) | Self::Fact(text) | Self::Body(text) => text,
+        }
+    }
+    fn with_text(&self, text: String) -> Self {
+        match self {
+            Self::Title(_) => Self::Title(text),
+            Self::Fact(_) => Self::Fact(text),
+            Self::Body(_) => Self::Body(text),
+        }
+    }
+    fn add(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match self {
+            Self::Title(text) => screen.heading(text.clone()),
+            Self::Fact(text) => screen.secondary(text.clone()),
+            Self::Body(text) => screen.text(text.clone()),
+        }
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 struct Arxiv {
@@ -341,11 +369,9 @@ struct Arxiv {
     listing_page: usize,
     /// Which paper is open, as an index into `papers`.
     open: Option<usize>,
-    /// The abstract, already broken into panel pages.
-    ///
-    /// A summary and its metadata, which is a card rather than a document. The
-    /// paper itself is read through `book`.
-    pages: Vec<Vec<String>>,
+    /// The title, metadata and abstract, broken into complete panel pages.
+    /// The paper itself is read through `book`.
+    pages: Vec<Vec<AbstractBlock>>,
     page: usize,
     /// The paper's full text, open in the reader every other application on
     /// this device reads through.
@@ -642,33 +668,143 @@ impl Arxiv {
         }
     }
 
-    /// Lays the open paper's abstract out as pages, with the paper's title
-    /// and facts measured off the top of the first page and the prose given
-    /// the whole of every page after.
+    /// Opens the abstract with its title and facts kept in their own type levels.
     fn open_abstract(&mut self, context: &Context) {
-        let Some(paper) = self.paper() else {
-            return;
-        };
-        let header = paper_header(paper);
-        let paragraphs: Vec<(u32, u8, QuoteRole, &str)> = paper
-            .summary
-            .split("\n\n")
-            .map(|paragraph| (0, 0, QuoteRole::Body, paragraph))
-            .collect();
-        // `true` because the paper screen's bottom band is a bottom action
-        // (Full text): the layout engine bounds content by it exactly as it
-        // does a navigation bar, so the pages are measured against that
-        // shorter area. Measured without it, a full first page overflows
-        // into the band and the renderer refuses the screen -- which only a
-        // real abstract, long enough to fill the page, ever showed.
-        self.pages = context
-            .paginate_tagged_under(&paragraphs, true, &header)
-            .into_iter()
-            .map(|page| page.into_iter().map(|(_, _, _, text)| text).collect())
-            .collect();
         self.page = 0;
         self.truncated = false;
         self.formulae_as_text = false;
+        self.reflow_abstract(context);
+    }
+
+    fn reflow_abstract(&mut self, context: &Context) {
+        let Some(paper) = self.paper() else { return };
+        let blocks = std::iter::once(AbstractBlock::Title(paper.title.clone()))
+            .chain(fact_lines(paper).into_iter().map(AbstractBlock::Fact))
+            .chain(
+                paper
+                    .summary
+                    .split("\n\n")
+                    .filter(|text| !text.trim().is_empty())
+                    .map(|text| AbstractBlock::Body(text.to_owned())),
+            )
+            .collect::<Vec<_>>();
+        let mut queue = std::collections::VecDeque::from(blocks);
+        let mut pages = Vec::new();
+        let mut current = Vec::new();
+        while let Some(block) = queue.pop_front() {
+            let mut candidate = current.clone();
+            candidate.push(block.clone());
+            if self.abstract_fits(context, &candidate) {
+                current = candidate;
+                continue;
+            }
+            // Keep facts whole when possible. Long paragraphs use the space
+            // left on this page; a title or fact that fills a page can split too.
+            if current.is_empty() || matches!(block, AbstractBlock::Body(_)) {
+                if let Some((head, tail)) = self.split_abstract_block(context, &current, &block) {
+                    current.push(head);
+                    pages.push(std::mem::take(&mut current));
+                    queue.push_front(tail);
+                    continue;
+                }
+            }
+            if current.is_empty() {
+                current.push(block);
+            } else {
+                pages.push(std::mem::take(&mut current));
+                queue.push_front(block);
+            }
+        }
+        if !current.is_empty() {
+            pages.push(current);
+        }
+        self.pages = pages;
+        self.page = self.page.min(self.pages.len().saturating_sub(1));
+    }
+
+    fn abstract_fits(&self, context: &Context, blocks: &[AbstractBlock]) -> bool {
+        let mut screen = self.abstract_prefix();
+        for block in blocks {
+            screen = block.add(screen);
+        }
+        screen
+            .bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book)
+            .page_turns(READ_BACK, READ_NEXT)
+            .page_position(1, 2)
+            .build()
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .issues
+            .iter()
+            .all(|issue| issue.severity != kobo_sdk::DiagnosticSeverity::Error)
+    }
+
+    fn split_abstract_block(
+        &self,
+        context: &Context,
+        current: &[AbstractBlock],
+        block: &AbstractBlock,
+    ) -> Option<(AbstractBlock, AbstractBlock)> {
+        let text = block.text();
+        let words = text
+            .char_indices()
+            .filter_map(|(index, ch)| (index > 0 && ch.is_whitespace()).then_some(index))
+            .collect::<Vec<_>>();
+        let mut split = self.fitting_abstract_prefix(context, current, block, &words);
+        if split == 0 {
+            let characters = text
+                .char_indices()
+                .skip(1)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            split = self.fitting_abstract_prefix(context, current, block, &characters);
+        }
+        if split == 0 {
+            return None;
+        }
+        Some((
+            block.with_text(text[..split].trim_end().to_owned()),
+            block.with_text(text[split..].trim_start().to_owned()),
+        ))
+    }
+
+    fn fitting_abstract_prefix(
+        &self,
+        context: &Context,
+        current: &[AbstractBlock],
+        block: &AbstractBlock,
+        boundaries: &[usize],
+    ) -> usize {
+        let (mut low, mut high) = (0, boundaries.len());
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            let mut candidate = current.to_vec();
+            candidate.push(
+                block.with_text(block.text()[..boundaries[middle - 1]].trim_end().to_owned()),
+            );
+            if self.abstract_fits(context, &candidate) {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        low.checked_sub(1).map_or(0, |index| boundaries[index])
+    }
+
+    fn abstract_prefix(&self) -> ScreenBuilder {
+        let mut screen = ScreenBuilder::new("arxiv-paper")
+            .top_bar(self.paper().map_or("", |paper| paper.id.as_str()));
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        if self.truncated {
+            screen = screen.banner(
+                BannerLevel::Attention,
+                "This paper is too long to open completely, so only the beginning is shown.",
+            );
+        } else if self.formulae_as_text {
+            screen=screen.banner(BannerLevel::Info,"Some formulas in the full text are shown as text. This paper has more mathematics than the reader can draw.");
+        }
+        screen
     }
 
     fn subjects(&self, context: &Context) -> Screen {
@@ -700,7 +836,12 @@ impl Arxiv {
                 (name, code)
             })
             .collect();
-        let pages = context.paginate_rows(&rows, true);
+        let pages = context.paginate_rows_under(
+            &rows,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.subject_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen
@@ -776,7 +917,12 @@ impl Arxiv {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
-        let pages = context.paginate_rows(&borrowed, true);
+        let pages = context.paginate_rows_under(
+            &borrowed,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|index| {
@@ -840,7 +986,12 @@ impl Arxiv {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
-        let pages = context.paginate_rows(&borrowed, true);
+        let pages = context.paginate_rows_under(
+            &borrowed,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.saved_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         let searches = self.saved.len();
@@ -912,7 +1063,13 @@ impl Arxiv {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
-        let pages = context.paginate_rows(&borrowed, true);
+        let pages = context.paginate_ranked_rows_under(
+            &borrowed,
+            true,
+            u16::try_from(self.offset + self.papers.len()).unwrap_or(u16::MAX),
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
         let page = self.listing_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|index| {
@@ -963,38 +1120,21 @@ impl Arxiv {
     }
 
     fn reading(&self) -> Screen {
-        let Some(paper) = self.paper() else {
+        if self.paper().is_none() {
             return ScreenBuilder::new("arxiv-paper")
                 .top_bar("Preprints")
                 .build();
-        };
-        let mut screen = ScreenBuilder::new("arxiv-paper").top_bar(paper.id.clone());
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
+        let mut screen = self.abstract_prefix();
         if self.waiting_for(Awaiting::FullText) {
             return screen.activity("Fetching the full text", None).build();
         }
         if self.loading.is_some() {
             return screen.activity("Opening the kept paper", None).build();
         }
-        if self.truncated {
-            screen = screen.banner(
-                BannerLevel::Attention,
-                "This paper is too long to open completely, so only the beginning is shown.",
-            );
-        } else if self.formulae_as_text {
-            screen = screen.banner(
-                BannerLevel::Info,
-                "Some formulas in the full text are shown as text. This paper has more mathematics than the reader can draw.",
-            );
-        }
         let page = self.page.min(self.pages.len().saturating_sub(1));
-        if page == 0 {
-            screen = with_paper_header(screen, paper);
-        }
-        for line in self.pages.get(page).map(Vec::as_slice).unwrap_or_default() {
-            screen = screen.text(line.clone());
+        for block in self.pages.get(page).into_iter().flatten() {
+            screen = block.add(screen);
         }
         // Keeping is offered from the paper rather than from the reader,
         // because the reader's bar belongs to reading and every application
@@ -1034,6 +1174,12 @@ impl Arxiv {
     }
 
     fn show(&mut self, context: &mut Context) {
+        if self.view == View::Paper
+            && !self.waiting_for(Awaiting::FullText)
+            && self.loading.is_none()
+        {
+            self.reflow_abstract(context);
+        }
         let screen = match self.view {
             View::Subjects => self.subjects(context),
             View::Search => self.search(),
@@ -1051,21 +1197,31 @@ impl Arxiv {
 
     /// Turns a page of whatever list the view is showing.
     fn turn(&mut self, context: &mut Context, forward: bool) {
+        let screen = match self.view {
+            View::Subjects => self.subjects(context),
+            View::Listing => self.listing(context),
+            View::Library => self.library(context),
+            View::Saved => self.saved(context),
+            View::Paper => self.reading(),
+            View::FullText | View::Search => return,
+        };
+        let last = screen
+            .page_turns
+            .and_then(|turns| turns.position)
+            .map_or(0, |(_, total)| usize::from(total).saturating_sub(1));
         let page = match self.view {
             View::Subjects => &mut self.subject_page,
             View::Listing => &mut self.listing_page,
             View::Library => &mut self.library_page,
             View::Saved => &mut self.saved_page,
             View::Paper => &mut self.page,
-            // The reader turns its own pages, and the taps that ask it to are
-            // its own actions rather than this application's.
             View::FullText | View::Search => return,
         };
-        if forward {
-            *page += 1;
+        *page = if forward {
+            (*page).min(last).saturating_add(1).min(last)
         } else {
-            *page = page.saturating_sub(1);
-        }
+            (*page).min(last).saturating_sub(1)
+        };
         self.show(context);
     }
 
@@ -1424,22 +1580,6 @@ fn fact_lines(paper: &Paper) -> Vec<String> {
         lines.push(paper.comment.clone());
     }
     lines
-}
-
-/// The head of a paper's first page: its title set as a heading and each fact
-/// about it on a muted line of its own, apart from the abstract that follows.
-fn with_paper_header(screen: ScreenBuilder, paper: &Paper) -> ScreenBuilder {
-    let mut screen = screen.heading(paper.title.clone());
-    for line in fact_lines(paper) {
-        screen = screen.secondary(line);
-    }
-    screen
-}
-
-/// The header on its own, so the abstract can be paginated in the space it
-/// leaves on the first page.
-fn paper_header(paper: &Paper) -> Screen {
-    with_paper_header(ScreenBuilder::new("arxiv-paper-head"), paper).build()
 }
 
 /// The identifier as it goes in a path.
@@ -1984,6 +2124,208 @@ mod tests {
 
     /// The runtime refuses a malformed URL rather than repairing it, so a
     /// search with a space in it would otherwise never leave the device.
+    fn text_size_metrics() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        let mut smallest = kobo_sdk::CLARA_BW_METRICS;
+        while let Some(scale) = smallest.text_scale.smaller() {
+            smallest.text_scale = scale;
+        }
+        std::iter::successors(Some(smallest), |metrics| {
+            Some(kobo_sdk::DisplayMetrics {
+                text_scale: metrics.text_scale.larger()?,
+                ..*metrics
+            })
+        })
+    }
+
+    #[test]
+    fn notices_leave_every_subject_paper_and_saved_item_reachable() {
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
+            let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+            let mut app = Arxiv {
+                trouble: Some(
+                    "The archive could not be reached. Saved items remain available.".into(),
+                ),
+                ..Arxiv::default()
+            };
+            app.papers = (0..12)
+                .map(|index| Paper {
+                    title: format!("Paper {index}: Measurements beside the river"),
+                    ..paper()
+                })
+                .collect();
+            app.total = 12;
+            app.library = (0..12)
+                .map(|index| Kept {
+                    id: format!("2609.{index:05}"),
+                    title: format!("Paper {index}: Measurements beside the river"),
+                    authors: "Ada Lovelace".into(),
+                    bytes: 4096,
+                    ..Kept::default()
+                })
+                .collect();
+            app.saved = (0..12)
+                .map(|index| format!("river measurements {index}"))
+                .collect();
+            for (view, prefix, count) in [
+                (View::Subjects, super::SUBJECT, SUBJECTS.len()),
+                (View::Listing, super::PAPER, 12),
+                (View::Library, super::KEPT, 12),
+                (View::Saved, SSEARCH, 12),
+            ] {
+                app.view = view;
+                app.subject_page = 0;
+                app.listing_page = 0;
+                app.library_page = 0;
+                app.saved_page = 0;
+                let screen = |app: &Arxiv| match view {
+                    View::Subjects => app.subjects(&context),
+                    View::Listing => app.listing(&context),
+                    View::Library => app.library(&context),
+                    View::Saved => app.saved(&context),
+                    _ => unreachable!(),
+                };
+                let pages = screen(&app)
+                    .page_turns
+                    .and_then(|turns| turns.position)
+                    .unwrap()
+                    .1;
+                let mut seen = vec![0; count];
+                for page in 0..usize::from(pages) {
+                    app.subject_page = page;
+                    app.listing_page = page;
+                    app.library_page = page;
+                    app.saved_page = page;
+                    let diagnostics =
+                        screen(&app).diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.iter().all(|issue| {
+                            // “Machine Learning (Statistics)” is a taxonomy
+                            // qualifier, not an application-state suffix.
+                            view == View::Subjects
+                                && issue.kind == kobo_sdk::LayoutIssueKind::StateInLabel
+                        }),
+                        "{text_scale:?}, {view:?}, page {page}: {:?}",
+                        diagnostics.issues
+                    );
+                    for (index, times) in seen.iter_mut().enumerate() {
+                        let action = action_id(&format!("{prefix}{index}"));
+                        if let Some(rect) = diagnostics.layout.rect_of_action(action) {
+                            assert_eq!(
+                                diagnostics
+                                    .layout
+                                    .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                                Some(action)
+                            );
+                            *times += 1;
+                        }
+                    }
+                }
+                assert_eq!(seen, vec![1; count]);
+            }
+        }
+    }
+
+    #[test]
+    fn abstract_pages_keep_all_title_facts_and_prose_under_a_recovery_notice() {
+        for metrics in text_size_metrics() {
+            let text_scale = metrics.text_scale;
+            let mut context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+            let title = "A study of language models and river measurements across several seasons "
+                .repeat(4);
+            let summary="The researchers measured the river and compared their observations with the surrounding fields. ".repeat(12);
+            let paper = Paper {
+                title: title.trim().to_owned(),
+                summary: summary.clone(),
+                ..paper()
+            };
+            let facts = fact_lines(&paper).join(" ");
+            let mut app = Arxiv {
+                view: View::Paper,
+                open: Some(0),
+                papers: vec![paper],
+                trouble: Some("This paper could not be saved. Try keeping it again.".into()),
+                ..Arxiv::default()
+            };
+            app.open_abstract(&context);
+            let all = app.pages.iter().flatten().collect::<Vec<_>>();
+            for (kind, expected) in [
+                (0, title.as_str()),
+                (1, facts.as_str()),
+                (2, summary.as_str()),
+            ] {
+                let text = all
+                    .iter()
+                    .filter_map(|block| match (kind, block) {
+                        (0, super::AbstractBlock::Title(t))
+                        | (1, super::AbstractBlock::Fact(t))
+                        | (2, super::AbstractBlock::Body(t)) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                assert_eq!(
+                    text.split_whitespace().collect::<Vec<_>>(),
+                    expected.split_whitespace().collect::<Vec<_>>()
+                );
+            }
+            for page in 0..app.pages.len() {
+                app.page = page;
+                let diagnostics = app
+                    .reading()
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?}, page {page}: {:?}",
+                    diagnostics.issues
+                );
+            }
+            let last = app.pages.len() - 1;
+            app.turn(&mut context, true);
+            app.turn(&mut context, true);
+            assert_eq!(app.page, last);
+            app.turn(&mut context, false);
+            assert_eq!(app.page, last.saturating_sub(1));
+        }
+    }
+
+    #[test]
+    fn unusually_long_unbroken_titles_split_at_utf8_boundaries() {
+        let metrics = text_size_metrics().last().unwrap();
+        let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+        let title = "étude".repeat(120);
+        let mut app = Arxiv {
+            open: Some(0),
+            papers: vec![Paper {
+                title: title.clone(),
+                ..paper()
+            }],
+            ..Arxiv::default()
+        };
+        app.open_abstract(&context);
+        let reconstructed = app
+            .pages
+            .iter()
+            .flatten()
+            .filter_map(|block| {
+                if let super::AbstractBlock::Title(text) = block {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<String>();
+        assert_eq!(reconstructed, title);
+        for page in 0..app.pages.len() {
+            app.page = page;
+            assert!(app
+                .reading()
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .issues
+                .is_empty());
+        }
+    }
+
     #[test]
     fn a_phrase_with_spaces_in_it_survives_the_journey_into_a_url() {
         assert_eq!(escape("deep learning"), "deep%20learning");
@@ -2133,7 +2475,19 @@ mod tests {
         let app = runner.app();
         // The paginated prose carries the abstract and nothing else: the
         // title and every fact live in the header above it.
-        let body = app.pages.concat().join("\n");
+        let body = app
+            .pages
+            .iter()
+            .flatten()
+            .filter_map(|block| {
+                if let super::AbstractBlock::Body(text) = block {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(body.contains("We revisit the transformer."), "{body}");
         assert!(!body.contains("Attention Is All You Need Again"), "{body}");
         assert!(!body.contains("Submitted 2024-01-01"), "{body}");

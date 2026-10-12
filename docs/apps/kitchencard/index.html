@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/kitchencard.png">
 <meta name="twitter:image:alt" content="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-eGlCaeV3AA1Xt8HrIS1kYCXjDjm68uE3UwGfZj6nyJ0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-9Nb2PbPintQyG84yiA9/kAZu6sTZ7PYIKkcok+SUWiM='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.5",
+      "softwareVersion": "0.1.7",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Kitchen Card</h1>
       <p class="summary">A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.5</dd></div>
+        <div><dt>Version</dt><dd>0.1.7</dd></div>
         <div><dt>Permissions</dt><dd>network, keep-awake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -119,16 +119,18 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.5</h2>
-    <p>Clearer description in the Store. No change to how the app works.</p>
+    <h2>New in 0.1.7</h2>
+    <p>Connecting Mealie lists the commands to run on your computer, with no address to look up.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Make the Mealie API available to the Kobo at https://mealie.local.</li>
-      <li>Create a long-lived Mealie API token and install it under the exact name mealie.
-        <code class="setup-command">kobo secret set mealie --device &lt;address&gt;</code></li>
+      <li>Create an API token in Mealie's user settings.</li>
+      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
+        <code class="setup-command">kobo pair</code></li>
+      <li>Install the token under the name mealie, then add the address in the app.
+        <code class="setup-command">kobo secret set mealie</code></li>
     </ol>
   </section>
   <section class="panel get-cobalt" id="setup-panel">

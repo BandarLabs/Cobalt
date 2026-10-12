@@ -37,7 +37,7 @@ use crate::frame::{FramePlanner, FrameRegion, FrameTransition, PanelWaveform};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
-use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
+use kobo_hal::reader::{Reader, ReaderError, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::soc_watchdog::SocWatchdog;
 use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
@@ -215,10 +215,6 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// changed.
 const STATUS_POLL: Duration = Duration::from_secs(2);
 
-/// How stale a status may be before a frame that is already being drawn takes
-/// a fresh one.
-const STATUS_INTERVAL: Duration = Duration::from_secs(60);
-
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
 ///
 /// Held by the session rather than read per frame. Every reading here is from
@@ -236,10 +232,22 @@ struct StatusSource {
     /// the session to the slow reboot on hand-back. So this is told rather
     /// than asked, from the replies the daemon is already carrying.
     ///
-    /// The cost is that headphones which wander out of range on their own are
-    /// noticed the next time something reads Bluetooth rather than within two
-    /// seconds. That is the right trade against making every session reboot.
+    /// Audio playback is the second witness. The player writes to the
+    /// firmware's A2DP sockets, which accept audio only while headphones are
+    /// connected, so opening them proves a connection and losing them proves
+    /// its end, at no cost to the stack. Headphones that wander off while
+    /// nothing is playing are still noticed only at the next read or the next
+    /// play, which is when the answer to "where will the sound go" matters.
     bluetooth: bool,
+    /// The last audio observation acted on, so each moves the mark once. A
+    /// sink lost an hour ago must not override a Bluetooth reply that has
+    /// since said headphones are connected, and a new loss must not be
+    /// mistaken for that old one.
+    audio_sink: Option<u64>,
+    /// The band's readings before Bluetooth is added to them.
+    reading: Reading,
+    /// The last radio state seen, kept only to trace its changes.
+    link: Option<kobo_hal::network::LinkState>,
 }
 
 impl StatusSource {
@@ -249,7 +257,28 @@ impl StatusSource {
             taken: None,
             polled: None,
             bluetooth: false,
+            audio_sink: None,
+            reading: Reading::default(),
+            link: None,
         }
+    }
+
+    /// Records what audio playback just proved about the Bluetooth sink.
+    ///
+    /// Acts on every observation it has not seen, whatever it says, and on
+    /// none twice. Comparing values instead ignored a repeat: a second failure
+    /// to open the sink, after a Bluetooth reply had put the mark back,
+    /// matched the first and left headphones on the band that were gone.
+    /// Returns whether the band changed.
+    fn observe_audio_sink(&mut self, evidence: Option<kobo_hal::audio::SinkEvidence>) -> bool {
+        let Some(evidence) = evidence else {
+            return false;
+        };
+        if self.audio_sink == Some(evidence.observation) {
+            return false;
+        }
+        self.audio_sink = Some(evidence.observation);
+        self.observe_bluetooth(evidence.connected)
     }
 
     /// Records what the daemon just learned about Bluetooth.
@@ -261,7 +290,7 @@ impl StatusSource {
             return false;
         }
         self.bluetooth = connected;
-        self.last.bluetooth = connected;
+        self.last = self.reading.status(connected);
         true
     }
 
@@ -289,11 +318,28 @@ impl StatusSource {
         true
     }
 
-    /// The current status, re-read only when it has gone stale.
+    /// Takes a reading now, whatever the poll interval says, and reports
+    /// whether anything visible moved.
+    ///
+    /// For the moments the daemon has just changed something itself, such as
+    /// switching Wi-Fi off. Waiting for the next poll there drew the reply's
+    /// screen with the old band and then repainted a second later, which is
+    /// the lag people noticed: two panel updates where one would do.
+    fn refresh(&mut self) -> bool {
+        self.polled = None;
+        self.poll()
+    }
+
+    /// The current status, as fresh as the poll interval.
+    ///
+    /// A frame takes the same reading the poll would, rather than one up to a
+    /// minute old. A minute was the old limit, so a screen drawn just after a
+    /// cable was pulled could put the charging mark back for the poll to take
+    /// away again.
     fn get(&mut self) -> &kobo_ui::Status {
         let stale = self
             .taken
-            .is_none_or(|taken| taken.elapsed() >= STATUS_INTERVAL);
+            .is_none_or(|taken| taken.elapsed() >= STATUS_POLL);
         if stale {
             self.last = self.read();
             self.taken = Some(Instant::now());
@@ -301,11 +347,38 @@ impl StatusSource {
         &self.last
     }
 
-    fn read(&self) -> kobo_ui::Status {
-        kobo_ui::Status {
-            bluetooth: self.bluetooth,
-            ..read_status()
+    fn read(&mut self) -> kobo_ui::Status {
+        let (reading, link) = read_status();
+        // Traced on change only, so a field report says when the radio went
+        // from searching to associated to routed without a line every poll.
+        if self.link != Some(link) {
+            trace(&format!("wifi link: {link:?}"));
+            self.link = Some(link);
         }
+        self.reading = reading;
+        self.reading.status(self.bluetooth)
+    }
+}
+
+/// One reading of what the band shows, apart from Bluetooth, which the
+/// daemon is told rather than reads.
+#[derive(Clone, Debug, Default)]
+struct Reading {
+    clock: String,
+    battery: Option<kobo_ui::Percent>,
+    charging: bool,
+    signal: kobo_ui::Signal,
+}
+
+impl Reading {
+    fn status(&self, bluetooth: bool) -> kobo_ui::Status {
+        kobo_ui::Status::standard(
+            self.clock.clone(),
+            self.battery,
+            self.charging,
+            self.signal,
+            bluetooth,
+        )
     }
 }
 
@@ -327,27 +400,31 @@ fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chro
     Chrome::for_screen(screen, at_home, Some(status.get().clone()))
 }
 
-/// Assembles one reading of everything the band shows.
-fn read_status() -> kobo_ui::Status {
+/// Assembles one reading of everything the band shows, and the radio state
+/// it was drawn from.
+fn read_status() -> (Reading, kobo_hal::network::LinkState) {
+    use kobo_hal::network::LinkState;
     let battery = kobo_hal::battery::read();
-    kobo_ui::Status {
+    let link = kobo_hal::network::link_state();
+    let reading = Reading {
         clock: clock(),
         // A radio with no default route is not a usable connection however
         // strong the association is, so reachability is checked before
         // strength. Showing three arcs on a device that cannot load a page is
-        // the one thing this mark must never do.
-        signal: if kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
-            kobo_hal::network::signal_dbm(kobo_hal::network::wireless_link())
-                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm)
-        } else {
-            kobo_ui::Signal::Off
+        // the one thing this mark must never do. A radio that is on but not
+        // routed is still told apart from one that is off, because the fix
+        // for each is different.
+        signal: match link {
+            LinkState::Absent | LinkState::Down => kobo_ui::Signal::Off,
+            LinkState::Searching | LinkState::NoRoute => kobo_ui::Signal::Disconnected,
+            LinkState::Online => kobo_hal::network::wireless_link()
+                .and_then(|link| kobo_hal::network::signal_dbm(&link))
+                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm),
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
-        // Filled in by the caller, which is the only layer holding what the
-        // daemon has been told about the controller.
-        bluetooth: false,
-    }
+    };
+    (reading, link)
 }
 
 /// The wall clock as `HH:MM`, or empty when it cannot be read.
@@ -638,7 +715,7 @@ pub fn present(
         "launch: network recovery finished after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
+    if network.was_online() && kobo_hal::network::online() {
         wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
     }
     trace(&format!(
@@ -666,6 +743,25 @@ pub fn present(
             }
         });
     if let Some(session) = buttons.as_mut() {
+        pump_gpio(session, &taps);
+    }
+
+    // Readers on the BD71828 PMIC (the T302, and per `cover.rs` the Clara BW)
+    // report KEY_POWER on a separate `bd71828-pwrkey` node, while gpio-keys
+    // carries the cover signal and no power key. Listening only there makes
+    // the physical button appear dead during a Cobalt session. The node is
+    // opened whenever it exists and gpio-keys does not already report the
+    // power key, so no reader can receive one press twice.
+    let mut power_key = None;
+    if !gpio::buttons_report_power() {
+        if let Some(path) = gpio::discover_power_path() {
+            match GpioSession::acquire_power(&path) {
+                Ok(session) => power_key = Some(session),
+                Err(error) => trace(&format!("power key unavailable: {error}")),
+            }
+        }
+    }
+    if let Some(session) = power_key.as_mut() {
         pump_gpio(session, &taps);
     }
 
@@ -871,6 +967,26 @@ pub fn present(
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     wifi_trace.checkpoint(WifiTraceEvent::NickelStartRequested);
+    // Started only if nothing else has started one. A reader that is already
+    // running came up while this session still owned the panel, and starting
+    // another beside it leaves two readers drawing on one screen. Neither can
+    // then be singled out to stop, so the next launch refuses too and only a
+    // reboot separates them. A reboot now is the same outcome, taken before
+    // the second reader rather than after it.
+    if let Some(running) = reader_already_back() {
+        trace(&format!(
+            "{running} before this session handed back; requesting a clean reboot instead of starting another"
+        ));
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; {running}, so a clean reboot was requested rather than a second reader"
+            )
+        });
+    }
     let restarted = match reader.start(START_GRACE) {
         Ok(pid) => pid,
         Err(error) => {
@@ -888,6 +1004,25 @@ pub fn present(
             });
         }
     };
+    // Checked again now that it is up. The check above and the start are two
+    // steps, and a reader that something else started between them is only
+    // visible afterwards, as a second process beside the one just started.
+    // Two readers cannot be stopped one at a time, so the reboot is taken
+    // here rather than left for the owner to find.
+    if let Err(ReaderError::Ambiguous(pids)) = Reader::find() {
+        trace(&format!(
+            "several readers are running after the restart ({pids:?}); requesting a clean reboot"
+        ));
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; several readers were running after the restart ({pids:?}), so a clean reboot was requested"
+            )
+        });
+    }
     wifi_trace.checkpoint(WifiTraceEvent::NickelPidObserved);
     // Any daemon Cobalt started for the session was stopped by exact captured
     // identity above. A stop or capture uncertainty takes the clean-reboot
@@ -961,8 +1096,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut Trac
     loop {
         if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
             let associated = wifi.associated().unwrap_or(false);
-            let healthy =
-                associated && kobo_hal::network::is_online(kobo_hal::network::wireless_link());
+            let healthy = associated && kobo_hal::network::online();
             if healthy {
                 let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
@@ -1381,6 +1515,23 @@ fn ask_consent(
     taps.set(None);
     trace(&format!("consent notice answered: {decision:?}"));
     decision
+}
+
+/// Describes a stock reader that is already running, if there is one.
+///
+/// A failure to read the process table is not treated as a reader: starting
+/// one reports its own failure and takes the reboot path from there.
+fn reader_already_back() -> Option<String> {
+    match Reader::find() {
+        Ok(found) => Some(format!(
+            "the reader was already running as pid {}",
+            found.pid()
+        )),
+        Err(ReaderError::Ambiguous(pids)) => {
+            Some(format!("several readers were already running: {pids:?}"))
+        }
+        Err(_) => None,
+    }
 }
 
 fn restore_screen(
@@ -1818,7 +1969,14 @@ fn host_applications(
             // Repainting is conditional on the reading having moved, and the
             // frame planner declines an identical frame anyway, so a session
             // sitting still costs nothing beyond reading four small files.
-            if status.poll() {
+            // Audio playback proves the Bluetooth sink present or gone as it
+            // opens and loses it; that is free to ask and moves the mark.
+            let sink_moved = status.observe_audio_sink(
+                audio
+                    .as_ref()
+                    .and_then(kobo_hal::audio::Audio::sink_evidence),
+            );
+            if status.poll() || sink_moved {
                 repaint(
                     &mut apps,
                     front,
@@ -1882,7 +2040,7 @@ fn host_applications(
                 && auto_update_battery_permits()
             {
                 if let Some(plan) = pending_updates.take() {
-                    apply_auto_update(plan, &mut apps, front);
+                    apply_auto_update(plan, &mut apps, front, watchdog);
                 }
             }
             // An application that was offered Back and drew nothing has had
@@ -2578,7 +2736,9 @@ fn host_applications(
                                             kobo_protocol::DeviceResult::Denied(
                                                 kobo_protocol::DenyReason::Unsupported,
                                             ),
-                                            kobo_hal::bluetooth::Bluetooth::scan,
+                                            |bluetooth| {
+                                                while_beating(watchdog, || bluetooth.scan())
+                                            },
                                         )
                                     }
                                     kobo_protocol::DeviceRequest::PairBluetooth { address } => {
@@ -2768,8 +2928,13 @@ fn host_applications(
                                     // asking, and nothing else is served
                                     // while the installation is replaced,
                                     // which is exactly the quiet wanted.
+                                    // The heartbeat is not quiet, though: a
+                                    // release takes longer to fetch and
+                                    // unpack than the watchdog waits.
                                     kobo_protocol::DeviceRequest::Update { url, sha256 } => {
-                                        match crate::update::apply(url, sha256) {
+                                        match while_beating(watchdog, || {
+                                            crate::update::apply(url, sha256)
+                                        }) {
                                             Ok(()) => kobo_protocol::DeviceResult::Done,
                                             Err(error) => {
                                                 trace(&format!("update refused: {error}"));
@@ -2794,7 +2959,9 @@ fn host_applications(
                                     kobo_protocol::DeviceRequest::RefreshAppCatalog => {
                                         let root = Path::new(COBALT_ROOT);
                                         let channel = crate::autoupdate::preferences(root).channel;
-                                        let result = crate::app_store::refresh(root, channel);
+                                        let result = while_beating(watchdog, || {
+                                            crate::app_store::refresh(root, channel)
+                                        });
                                         if result.is_ok() {
                                             store_channel = channel;
                                         }
@@ -2802,8 +2969,9 @@ fn host_applications(
                                     }
                                     kobo_protocol::DeviceRequest::InstallApp { id } => {
                                         let root = Path::new(COBALT_ROOT);
-                                        let result =
-                                            crate::app_store::install(root, id, store_channel);
+                                        let result = while_beating(watchdog, || {
+                                            crate::app_store::install(root, id, store_channel)
+                                        });
                                         if result.is_ok() {
                                             stop_named_application(&mut apps, id);
                                         }
@@ -2824,7 +2992,11 @@ fn host_applications(
                                         crate::app_link::begin(Path::new(COBALT_ROOT)),
                                     ),
                                     kobo_protocol::DeviceRequest::PollAppLink => {
-                                        let result = crate::app_link::poll(Path::new(COBALT_ROOT));
+                                        // A poll can carry a queued install,
+                                        // which downloads a whole package.
+                                        let result = while_beating(watchdog, || {
+                                            crate::app_link::poll(Path::new(COBALT_ROOT))
+                                        });
                                         if let Ok(kobo_protocol::DeviceResult::RemoteInstall(
                                             outcome,
                                         )) = &result
@@ -2926,6 +3098,27 @@ fn host_applications(
                                         &mut status,
                                     )?;
                                 }
+                            }
+                            // The same for a request that just changed the
+                            // radio, so the band moves with the switch rather
+                            // than on the next poll.
+                            if matches!(
+                                request,
+                                kobo_protocol::DeviceRequest::SetWifi { .. }
+                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
+                                    | kobo_protocol::DeviceRequest::DisconnectWifi
+                            ) && status.refresh()
+                            {
+                                repaint(
+                                    &mut apps,
+                                    front,
+                                    display,
+                                    whole_screen,
+                                    &mut surface,
+                                    &mut panel,
+                                    &home,
+                                    &mut status,
+                                )?;
                             }
                             reply(
                                 &mut apps[index],
@@ -3451,7 +3644,12 @@ fn auto_update_battery_permits() -> bool {
 /// under the reader; its turn comes with a later plan. A staged platform
 /// release takes effect the next time Cobalt starts, exactly as one installed
 /// from the settings screen does.
-fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: u64) {
+fn apply_auto_update(
+    plan: crate::autoupdate::Plan,
+    apps: &mut [Hosted],
+    front: u64,
+    watchdog: &Arc<Watchdog>,
+) {
     let root = Path::new(COBALT_ROOT);
     let chosen = crate::autoupdate::preferences(root);
     if chosen.channel != plan.channel {
@@ -3468,7 +3666,12 @@ fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: 
                 trace(&format!("{id} is on the panel, so its update waits"));
                 continue;
             }
-            match crate::app_store::install(root, &id, chosen.channel) {
+            // One bound per package rather than one for the batch: a batch
+            // grows with the Store, and a limit that has to cover all of it
+            // would cover a wedged install for just as long.
+            match while_beating(watchdog, || {
+                crate::app_store::install(root, &id, chosen.channel)
+            }) {
                 Ok(()) => {
                     stop_named_application(apps, &id);
                     trace(&format!("{id} was updated in the background"));
@@ -3481,7 +3684,9 @@ fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: 
         return;
     }
     if let Some(update) = plan.platform {
-        match crate::update::apply(&update.url, &update.sha256) {
+        match while_beating(watchdog, || {
+            crate::update::apply(&update.url, &update.sha256)
+        }) {
             Ok(()) => trace(&format!(
                 "Cobalt {} is staged and runs from the next start",
                 update.version
@@ -4175,23 +4380,61 @@ fn greet(
     Ok((stream, name, hello.version))
 }
 
+/// The longest one blocking request may keep the heartbeat up for.
+///
+/// Sized for the largest of them, a platform archive. Twenty-odd megabytes at
+/// forty kilobytes a second is already over nine minutes before its digest,
+/// expansion and writes, so a ten minute bound failed every update on a slow
+/// connection, and each retry failed the same way. Thirty minutes covers that
+/// with room to spare while still ending a request that has wedged. The
+/// network's own timeouts bound silence, not a slow transfer, and nothing
+/// bounds a write to flash that has wedged. Past this the thread stops
+/// vouching, the heartbeat goes quiet, and the watchdog takes the session down
+/// and hands the panel back as it would for any other stall.
+const BLOCKING_WORK_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// Runs `work` with the heartbeat kept up by a thread, for a request that
+/// legitimately blocks the session loop.
+///
+/// A platform update fetches twenty-odd megabytes, digests them on a single
+/// core and writes the expanded tree to the book partition, and each
+/// background app update does the same for a package. Either outlasts the
+/// sixty seconds the watchdog allows. When the heartbeat stopped, the watchdog
+/// concluded the runtime had died and started the reader while this session
+/// still owned the panel, so both drew on it, and the session's own teardown
+/// then started a second reader on top of the first. The thread vouches for
+/// at most [`BLOCKING_WORK_LIMIT`], so a request that never finishes still
+/// ends in recovery rather than in a heartbeat that lies forever.
+fn while_beating<T>(watchdog: &Arc<Watchdog>, work: impl FnOnce() -> T) -> T {
+    let _beating = KeepBeating::for_at_most(watchdog, BLOCKING_WORK_LIMIT);
+    work()
+}
+
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
 /// session loop is not running.
 ///
-/// Only used during teardown. Using it for the session itself would defeat the
-/// point: a heartbeat coming from a thread says the process exists, while a
-/// heartbeat coming from the loop says the runtime is still doing its job.
+/// Used during teardown, and around the few requests that block the loop on
+/// purpose for longer than the watchdog waits. Using it for the session as a
+/// whole would defeat the point: a heartbeat coming from a thread says the
+/// process exists, while a heartbeat coming from the loop says the runtime is
+/// still doing its job.
 struct KeepBeating {
     running: Arc<AtomicBool>,
 }
 
 impl KeepBeating {
+    /// For teardown, which has its own bounds on every step it waits for.
     fn start(watchdog: &Arc<Watchdog>) -> Self {
+        Self::for_at_most(watchdog, Duration::MAX)
+    }
+
+    fn for_at_most(watchdog: &Arc<Watchdog>, limit: Duration) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let stop = Arc::clone(&running);
         let watchdog = Arc::clone(watchdog);
+        let started = Instant::now();
         thread::spawn(move || {
-            while stop.load(AtomicOrdering::Relaxed) {
+            while stop.load(AtomicOrdering::Relaxed) && started.elapsed() < limit {
                 watchdog.beat();
                 thread::sleep(BEAT_INTERVAL);
             }
@@ -4231,8 +4474,9 @@ enum Tap {
 /// reliable enough to be the way out of anything. A screen may ask for first
 /// refusal on it (see [`Screen::owns_back`]) so that a screen reached from
 /// inside an application goes back to where it was reached from rather than
-/// out of the application. That is a delivery, not a transfer of ownership:
-/// the caller still leaves if no new screen follows.
+/// out of the application. An open overlay also receives Back so the application
+/// can dismiss it even over a root screen. That is a delivery, not a transfer
+/// of ownership: the caller still leaves if no new screen follows.
 #[allow(
     clippy::too_many_arguments,
     reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
@@ -4313,6 +4557,7 @@ fn deliver_touch(
     let route = kobod::navigation::route(
         action == ActionId::BACK,
         current.is_some_and(|screen| screen.owns_back),
+        current.is_some_and(|screen| screen.overlay.is_some()),
     );
     if route == kobod::navigation::BackRoute::Leave {
         return Ok(Tap::Leave);
@@ -5328,6 +5573,26 @@ mod tests {
     }
 
     #[test]
+    fn a_protocol_10_app_keeps_receiving_protocol_10() {
+        // The oldest protocol in the release registry. Refusing it left Store
+        // applications built for it unable to open after a platform update.
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::DICTIONARY_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::DICTIONARY_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_11_app_keeps_receiving_protocol_11() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::LEGACY_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::LEGACY_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_12_app_keeps_receiving_protocol_12() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::FOLIO_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::FOLIO_VERSION);
+    }
+
+    #[test]
     fn a_protocol_13_app_keeps_receiving_protocol_13() {
         // #191: Todo compiled for 13 died with UnsupportedVersion(14) on the
         // first runtime-originated frame. Elipsa rotation session-rotation1.log
@@ -5554,6 +5819,49 @@ mod tests {
         let (hours, minutes) = now.split_once(':').expect("a separator");
         assert!(hours.parse::<u32>().expect("hours") < 24, "{now}");
         assert!(minutes.parse::<u32>().expect("minutes") < 60, "{now}");
+    }
+
+    fn sink(observation: u64, connected: bool) -> kobo_hal::audio::SinkEvidence {
+        kobo_hal::audio::SinkEvidence {
+            observation,
+            connected,
+        }
+    }
+
+    #[test]
+    fn a_repeated_sink_failure_after_a_bluetooth_reply_still_clears_the_mark() {
+        let mut status = super::StatusSource::new();
+        assert!(!status.observe_audio_sink(Some(sink(1, false))));
+        assert!(
+            status.observe_bluetooth(true),
+            "the reply puts the mark back"
+        );
+        assert!(
+            status.observe_audio_sink(Some(sink(2, false))),
+            "a second failure is news even though it says the same thing"
+        );
+        assert!(!status.bluetooth);
+    }
+
+    #[test]
+    fn a_repeated_sink_success_after_a_bluetooth_reply_still_sets_the_mark() {
+        let mut status = super::StatusSource::new();
+        assert!(status.observe_audio_sink(Some(sink(1, true))));
+        assert!(status.observe_bluetooth(false));
+        assert!(status.observe_audio_sink(Some(sink(2, true))));
+        assert!(status.bluetooth);
+    }
+
+    #[test]
+    fn an_old_sink_observation_never_overrides_a_newer_bluetooth_reply() {
+        let mut status = super::StatusSource::new();
+        assert!(!status.observe_audio_sink(Some(sink(1, false))));
+        assert!(status.observe_bluetooth(true));
+        assert!(
+            !status.observe_audio_sink(Some(sink(1, false))),
+            "polled again, nothing new"
+        );
+        assert!(status.bluetooth);
     }
 
     #[test]
@@ -6069,6 +6377,65 @@ mod tests {
                 action: ActionId::BACK
             }
         ));
+    }
+
+    #[test]
+    fn overlay_close_is_delivered_before_a_root_back_leaves() {
+        let chrome = Chrome::with_back(true);
+        let root = hello();
+        let covered = root.clone().with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(2),
+            "Settings",
+            vec![],
+        ));
+        let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().unwrap();
+        app.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        for (screen, kind, expected) in [
+            (
+                &covered,
+                kobo_ui::LayoutKind::OverlayClose,
+                Tap::OfferedBack,
+            ),
+            (&root, kobo_ui::LayoutKind::Back, Tap::Leave),
+        ] {
+            let layout = screen.layout_with(&crate::device_metrics(), &chrome);
+            let rect = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kind)
+                .unwrap()
+                .rect;
+            let tap = TouchEvent::Up {
+                x: u32::try_from(rect.x + rect.width / 2).unwrap(),
+                y: u32::try_from(rect.y + rect.height / 2).unwrap(),
+            };
+            assert_eq!(
+                deliver_touch(
+                    &mut runtime,
+                    tap,
+                    Some(screen),
+                    &chrome,
+                    false,
+                    kobo_ui::Orientation::Portrait,
+                    kobo_ui::LandscapeTurn::Clockwise,
+                    kobo_protocol::VERSION,
+                    kobo_ui::TopBarState::Hidden,
+                )
+                .unwrap(),
+                expected,
+            );
+            if expected == Tap::OfferedBack {
+                assert!(matches!(
+                    kobo_protocol::read_from(&mut app).unwrap().message,
+                    Message::Action {
+                        action: ActionId::BACK
+                    }
+                ));
+            } else {
+                assert!(kobo_protocol::read_from(&mut app).is_err());
+            }
+        }
     }
 
     fn catalogue() -> PathBuf {

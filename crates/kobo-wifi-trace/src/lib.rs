@@ -473,7 +473,9 @@ impl Sampler {
                 power_text.split_whitespace().any(|value| value == "mem")
             )
         };
-        let wakeup_count = bounded_number(&self.path("/sys/power/wakeup_count"));
+        // This is a suspend handshake, not a passive counter: reading can
+        // wait for wakeup events to settle even with O_NONBLOCK. Never open it.
+        let wakeup_count = "not-sampled".to_owned();
         let suspend_success = bounded_number(&self.path("/sys/kernel/debug/suspend_stats/success"));
         let suspend_fail = bounded_number(&self.path("/sys/kernel/debug/suspend_stats/fail"));
         let reboot_reason = first_reason_category(&[
@@ -2307,6 +2309,56 @@ fn json_usize(value: usize) -> Value {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn passive_sampling_never_opens_the_wakeup_handshake() {
+        const CHILD_ROOT: &str = "COBALT_WAKEUP_FIFO_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let snapshot = Sampler::at(PathBuf::from(root), PrivacyKey::test(1)).sample_core();
+            assert_eq!(snapshot.wakeup_count, "not-sampled");
+            return;
+        }
+
+        let root = test_root("wakeup-fifo");
+        fs::create_dir_all(root.join("sys/power")).unwrap();
+        let fifo = root.join("sys/power/wakeup_count");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        // Keep the blocking fixture, but contain the sample in a child. If a
+        // read returns, the parent must fail promptly rather than hang CI.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::passive_sampling_never_opens_the_wakeup_handshake",
+            ])
+            .env(CHILD_ROOT, &root)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => (),
+                Err(_) => break None,
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Always reap before asserting, including timeout and wait errors.
+        let _ = child.kill();
+        child.wait().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(
+            status.is_some_and(|status| status.success()),
+            "passive sample failed or exceeded its five-second deadline"
+        );
+    }
 
     fn test_root(label: &str) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);

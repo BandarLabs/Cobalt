@@ -1,4 +1,6 @@
 //! A tap-driven, offline-after-download reader for public AO3 works.
+#[cfg(test)]
+mod collection_tests;
 mod library;
 
 use kobo_bookview::{BookView, Step};
@@ -25,7 +27,6 @@ const CHUNK: u32 = 256 * 1024;
 const PAGE_BYTES: u32 = 512 * 1024;
 const FEED_BYTES: u32 = 512 * 1024;
 const MAX_EPUB: usize = 12 * 1024 * 1024;
-const ROWS_PER_PAGE: usize = 6;
 const UA: &str = "kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)";
 const LOCKED: &str =
     "Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work.";
@@ -247,7 +248,7 @@ fn update_label(work: &Work) -> String {
 
 impl Fanshelf {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn ready(&self) -> bool {
@@ -268,32 +269,43 @@ impl Fanshelf {
         self.open.and_then(|index| self.works.get(index))
     }
 
-    fn page_bounds(page: usize, total: usize) -> (usize, usize) {
-        let start = page
-            .min(total.saturating_sub(1) / ROWS_PER_PAGE)
-            .saturating_mul(ROWS_PER_PAGE);
-        (start, (start + ROWS_PER_PAGE).min(total))
+    /// Measure exactly the rows and prefix we draw, then keep page controls in
+    /// the reserved bottom band rather than after a potentially full list.
+    fn paged(
+        context: &Context,
+        mut screen: ScreenBuilder,
+        page: usize,
+        mut rows: Vec<(String, String, String, Glyph)>,
+    ) -> ScreenBuilder {
+        for (_, title, _, _) in &mut rows {
+            *title = context.clamped_row(title, 2, true);
+        }
+        let borrowed = rows
+            .iter()
+            .map(|(_, title, summary, _)| (title.as_str(), summary.as_str()))
+            .collect::<Vec<_>>();
+        let prefix = screen.clone().build();
+        let single =
+            context.paginate_rows_under(&borrowed, false, kobo_sdk::Position::Elsewhere, &prefix);
+        if single.len() <= 1 {
+            return screen.rows(rows);
+        }
+        let pages =
+            context.paginate_rows_under(&borrowed, true, kobo_sdk::Position::AtTheFoot, &prefix);
+        let page = page.min(pages.len().saturating_sub(1));
+        screen = screen.rows(pages[page].iter().map(|&index| rows[index].clone()));
+        screen
+            .page_turns("page-prev", "page-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            )
+            .action_bar([("page-prev", "Previous"), ("page-next", "Next")])
     }
 
-    fn paged(mut screen: ScreenBuilder, page: usize, total: usize) -> ScreenBuilder {
-        if total <= ROWS_PER_PAGE {
-            return screen;
-        }
-        let pages = total.div_ceil(ROWS_PER_PAGE);
-        screen = screen.secondary(format!("Page {} of {pages}", page.min(pages - 1) + 1));
-        let mut actions = Vec::new();
-        if page > 0 {
-            actions.push(("page-prev", "Previous"));
-        }
-        if page + 1 < pages {
-            actions.push(("page-next", "Next"));
-        }
-        screen.buttons(actions)
-    }
-
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.view {
-            View::Shelf => self.shelf_screen(),
+            View::Shelf => self.shelf_screen(context),
             View::Add => ScreenBuilder::new("fs-add")
                 .top_bar("Add work")
                 .heading("Add an AO3 work")
@@ -310,8 +322,8 @@ impl Fanshelf {
                 .buttons([("adult-cancel", "Go back"), ("adult-confirm", "Continue")])
                 .owns_back(true)
                 .build(),
-            View::Follow => self.follow_screen(),
-            View::Fandoms => self.fandoms_screen(),
+            View::Follow => self.follow_screen(context),
+            View::Fandoms => self.fandoms_screen(context),
             View::Manage => self.manage_screen(),
             View::AddTag => ScreenBuilder::new("fs-add-tag")
                 .top_bar("Follow tag")
@@ -320,8 +332,8 @@ impl Fanshelf {
                 .keyboard(&self.keyboard, "Follow")
                 .owns_back(true)
                 .build(),
-            View::Feed => self.feed_screen(),
-            View::Updates => self.updates_screen(),
+            View::Feed => self.feed_screen(context),
+            View::Updates => self.updates_screen(context),
             View::Reading => self
                 .book
                 .screen(self.current().map_or("Fanshelf", |work| work.title.as_str()))
@@ -365,7 +377,7 @@ impl Fanshelf {
             .collect()
     }
 
-    fn fandoms_screen(&self) -> Screen {
+    fn fandoms_screen(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("fs-fandoms")
             .top_bar("Fandoms")
             .top_bar_action("shelf", "Shelf");
@@ -377,24 +389,24 @@ impl Fanshelf {
                 "Fandoms appear once works are added.",
             );
         } else {
-            let (start, end) = Self::page_bounds(self.fandom_page, fandoms.len());
-            screen = screen.rows(fandoms[start..end].iter().enumerate().map(
-                |(offset, (fandom, count))| {
-                    let index = start + offset;
+            let rows = fandoms
+                .iter()
+                .enumerate()
+                .map(|(index, (fandom, count))| {
                     (
                         format!("fandom-{index}"),
                         display(fandom, 74),
                         format!("{count} work{}", if *count == 1 { "" } else { "s" }),
                         Glyph::Book,
                     )
-                },
-            ));
-            screen = Self::paged(screen, self.fandom_page, fandoms.len());
+                })
+                .collect();
+            screen = Self::paged(context, screen, self.fandom_page, rows);
         }
         screen.owns_back(true).build()
     }
 
-    fn shelf_screen(&self) -> Screen {
+    fn shelf_screen(&self, context: &Context) -> Screen {
         let title = self.filter.clone().unwrap_or_else(|| "Fanshelf".to_owned());
         let mut screen = ScreenBuilder::new("fs-shelf")
             .top_bar(display(&title, 60))
@@ -404,13 +416,32 @@ impl Fanshelf {
         } else {
             screen.top_bar_action("filter", "Filter")
         };
-        screen = screen.buttons([
+        let compact = screen.clone().buttons([
             ("follow", "Followed tags"),
             ("updates", "Updates"),
             ("manage", "Manage"),
         ]);
+        screen = if compact
+            .clone()
+            .build()
+            .layout_for(&context.metrics())
+            .nodes
+            .iter()
+            .any(|node| node.text_lines.len() > 1)
+        {
+            // At larger type sizes three equal columns break even short
+            // labels mid-word. Measure this prefix too before placing rows.
+            screen
+                .button("follow", "Followed tags")
+                .buttons([("updates", "Updates"), ("manage", "Manage")])
+        } else {
+            compact
+        };
         if !self.ready() {
             return screen.secondary("Loading shelf…").build();
+        }
+        if let Some(message) = &self.message {
+            screen = screen.banner(BannerLevel::Info, message);
         }
         if self.works.is_empty() {
             screen = screen.splash(
@@ -427,27 +458,26 @@ impl Fanshelf {
                     "All shows the whole shelf.",
                 );
             } else {
-                let (start, end) = Self::page_bounds(self.shelf_page, visible.len());
-                screen = screen.rows(visible[start..end].iter().map(|index| {
-                    let work = &self.works[*index];
-                    let badge = Self::badge(work, &self.reading);
-                    (
-                        format!("work-{index}"),
-                        display(&work.title, 74),
-                        format!(
-                            "{} · {}{}",
-                            display(&work.author, 42),
-                            work.chapters_label(),
-                            badge
-                        ),
-                        Glyph::Book,
-                    )
-                }));
-                screen = Self::paged(screen, self.shelf_page, visible.len());
+                let rows = visible
+                    .iter()
+                    .map(|index| {
+                        let work = &self.works[*index];
+                        let badge = Self::badge(work, &self.reading);
+                        (
+                            format!("work-{index}"),
+                            display(&work.title, 74),
+                            format!(
+                                "{} · {}{}",
+                                display(&work.author, 42),
+                                work.chapters_label(),
+                                badge
+                            ),
+                            Glyph::Book,
+                        )
+                    })
+                    .collect();
+                screen = Self::paged(context, screen, self.shelf_page, rows);
             }
-        }
-        if let Some(message) = &self.message {
-            screen = screen.banner(BannerLevel::Info, message);
         }
         screen.build()
     }
@@ -575,11 +605,14 @@ impl Fanshelf {
         screen.owns_back(true).build()
     }
 
-    fn follow_screen(&self) -> Screen {
+    fn follow_screen(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("fs-follow")
             .top_bar("Followed AO3 tags")
             .top_bar_action("add-tag", "Add")
             .top_bar_action("shelf", "Shelf");
+        if let Some(message) = &self.message {
+            screen = screen.banner(BannerLevel::Info, message);
+        }
         if self.tags.is_empty() {
             screen = screen.splash(
                 Some(Glyph::Bookmark),
@@ -587,30 +620,25 @@ impl Fanshelf {
                 "Follow a tag to see its newest works.",
             );
         } else {
-            let (start, end) = Self::page_bounds(self.tag_page, self.tags.len());
-            screen = screen.rows(
-                self.tags[start..end]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, tag)| {
-                        let index = start + offset;
-                        (
-                            format!("tag-{index}"),
-                            display(&tag.name, 90),
-                            "Newest works from feeds.atom".to_owned(),
-                            Glyph::Bookmark,
-                        )
-                    }),
-            );
-            screen = Self::paged(screen, self.tag_page, self.tags.len());
-        }
-        if let Some(message) = &self.message {
-            screen = screen.banner(BannerLevel::Info, message);
+            let rows = self
+                .tags
+                .iter()
+                .enumerate()
+                .map(|(index, tag)| {
+                    (
+                        format!("tag-{index}"),
+                        display(&tag.name, 90),
+                        "Newest works from feeds.atom".to_owned(),
+                        Glyph::Bookmark,
+                    )
+                })
+                .collect();
+            screen = Self::paged(context, screen, self.tag_page, rows);
         }
         screen.owns_back(true).build()
     }
 
-    fn feed_screen(&self) -> Screen {
+    fn feed_screen(&self, context: &Context) -> Screen {
         let title = self
             .open_tag
             .and_then(|index| self.tags.get(index))
@@ -630,31 +658,29 @@ impl Fanshelf {
                     .unwrap_or("AO3 returned no readable Atom entries for this tag."),
             );
         } else {
-            let (start, end) = Self::page_bounds(self.feed_page, self.feed.len());
-            screen = screen.rows(
-                self.feed[start..end]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, work)| {
-                        let index = start + offset;
-                        (
-                            format!("feed-{index}"),
-                            display(&work.title, 84),
-                            format!(
-                                "{} · {}",
-                                display(&work.author, 44),
-                                display(&work.updated, 24)
-                            ),
-                            Glyph::Book,
-                        )
-                    }),
-            );
-            screen = Self::paged(screen, self.feed_page, self.feed.len());
+            let rows = self
+                .feed
+                .iter()
+                .enumerate()
+                .map(|(index, work)| {
+                    (
+                        format!("feed-{index}"),
+                        display(&work.title, 84),
+                        format!(
+                            "{} · {}",
+                            display(&work.author, 44),
+                            display(&work.updated, 24)
+                        ),
+                        Glyph::Book,
+                    )
+                })
+                .collect();
+            screen = Self::paged(context, screen, self.feed_page, rows);
         }
         screen.owns_back(true).build()
     }
 
-    fn updates_screen(&self) -> Screen {
+    fn updates_screen(&self, context: &Context) -> Screen {
         let wips = self
             .works
             .iter()
@@ -665,6 +691,9 @@ impl Fanshelf {
             .top_bar("Updates")
             .top_bar_action("check-all", "Check all")
             .top_bar_action("shelf", "Shelf");
+        if let Some(message) = &self.message {
+            screen = screen.banner(BannerLevel::Info, message);
+        }
         if wips.is_empty() {
             screen = screen.splash(
                 Some(Glyph::Check),
@@ -672,28 +701,27 @@ impl Fanshelf {
                 "Works in progress appear here.",
             );
         } else {
-            let (start, end) = Self::page_bounds(self.updates_page, wips.len());
-            screen = screen.rows(wips[start..end].iter().map(|(index, work)| {
-                let state = if work.download == DownloadState::UpdateAvailable {
-                    "Unread update"
-                } else if work.download == DownloadState::Removed {
-                    REMOVED
-                } else if work.last_checked == 0 {
-                    "Never checked"
-                } else {
-                    "Up to date at last manual check"
-                };
-                (
-                    format!("update-{index}"),
-                    display(&work.title, 76),
-                    format!("{} · {state}", work.chapters_label()),
-                    Glyph::Clock,
-                )
-            }));
-            screen = Self::paged(screen, self.updates_page, wips.len());
-        }
-        if let Some(message) = &self.message {
-            screen = screen.banner(BannerLevel::Info, message);
+            let rows = wips
+                .iter()
+                .map(|(index, work)| {
+                    let state = if work.download == DownloadState::UpdateAvailable {
+                        "Unread update"
+                    } else if work.download == DownloadState::Removed {
+                        REMOVED
+                    } else if work.last_checked == 0 {
+                        "Never checked"
+                    } else {
+                        "Up to date at last manual check"
+                    };
+                    (
+                        format!("update-{index}"),
+                        display(&work.title, 76),
+                        format!("{} · {state}", work.chapters_label()),
+                        Glyph::Clock,
+                    )
+                })
+                .collect();
+            screen = Self::paged(context, screen, self.updates_page, rows);
         }
         screen.owns_back(true).build()
     }
@@ -1309,22 +1337,28 @@ impl KoboApp for Fanshelf {
             for request in requests {
                 self.enqueue(context, request);
             }
-        } else if action == action_id("page-prev") {
+        } else if action == action_id("page-prev") || action == action_id("page-next") {
+            // Clamp from the page actually shown, including after a collection
+            // shrinks. Repeated turns at either boundary must remain harmless.
+            let (page, total) = self
+                .screen(context)
+                .page_turns
+                .and_then(|turns| turns.position)
+                .unwrap_or((1, 1));
+            let current = usize::from(page.saturating_sub(1));
+            let next = if action == action_id("page-prev") {
+                current.saturating_sub(1)
+            } else {
+                current
+                    .saturating_add(1)
+                    .min(usize::from(total.saturating_sub(1)))
+            };
             match self.view {
-                View::Shelf => self.shelf_page = self.shelf_page.saturating_sub(1),
-                View::Follow => self.tag_page = self.tag_page.saturating_sub(1),
-                View::Fandoms => self.fandom_page = self.fandom_page.saturating_sub(1),
-                View::Feed => self.feed_page = self.feed_page.saturating_sub(1),
-                View::Updates => self.updates_page = self.updates_page.saturating_sub(1),
-                _ => {}
-            }
-        } else if action == action_id("page-next") {
-            match self.view {
-                View::Shelf => self.shelf_page = self.shelf_page.saturating_add(1),
-                View::Follow => self.tag_page = self.tag_page.saturating_add(1),
-                View::Fandoms => self.fandom_page = self.fandom_page.saturating_add(1),
-                View::Feed => self.feed_page = self.feed_page.saturating_add(1),
-                View::Updates => self.updates_page = self.updates_page.saturating_add(1),
+                View::Shelf => self.shelf_page = next,
+                View::Follow => self.tag_page = next,
+                View::Fandoms => self.fandom_page = next,
+                View::Feed => self.feed_page = next,
+                View::Updates => self.updates_page = next,
                 _ => {}
             }
         } else if action == action_id("download") {
@@ -1486,7 +1520,7 @@ mod tests {
             view: View::Work,
             ..Fanshelf::default()
         };
-        let screen = app.screen();
+        let screen = app.screen(&AppRunner::new(Fanshelf::default()).context());
         let labels = screen
             .nodes
             .iter()
@@ -1710,39 +1744,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_catalogues_remain_reachable_through_paging() {
-        let works = (0..7)
-            .map(|index| Work {
-                title: format!("Work {index}"),
-                id: (100 + index).to_string(),
-                ..work()
-            })
-            .collect();
-        let app = Fanshelf {
-            works,
-            works_loaded: true,
-            tags_loaded: true,
-            view: View::Shelf,
-            ..Fanshelf::default()
-        };
-        let mut runner = AppRunner::new(app);
-        runner.action(action_id("page-next"));
-        let titles = runner
-            .app()
-            .screen()
-            .nodes
-            .into_iter()
-            .flat_map(|node| match node {
-                Node::Rows { rows, .. } => {
-                    rows.into_iter().map(|row| row.title).collect::<Vec<_>>()
-                }
-                _ => Vec::new(),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(titles, ["Work 6"]);
-    }
-
-    #[test]
     fn primary_screens_fit_the_clara_panel() {
         let mut app = Fanshelf {
             works_loaded: true,
@@ -1771,7 +1772,7 @@ mod tests {
             app.open = Some(0);
             app.open_tag = Some(0);
             assert!(
-                app.screen()
+                app.screen(&AppRunner::new(Fanshelf::default()).context())
                     .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                     .issues
                     .is_empty(),

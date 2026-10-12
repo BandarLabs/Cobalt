@@ -84,7 +84,7 @@ const ENTRIES: &[Entry] = &[
         title: "Terminal",
         label: "Terminal",
         summary: "A shell on the panel, with keys that send rather than collect.",
-        needs: "Runs commands on this device. Nothing it does survives a reboot.",
+        needs: "Runs commands on this device. File changes can survive a reboot.",
         glyph: Glyph::Terminal,
     },
 ];
@@ -1095,5 +1095,13 @@ mod tests {
             "the Books tab did not leave a starting screen"
         );
         assert_eq!(ENTRIES[BOOKS].name, "books");
+    }
+    #[test]
+    fn terminal_launch_does_not_promise_reboot_will_undo_file_changes() {
+        let app = Launcher::default();
+        let terminal = app.entry(3);
+        assert_eq!(terminal.name, "terminal");
+        assert!(terminal.needs.contains("File changes can survive a reboot"));
+        assert!(!terminal.needs.contains("Nothing it does survives"));
     }
 }
