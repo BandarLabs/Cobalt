@@ -79,6 +79,11 @@ pub const PICTURE_BLEED_VERSION: u8 = 15;
 
 pub const AUTO_HIDDEN_TOP_BAR_VERSION: u8 = 15;
 
+/// Additive warmth tags in protocol 15; existing frames retain their layout.
+/// Requires a runtime containing the warmth API (unreleased); older runtimes
+/// refuse the new tags. Apps must set the eventual release minimum explicitly.
+pub const WARMTH_VERSION: u8 = 15;
+
 pub const VERSION: u8 = 15;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -1222,59 +1227,94 @@ pub enum DeviceRequest {
     /// how a screen that has just opened finds that out.
     ReadCover,
     /// Keep Wi-Fi associated for at most this many seconds.
-    HoldWifi { seconds: u32 },
+    HoldWifi {
+        seconds: u32,
+    },
     /// Release a Wi-Fi hold early.
     ReleaseWifi,
     /// Keep the device out of suspend for at most this many seconds.
-    KeepAwake { seconds: u32 },
+    KeepAwake {
+        seconds: u32,
+    },
     /// Release a wake hold early.
     AllowSleep,
     /// Ask to be woken again after this many seconds.
-    ScheduleWake { seconds: u32 },
+    ScheduleWake {
+        seconds: u32,
+    },
     /// Cancel a pending scheduled wake.
     CancelWake,
     /// Set the front light to a percentage.
-    SetFrontlight { percent: u8 },
+    SetFrontlight {
+        percent: u8,
+    },
     /// Report the current front light percentage.
     ReadFrontlight,
+    /// 0 coolest, 100 warmest. Requires `frontlight-control`
+    /// and a profile with measured warmth topology and direction.
+    SetWarmth {
+        percent: u8,
+    },
+    ReadWarmth,
     /// Report whether the Bluetooth controller is available and powered.
     ReadBluetooth,
     /// Power the Bluetooth controller on or off.
-    SetBluetooth { enabled: bool },
+    SetBluetooth {
+        enabled: bool,
+    },
     /// Discover nearby and remembered Bluetooth devices.
     ScanBluetooth,
     /// Pair with a Bluetooth device by its canonical address.
-    PairBluetooth { address: String },
+    PairBluetooth {
+        address: String,
+    },
     /// Connect a paired Bluetooth device.
-    ConnectBluetooth { address: String },
+    ConnectBluetooth {
+        address: String,
+    },
     /// Disconnect a Bluetooth device without forgetting it.
-    DisconnectBluetooth { address: String },
+    DisconnectBluetooth {
+        address: String,
+    },
     /// Remove a remembered Bluetooth pairing.
-    ForgetBluetooth { address: String },
+    ForgetBluetooth {
+        address: String,
+    },
     /// Report Wi-Fi power and association state.
     ReadWifi,
     /// Power the Wi-Fi interface on or off.
-    SetWifi { enabled: bool },
+    SetWifi {
+        enabled: bool,
+    },
     /// Discover nearby Wi-Fi networks.
     ScanWifi,
     /// Join a Wi-Fi network. An empty password means an open network.
-    JoinWifi { ssid: String, password: String },
+    JoinWifi {
+        ssid: String,
+        password: String,
+    },
     /// Leave the current Wi-Fi network without powering the radio off.
     DisconnectWifi,
     /// Report the active audio source and transport state.
     ReadAudio,
     /// Prepare a shelf file or HTTPS stream for playback.
-    LoadAudio { source: AudioSource },
+    LoadAudio {
+        source: AudioSource,
+    },
     /// Start or resume the prepared source.
     PlayAudio,
     /// Pause without discarding the prepared source or position.
     PauseAudio,
     /// Seek to an absolute position in the prepared source.
-    SeekAudio { position_ms: u32 },
+    SeekAudio {
+        position_ms: u32,
+    },
     /// Stop playback and return to the beginning of the prepared source.
     StopAudio,
     /// Set software playback volume as a percentage.
-    SetAudioVolume { percent: u8 },
+    SetAudioVolume {
+        percent: u8,
+    },
     /// Replace the installed Cobalt with a downloaded release archive.
     ///
     /// The runtime fetches `url`, refuses the bytes unless their SHA-256
@@ -1282,7 +1322,10 @@ pub enum DeviceRequest {
     /// the folders, keeping the old install for one step of rollback. The
     /// root filesystem is never written, so the worst a bad archive can do
     /// is fail to start; the reader itself cannot be harmed.
-    Update { url: String, sha256: String },
+    Update {
+        url: String,
+        sha256: String,
+    },
     /// Enumerate app-store applications currently installed on this reader.
     ListInstalledApps,
     /// Read the last verified app catalog without using the network.
@@ -1290,9 +1333,13 @@ pub enum DeviceRequest {
     /// Fetch and verify the current app catalog from Cobalt's fixed source.
     RefreshAppCatalog,
     /// Install or update one catalog application by stable identity.
-    InstallApp { id: String },
+    InstallApp {
+        id: String,
+    },
     /// Remove one app-store application by stable identity.
-    UninstallApp { id: String },
+    UninstallApp {
+        id: String,
+    },
     /// Look up one selected word using only runtime-installed dictionaries.
     LookupWord {
         word: String,
@@ -1311,7 +1358,10 @@ pub enum DeviceRequest {
     /// Choose which automatic updates the runtime performs on its own. Both
     /// switches travel together so two writes cannot interleave and leave a
     /// mixture neither screen chose.
-    SetAutoUpdate { cobalt: bool, apps: bool },
+    SetAutoUpdate {
+        cobalt: bool,
+        apps: bool,
+    },
     /// Report what this runtime is and what it is running on.
     ///
     /// Asked when somebody opens a screen that shows it, in the same spirit
@@ -1321,13 +1371,18 @@ pub enum DeviceRequest {
     /// Report which published update stream the runtime follows.
     ReadUpdateChannel,
     /// Select the published update stream used for platform and app updates.
-    SetUpdateChannel { channel: UpdateChannel },
+    SetUpdateChannel {
+        channel: UpdateChannel,
+    },
     /// Install or replace one runtime-owned credential for the calling app.
     ///
     /// The runtime authorizes the app/name pair before writing anything.
     /// Applications may submit a value entered by the owner, but cannot read
     /// the stored value back.
-    SetSecret { name: String, value: SecretValue },
+    SetSecret {
+        name: String,
+        value: SecretValue,
+    },
     /// Save account details together with their owner-selected HTTPS server.
     /// The runtime keeps the destination and value in one atomic record.
     SetServerSecret {
@@ -1341,7 +1396,9 @@ pub enum DeviceRequest {
     /// and the few facts a shelf needs; reading the bytes is a second ask.
     ListLibrary,
     /// Read one library document by the identifier a listing returned.
-    ReadLibrary { id: String },
+    ReadLibrary {
+        id: String,
+    },
     /// Ask which of these runtime-owned credentials are installed.
     ///
     /// Presence only, never values. An application that spends several
@@ -1350,7 +1407,9 @@ pub enum DeviceRequest {
     /// is paid for rather than after the second provider answered.
     /// Additive on a new tag: older sides refuse the frame rather than
     /// misreading it.
-    CheckSecrets { names: Vec<String> },
+    CheckSecrets {
+        names: Vec<String>,
+    },
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1574,6 +1633,8 @@ pub enum DeviceResult {
     },
     /// Front light state.
     Frontlight { percent: u8 },
+    /// Device-neutral, quantized warmth: 0 coolest, 100 warmest.
+    Warmth { percent: u8 },
     /// Bluetooth controller state and the bounded set currently known.
     Bluetooth {
         available: bool,
@@ -2072,7 +2133,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::DeviceRequest(request) => {
             encode_device_request(&mut payload, request, frame.version)?;
         }
-        Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
+        Message::DeviceResult(result) => encode_device_result(&mut payload, result, frame.version)?,
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
         }
@@ -2690,7 +2751,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             Ok((12, length))
         }
         Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
-        Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
+        Message::DeviceResult(result) => Ok((8, device_result_len(result, version)?)),
         Message::Spawn { work, .. } => {
             if matches!(work, Task::Update { .. }) && version < UPDATE_TASK_VERSION {
                 return Err(ProtocolError::UnsupportedVersion(version));
@@ -2836,6 +2897,13 @@ fn encode_device_request(
             fixed_device_request(output, 8, u32::from(*percent));
         }
         DeviceRequest::ReadFrontlight => fixed_device_request(output, 9, 0),
+        DeviceRequest::SetWarmth { percent } if version >= WARMTH_VERSION && *percent <= 100 => {
+            output.extend_from_slice(&[54, *percent]);
+        }
+        DeviceRequest::ReadWarmth if version >= WARMTH_VERSION => output.push(55),
+        DeviceRequest::SetWarmth { .. } | DeviceRequest::ReadWarmth => {
+            return Err(ProtocolError::InvalidValue("warmth request"));
+        }
         DeviceRequest::ReadBluetooth => output.push(10),
         DeviceRequest::SetBluetooth { enabled } => {
             output.extend_from_slice(&[11, u8::from(*enabled)]);
@@ -3067,9 +3135,9 @@ fn device_request_len(request: &DeviceRequest, version: u8) -> Result<usize, Pro
     Ok(encoded.len())
 }
 
-fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
+fn device_result_len(result: &DeviceResult, version: u8) -> Result<usize, ProtocolError> {
     let mut encoded = Vec::new();
-    encode_device_result(&mut encoded, result)?;
+    encode_device_result(&mut encoded, result, version)?;
     Ok(encoded.len())
 }
 
@@ -3231,6 +3299,14 @@ fn decode_device_request(
             Ok(DeviceRequest::SetFrontlight { percent })
         }
         9 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadFrontlight),
+        54 if version >= WARMTH_VERSION => {
+            let percent = reader.u8()?;
+            if percent > 100 {
+                return Err(ProtocolError::InvalidValue("warmth percent"));
+            }
+            Ok(DeviceRequest::SetWarmth { percent })
+        }
+        55 if version >= WARMTH_VERSION => Ok(DeviceRequest::ReadWarmth),
         10 => Ok(DeviceRequest::ReadBluetooth),
         11 => Ok(DeviceRequest::SetBluetooth {
             enabled: read_boolean(reader, "Bluetooth enabled")?,
@@ -3430,8 +3506,16 @@ fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), Protocol
     clippy::too_many_lines,
     reason = "one explicit bounded result tag table"
 )]
-fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
+fn encode_device_result(
+    output: &mut Vec<u8>,
+    result: &DeviceResult,
+    version: u8,
+) -> Result<(), ProtocolError> {
     match result {
+        DeviceResult::Warmth { percent } if version >= WARMTH_VERSION && *percent <= 100 => {
+            output.extend_from_slice(&[23, *percent]);
+        }
+        DeviceResult::Warmth { .. } => return Err(ProtocolError::InvalidValue("warmth result")),
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
             output.push(2);
@@ -3750,8 +3834,18 @@ fn valid_cobalt_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+fn decode_device_result(
+    reader: &mut Reader<'_>,
+    version: u8,
+) -> Result<DeviceResult, ProtocolError> {
     match reader.u8()? {
+        23 if version >= WARMTH_VERSION => {
+            let percent = reader.u8()?;
+            if percent > 100 {
+                return Err(ProtocolError::InvalidValue("warmth percent"));
+            }
+            Ok(DeviceResult::Warmth { percent })
+        }
         1 => Ok(DeviceResult::Done),
         2 => Ok(DeviceResult::Granted {
             seconds: reader.u32()?,
@@ -4731,7 +4825,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             name: reader.string()?,
         },
         7 => Message::DeviceRequest(decode_device_request(&mut reader, version)?),
-        8 => Message::DeviceResult(decode_device_result(&mut reader)?),
+        8 => Message::DeviceResult(decode_device_result(&mut reader, version)?),
         9 => {
             let task = TaskId(reader.u32()?);
             let work = match reader.u8()? {
@@ -7513,6 +7607,81 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn warmth_round_trips_and_refuses_old_versions_and_invalid_values() {
+        for message in [
+            Message::DeviceRequest(DeviceRequest::SetWarmth { percent: 0 }),
+            Message::DeviceRequest(DeviceRequest::SetWarmth { percent: 100 }),
+            Message::DeviceRequest(DeviceRequest::ReadWarmth),
+            Message::DeviceResult(DeviceResult::Warmth { percent: 50 }),
+        ] {
+            let frame = Frame {
+                version: VERSION,
+                request_id: 7,
+                message,
+            };
+            let wire = encode(&frame).unwrap();
+            assert_eq!(decode(&wire).unwrap(), frame);
+            for version in ACCEPTED_VERSIONS
+                .into_iter()
+                .filter(|v| *v < WARMTH_VERSION)
+            {
+                let mut old = frame.clone();
+                old.version = version;
+                assert!(encode(&old).is_err());
+                let mut wire = wire.clone();
+                wire[4] = version;
+                assert!(decode(&wire).is_err());
+            }
+        }
+        for message in [
+            Message::DeviceRequest(DeviceRequest::SetWarmth { percent: 50 }),
+            Message::DeviceResult(DeviceResult::Warmth { percent: 50 }),
+        ] {
+            let frame = Frame {
+                version: VERSION,
+                request_id: 7,
+                message,
+            };
+            let mut wire = encode(&frame).unwrap();
+            *wire.last_mut().unwrap() = 101;
+            assert!(decode(&wire).is_err());
+        }
+        for message in [
+            Message::DeviceRequest(DeviceRequest::SetWarmth { percent: 101 }),
+            Message::DeviceResult(DeviceResult::Warmth { percent: 101 }),
+        ] {
+            assert!(encode(&Frame {
+                version: VERSION,
+                request_id: 7,
+                message
+            })
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn warmth_does_not_change_existing_brightness_frames() {
+        for version in ACCEPTED_VERSIONS {
+            let mut request = Vec::new();
+            encode_device_request(
+                &mut request,
+                &DeviceRequest::SetFrontlight { percent: 42 },
+                version,
+            )
+            .unwrap();
+            assert_eq!(request, [8, 0, 0, 0, 42]);
+            let mut result = Vec::new();
+            encode_device_result(
+                &mut result,
+                &DeviceResult::Frontlight { percent: 42 },
+                version,
+            )
+            .unwrap();
+            assert_eq!(result, [4, 42]);
+        }
+    }
 
     #[test]
     fn a_shared_failure_code_never_blames_a_part_of_the_system_it_cannot_know_about() {

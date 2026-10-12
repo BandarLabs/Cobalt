@@ -69,6 +69,7 @@ pub fn profile_from_probe(
     let controller = controller_for(&snapshot.compatible, &framebuffer.id)?;
 
     let profile = DeviceProfile {
+        warmth: None,
         id: PROVISIONAL_ID,
         model: leak(
             snapshot

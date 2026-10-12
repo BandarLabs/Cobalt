@@ -1446,6 +1446,7 @@ impl KoboApp for Settings {
             DeviceResult::Granted { .. }
             | DeviceResult::Battery { .. }
             | DeviceResult::Frontlight { .. }
+            | DeviceResult::Warmth { .. }
             | DeviceResult::Cover { .. }
             | DeviceResult::Audio { .. }
             | DeviceResult::Dictionary { .. }

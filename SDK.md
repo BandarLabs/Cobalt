@@ -1268,6 +1268,35 @@ context.device().play_audio();
 context.device().seek_audio(Duration::from_secs(30));
 ```
 
+The unreleased, app-only warmth API adds `context.device().set_warmth(40)`
+and `context.device().read_warmth()`, under the same `frontlight-control`
+capability. `DeviceResult::Warmth { percent }` reports 0 as coolest and 100
+as warmest, rounded to the controller's available steps. The SDK clamps values
+above 100; malformed wire percentages are refused. An explicit warmth setting
+wins over the brightness-100 midpoint rule and remains in effect across later
+brightness changes. Normal exit and crash recovery restore the owner's exact
+pre-session brightness and balance.
+
+**No physical profile enables warmth yet**, including Clara BW: warm-bank
+direction is unmeasured. Requests return `Denied(Unsupported)` without a
+profile mapping; missing or changed controls after capture return a backend
+failure. Headless host simulation uses a separate 0–100 model and is not hardware
+evidence; browser simulation continues to refuse warmth in this draft.
+Launcher controls are unchanged.
+
+The requests use new protocol-15 tags 54/55 and result tag 23; existing frames
+and the accepted version window are unchanged. Earlier runtimes do not understand
+these tags. Before distributing an app that uses warmth, set its
+`minimum_cobalt_version` to the release that actually contains this API; the
+protocol-15 registry minimum alone is insufficient. That release has not been
+assigned by this draft.
+
+Before enabling a physical profile or shipping warmth support, record attended
+Clara BW coolest/middle/warmest direction checks and restoration on normal exit
+and after a killed session, with the tested commit, model and firmware. Other
+controllers require their own measured topology and direction. These hardware
+checks have not been run for this draft.
+
 Every one is a request, answered at `on_device_result` with a `DeviceResult`
 that may be `Denied`. There are three distinct refusals and they mean different
 things:
@@ -1299,7 +1328,7 @@ clamps even that:
 | `keep-awake` | Stay out of suspend in the foreground |
 | `scheduled-wake` | Be woken to refresh content |
 | `battery-read` | Read battery percentage and charging state |
-| `frontlight-control` | Change front light brightness |
+| `frontlight-control` | Change front light brightness and mapped warmth |
 | `audio`, `bluetooth-audio` | Play audio, including to headphones |
 | `bluetooth-control` | Power, scan, pair and connect Bluetooth devices |
 | `wifi-control` | Power, scan, join and disconnect Wi-Fi |
