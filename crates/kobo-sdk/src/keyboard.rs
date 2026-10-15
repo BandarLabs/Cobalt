@@ -47,7 +47,12 @@ const LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 /// wrote into an item, and for as long as this layer had no `#` on it, that
 /// was a feature only reachable by somebody who had typed their list
 /// somewhere else and imported it.
-const SYMBOLS: [&str; 3] = ["1234567890", "-/:;()&@\"", ".,?!'+=#"];
+///
+/// The underscore is on it because access tokens contain one. Every Lichess
+/// token starts `lip_`, and a token the keyboard cannot type is a token that
+/// can only be installed from a computer. It sits at the end of its row so
+/// no other key moves.
+const SYMBOLS: [&str; 3] = ["1234567890", "-/:;()&@\"_", ".,?!'+=#"];
 
 /// What a tap on the keyboard meant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -481,7 +486,7 @@ mod tests {
         // a control nobody can use. The hash is the one that got shipped
         // missing: the todo list groups by tags, and a tag starts with one.
         let layers = super::LETTERS.concat() + &super::SYMBOLS.concat();
-        for wanted in ['#', '@', '/', ':', '-', '.', '?'] {
+        for wanted in ['#', '@', '/', ':', '-', '.', '?', '_'] {
             assert!(
                 layers.contains(wanted),
                 "the keyboard cannot type {wanted:?}"
