@@ -7304,8 +7304,68 @@ fn secret_install_script(name: &str, value: &str) -> String {
          {SECRET_DELIMITER}\n\
          chmod 600 .{name}.writing\n\
          mv -f .{name}.writing {name}\n\
-         trap - EXIT HUP INT TERM\n"
+         trap - EXIT HUP INT TERM\n{}",
+        forget_typed_copies_script(name)
     )
+}
+
+fn secret_remove_script(name: &str) -> String {
+    format!(
+        "set -e\nrm -f {DEVICE_SECRETS_DIRECTORY}/{name}\n{}",
+        forget_typed_copies_script(name)
+    )
+}
+
+/// What the reader prints for each copy typed on it that a command removed.
+const TYPED_COPY_REMOVED: &str = "typed-copy-removed";
+
+/// Deletes the copies of a secret that apps saved from the reader's keyboard.
+///
+/// The runtime prefers an app's own copy to the owner's file, so an app can be
+/// connected without a computer. Left alone, that preference would make
+/// setting or removing a secret from here change nothing for an app connected
+/// that way: the owner replaces a rejected token and the app keeps sending the
+/// old one. Server-bound accounts live a directory deeper and are never
+/// matched. Each removal is announced so the owner is told what went.
+fn forget_typed_copies_script(name: &str) -> String {
+    format!(
+        "for typed in {DEVICE_SECRETS_DIRECTORY}/apps/*/{name}; do\n\
+         if [ -f \"$typed\" ]; then\n\
+         rm -f \"$typed\"\n\
+         echo {TYPED_COPY_REMOVED}\n\
+         fi\n\
+         done\n"
+    )
+}
+
+/// The same as [`forget_typed_copies_script`], for a reader mounted over USB.
+fn forget_typed_copies(secrets: &Path, name: &str) -> Result<usize, String> {
+    let apps = secrets.join("apps");
+    let entries = match fs::read_dir(&apps) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("read {}: {error}", apps.display())),
+    };
+    let mut removed = 0;
+    for entry in entries {
+        let typed = entry
+            .map_err(|error| format!("read {}: {error}", apps.display()))?
+            .path()
+            .join(name);
+        if fs::symlink_metadata(&typed).is_ok_and(|metadata| metadata.is_file()) {
+            fs::remove_file(&typed)
+                .map_err(|error| format!("remove {}: {error}", typed.display()))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn typed_copies_removed(stdout: &[u8]) -> usize {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter(|line| line.trim() == TYPED_COPY_REMOVED)
+        .count()
 }
 
 fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
@@ -7336,6 +7396,43 @@ fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn remove_secret(name: &str, target: &SecretTarget) -> Result<(), String> {
+    match target {
+        SecretTarget::Device(host) => {
+            let script = secret_remove_script(name);
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    format!("remove the '{name}' credential"),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            println!("Removed '{name}' from {host}.");
+            if typed_copies_removed(&output.stdout) > 0 {
+                println!("Removed the value typed on the reader.");
+            }
+        }
+        SecretTarget::Volume(volume) => {
+            let directory = volume.join(".adds").join("cobalt").join("secrets");
+            let path = directory.join(name);
+            let typed = forget_typed_copies(&directory, name)?;
+            match std::fs::remove_file(&path) {
+                Ok(()) => println!("Removed {}.", path.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && typed == 0 => {
+                    println!("No '{name}' credential was installed.");
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("remove {}: {error}", path.display())),
+            }
+            if typed > 0 {
+                println!("Removed the value typed on the reader.");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn secret_command(arguments: &[String]) -> Result<(), String> {
     if provider_help_requested(arguments) {
         println!("{SECRET_USAGE}");
@@ -7362,6 +7459,9 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                         ));
                     }
                     println!("Installed '{name}' ({bytes} bytes) on {host}.");
+                    if typed_copies_removed(&output.stdout) > 0 {
+                        println!("It replaces the value typed on the reader.");
+                    }
                 }
                 SecretTarget::Volume(volume) => {
                     let directory = volume.join(".adds").join("cobalt").join("secrets");
@@ -7370,6 +7470,9 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                     let path = directory.join(name);
                     publish_secret(&path, &value)?;
                     println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
+                    if forget_typed_copies(&directory, name)? > 0 {
+                        println!("It replaces the value typed on the reader.");
+                    }
                 }
             }
             println!(
@@ -7377,34 +7480,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             );
             Ok(())
         }
-        (SecretAction::Remove { name }, SecretTarget::Device(host)) => {
-            let script = format!("rm -f {DEVICE_SECRETS_DIRECTORY}/{name}\n");
-            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
-            if !output.status.success() {
-                return Err(remote_shell_error(
-                    format!("remove the '{name}' credential"),
-                    &output.stdout,
-                    &output.stderr,
-                ));
-            }
-            println!("Removed '{name}' from {host}.");
-            Ok(())
-        }
-        (SecretAction::Remove { name }, SecretTarget::Volume(volume)) => {
-            let path = volume
-                .join(".adds")
-                .join("cobalt")
-                .join("secrets")
-                .join(name);
-            match std::fs::remove_file(&path) {
-                Ok(()) => println!("Removed {}.", path.display()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    println!("No '{name}' credential was installed.");
-                }
-                Err(error) => return Err(format!("remove {}: {error}", path.display())),
-            }
-            Ok(())
-        }
+        (SecretAction::Remove { name }, target) => remove_secret(name, target),
         (SecretAction::List, SecretTarget::Device(host)) => {
             // Names only. A command that can print a key is a command someone
             // will run over a shoulder or paste into a bug report.
@@ -8391,6 +8467,83 @@ mod tests {
             fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn typed_copies_fixture(label: &str) -> std::path::PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "cobalt-secret-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for (path, value) in [
+            ("apps/lichess/lichess", "lip_rejected"),
+            ("apps/chat/openai", "chat-key"),
+            ("apps/calibre-web/servers/lichess", "server-bound"),
+        ] {
+            let path = directory.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, value).unwrap();
+        }
+        directory
+    }
+
+    #[test]
+    fn setting_a_secret_from_a_computer_replaces_the_copy_typed_on_the_reader() {
+        let directory = typed_copies_fixture("set");
+        let script = super::secret_install_script("lichess", "lip_new")
+            .replace(super::DEVICE_SECRETS_DIRECTORY, directory.to_str().unwrap());
+        let run = || Command::new("sh").arg("-c").arg(&script).output().unwrap();
+
+        let first = run();
+        assert!(first.status.success(), "{first:?}");
+        assert_eq!(super::typed_copies_removed(&first.stdout), 1);
+        assert_eq!(
+            fs::read_to_string(directory.join("lichess")).unwrap(),
+            "lip_new\n"
+        );
+        assert!(!directory.join("apps/lichess/lichess").exists());
+        assert!(directory.join("apps/chat/openai").exists());
+        assert!(directory.join("apps/calibre-web/servers/lichess").exists());
+
+        let again = run();
+        assert!(again.status.success(), "{again:?}");
+        assert_eq!(super::typed_copies_removed(&again.stdout), 0);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn removing_a_secret_from_a_computer_also_removes_the_copy_typed_on_the_reader() {
+        let directory = typed_copies_fixture("remove");
+        fs::write(directory.join("lichess"), "lip_owner").unwrap();
+        let script = super::secret_remove_script("lichess")
+            .replace(super::DEVICE_SECRETS_DIRECTORY, directory.to_str().unwrap());
+
+        let output = Command::new("sh").arg("-c").arg(&script).output().unwrap();
+
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(super::typed_copies_removed(&output.stdout), 1);
+        assert!(!directory.join("lichess").exists());
+        assert!(!directory.join("apps/lichess/lichess").exists());
+        assert!(directory.join("apps/chat/openai").exists());
+        assert!(directory.join("apps/calibre-web/servers/lichess").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_mounted_reader_loses_only_typed_copies_of_the_named_secret() {
+        let directory = typed_copies_fixture("volume");
+
+        assert_eq!(super::forget_typed_copies(&directory, "lichess"), Ok(1));
+        assert_eq!(super::forget_typed_copies(&directory, "lichess"), Ok(0));
+        assert_eq!(super::forget_typed_copies(&directory, "servers"), Ok(0));
+        assert!(directory.join("apps/chat/openai").exists());
+        assert!(directory.join("apps/calibre-web/servers/lichess").exists());
+        let empty = directory.join("no-apps-yet");
+        assert_eq!(super::forget_typed_copies(&empty, "lichess"), Ok(0));
         fs::remove_dir_all(directory).unwrap();
     }
 
