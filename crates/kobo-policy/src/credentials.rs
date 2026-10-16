@@ -250,6 +250,7 @@ pub fn may_set(app: &str, name: &str) -> bool {
     match app {
         "audiobook" => matches!(name, "exa" | "openai" | "elevenlabs"),
         "chat" => matches!(name, "openai" | "anthropic" | "gemini"),
+        "lichess" => name == "lichess",
         "zotero-reader" => name == "zotero",
         _ => false,
     }
@@ -808,8 +809,9 @@ mod tests {
         assert!(may_set("zotero-reader", "zotero"));
         assert!(may_set("chat", "anthropic"));
         assert!(may_set("audiobook", "elevenlabs"));
+        assert!(may_set("lichess", "lichess"));
         assert!(!may_set("zotero-reader", "openai"));
-        assert!(!may_set("lichess", "lichess"));
+        assert!(!may_set("lichess", "zotero"));
         assert!(!may_set("other", "zotero"));
     }
 

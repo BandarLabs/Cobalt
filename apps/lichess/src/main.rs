@@ -2,7 +2,9 @@
 //!
 //! The application names the `lichess` secret but never receives its value.
 //! Live HTTP streams, redirects, cancellation, and credential attachment stay
-//! in the runtime.
+//! in the runtime. An owner without a computer can type the token on the
+//! reader: the app holds those keystrokes only until it hands them to the
+//! runtime, and cannot read the stored token back.
 
 mod api;
 mod chess;
@@ -10,11 +12,12 @@ mod model;
 
 use api::{BoardRecord, Event, SeekPreset};
 use kobo_json::{ObjectBuilder, Value};
+use kobo_sdk::credentials::{CredentialEvent, CredentialSetup};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat,
-    KoboApp, Orientation, Screen, ScreenBuilder, SlotWidth, StoreResult, Task, TaskError, TaskId,
-    TaskOutcome, Tile, TileShape, TileState,
+    action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, DeviceRequest,
+    DeviceResult, Failure, Glyph, Heartbeat, KoboApp, Orientation, Screen, ScreenBuilder,
+    SlotWidth, StoreResult, Task, TaskError, TaskId, TaskOutcome, Tile, TileShape, TileState,
 };
 #[cfg(any(test, debug_assertions))]
 use model::ChallengeTime;
@@ -33,6 +36,15 @@ const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 const ACCOUNT_RETRY_SECONDS: u32 = 15;
+const CONNECT: &str = "connect-lichess";
+/// Where the token comes from, said on the reader that asks for it.
+///
+/// The website's setup steps link to a form with the scope already ticked,
+/// but someone who installed from the Store on the reader may never have
+/// seen them. The address is short enough to type into a phone, and naming
+/// the one scope keeps the token from granting more than the Board API needs.
+const TOKEN_GUIDANCE: &str = "On a phone or computer, create a token at \
+lichess.org/account/oauth/token with only board:play. Enter it here as the account key.";
 const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 4;
 
 struct HomeTile {
@@ -347,6 +359,7 @@ struct Lichess {
     puzzles: Vec<Puzzle>,
     current_puzzle: usize,
     puzzle_wrong: u8,
+    credential: CredentialSetup,
 }
 
 impl Default for Lichess {
@@ -415,12 +428,19 @@ impl Default for Lichess {
             puzzles: Vec::new(),
             current_puzzle: 0,
             puzzle_wrong: 0,
+            credential: CredentialSetup::new(api::SECRET, "Lichess").with_guidance(TOKEN_GUIDANCE),
         }
     }
 }
 
 impl Lichess {
     fn show(&mut self, context: &mut Context) {
+        if self.credential.is_open() {
+            // Back closes the prompt onto Account/Games rather than leaving
+            // the app, which is where the owner opened it from.
+            context.set_screen(self.credential.screen("Lichess").with_own_back(true));
+            return;
+        }
         let screen = match self.route {
             Route::Home => self.home(context),
             Route::HowTo => Self::how_to_screen(),
@@ -462,9 +482,9 @@ impl Lichess {
             return format!("Retry in {remaining}s");
         }
         match self.account {
-            AccountState::Unknown | AccountState::Missing | AccountState::Invalid => {
-                "Offline".to_owned()
-            }
+            AccountState::Unknown => "Offline".to_owned(),
+            AccountState::Missing => "Not connected".to_owned(),
+            AccountState::Invalid => "Token rejected".to_owned(),
             AccountState::Checking => "Checking account".to_owned(),
             AccountState::Failed(_) => "Account error".to_owned(),
             AccountState::Ready(_) if !self.event_open => "Connecting".to_owned(),
@@ -741,7 +761,10 @@ impl Lichess {
     fn play_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("lichess-play").top_bar("Account/Games");
         screen = match &self.account {
-            AccountState::Unknown | AccountState::Missing => screen.secondary("Offline"),
+            AccountState::Unknown => screen.secondary("Offline"),
+            AccountState::Missing => screen
+                .secondary("Not connected")
+                .text("Connect a Lichess account to play online."),
             AccountState::Checking => screen.activity("Checking account", None),
             AccountState::Ready(account) => screen.secondary(account.username.clone()),
             AccountState::Invalid => screen.banner(BannerLevel::Attention, "Token rejected"),
@@ -749,6 +772,9 @@ impl Lichess {
         };
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
+        }
+        if matches!(self.account, AccountState::Missing | AccountState::Invalid) {
+            screen = screen.primary_button(CONNECT, "Connect Lichess");
         }
         if let Some(challenge) = &self.challenge {
             screen = screen.section("Incoming challenge").rows([(
@@ -4073,6 +4099,12 @@ impl KoboApp for Lichess {
         reason = "action dispatch is a flat exhaustive mapping from stable UI identifiers to state transitions"
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.credential.is_open() {
+            if self.credential.on_action(context, action).is_some() {
+                self.show(context);
+            }
+            return;
+        }
         if action == ActionId::BACK {
             if self.route == Route::ChallengePlayer {
                 self.challenge_keyboard.clear();
@@ -4163,6 +4195,8 @@ impl KoboApp for Lichess {
             };
         } else if action == action_id("refresh-play") {
             self.validate_account(context);
+        } else if action == action_id(CONNECT) {
+            self.credential.open();
         } else if action == action_id("challenge-player") {
             self.challenge_keyboard.clear();
             self.challenge_username.clear();
@@ -4396,6 +4430,22 @@ impl KoboApp for Lichess {
         self.show(context);
     }
 
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        let Some(event) = self.credential.on_device_result(&request, &result) else {
+            return;
+        };
+        if event == CredentialEvent::Saved {
+            self.notice = None;
+            self.validate_account(context);
+        }
+        self.show(context);
+    }
+
     fn on_suspend(&mut self, context: &mut Context) {
         self.suspended = true;
         if self.local_game {
@@ -4608,11 +4658,12 @@ mod tests {
         api, board_cells, clock, AccountState, ActionScope, BoardRecord, Challenge,
         ChallengeDirection, ChallengeTime, Color, Event, FullGame, Game, GameAction, Lichess,
         Orientation, Pending, Player, Promotion, Puzzle, Route, ServerState, Session,
-        ACCOUNT_RETRY_SECONDS, BOARD_RATE_KEY, EVENT_RATE_KEY, HOME_TILE_COUNT, SEEK_RATE_KEY,
+        ACCOUNT_RETRY_SECONDS, BOARD_RATE_KEY, CONNECT, EVENT_RATE_KEY, HOME_TILE_COUNT,
+        SEEK_RATE_KEY,
     };
     use kobo_sdk::{
-        action_id, ActionId, AppRunner, Command, Context, KoboApp, Screen, StoreRequest, TaskError,
-        TaskOutcome,
+        action_id, ActionId, AppRunner, Command, Context, DeviceRequest, DeviceResult, KoboApp,
+        Screen, StoreRequest, TaskError, TaskOutcome,
     };
     use kobo_ui::{
         render_with, tone, Chrome, ControlState, DisplayMetrics, Glyph, LayoutKind, Node, Surface,
@@ -7525,7 +7576,7 @@ mod tests {
         );
         assert!(matches!(app.account, AccountState::Missing));
         assert!(app.notice.is_none());
-        assert!(format!("{:?}", app.play_screen()).contains("Offline"));
+        assert!(format!("{:?}", app.play_screen()).contains("Not connected"));
         app.tasks.insert(kobo_sdk::TaskId(8), Pending::Account);
         app.on_task(
             &mut context,
@@ -7533,6 +7584,115 @@ mod tests {
             TaskOutcome::Completed(b"COBALT-HTTP/1 429\nRetry-After: 17\n\n".to_vec()),
         );
         assert!(app.notice.as_deref().unwrap_or_default().contains("17s"));
+    }
+
+    fn unconnected() -> Lichess {
+        Lichess {
+            route: Route::Play,
+            account: AccountState::Missing,
+            ..Lichess::default()
+        }
+    }
+
+    #[test]
+    fn a_missing_or_rejected_token_can_be_replaced_from_account_games() {
+        let mut app = unconnected();
+        let missing = format!("{:?}", app.play_screen());
+        assert!(missing.contains("Not connected"), "{missing}");
+        assert!(missing.contains("Connect Lichess"), "{missing}");
+        app.account = AccountState::Invalid;
+        let rejected = format!("{:?}", app.play_screen());
+        assert!(rejected.contains("Token rejected"), "{rejected}");
+        assert!(rejected.contains("Connect Lichess"), "{rejected}");
+        assert!(!format!("{:?}", ready_app().play_screen()).contains("Connect Lichess"));
+    }
+
+    #[test]
+    fn the_connect_prompt_says_where_to_create_the_token_and_keeps_the_computer_route() {
+        let mut runner = AppRunner::new(unconnected());
+        let prompt = format!(
+            "{:?}",
+            painted(runner.action(action_id(CONNECT))).expect("connect prompt")
+        );
+        assert!(
+            prompt.contains("lichess.org/account/oauth/token"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("board:play"), "{prompt}");
+        assert!(prompt.contains("Enter account key"), "{prompt}");
+        assert!(prompt.contains("Use computer"), "{prompt}");
+    }
+
+    /// The taps that type `lip_Ab3` on the SDK keyboard: the prefix every
+    /// Lichess token starts with, its underscore from the symbol layer, a
+    /// capital and a digit.
+    const TOKEN_TAPS: [&str; 11] = [
+        "kb.r1c8", "kb.r0c7", "kb.r0c9", "kb.layer", "kb.r1c9", "kb.layer", "kb.shift", "kb.r1c0",
+        "kb.r2c4", "kb.layer", "kb.r0c2",
+    ];
+
+    #[test]
+    fn a_token_typed_on_the_reader_is_saved_by_the_runtime_and_checked_at_once() {
+        let mut runner = AppRunner::new(unconnected());
+        runner.action(action_id(CONNECT));
+        runner.action(action_id("credential.enter"));
+        for tap in TOKEN_TAPS {
+            runner.action(action_id(tap));
+        }
+        let saving = runner.action(action_id("kb.enter"));
+        assert!(saving.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::SetSecret { name, value })
+                if name == "lichess" && value.as_str() == "lip_Ab3"
+        )));
+
+        let saved = painted(runner.device_result(DeviceResult::Done)).expect("account games");
+
+        let app = runner.app_mut();
+        assert!(!app.credential.is_open());
+        assert_eq!(app.route, Route::Play);
+        assert!(matches!(app.account, AccountState::Checking));
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Account)));
+        assert!(format!("{saved:?}").contains("Checking account"));
+    }
+
+    #[test]
+    fn back_from_the_connect_prompt_returns_to_account_games_without_saving() {
+        let mut runner = AppRunner::new(unconnected());
+        runner.action(action_id(CONNECT));
+        let commands = runner.action(ActionId::BACK);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(_))));
+        let screen = format!("{:?}", painted(commands).expect("account games"));
+        assert!(screen.contains("Account/Games"), "{screen}");
+        assert!(screen.contains("Challenge player"), "{screen}");
+        assert!(!runner.app_mut().credential.is_open());
+        assert_eq!(runner.app_mut().route, Route::Play);
+    }
+
+    #[test]
+    fn connecting_fits_every_panel_and_text_size() {
+        for (name, panel) in panels() {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..panel
+                };
+                let mut runner = AppRunner::with_metrics(unconnected(), metrics);
+                let play = runner.app_mut().play_screen().with_own_back(true);
+                let prompt = painted(runner.action(action_id(CONNECT))).expect("connect prompt");
+                for screen in [play, prompt] {
+                    let chrome = Chrome::for_screen(&screen, false, None);
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        !diagnostics.has_errors(),
+                        "{name} {text_scale:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -7647,7 +7807,7 @@ mod tests {
         );
 
         assert!(matches!(app.account, AccountState::Missing));
-        assert!(format!("{:?}", app.play_screen()).contains("Offline"));
+        assert!(format!("{:?}", app.play_screen()).contains("Not connected"));
     }
 
     #[test]

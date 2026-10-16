@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "67777d3ec875a6efd0d45e471ff308a34e0371a6"
+     "compatible_blob": "3602372b8c132a0b32622c730d4e8b45c219c148"
     }
    ]
   },
@@ -418,6 +418,17 @@
      "path": "Cargo.lock",
      "base_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696",
      "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Take rustls 0.23.46 for the four TLS advisories published on 2026-10-14 (RUSTSEC-2026-0346 to RUSTSEC-2026-0349). Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
+     "compatible_blob": "3602372b8c132a0b32622c730d4e8b45c219c148"
     }
    ]
   }

@@ -991,6 +991,9 @@ private namespace first. A file installed by `kobo secret set` remains a
 global owner credential at `secrets/<name>` and is used only when the calling
 app has no private value. Thus Chat and Audiobook may hold different `openai`
 credentials, while existing CLI-installed credentials continue to work.
+Setting or removing a secret with `kobo secret` also deletes the values apps
+saved under that name, so the owner's latest choice from a computer is the one
+used, and a rejected token typed on the reader can be replaced from a computer.
 Applications cannot name or write another app's namespace, and secret paths
 and symbolic links are refused rather than followed.
 

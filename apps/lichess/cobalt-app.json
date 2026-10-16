@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.15",
-  "release_notes": "The home screen no longer shows 1 of 1 under a single page, and the setup guide needs no address.",
+  "version": "1.0.16",
+  "release_notes": "Connect your Lichess account from Account/Games by typing the token on the reader. Without one, the app says Not connected instead of Offline.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [
@@ -22,7 +22,10 @@
         }
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "text": "On the reader, open Lichess, tap Account/Games, then Connect Lichess, and type the token."
+      },
+      {
+        "text": "Or use a computer, which also works if Lichess asks for a newer Cobalt. Once per reader, plug it in over USB and run kobo setup --enable-ssh. Then pair it:",
         "command": "kobo pair"
       },
       {

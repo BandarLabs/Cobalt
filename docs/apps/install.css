@@ -176,6 +176,7 @@ h1 {
 .prerequisites { background: var(--paper-deep); }
 .prerequisites ol { margin: 20px 0 0; padding-left: 22px; color: var(--muted); }
 .prerequisites li + li { margin-top: 12px; }
+.setup-tool { margin: 20px 0 0; color: var(--muted); }
 .setup-command {
   display: block;
   width: fit-content;
