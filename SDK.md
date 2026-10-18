@@ -1093,6 +1093,13 @@ row, whatever it currently says. Shift and the symbol layer change every label
 without moving a single cell, so a finger already resting on a key does not
 have to be lifted and re-aimed.
 
+Shift works on the symbol layer as it does on a computer: shift then 5 types
+`%`. The shifted page also holds `$ ^ * [ ] { } < > \ | ~` and the backtick, so
+every printable ASCII character can be typed, which a Wi-Fi password or a shell
+command may need. An app that arranges its own keys reads the current rows
+from `Keyboard::rows` instead of copying them. `TextEntry::open` always starts
+on the letters, unshifted.
+
 ---
 
 ## 7. State that survives being closed
