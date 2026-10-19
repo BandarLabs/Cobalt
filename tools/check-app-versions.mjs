@@ -424,6 +424,40 @@ export function manifestOnlyChangesWorkspaceMembershipOrVersion(
   );
 }
 
+// The `version` entry of `[package]`, in any of its spellings, replaced by a
+// placeholder so two manifests can be compared with it out of the way. Only
+// `[package]` is touched: a `version` inside a dependency table is a different
+// thing.
+function normalizePackageVersion(source) {
+  const lines = source.split("\n");
+  const start = lines.findIndex(line => line.trim() === "[package]");
+  if (start < 0) return source;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line.startsWith("[")) break;
+    if (
+      /^version(\.workspace\s*=\s*true|\s*=\s*"[^"]*"|\s*=\s*\{\s*workspace\s*=\s*true\s*\})$/.test(
+        line
+      )
+    ) {
+      lines[index] = 'version = "<package-version>"';
+      return lines.join("\n");
+    }
+  }
+  return source;
+}
+
+// A package manifest that changed only in its version lines: its own under
+// `[package]`, in whichever spelling, and the versions written beside path
+// dependencies. Neither changes what the package compiles to, so the gate
+// treats such an edit as it already treats the workspace version moving.
+export function manifestOnlyChangesVersions(previousSource, currentSource) {
+  return manifestOnlyChangesPathDependencyVersions(
+    normalizePackageVersion(previousSource),
+    normalizePackageVersion(currentSource)
+  );
+}
+
 export function manifestOnlyChangesPathDependencyVersions(previousSource, currentSource) {
   const normalize = source =>
     source
@@ -768,6 +802,9 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
   }
 
   const changedIdentities = new Set();
+  // Package manifests whose only change is a version line. They are not Store
+  // changes, so a push that carries nothing else is not an unpublished one.
+  const quietManifests = new Set();
   const previousRegistry = JSON.parse(
     command("git", ["show", `${baseRevision}:apps/catalog.json`])
   );
@@ -803,11 +840,9 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
     if (
       previousManifest !== null &&
       packageChanges.every(path => path === relativeManifest) &&
-      manifestOnlyChangesPathDependencyVersions(
-        previousManifest,
-        readFileSync(package_.manifest_path, "utf8")
-      )
+      manifestOnlyChangesVersions(previousManifest, readFileSync(package_.manifest_path, "utf8"))
     ) {
+      quietManifests.add(relativeManifest);
       continue;
     }
     changedIdentities.add(
@@ -830,7 +865,7 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
 
   return {
     affected: registeredConsumers(metadata, registeredPackages, changedIdentities),
-    storeChanges
+    storeChanges: storeChanges.filter(path => !quietManifests.has(path))
   };
 }
 

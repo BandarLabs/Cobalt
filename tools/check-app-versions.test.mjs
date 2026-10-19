@@ -17,6 +17,7 @@ import {
   meaningfulReleaseNotes,
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
+  manifestOnlyChangesVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
   packagesToBuild,
   registeredConsumers,
@@ -1232,6 +1233,36 @@ test("the standalone importer is isolated without changing device workspace inpu
   const importer = metadata("crates/kobo-flashcards-import/Cargo.toml");
   assert.equal(importer.workspace_members.length, 1);
   assert.ok(importer.workspace_members[0].includes("kobo-flashcards-import"));
+});
+
+test("a package manifest that only moves its version lines is not a Store change", () => {
+  const previous = [
+    "[package]",
+    'name = "kobo-sudoku"',
+    'version = "1.0.11"',
+    "edition.workspace = true",
+    "",
+    "[dependencies]",
+    'kobo-sdk = { path = "../../crates/kobo-sdk", version = "0.3.2" }',
+    ""
+  ].join("\n");
+  const inherited = previous.replace('version = "1.0.11"', "version.workspace = true");
+  assert.equal(manifestOnlyChangesVersions(previous, inherited), true);
+  assert.equal(manifestOnlyChangesVersions(previous, previous.replace('"1.0.11"', '"1.0.15"')), true);
+  assert.equal(
+    manifestOnlyChangesVersions(previous, inherited.replace('version = "0.3.2"', 'version = "0.3.3"')),
+    true
+  );
+  assert.equal(
+    manifestOnlyChangesVersions(previous, inherited.replace("[dependencies]\n", '[dependencies]\nserde = "1"\n')),
+    false
+  );
+  assert.equal(manifestOnlyChangesVersions(previous, inherited.replace("kobo-sudoku", "kobo-sudoku2")), false);
+  const dependencyTable = `${previous}\n[dependencies.serde]\nversion = "1"\n`;
+  assert.equal(
+    manifestOnlyChangesVersions(dependencyTable, dependencyTable.replace('version = "1"\n', 'version = "2"\n')),
+    false
+  );
 });
 
 test("a toolchain pin rebuilds every app unless its exact content was reviewed", () => {
