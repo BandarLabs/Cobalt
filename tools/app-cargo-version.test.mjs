@@ -28,6 +28,42 @@ test("the package version is read in every spelling and only from [package]", ()
   assert.equal(packageVersion('[dependencies.serde]\nversion = "1"\n'), null);
 });
 
+test("a compliant manifest reads as compliant whatever comments and table forms it uses", () => {
+  const inherited = { workspace: true };
+  assert.deepEqual(
+    packageVersion(WORKSPACE.replace("version.workspace = true", "version.workspace = true # platform version")),
+    inherited
+  );
+  assert.deepEqual(packageVersion(WORKSPACE.replace("[package]", "[package] # the Store app")), inherited);
+  assert.deepEqual(packageVersion(WORKSPACE.replace("[package]", "[ package ]")), inherited);
+  assert.deepEqual(
+    packageVersion(WORKSPACE.replace("version.workspace = true", "version . workspace = true")),
+    inherited
+  );
+  assert.deepEqual(
+    packageVersion(
+      WORKSPACE.replace("version.workspace = true\n", "") + "\n[package.version] # inherited\nworkspace = true\n"
+    ),
+    inherited
+  );
+  assert.deepEqual(
+    packageVersion(WORKSPACE.replace("version.workspace = true", 'version = "1.0.11" # stale copy')),
+    { workspace: false, value: "1.0.11" }
+  );
+  assert.deepEqual(
+    packageVersion(WORKSPACE.replace("version.workspace = true", "version = '1.0.11'")),
+    { workspace: false, value: "1.0.11" }
+  );
+});
+
+test("commented-out lines and other package tables are not the package version", () => {
+  const bare = WORKSPACE.replace("version.workspace = true\n", "");
+  assert.equal(packageVersion(bare.replace("[package]\n", "[package]\n# version.workspace = true\n")), null);
+  assert.equal(packageVersion(bare.replace("[package]\n", '[package]\ndescription = "# not a comment"\n')), null);
+  assert.equal(packageVersion(bare + '\n[package.metadata.store]\nversion = "2.0.0"\n'), null);
+  assert.equal(packageVersion(bare + '\n[[package]]\nversion = "2.0.0"\n'), null);
+});
+
 test("a package that repeats a version of its own is named with both numbers", () => {
   const packages = [
     { directory: "apps/right", manifestVersion: "2.0.0", cargo: WORKSPACE },

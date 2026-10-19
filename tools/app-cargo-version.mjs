@@ -22,20 +22,52 @@ const SOURCE_DIRECTORIES = ["apps", "examples"];
 
 // The `version` entry of the `[package]` table, however it is spelled, or
 // null when the table has none. Only `[package]` is read: a `version` line
-// inside a dependency table is a different thing.
+// inside a dependency table is a different thing. A compliant manifest that
+// this misreads is told it has no version, so comments, spaced headers and a
+// `[package.version]` table all have to read the way Cargo reads them.
 export function packageVersion(cargoSource) {
-  const lines = cargoSource.split("\n");
-  const start = lines.findIndex(line => line.trim() === "[package]");
-  if (start < 0) return null;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    if (line.startsWith("[")) break;
-    if (/^version\.workspace\s*=\s*true$/.test(line)) return { workspace: true };
-    if (/^version\s*=\s*\{\s*workspace\s*=\s*true\s*\}$/.test(line)) return { workspace: true };
-    const explicit = /^version\s*=\s*"([^"]*)"$/.exec(line);
-    if (explicit) return { workspace: false, value: explicit[1] };
+  let table = null;
+  for (const raw of cargoSource.split("\n")) {
+    const line = withoutComment(raw).trim();
+    if (line.startsWith("[")) {
+      table = tableName(line);
+      continue;
+    }
+    if (table === "package") {
+      if (/^version\s*\.\s*workspace\s*=\s*true$/.test(line)) return { workspace: true };
+      if (/^version\s*=\s*\{\s*workspace\s*=\s*true\s*\}$/.test(line)) return { workspace: true };
+      const explicit = /^version\s*=\s*(?:"([^"]*)"|'([^']*)')$/.exec(line);
+      if (explicit) return { workspace: false, value: explicit[1] ?? explicit[2] };
+    } else if (table === "package.version" && /^workspace\s*=\s*true$/.test(line)) {
+      return { workspace: true };
+    }
   }
   return null;
+}
+
+// The dotted name of a `[table]` header with the spacing TOML allows removed,
+// or null for an array of tables, which is never the package table, and for a
+// quoted name, which no Cargo manifest here writes and this does not read.
+function tableName(header) {
+  const name = /^\[\s*([\w-]+(?:\s*\.\s*[\w-]+)*)\s*\]$/.exec(header);
+  return name ? name[1].replace(/\s+/g, "") : null;
+}
+
+// The line up to its comment. A `#` inside a quoted string is not one.
+function withoutComment(line) {
+  let quote = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quote === null) {
+      if (character === "#") return line.slice(0, index);
+      if (character === '"' || character === "'") quote = character;
+    } else if (character === "\\" && quote === '"') {
+      index += 1;
+    } else if (character === quote) {
+      quote = null;
+    }
+  }
+  return line;
 }
 
 // Every directory under apps/ and examples/ that carries a Store manifest,
