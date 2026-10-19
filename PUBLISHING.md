@@ -1,5 +1,9 @@
 # Publishing the SDK crates
 
+Every SDK crate is marked `publish = false` and none is on crates.io today;
+applications are built from a checkout of this repository. This is the order
+to follow if that changes.
+
 The public Rust API is split into small crates. Their local `path` dependencies
 also carry exact `0.1.0` registry versions, so a workspace checkout uses local
 source while a published crate resolves the same version from crates.io.

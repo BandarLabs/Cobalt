@@ -107,6 +107,15 @@ cargo run --manifest-path ../../crates/kobo-cli/Cargo.toml -- dev
 Tests should validate screens with `CLARA_BW_METRICS`, including tappability
 and stable layout after state changes.
 
+## Licensing
+
+An app links `kobo-sdk`, which is AGPL-3.0-only with no linking exception, so
+the app is AGPL-3.0 as well, whether it lives here or in a checkout of its own.
+Content an app bundles, such as puzzles, texts, fonts or images, needs a
+licence that allows redistribution on those terms; name it in the app's README
+and in [THIRD-PARTY.md](../THIRD-PARTY.md). The SDK crates are not on
+crates.io, so an app is built from this repository.
+
 ## Pull request and Beta publication
 
 Open the app pull-request template against `beta`. Human review is for product
