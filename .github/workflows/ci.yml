@@ -333,14 +333,31 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit dependencies
         run: |
+          # zip before 9.0.0 has three advisories, RUSTSEC-2026-0367, -0368 and
+          # -0369, all in ZipArchive::extract and ZipStreamReader::extract, which
+          # write an archive to disk keeping SUID and SGID bits and following
+          # symlinks out of the destination. Nothing audited here calls either.
+          # kobo-comic and the flashcards importer read entries into memory by
+          # index or name, and so does anki's rslib; only anki's own build
+          # runner extracts, and the importer does not depend on it. zip 9 needs
+          # rustc 1.88, newer than the device toolchain, and anki at the pinned
+          # revision requires zip 4. The ignores live here, not in
+          # .cargo/audit.toml, because check-app-versions counts every path
+          # under .cargo/ as a build input and would rebuild every Store app.
+          # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
+          ignore=(
+            --ignore RUSTSEC-2026-0367
+            --ignore RUSTSEC-2026-0368
+            --ignore RUSTSEC-2026-0369
+          )
           set +e
-          output="$(cargo audit --db advisory-db --no-fetch 2>&1)"
+          output="$(cargo audit "${ignore[@]}" --db advisory-db --no-fetch 2>&1)"
           status=$?
           set -e
           if [ "$status" -eq 0 ]; then
             printf '%s\n' "$output"
-            cargo audit --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
-            cargo audit --db advisory-db --no-fetch --file fuzz/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db --no-fetch --file fuzz/Cargo.lock
           elif printf '%s\n' "$output" | grep -Eq \
             'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
             printf '%s\n' "$output" >&2
@@ -361,9 +378,9 @@ jobs:
               --record tools/advisory-db-fallback.json \
               --snapshot "$snapshot" \
               --today "$(date -u +%F)"
-            cargo audit --db advisory-db-fallback --no-fetch
-            cargo audit --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
-            cargo audit --db advisory-db-fallback --no-fetch --file fuzz/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch --file fuzz/Cargo.lock
           else
             printf '%s\n' "$output" >&2
             exit "$status"
