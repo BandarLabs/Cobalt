@@ -340,6 +340,7 @@ jobs:
           if [ "$status" -eq 0 ]; then
             printf '%s\n' "$output"
             cargo audit --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit --db advisory-db --no-fetch --file fuzz/Cargo.lock
           elif printf '%s\n' "$output" | grep -Eq \
             'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
             printf '%s\n' "$output" >&2
@@ -362,6 +363,7 @@ jobs:
               --today "$(date -u +%F)"
             cargo audit --db advisory-db-fallback --no-fetch
             cargo audit --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit --db advisory-db-fallback --no-fetch --file fuzz/Cargo.lock
           else
             printf '%s\n' "$output" >&2
             exit "$status"
