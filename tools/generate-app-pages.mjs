@@ -92,6 +92,7 @@ const categories = {
   brief: "Reading",
   "calibre-web": "Reading",
   chat: "Developer",
+  clippings: "Reading",
   crossword: "Games",
   deck: "Devices",
   fanshelf: "Reading",
