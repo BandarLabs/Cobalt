@@ -506,9 +506,11 @@ rm -f "$registry"
   --public-key "$public_key" \
   --package "$package" >/dev/null
 
+# rslib has to stand alone. The pinned compiler's standard library stores its
+# panic paths back to back, so a bare match finds `pattern.rslibrary/core`.
 for path in "$device" "$package"; do
   if strings "$path" |
-    grep -E 'Anki|AnkiDroid|ankitects|anki_i18n|rslib|9e32ad8849068510a82273889c21b22e1acf0949' >/dev/null; then
+    grep -E 'Anki|AnkiDroid|ankitects|anki_i18n|(^|[^[:alnum:]_])rslib([^[:alnum:]_]|$)|9e32ad8849068510a82273889c21b22e1acf0949' >/dev/null; then
     echo "device artifact contains host-only Anki branding or source material: $path" >&2
     exit 1
   fi
