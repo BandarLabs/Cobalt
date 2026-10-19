@@ -3,9 +3,10 @@
 # the file here, a contributor on current stable ran the clippy command the
 # contributing guide asks for and watched it fail on lints CI has never seen.
 #
-# The standalone Flashcards importer builds with a newer compiler from its own
-# directory, and the jobs that need it set RUSTUP_TOOLCHAIN, which rustup
-# consults before this file.
+# The standalone Flashcards importer needs Rust 1.88, and this file applies in
+# its directory too, so everything that builds it names that compiler:
+# `cargo +1.88.0` in the documented commands and the validation scripts, and
+# RUSTUP_TOOLCHAIN in the jobs, which rustup consults before this file.
 #
 # Changing this line changes every byte the device package is built from, and
 # the Store release gate treats it accordingly.
