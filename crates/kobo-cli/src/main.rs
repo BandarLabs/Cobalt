@@ -15,6 +15,7 @@ mod authorize;
 mod beta_store_smoke;
 mod birds;
 mod bootstrap;
+mod clippings;
 mod connect;
 mod console;
 mod deck;
@@ -964,6 +965,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "readlater" => readlater::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
+        "clippings" => clippings::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
@@ -7795,6 +7797,7 @@ fn print_help() {
            frame init | push PHOTOS [--fit crop|pad] | ls | rm ID   Photos for Frame\n\
            musicstand init | push SCORE.pdf | ls | rm ID          Scores for Music Stand\n\
            vault init | push NOTES_DIR | ingest DIR | ls | rm ID  Markdown notes for Vault\n\
+           clippings push DIR     Web Clipper notes and read state for Clippings\n\
            flashcards --help      Import Anki decks and stage them for Flashcards\n\
            fieldbook --help       Field packs in, eBird checklists out\n\
            panels push COMIC.cbz  A comic for Panels\n\
@@ -7986,6 +7989,7 @@ mod tests {
         super::needles::command(&["--help".into()]).expect("needles help");
         super::nonograms::command(&["--help".into()]).expect("nonograms help");
         super::vault::command(&["--help".into()]).expect("vault help");
+        super::clippings::command(&["--help".into()]).expect("clippings help");
     }
 
     #[test]
