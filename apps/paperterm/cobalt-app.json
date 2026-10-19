@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The keyboard now has underscore and hash keys, and shift on the symbol keys types $ % | ~ and the other symbols a shell needs.",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "setup": {
     "steps": [
       {

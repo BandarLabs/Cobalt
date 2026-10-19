@@ -4,8 +4,8 @@
   "short_label": "Sync",
   "summary": "Sync folders between your computer and Kobo with Syncthing, on a schedule.",
   "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.",
-  "version": "0.3.3",
-  "release_notes": "Status reads in plain words: Check how the last sync went, Left to sync, and None yet for peers.",
+  "version": "0.3.4",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"
