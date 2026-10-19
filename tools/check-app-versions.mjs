@@ -45,7 +45,8 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
   "crates/kobo-ui/src/vector.rs",
   "crates/kobo-ui/src/vector/tabler.rs",
   "examples/gutenbird/Cargo.toml",
-  "examples/gutenbird/src/main.rs"
+  "examples/gutenbird/src/main.rs",
+  "rust-toolchain.toml"
 ]);
 
 // Cargo metadata grows with every workspace package. Bound it well above the
@@ -694,6 +695,25 @@ export function storeImpactOfChangedPaths(changedPaths, packageDirectories, regi
   };
 }
 
+// The inputs that decide how every Store binary is built. A change to one
+// rebuilds every app, with two exceptions that change no shipped byte: a root
+// manifest edit that only moves the workspace version or membership, and a
+// toolchain pin whose reviewed content names the compiler the workflows were
+// already using. That review is recorded in the compatible-change manifest
+// against the exact blob, so any later edit to the pin is a global input again.
+export function globalBuildInputsChanged(
+  changedPaths,
+  compatiblePaths,
+  rootManifestOnlyMovesVersionOrMembership
+) {
+  const toolchainPins = new Set(["rust-toolchain", "rust-toolchain.toml"]);
+  if (changedPaths.some(path => path.startsWith(".cargo/"))) return true;
+  if (changedPaths.some(path => toolchainPins.has(path) && !compatiblePaths.has(path))) {
+    return true;
+  }
+  return changedPaths.includes("Cargo.toml") && !rootManifestOnlyMovesVersionOrMembership();
+}
+
 export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
@@ -737,14 +757,12 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
     path => command("git", ["hash-object", path])
   );
 
-  const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
-  const changesGlobalInputs =
-    changedPaths.some(path => unconditionalGlobalInputs.has(path) || path.startsWith(".cargo/")) ||
-    (changedPaths.includes("Cargo.toml") &&
-      !manifestOnlyChangesWorkspaceMembershipOrVersion(
-        command("git", ["show", `${baseRevision}:Cargo.toml`]),
-        readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
-      ));
+  const changesGlobalInputs = globalBuildInputsChanged(changedPaths, compatiblePaths, () =>
+    manifestOnlyChangesWorkspaceMembershipOrVersion(
+      command("git", ["show", `${baseRevision}:Cargo.toml`]),
+      readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
+    )
+  );
   if (changesGlobalInputs) {
     return { affected: new Set(registeredPackages), storeChanges };
   }

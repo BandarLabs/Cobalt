@@ -431,6 +431,17 @@
      "compatible_blob": "3602372b8c132a0b32622c730d4e8b45c219c148"
     }
    ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "rust-toolchain.toml pins the compiler the workflows already named, 1.85.1, so a contributor builds and lints with the one CI uses; no Store binary is built differently. Any later change to the pin is a global release input again.",
+   "files": [
+    {
+     "path": "rust-toolchain.toml",
+     "base_blob": null,
+     "compatible_blob": "d02d9b3b98ea172cf2e335a28a78ddcd558ba443"
+    }
+   ]
   }
  ]
 }

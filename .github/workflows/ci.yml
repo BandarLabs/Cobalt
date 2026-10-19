@@ -25,6 +25,9 @@ jobs:
         with:
           toolchain: 1.85.1
           components: clippy, rustfmt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
@@ -84,6 +87,10 @@ jobs:
   flashcards-importer:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # rust-toolchain.toml at the root names the device compiler; the importer
+    # needs the newer one, and rustup reads this variable before the file.
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -104,6 +111,9 @@ jobs:
         with:
           toolchain: 1.85.1
           targets: armv7-unknown-linux-musleabihf
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
       - name: Install the ring C cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       # The device target is musl, but the C in the dependency tree was being
@@ -301,6 +311,10 @@ jobs:
 
   advisories:
     runs-on: ubuntu-latest
+    # cargo-audit is built with the newer compiler; rustup reads this variable
+    # before the root rust-toolchain.toml.
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

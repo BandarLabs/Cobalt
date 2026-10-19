@@ -1,0 +1,15 @@
+# The compiler every workspace binary is built with, on a contributor's
+# machine as well as in CI. The workflows already named this version; without
+# the file here, a contributor on current stable ran the clippy command the
+# contributing guide asks for and watched it fail on lints CI has never seen.
+#
+# The standalone Flashcards importer builds with a newer compiler from its own
+# directory, and the jobs that need it set RUSTUP_TOOLCHAIN, which rustup
+# consults before this file.
+#
+# Changing this line changes every byte the device package is built from, and
+# the Store release gate treats it accordingly.
+[toolchain]
+channel = "1.85.1"
+components = ["clippy", "rustfmt"]
+targets = ["armv7-unknown-linux-musleabihf"]
