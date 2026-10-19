@@ -1,7 +1,5 @@
-use super::{
-    frame::{FramePlanner, FrameTransition, PanelWaveform},
-    PROFILE,
-};
+use super::PROFILE;
+use kobo_frame_plan::{FramePlanner, FrameTransition, PanelWaveform};
 use kobo_ui::Surface;
 use std::{io, time::Instant};
 

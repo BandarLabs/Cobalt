@@ -12,8 +12,6 @@ use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 
-// Panel policy belongs to the runtime, but the simulator compiles the same
-// source so region and waveform decisions cannot drift.
 mod activity;
 mod app_store;
 mod board_fixtures;
@@ -27,8 +25,6 @@ mod radio;
 pub mod runtime;
 pub use capture::CaptureSource;
 use panel::PanelPreview;
-#[path = "../../kobod/src/frame.rs"]
-mod frame;
 
 use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
 use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391, SUPPORTED_PROFILES};

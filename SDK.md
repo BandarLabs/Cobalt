@@ -52,8 +52,10 @@ Cobalt is tested on the Clara BW, Clara Colour, Elipsa 2E, Clara HD, Libra 2,
 Libra Colour and Libra H2O at the firmware in the
 [device support matrix](docs/DEVICES.md#device-support-matrix). Other models
 run after the owner accepts a notice listing what is untested, and developer
-write tools require an exact match. Cobalt is AGPL-3.0 licensed and comes with
-no warranty. To help support another model, start with
+write tools require an exact match. Cobalt, including the SDK an application
+links, is AGPL-3.0-only with no linking exception, so an application built with
+it carries the same licence; it comes with no warranty. To help support another
+model, start with
 [Porting to another Kobo](docs/PORTING.md).
 
 Six steps from nothing to a tile on the reader's launcher.

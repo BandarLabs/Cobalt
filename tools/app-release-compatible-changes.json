@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "3602372b8c132a0b32622c730d4e8b45c219c148"
+     "compatible_blob": "f394649a66bc235232478bb20240de9596390eff"
     }
    ]
   },
@@ -406,7 +406,7 @@
     {
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
-     "compatible_blob": "cd2a4dbf72810b24ec289bebe19eff298c91417e"
+     "compatible_blob": "d43f100e17181682b91bcd01451065b2f0bc2652"
     }
    ]
   },
@@ -428,7 +428,29 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "3602372b8c132a0b32622c730d4e8b45c219c148"
+     "compatible_blob": "f394649a66bc235232478bb20240de9596390eff"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "rust-toolchain.toml pins the compiler the workflows already named, 1.85.1, so a contributor builds and lints with the one CI uses; no Store binary is built differently. Any later change to the pin is a global release input again.",
+   "files": [
+    {
+     "path": "rust-toolchain.toml",
+     "base_blob": null,
+     "compatible_blob": "6c114996c00c356bd8c1bb9800f901b1165c19e2"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "The panel frame planner moved from kobod into its own crate, kobo-frame-plan, and every Store package now inherits the workspace version from its Cargo.toml. The lock gains one path crate that only the runtime and the simulator depend on, and the Store packages' own version lines; no Store binary resolves to different code. The inline test modules of kobo-ui, kobo-protocol, the kobo command and the runtime's device module moved into sibling files, which changes those sources' bytes and none of their code; the active entries naming them are re-pinned to the tree.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
+     "compatible_blob": "f394649a66bc235232478bb20240de9596390eff"
     }
    ]
   }

@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
-// This module is compiled by both the device runtime and simulator. Each uses
-// a different half of the diagnostic API, so neither crate uses every method.
-#![allow(dead_code)]
 
 //! Panel update planning shared by the device runtime and simulator.
+//!
+//! One crate rather than one source file compiled twice, so the two cannot
+//! drift on which region is refreshed with which waveform: the simulator's
+//! answer is the runtime's answer because it is the same code.
 
 use kobo_ui::{tone, Rect, Surface};
 

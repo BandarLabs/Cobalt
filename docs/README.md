@@ -23,6 +23,8 @@
 - [Release train](RELEASE-TRAIN.md): how `beta` and stable releases are published.
 - [Publishing the SDK crates](../PUBLISHING.md)
 - [Wi-Fi handoff trace](WIFI_HANDOFF_TRACE.md): an attended diagnostic mode.
+- [Credential routes declared by the app](CREDENTIAL_ROUTES.md): a proposal
+  for moving per-service credential policy out of the platform.
 
 ## Project
 

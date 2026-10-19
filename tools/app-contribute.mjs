@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectRegistry, currentProtocolVersion, normalizeContribution } from "./app-registry.mjs";
+import { packageVersion } from "./app-cargo-version.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const root = resolve(dirname(scriptPath), "..");
@@ -37,6 +38,12 @@ export function contributionPlan(manifestPath) {
   if (packageMatch[1] !== app.package) {
     throw new Error(
       `${relative(root, cargoPath)} package '${packageMatch[1]}' must be '${app.package}'`
+    );
+  }
+  if (!packageVersion(cargo)?.workspace) {
+    throw new Error(
+      `${relative(root, cargoPath)} must inherit the workspace version (version.workspace = true); ` +
+        `the app's version is the manifest's ${app.version}`
     );
   }
   const registry = collectRegistry();

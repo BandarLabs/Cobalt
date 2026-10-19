@@ -157,6 +157,28 @@ For the owner-attended Clara BW Wi-Fi handoff investigation, use the
 [bounded passive handoff trace](WIFI_HANDOFF_TRACE.md). It is opt-in, is not a
 fix, and includes the exact build, run, wait, and retrieval procedure.
 
+## Fuzzing the parsers
+
+Everything the runtime reads from a stranger's server, and the wire protocol
+every application speaks to it, is parsed by code in this workspace with
+`unsafe` forbidden. A malformed input cannot corrupt memory, but it can still
+panic, and release builds abort on panic, so a panic in any of those readers
+ends the runtime and the owner waits for the watchdog. The targets under
+[`fuzz/`](../fuzz/README.md) feed each reader arbitrary bytes and assert the
+property its documentation claims.
+
+```sh
+cargo install cargo-fuzz
+cd fuzz
+cargo +nightly fuzz list
+cargo +nightly fuzz run protocol_decode -- -max_total_time=60
+```
+
+`cargo fuzz` needs nightly for the sanitizer, and the root toolchain file pins
+stable, so nightly is named on the command line. The Fuzz workflow runs every
+target for a bounded time each night and keeps any crashing input as a run
+artifact. A reader that gains a new entry point gets a target beside these.
+
 ## Keeping credentials out of commits
 
 A key must never reach a commit. `tools/pre-commit` refuses one, and is
