@@ -1069,6 +1069,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-frame-plan"
+version = "0.3.28"
+dependencies = [
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-gallery"
 version = "0.3.28"
 dependencies = [
@@ -1532,6 +1539,7 @@ dependencies = [
  "kobo-abi",
  "kobo-app-store",
  "kobo-catalog",
+ "kobo-frame-plan",
  "kobo-hal",
  "kobo-json",
  "kobo-net",
@@ -1727,6 +1735,7 @@ dependencies = [
  "base64",
  "kobo-abi",
  "kobo-app-store",
+ "kobo-frame-plan",
  "kobo-hal",
  "kobo-json",
  "kobo-net",

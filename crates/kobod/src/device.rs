@@ -33,7 +33,7 @@
 //! spread across returns.
 
 use crate::blackbox::{self, trace};
-use crate::frame::{FramePlanner, FrameRegion, FrameTransition, PanelWaveform};
+use kobo_frame_plan::{FramePlanner, FrameRegion, FrameTransition, PanelWaveform};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;

@@ -74,7 +74,6 @@ mod blackbox;
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
-mod frame;
 mod syncthing;
 mod update;
 
