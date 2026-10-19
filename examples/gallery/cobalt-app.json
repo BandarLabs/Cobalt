@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Shows the new segmented control, filter picker, setting toggles and computer command block."
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
 }

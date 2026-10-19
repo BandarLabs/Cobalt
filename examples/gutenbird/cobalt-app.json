@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Browse OPDS libraries and read their books on your Kobo.",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "Added catalogs remain reachable on measured pages, including after errors. Returning from a shelf keeps the catalog page. Loading placeholders fit the available room at large text sizes."
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
 }
