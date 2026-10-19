@@ -1576,6 +1576,10 @@ struct Hosted {
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
     jail: Option<PathBuf>,
+    /// Which of the runtime's unprivileged identities this application runs
+    /// as, on the device. Held so the next launch can take one nothing alive
+    /// is using.
+    identity_slot: Option<u32>,
     child: ApplicationChild,
     stream: std::os::unix::net::UnixStream,
     store: kobo_policy::store::Store,
@@ -1683,12 +1687,33 @@ struct AppLaunch {
     program: PathBuf,
     jail: Option<PathBuf>,
     sandbox: Option<kobo_abi::sandbox::Sandbox>,
+    identity_slot: Option<u32>,
+}
+
+/// Picks the identity slot a new application runs in: one nothing alive is
+/// using.
+///
+/// Launch numbers only grow, so taking one modulo the pool spreads consecutive
+/// launches across it and a slot is not handed straight back while the process
+/// that last held it may still be on its way out. When the preferred slot is
+/// taken anyway the first free one is used; the pool is larger than the number
+/// of applications ever hosted at once, so there is one.
+fn identity_slot_for(taken: impl Iterator<Item = u32>, id: u64) -> u32 {
+    let taken: Vec<u32> = taken.collect();
+    let slots = kobo_abi::sandbox::IDENTITY_SLOTS;
+    let preferred = u32::try_from(id % u64::from(slots)).unwrap_or(0);
+    if !taken.contains(&preferred) {
+        return preferred;
+    }
+    (0..slots)
+        .find(|slot| !taken.contains(slot))
+        .unwrap_or(preferred)
 }
 
 impl AppLaunch {
-    fn prepare(path: &Path, id: u64) -> Result<Self, String> {
+    fn prepare(path: &Path, id: u64, identity_slot: u32) -> Result<Self, String> {
         if kobo_abi::sandbox::is_root() {
-            return Self::sandboxed(path, id);
+            return Self::sandboxed(path, id, identity_slot);
         }
         let socket_path =
             std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
@@ -1702,10 +1727,11 @@ impl AppLaunch {
             program: path.to_path_buf(),
             jail: None,
             sandbox: None,
+            identity_slot: None,
         })
     }
 
-    fn sandboxed(path: &Path, id: u64) -> Result<Self, String> {
+    fn sandboxed(path: &Path, id: u64, identity_slot: u32) -> Result<Self, String> {
         if !kobo_abi::sandbox::network_boundary_available() {
             // Kobo's 4.1 i.MX6 kernels ship without CONFIG_SECCOMP and
             // CONFIG_NET_NS, so neither in-kernel network boundary exists
@@ -1734,7 +1760,7 @@ impl AppLaunch {
                 .map_err(|error| format!("bind sandbox application socket: {error}"))?;
             fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
                 .map_err(|error| format!("make sandbox socket connectable: {error}"))?;
-            let sandbox = kobo_abi::sandbox::Sandbox::new(&root)
+            let sandbox = kobo_abi::sandbox::Sandbox::new(&root, identity_slot)
                 .map_err(|error| format!("prepare application sandbox: {error}"))?;
             Ok(Self {
                 listener,
@@ -1743,6 +1769,7 @@ impl AppLaunch {
                 program: PathBuf::from("/app"),
                 jail: Some(root.clone()),
                 sandbox: Some(sandbox),
+                identity_slot: Some(identity_slot),
             })
         })();
         if prepared.is_err() {
@@ -3783,7 +3810,9 @@ fn start_application(
     } else {
         Declared::all()
     };
-    let launch = AppLaunch::prepare(path, *next_id)?;
+    let identity_slot =
+        identity_slot_for(apps.iter().filter_map(|app| app.identity_slot), *next_id);
+    let launch = AppLaunch::prepare(path, *next_id, identity_slot)?;
     let AppLaunch {
         listener,
         socket_path,
@@ -3791,6 +3820,7 @@ fn start_application(
         program,
         jail,
         sandbox,
+        identity_slot,
     } = launch;
     let mut command = Command::new(&program);
     command
@@ -3923,6 +3953,7 @@ fn start_application(
         name,
         path: path.to_path_buf(),
         jail,
+        identity_slot,
         child,
         stream,
         tasks,
@@ -4921,6 +4952,20 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_application_never_shares_an_identity_slot_with_one_still_alive() {
+        use kobo_abi::sandbox::IDENTITY_SLOTS;
+        let pool = u64::from(IDENTITY_SLOTS);
+        assert_eq!(super::identity_slot_for([].into_iter(), 5), 5);
+        assert_eq!(super::identity_slot_for([].into_iter(), pool + 3), 3);
+        // The preferred slot belongs to a launch one pool earlier that is
+        // still running, and the lowest free slot is taken instead.
+        assert_eq!(super::identity_slot_for([3, 0].into_iter(), pool + 3), 1);
+        // Nothing free is a state the host never reaches; it is answered with
+        // the preferred slot rather than a refusal to launch anything.
+        assert_eq!(super::identity_slot_for(0..IDENTITY_SLOTS, 7), 7);
+    }
+
     use kobo_policy::{Capability, TaskRunner};
     use kobo_protocol::{
         Credential, CredentialUse, DeviceResult, Frame, Header, Message, Task, TaskId, TaskOutcome,
@@ -5263,6 +5308,7 @@ mod tests {
             name: "fixture".into(),
             path: root.join("fixture"),
             jail: None,
+            identity_slot: None,
             child: ApplicationChild::ordinary(child),
             stream: runtime,
             store: kobo_policy::store::Store::new(root.join("state")),
@@ -5406,6 +5452,7 @@ mod tests {
             name: "todo".into(),
             path: root.join("todo"),
             jail: None,
+            identity_slot: None,
             child: ApplicationChild::ordinary(child),
             stream: runtime,
             store: kobo_policy::store::Store::new(root.join("state")),
