@@ -4,8 +4,8 @@
   "short_label": "Nonograms",
   "summary": "Solve 18 original picture puzzles with attached clues, saved undo and larger grids.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.10",
-  "release_notes": "Photo puzzle instructions name the full command, and the setup guide lists the steps.",
+  "version": "0.1.11",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "grid",
   "capabilities": [],
   "setup": {

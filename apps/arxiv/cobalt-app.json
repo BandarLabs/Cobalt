@@ -3,11 +3,11 @@
   "display_name": "Preprints",
   "short_label": "Preprints",
   "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "glyph": "note",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Recovery notices no longer cover subject, paper or saved-item rows. Long titles, paper facts and abstracts remain complete across pages at every text size.",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "page_description": "Browse a subject's newest arXiv preprints or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
 }

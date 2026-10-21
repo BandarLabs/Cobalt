@@ -4,8 +4,8 @@
   "short_label": "Vault",
   "summary": "Browse your notes by folder, tag, link, and backlink.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
-  "version": "0.1.5",
-  "release_notes": "An empty vault lists the commands that send your notes, and the setup guide lists the steps.",
+  "version": "0.1.6",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "note",
   "capabilities": [],
   "setup": {

@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.7",
-  "release_notes": "Pairing shows the commands to run on your computer, including the one that lets the reader trust the helper, instead of naming an app it never explained.",
+  "version": "0.2.8",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "grid",
   "capabilities": [
     "network"

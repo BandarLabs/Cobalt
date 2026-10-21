@@ -4,8 +4,8 @@
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
   "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
-  "version": "0.1.7",
-  "release_notes": "Connecting Mealie lists the commands to run on your computer, with no address to look up.",
+  "version": "0.1.8",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "reader",
   "capabilities": [
     "network",
