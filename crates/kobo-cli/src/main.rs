@@ -5165,19 +5165,17 @@ fn reader_still_connected(expected: &setup::Mounted) -> Result<(), String> {
 fn confirmed_setup(
     options: &SetupOptions,
     reader: &setup::Mounted,
-    profile: &kobo_profile::DeviceProfile,
+    profile: Option<&kobo_profile::DeviceProfile>,
     payload: &SetupPayload,
 ) -> Result<bool, String> {
     println!(
-        "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+        "\nReady to {}:\n  Model: {}\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
         if options.mode == SetupMode::Undo {
             "remove Cobalt"
         } else {
             "install Cobalt"
         },
-        profile.model,
-        profile.device_code,
-        profile.id,
+        setup_model(reader, profile),
         reader.firmware,
         reader.volume.display(),
         payload.description(),
@@ -5216,6 +5214,32 @@ fn confirmed_setup(
     std::io::BufRead::read_line(&mut reader_tty, &mut answer)
         .map_err(|error| format!("read confirmation: {error}"))?;
     Ok(confirmation_answer(&answer))
+}
+
+/// Names the hardware in a confirmation, whether or not a profile claims it.
+///
+/// An unrecognised model still has to be reported as itself rather than as a
+/// blank or as a similar reader. The model code is the one identity a mounted
+/// volume gives us, and it is what the owner can compare with the label on
+/// the back.
+fn setup_model(
+    reader: &setup::Mounted,
+    profile: Option<&kobo_profile::DeviceProfile>,
+) -> String {
+    profile.map_or_else(
+        || {
+            format!(
+                "unrecognised Kobo {} (no reviewed profile)",
+                reader.model_code()
+            )
+        },
+        |profile| {
+            format!(
+                "{} (device code {}, profile {})",
+                profile.model, profile.device_code, profile.id
+            )
+        },
+    )
 }
 
 fn choose_discovered_reader() -> Result<setup::Mounted, String> {
@@ -5260,14 +5284,14 @@ fn setup_device_with_confirmation(
     confirm: impl FnOnce(
         &SetupOptions,
         &setup::Mounted,
-        &kobo_profile::DeviceProfile,
+        Option<&kobo_profile::DeviceProfile>,
         &SetupPayload,
     ) -> Result<bool, String>,
 ) -> Result<(), String> {
     let options = parse_setup(arguments)?;
     let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
     let profile = if options.mode == SetupMode::Undo {
-        setup::undo_profile(&reader)?
+        setup::undo_profile(&reader)
     } else {
         setup::install_profile(&reader)?
     };
@@ -5277,14 +5301,21 @@ fn setup_device_with_confirmation(
         setup_payload(&options)?
     };
     println!(
-        "found {} ({}, profile {}, device code {}) at {} · firmware {}",
-        profile.model,
+        "found {} ({}) at {} · firmware {}",
+        profile.map_or("an unrecognised Kobo", |profile| profile.model),
         reader.model_code(),
-        profile.id,
-        profile.device_code,
         reader.volume.display(),
         reader.firmware
     );
+    if profile.is_none() {
+        println!(
+            "note: no reviewed profile claims {}; setup can still install Cobalt, but the\n\
+             runtime will derive a profile from the reader's own probe and ask before\n\
+             writing to the panel. Display and touch behaviour are unverified until a\n\
+             reviewed profile exists for this model.",
+            reader.model_code()
+        );
+    }
 
     if options.dry_run {
         println!(
@@ -9822,6 +9853,36 @@ mod tests {
             .expect("declined cleanly");
             assert!(!volume.path.join(setup::INSTALL_FOLDER).exists());
             assert!(!volume.path.join(setup::SETTINGS).exists());
+        }
+
+        #[test]
+        fn an_unreviewed_reader_reaches_the_confirmation_with_no_profile() {
+            let volume = TempVolume::new("unreviewed");
+            let system = volume.path.join(".kobo");
+            std::fs::create_dir_all(&system).expect("system folder");
+            std::fs::write(
+                system.join("version"),
+                "N888970042839,4.1.15,4.38.23828,4.1.15\n",
+            )
+            .expect("version");
+            setup_device_with_confirmation(
+                &arguments(&[
+                    "--volume",
+                    volume.path.to_str().expect("path"),
+                    "--source",
+                    "--no-eject",
+                    "--no-menu",
+                ]),
+                |_, _, profile, _| {
+                    assert!(
+                        profile.is_none(),
+                        "an unrecognised model must not be given a profile"
+                    );
+                    Ok(false)
+                },
+            )
+            .expect("declined cleanly");
+            assert!(!volume.path.join(setup::INSTALL_FOLDER).exists());
         }
 
         #[test]

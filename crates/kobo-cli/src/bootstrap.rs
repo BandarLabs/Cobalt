@@ -37,13 +37,10 @@ fn verify(path: &Path) -> Result<(), String> {
     if bytes != CONTENT.as_bytes() {
         return Err(format!("{} did not verify after writing", path.display()));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return Err(format!("{} is not executable", path.display()));
-        }
-    }
+    // The execute bit is deliberately not checked: a FAT volume mounted with
+    // `showexec` shows `.sh` files as non-executable on the host whatever was
+    // written, and the reader's own mount decides what runs. The bytes are what
+    // can be verified from here.
     Ok(())
 }
 
