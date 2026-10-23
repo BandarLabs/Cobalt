@@ -862,6 +862,88 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
     colour_panel: false,
 };
 
+/// Kobo Forma, an i.MX6SLL EPDC device like the Libra 2 and Libra H2O.
+///
+/// Measured with `kobo doctor` against a reader on firmware 4.38.23828,
+/// running Nickel in portrait with the page-turn buttons on the right, which
+/// this device reports as `rotation: 3` (the half turn, buttons on the left,
+/// reported `1`; the Libra 2 numbers its poses the other way round). Every geometry, identity and digitiser field
+/// below is what the device reported; none is inferred from a sibling model.
+/// The 8 inch panel is 1440x1920 at 300 ppi, and `memory_length` is the
+/// reported mapping of 11_796_480 bytes.
+///
+/// `touch_transform` was measured on the physical device with `kobo
+/// touch-probe` on 2026-10-23, read-only and ungrabbed: taps at the top-left,
+/// bottom-left and bottom-right corners, reader upright with the buttons on the
+/// right (`rotation: 3`), cycled twice. Going down the left edge drove `raw_x`
+/// *upward* from about 100 to 1860, and going right along the bottom drove
+/// `raw_y` *downward* from about 1330 to 130, so the axes are exchanged and the
+/// display's X is mirrored: `TransposeMirrorX`. The digitiser axes (X over
+/// 0..1919, Y over 0..1439) are the reverse of the panel's 1440 by 1920.
+///
+/// Only this one pose is verified. The profile is not `write_ready`: display,
+/// exit and recovery have no attended evidence yet, so nothing writes to the
+/// panel through it.
+pub const FORMA_377: DeviceProfile = DeviceProfile {
+    id: "forma-377",
+    model: "Kobo Forma",
+    device_code: 377,
+    device_tree_model: "Freescale i.MX6SLL NTX Board",
+    compatible_fragments: &["fsl,imx6sll"],
+    framebuffer_id: "mxc_epdc_fb",
+    framebuffer_controller: FramebufferController::MxcfbV2,
+    width: 1440,
+    height: 1920,
+    pixels_per_inch: 300,
+    virtual_width: 1440,
+    virtual_height: 1920,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5760,
+    memory_length: 11_796_480,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 3,
+    verified_rotations: &[3],
+    geometry_rule: GeometryRule::Fixed,
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1919,
+    touch_y_min: 0,
+    touch_y_max: 1439,
+    serial_prefix: "N782",
+    firmware_versions: &["4.38.23828"],
+    kernel_release: "4.1.15-00287-gc98fdced63d6",
+    write_ready: false,
+    leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
+    colour_panel: false,
+};
+
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
     &TOLINO_SHINE_5_T302,
@@ -873,6 +955,7 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &LIBRA_COLOUR_390,
     &LIBRA_COLOUR_390_446,
     &LIBRA_H2O_384,
+    &FORMA_377,
 ];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
@@ -2389,6 +2472,7 @@ mod tests {
                 ("libra-colour-390", &[][..]),
                 ("libra-colour-390-4.46.23836", &["/bin/wpa_supplicant"][..]),
                 ("libra-h2o-384", &[][..]),
+                ("forma-377", &[][..]),
             ]
         );
     }
@@ -2412,6 +2496,7 @@ mod tests {
                 ("libra-colour-390", false),
                 ("libra-colour-390-4.46.23836", true),
                 ("libra-h2o-384", false),
+                ("forma-377", false),
             ]
         );
     }
@@ -2961,6 +3046,26 @@ mod tests {
         }
         assert_eq!(ELIPSA_2E_POSE.display_to_touch(1404, 0), None);
         assert_eq!(ELIPSA_2E_POSE.display_to_touch(0, 1872), None);
+    }
+
+    /// Captured from physical taps on the real Kobo Forma with `kobo
+    /// touch-probe`, read-only and ungrabbed, reader upright with the buttons
+    /// on the right. The owner tapped top-left, bottom-left and bottom-right.
+    /// Corner ranges alone cannot show which way each axis runs, so these are
+    /// the evidence for the direction: they are the measured values, not ones
+    /// derived from the transform they pin.
+    #[test]
+    fn forma_touch_transform_matches_physically_measured_corners() {
+        let forma = PanelPose::reference(&super::FORMA_377);
+        let top_left = forma.touch_to_display(108, 1322).expect("in range");
+        let bottom_left = forma.touch_to_display(1856, 1330).expect("in range");
+        let bottom_right = forma.touch_to_display(1915, 130).expect("in range");
+        assert!(top_left.0 < 200 && top_left.1 < 200, "{top_left:?}");
+        assert!(bottom_left.0 < 200 && bottom_left.1 > 1700, "{bottom_left:?}");
+        assert!(
+            bottom_right.0 > 1240 && bottom_right.1 > 1700,
+            "{bottom_right:?}"
+        );
     }
 
     /// Captured from a physical touch on the real Clara BW with

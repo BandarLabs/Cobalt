@@ -134,60 +134,32 @@ impl Mounted {
 /// Resolves USB-visible identity through the shared device profile table.
 ///
 /// A mounted book partition exposes only the serial prefix and firmware. That
-/// is enough to select one reviewed profile because each entry in
+/// is enough to select a reviewed profile because each entry in
 /// [`kobo_profile::SUPPORTED_PROFILES`] claims a model and a firmware branch,
 /// and no two claim the same pair. Panel geometry and kernel identity are
 /// checked again by the runtime before it can write to a display.
 ///
-/// # Errors
-///
-/// Returns a hardware- or firmware-specific refusal, or an ambiguity error if
-/// profile data ever stops being unique.
-pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
-    install_or_undo_profile(reader, false)
-}
-
-/// Picks the profile to name a reader by while removing Cobalt from it.
-///
-/// Removal only takes back what Cobalt put on the reader, so it is not gated
-/// on write evidence or on the firmware: a reader whose profile awaits
-/// review, or whose firmware has moved on, must still be able to return to
-/// stock. The hardware must still be one a profile describes.
+/// Installation over USB does not write the panel, so a reader that no profile
+/// claims is not refused here. `Ok(None)` means the model is unrecognised:
+/// setup can copy Cobalt and turn on SSH, and the runtime derives a provisional
+/// profile from the reader's own probe and asks before taking the panel. A
+/// firmware generation that Cobalt could never be launched on is still refused,
+/// because installing there would leave an owner with a payload nothing can
+/// start.
 ///
 /// # Errors
 ///
-/// Returns a refusal when no profile describes this model code.
-pub fn undo_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
-    install_or_undo_profile(reader, true)
-}
-
-fn install_or_undo_profile(
+/// Returns a firmware-generation refusal, a refusal for a known model whose
+/// reviewed evidence is incomplete or whose firmware branch was never
+/// measured, or an ambiguity error if profile data ever stops being unique.
+pub fn install_profile(
     reader: &Mounted,
-    undo: bool,
-) -> Result<&'static kobo_profile::DeviceProfile, String> {
-    let hardware = kobo_profile::SUPPORTED_PROFILES
-        .iter()
-        .copied()
-        .filter(|profile| profile.serial_prefix == reader.model_code())
-        .collect::<Vec<_>>();
-    if hardware.is_empty() {
-        return Err(format!(
-            "unsupported Kobo hardware: model code {} has no reviewed Cobalt profile",
-            reader.model_code()
-        ));
-    }
-    if undo {
-        return Ok(hardware
-            .iter()
-            .copied()
-            .find(|profile| profile.accepts_firmware(&reader.firmware))
-            .unwrap_or(hardware[0]));
-    }
-    // Checked before the model's own branches, and named for the reason rather
-    // than the symptom. Falling through to "reviewed branches: 4.45" would be
-    // true and would send an owner looking for a 4.45 build of a reader that
-    // Kobo has moved on from, when the answer is that nothing can start Cobalt
-    // there at all.
+) -> Result<Option<&'static kobo_profile::DeviceProfile>, String> {
+    // Checked before the model table, and named for the reason rather than the
+    // symptom. Falling through to "reviewed branches: 4.45" would be true and
+    // would send an owner looking for a 4.45 build of a reader that Kobo has
+    // moved on from, when the answer is that nothing can start Cobalt there at
+    // all.
     if !kobo_profile::launchable_generation(&reader.firmware) {
         return Err(format!(
             "firmware {} cannot start Cobalt: NickelMenu is the only way in from the \
@@ -197,13 +169,17 @@ fn install_or_undo_profile(
             reader.firmware.split('.').next().unwrap_or("that")
         ));
     }
+    let hardware = hardware_for(reader);
+    if hardware.is_empty() {
+        return Ok(None);
+    }
     let matching = hardware
         .iter()
         .copied()
         .filter(|profile| profile.accepts_firmware(&reader.firmware))
         .collect::<Vec<_>>();
     match matching.as_slice() {
-        [profile] if profile.write_ready => Ok(*profile),
+        [profile] if profile.write_ready => Ok(Some(*profile)),
         [profile] => Err(format!(
             "{} ({}) is not enabled for installation: {}",
             profile.model,
@@ -229,6 +205,34 @@ fn install_or_undo_profile(
             reader.firmware
         )),
     }
+}
+
+/// Picks the profile to name a reader by while removing Cobalt from it.
+///
+/// Removal only takes back what Cobalt put on the reader, so it is not gated
+/// on write evidence, on the firmware generation, or on the model table at
+/// all: a reader whose profile awaits review, whose firmware has moved on, or
+/// whose model was never reviewed must still be able to return to stock. When
+/// no profile claims the reader this returns `None`, and the removal proceeds
+/// exactly the same way; a profile is only used to name the hardware in the
+/// confirmation.
+#[must_use]
+pub fn undo_profile(reader: &Mounted) -> Option<&'static kobo_profile::DeviceProfile> {
+    let hardware = hardware_for(reader);
+    hardware
+        .iter()
+        .copied()
+        .find(|profile| profile.accepts_firmware(&reader.firmware))
+        .or_else(|| hardware.first().copied())
+}
+
+/// Every profile that claims this reader's model code.
+fn hardware_for(reader: &Mounted) -> Vec<&'static kobo_profile::DeviceProfile> {
+    kobo_profile::SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .filter(|profile| profile.serial_prefix == reader.model_code())
+        .collect()
 }
 
 /// Reads the four comma-separated facts the firmware records about itself.
@@ -2011,7 +2015,9 @@ mod tests {
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23697".to_owned(),
         };
-        let profile = install_profile(&reader).expect("supported");
+        let profile = install_profile(&reader)
+            .expect("supported")
+            .expect("profile");
         assert_eq!(profile.model, "Kobo Clara BW");
         assert_eq!(profile.device_code, 391);
         assert_eq!(profile.id, "clara-bw-391");
@@ -2025,7 +2031,7 @@ mod tests {
         // Removal is not gated on review: an owner can always get back to stock.
         assert_eq!(
             super::undo_profile(&tolino).map(|profile| profile.id),
-            Ok("tolino-shine-5-t302")
+            Some("tolino-shine-5-t302")
         );
         let moved_on = Mounted {
             firmware: "4.46.23836".to_owned(),
@@ -2033,24 +2039,34 @@ mod tests {
         };
         assert_eq!(
             super::undo_profile(&moved_on).map(|profile| profile.id),
-            Ok("tolino-shine-5-t302")
+            Some("tolino-shine-5-t302")
         );
     }
 
     #[test]
-    fn unsupported_hardware_and_firmware_are_refused_before_writes() {
+    fn an_unreviewed_model_is_bootstrapped_but_a_known_bad_branch_is_still_refused() {
         let reader = |serial: &str, firmware: &str| Mounted {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: serial.to_owned(),
             firmware: firmware.to_owned(),
         };
-        assert!(install_profile(&reader("N999000000000", "4.45.23697"))
-            .expect_err("hardware")
-            .contains("unsupported Kobo hardware"));
-        // A branch this model was never measured on, but one NickelMenu can
-        // still hook. Held at 4.x deliberately: a version from another
-        // generation is refused earlier and for a different reason, and using
-        // one here would test that refusal twice and this one never.
+        // Setup does not write the panel, so an unrecognised model is not a
+        // reason to refuse the only command that can put Cobalt and SSH on it.
+        // The runtime still asks before writing to hardware it cannot name.
+        assert_eq!(
+            install_profile(&reader("N999000000000", "4.45.23697")),
+            Ok(None)
+        );
+        // A model nobody has reviewed, on a branch NickelMenu can still hook:
+        // the case this path was written for, first met on a Kobo Forma before
+        // it had a profile.
+        let unreviewed = reader("N888970042839", "4.38.23828");
+        assert_eq!(install_profile(&unreviewed), Ok(None));
+        assert_eq!(super::undo_profile(&unreviewed), None);
+        // A branch this model was never measured on is still refused when the
+        // model itself is known. Held at 4.x deliberately: a version from
+        // another generation is refused earlier and for a different reason,
+        // and using one here would test that refusal twice and this one never.
         let refusal =
             install_profile(&reader("N365000000000", "4.20.11000")).expect_err("firmware");
         assert!(refusal.contains("unsupported firmware"));
@@ -2087,7 +2103,10 @@ mod tests {
             firmware: "4.45.23792".to_owned(),
         };
         assert_eq!(
-            install_profile(&reader).expect("supported").id,
+            install_profile(&reader)
+                .expect("supported")
+                .expect("profile")
+                .id,
             "clara-bw-391"
         );
     }
