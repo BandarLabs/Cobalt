@@ -710,20 +710,16 @@ pub fn present(
             ));
         }
     }
-    let session_network = network.restore_for_session(Duration::from_secs(30));
-    trace(&format!(
-        "launch: network recovery finished after {} ms",
-        launch_started.elapsed().as_millis()
-    ));
-    if network.was_online() && kobo_hal::network::online() {
-        wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
-    }
-    trace(&format!(
-        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
-        session_network.outcome(),
-        session_network.uncertain_executables(),
-        session_network.start_errors()
-    ));
+    // Recovery runs beside the session rather than in front of it. On a reader
+    // that was online and stayed online, deciding that nothing dropped means
+    // watching the link for twelve seconds, and the launcher used to wait out
+    // every one of them behind the splash. Nothing on the way to the first
+    // screen needs the network. The radio controls refuse with Busy until the
+    // outcome is known, so the radio still has one owner at a time, and the
+    // thread is joined before teardown, which is where the radio goes back.
+    let network = Arc::new(network);
+    let network_settled = Arc::new(AtomicBool::new(false));
+    let recovery = NetworkRecovery::start(&network, &network_settled, wifi_trace, launch_started);
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
@@ -822,6 +818,7 @@ pub fn present(
             forward_is_194,
             &watchdog,
             frontlight,
+            &network_settled,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -849,6 +846,10 @@ pub fn present(
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    // A session closed within seconds of opening can still be inside the
+    // recovery's settle window, so this may wait. It waits beating, and it has
+    // to: the radio cannot be handed back while it is still being restored.
+    let session_network = recovery.finish();
     let captured_supplicant_release_failed = if profile.reap_nickel_supplicant {
         trace("stopping the captured leftover supplicant before the reader returns");
         if let Err(error) =
@@ -862,14 +863,23 @@ pub fn present(
     } else {
         false
     };
-    let network_start_uncertain = !session_network.start_errors().is_empty()
-        || !session_network.uncertain_executables().is_empty();
-    let network_release_failed = match session_network.release(STOP_GRACE) {
-        Ok(()) => false,
-        Err(errors) => {
+    // A recovery that never reported is treated like one that failed to stop:
+    // nobody can say which daemons it left running, so the reader is rebooted
+    // rather than started on top of them.
+    let network_start_uncertain = session_network.as_ref().is_none_or(|session_network| {
+        !session_network.start_errors().is_empty()
+            || !session_network.uncertain_executables().is_empty()
+    });
+    let network_release_failed = match session_network.map(|session| session.release(STOP_GRACE)) {
+        Some(Ok(())) => false,
+        Some(Err(errors)) => {
             trace(&format!(
                 "session network would not stop cleanly: {errors:?}"
             ));
+            true
+        }
+        None => {
+            trace("network recovery ended without an outcome");
             true
         }
     };
@@ -1820,6 +1830,7 @@ fn host_applications(
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
     frontlight: Option<kobo_hal::frontlight::Frontlight>,
+    network_settled: &AtomicBool,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -2798,6 +2809,20 @@ fn host_applications(
                                                 kobo_protocol::DenyReason::Unsupported,
                                             ),
                                             |bluetooth| bluetooth.forget(address),
+                                        )
+                                    }
+                                    // Recovery may still be restarting the
+                                    // daemons the reader left behind. A switch
+                                    // thrown now would be a second owner of the
+                                    // same radio, so it waits for the outcome.
+                                    kobo_protocol::DeviceRequest::SetWifi { .. }
+                                    | kobo_protocol::DeviceRequest::ScanWifi
+                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
+                                    | kobo_protocol::DeviceRequest::DisconnectWifi
+                                        if !network_settled.load(AtomicOrdering::Acquire) =>
+                                    {
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Busy,
                                         )
                                     }
                                     kobo_protocol::DeviceRequest::ReadWifi => wifi.as_ref().map_or(
@@ -4478,6 +4503,89 @@ impl Drop for KeepBeating {
     fn drop(&mut self) {
         self.running.store(false, AtomicOrdering::Relaxed);
     }
+}
+
+/// Network recovery, running beside the session instead of in front of it.
+///
+/// It needs nothing the launcher does. On a reader that stayed online, ruling
+/// out a dropped link takes the whole settle window, and the launcher no longer
+/// waits for it. The outcome is collected at teardown, the one place it is
+/// needed.
+enum NetworkRecovery {
+    Running(thread::JoinHandle<kobo_hal::network::SessionConnection>),
+    Finished(kobo_hal::network::SessionConnection),
+}
+
+impl NetworkRecovery {
+    fn start(
+        network: &Arc<kobo_hal::network::Connection>,
+        settled: &Arc<AtomicBool>,
+        wifi_trace: &TraceClient,
+        launch_started: Instant,
+    ) -> Self {
+        let thread_network = Arc::clone(network);
+        let thread_settled = Arc::clone(settled);
+        let mut thread_trace = wifi_trace.sidecar();
+        let spawned = thread::Builder::new()
+            .name("cobalt-network-recovery".to_owned())
+            .spawn(move || {
+                recover_session_network(
+                    &thread_network,
+                    &thread_settled,
+                    &mut thread_trace,
+                    launch_started,
+                )
+            });
+        match spawned {
+            Ok(handle) => Self::Running(handle),
+            // A thread that cannot start is not a reason to lose the network.
+            // Recovering first is how every session ran before this existed.
+            Err(error) => {
+                trace(&format!(
+                    "network recovery could not run beside the session ({error}); recovering first"
+                ));
+                Self::Finished(recover_session_network(
+                    network,
+                    settled,
+                    &mut wifi_trace.sidecar(),
+                    launch_started,
+                ))
+            }
+        }
+    }
+
+    /// The outcome, waiting for it if recovery is still running. `None` means
+    /// the recovery thread panicked, so nobody knows which daemons it left.
+    fn finish(self) -> Option<kobo_hal::network::SessionConnection> {
+        match self {
+            Self::Running(handle) => handle.join().ok(),
+            Self::Finished(session) => Some(session),
+        }
+    }
+}
+
+fn recover_session_network(
+    network: &kobo_hal::network::Connection,
+    settled: &AtomicBool,
+    wifi_trace: &mut kobo_wifi_trace::TraceSidecar,
+    launch_started: Instant,
+) -> kobo_hal::network::SessionConnection {
+    let session_network = network.restore_for_session(Duration::from_secs(30));
+    trace(&format!(
+        "launch: network recovery finished after {} ms",
+        launch_started.elapsed().as_millis()
+    ));
+    if network.was_online() && kobo_hal::network::online() {
+        wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
+    }
+    trace(&format!(
+        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
+        session_network.outcome(),
+        session_network.uncertain_executables(),
+        session_network.start_errors()
+    ));
+    settled.store(true, AtomicOrdering::Release);
+    session_network
 }
 
 /// What a tap turned out to mean, once the runtime has had its say.
