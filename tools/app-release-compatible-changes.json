@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "f394649a66bc235232478bb20240de9596390eff"
+     "compatible_blob": "6e94a8d6bc9b70131c1d7c9b06c5500003c61751"
     }
    ]
   },
@@ -428,7 +428,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "f394649a66bc235232478bb20240de9596390eff"
+     "compatible_blob": "6e94a8d6bc9b70131c1d7c9b06c5500003c61751"
     }
    ]
   },
@@ -450,7 +450,18 @@
     {
      "path": "Cargo.lock",
      "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
-     "compatible_blob": "f394649a66bc235232478bb20240de9596390eff"
+     "compatible_blob": "6e94a8d6bc9b70131c1d7c9b06c5500003c61751"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Take rustls-webpki 0.103.16 and webpki-roots 1.0.11 for the two certificate trust advisories published on 2026-10-19 and 2026-10-20 (RUSTSEC-2026-0381 and RUSTSEC-2026-0382). Store apps keep their existing messages and cannot open a network socket inside the sandbox, so any TLS code they link is never reached; the runtime makes their requests, and the patched trust store reaches readers in the next platform package.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f394649a66bc235232478bb20240de9596390eff",
+     "compatible_blob": "6e94a8d6bc9b70131c1d7c9b06c5500003c61751"
     }
    ]
   }

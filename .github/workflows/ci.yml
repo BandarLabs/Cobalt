@@ -345,10 +345,28 @@ jobs:
           # .cargo/audit.toml, because check-app-versions counts every path
           # under .cargo/ as a build input and would rebuild every Store app.
           # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
+          #
+          # crypto-bigint before 0.7.6 has RUSTSEC-2026-0387: subtraction,
+          # division and Montgomery multiplication may branch on secret values.
+          # kobod reaches 0.5.5 through p256 0.13, which does its field
+          # arithmetic, and so the device key's ECDH point multiplication, in
+          # its own limb code. crypto-bigint touches that key only when a poll
+          # decodes and range-checks it, inside an outbound request nobody else
+          # can time. ECDSA there verifies public values. The fix needs p256
+          # 0.14 and rustc 1.87, newer than the device toolchain.
+          # Re-check when the device toolchain reaches 1.87.
+          #
+          # slice-ring-buffer has RUSTSEC-2025-0044, with no fixed release: four
+          # methods can drop an element twice. minimp3 in kobo-hal holds a
+          # SliceRingBuffer<u8>, and a u8 has no destructor to run twice. It
+          # calls none of the four methods either. Re-check if kobo-hal stops
+          # using minimp3 or minimp3 changes its buffer.
           ignore=(
             --ignore RUSTSEC-2026-0367
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0387
+            --ignore RUSTSEC-2025-0044
           )
           set +e
           output="$(cargo audit "${ignore[@]}" --db advisory-db --no-fetch 2>&1)"

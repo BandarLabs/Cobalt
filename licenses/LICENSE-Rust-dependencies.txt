@@ -658,7 +658,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ===============================================================================
-rustls-webpki 0.103.13 — ISC
+rustls-webpki 0.103.16 — ISC
 ===============================================================================
 
 Except as otherwise noted, this project is licensed under the following
@@ -785,7 +785,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ===============================================================================
-webpki-roots 1.0.9 — CDLA-Permissive-2.0
+webpki-roots 1.0.11 — CDLA-Permissive-2.0
 ===============================================================================
 
 # Community Data License Agreement - Permissive - Version 2.0
