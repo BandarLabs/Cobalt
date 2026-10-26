@@ -676,14 +676,19 @@ pub fn present(
         "launch: panel takeover after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if let Err(error) = show_launch_screen(&display, whole_screen) {
-        trace(&format!("launch screen unavailable: {error}"));
-    } else {
-        trace(&format!(
-            "launch: opening screen painted after {} ms",
-            launch_started.elapsed().as_millis()
-        ));
-    }
+    let mut launch_painter = match show_launch_screen(&display, whole_screen) {
+        Ok(painter) => {
+            trace(&format!(
+                "launch: opening screen painted after {} ms",
+                launch_started.elapsed().as_millis()
+            ));
+            Some(painter)
+        }
+        Err(error) => {
+            trace(&format!("launch screen unavailable: {error}"));
+            None
+        }
+    };
     // The display's exact profile is now retained for every later layout and
     // hit test. Installing a face may fail, but that is not fatal: `kobo-ui`
     // keeps its built-in bitmap, so the worst case is ugly text rather than a
@@ -695,6 +700,10 @@ pub fn present(
         ),
         Err(error) => format!("none ({error})"),
     };
+    timeline(&format!(
+        "launch: fonts installed after {} ms",
+        launch_started.elapsed().as_millis()
+    ));
 
     wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
 
@@ -710,20 +719,16 @@ pub fn present(
             ));
         }
     }
-    let session_network = network.restore_for_session(Duration::from_secs(30));
-    trace(&format!(
-        "launch: network recovery finished after {} ms",
-        launch_started.elapsed().as_millis()
-    ));
-    if network.was_online() && kobo_hal::network::online() {
-        wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
-    }
-    trace(&format!(
-        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
-        session_network.outcome(),
-        session_network.uncertain_executables(),
-        session_network.start_errors()
-    ));
+    // Recovery runs beside the session rather than in front of it. On a reader
+    // that was online and stayed online, deciding that nothing dropped means
+    // watching the link for twelve seconds, and the launcher used to wait out
+    // every one of them behind the splash. Nothing on the way to the first
+    // screen needs the network. The radio controls refuse with Busy until the
+    // outcome is known, so the radio still has one owner at a time, and the
+    // thread is joined before teardown, which is where the radio goes back.
+    let network = Arc::new(network);
+    let network_settled = Arc::new(AtomicBool::new(false));
+    let recovery = NetworkRecovery::start(&network, &network_settled, wifi_trace, launch_started);
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
@@ -792,23 +797,30 @@ pub fn present(
         Some(_) if crate::consent::already_accepted(Path::new(COBALT_ROOT), profile, &firmware) => {
             true
         }
-        Some(notice) => match ask_consent(&display, &taps, whole_screen, &notice) {
-            crate::consent::Decision::Accepted => {
-                if let Err(error) = crate::consent::record(
-                    Path::new(COBALT_ROOT),
-                    profile,
-                    &firmware,
-                    env!("CARGO_PKG_VERSION"),
-                ) {
-                    // The session still runs. Failing to remember the answer
-                    // costs one more question next time, which is a far
-                    // smaller wrong than refusing an owner who just said yes.
-                    trace(&format!("could not record the acceptance: {error}"));
+        Some(notice) => {
+            // The question replaces the splash on the panel, so a painter that
+            // remembers the splash would plan the launcher against a picture
+            // that is no longer there.
+            launch_painter = None;
+            match ask_consent(&display, &taps, whole_screen, &notice) {
+                crate::consent::Decision::Accepted => {
+                    if let Err(error) = crate::consent::record(
+                        Path::new(COBALT_ROOT),
+                        profile,
+                        &firmware,
+                        env!("CARGO_PKG_VERSION"),
+                    ) {
+                        // The session still runs. Failing to remember the
+                        // answer costs one more question next time, which is a
+                        // far smaller wrong than refusing an owner who just
+                        // said yes.
+                        trace(&format!("could not record the acceptance: {error}"));
+                    }
+                    true
                 }
-                true
+                crate::consent::Decision::Declined => false,
             }
-            crate::consent::Decision::Declined => false,
-        },
+        }
         None => true,
     };
 
@@ -822,6 +834,9 @@ pub fn present(
             forward_is_194,
             &watchdog,
             frontlight,
+            &network_settled,
+            launch_painter,
+            launch_started,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -849,6 +864,10 @@ pub fn present(
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    // A session closed within seconds of opening can still be inside the
+    // recovery's settle window, so this may wait. It waits beating, and it has
+    // to: the radio cannot be handed back while it is still being restored.
+    let session_network = recovery.finish();
     let captured_supplicant_release_failed = if profile.reap_nickel_supplicant {
         trace("stopping the captured leftover supplicant before the reader returns");
         if let Err(error) =
@@ -862,14 +881,23 @@ pub fn present(
     } else {
         false
     };
-    let network_start_uncertain = !session_network.start_errors().is_empty()
-        || !session_network.uncertain_executables().is_empty();
-    let network_release_failed = match session_network.release(STOP_GRACE) {
-        Ok(()) => false,
-        Err(errors) => {
+    // A recovery that never reported is treated like one that failed to stop:
+    // nobody can say which daemons it left running, so the reader is rebooted
+    // rather than started on top of them.
+    let network_start_uncertain = session_network.as_ref().is_none_or(|session_network| {
+        !session_network.start_errors().is_empty()
+            || !session_network.uncertain_executables().is_empty()
+    });
+    let network_release_failed = match session_network.map(|session| session.release(STOP_GRACE)) {
+        Some(Ok(())) => false,
+        Some(Err(errors)) => {
             trace(&format!(
                 "session network would not stop cleanly: {errors:?}"
             ));
+            true
+        }
+        None => {
+            trace("network recovery ended without an outcome");
             true
         }
     };
@@ -1314,9 +1342,16 @@ fn launch_surface(whole_screen: Rect, colour_panel: bool) -> Surface {
 
 /// Paints the first Cobalt-owned frame as soon as Nickel releases the panel.
 /// Network recovery and application discovery continue behind this screen.
-fn show_launch_screen(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+///
+/// The painter comes back with the splash recorded in it. Handed on to the
+/// session, it lets the launcher's first frame be planned as a change from the
+/// splash instead of a second whole-panel flash over a picture the panel is
+/// already showing.
+fn show_launch_screen(display: &DisplaySession, whole_screen: Rect) -> Result<Painter, String> {
     let surface = launch_surface(whole_screen, display.colour().is_some());
-    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
+    let mut painter = Painter::new(surface.width, surface.height);
+    painter.paint(display, whole_screen, &surface)?;
+    Ok(painter)
 }
 
 /// Tells the reader a restart is coming, and that it is not a fault.
@@ -1615,6 +1650,9 @@ struct Hosted {
     orientation: kobo_ui::Orientation,
     landscape_turn: kobo_ui::LandscapeTurn,
     painted: u32,
+    /// When this application's launch began, for the open timeline printed
+    /// with its first screen.
+    started: Instant,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
 }
@@ -1711,9 +1749,17 @@ fn identity_slot_for(taken: impl Iterator<Item = u32>, id: u64) -> u32 {
 }
 
 impl AppLaunch {
-    fn prepare(path: &Path, id: u64, identity_slot: u32) -> Result<Self, String> {
+    /// `verified` is the binary exactly as admission checked it, for a Store
+    /// app. The jail is written from those bytes rather than from the file,
+    /// which could otherwise change between the check and the copy.
+    fn prepare(
+        path: &Path,
+        verified: Option<&[u8]>,
+        id: u64,
+        identity_slot: u32,
+    ) -> Result<Self, String> {
         if kobo_abi::sandbox::is_root() {
-            return Self::sandboxed(path, id, identity_slot);
+            return Self::sandboxed(path, verified, id, identity_slot);
         }
         let socket_path =
             std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
@@ -1731,7 +1777,12 @@ impl AppLaunch {
         })
     }
 
-    fn sandboxed(path: &Path, id: u64, identity_slot: u32) -> Result<Self, String> {
+    fn sandboxed(
+        path: &Path,
+        verified: Option<&[u8]>,
+        id: u64,
+        identity_slot: u32,
+    ) -> Result<Self, String> {
         if !kobo_abi::sandbox::network_boundary_available() {
             // Kobo's 4.1 i.MX6 kernels ship without CONFIG_SECCOMP and
             // CONFIG_NET_NS, so neither in-kernel network boundary exists
@@ -1751,8 +1802,15 @@ impl AppLaunch {
             fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
                 .map_err(|error| format!("protect application sandbox: {error}"))?;
             let program = root.join("app");
-            fs::copy(path, &program)
-                .map_err(|error| format!("copy {} into sandbox: {error}", path.display()))?;
+            match verified {
+                Some(bytes) => fs::write(&program, bytes)
+                    .map_err(|error| format!("write {} into sandbox: {error}", path.display()))?,
+                None => {
+                    fs::copy(path, &program).map_err(|error| {
+                        format!("copy {} into sandbox: {error}", path.display())
+                    })?;
+                }
+            }
             fs::set_permissions(&program, fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("protect sandboxed application: {error}"))?;
             let socket_path = root.join("runtime.sock");
@@ -1820,6 +1878,9 @@ fn host_applications(
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
     frontlight: Option<kobo_hal::frontlight::Frontlight>,
+    network_settled: &AtomicBool,
+    launch_painter: Option<Painter>,
+    launch_started: Instant,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -1839,7 +1900,10 @@ fn host_applications(
     let mut apps: Vec<Hosted> = Vec::new();
     let mut next_id = 1_u64;
     let mut surface = Surface::new(whole_screen.width as usize, whole_screen.height as usize);
-    let mut panel = Painter::new(surface.width, surface.height);
+    let mut panel = match launch_painter {
+        Some(painter) if painter.fits(&surface) => painter,
+        _ => Painter::new(surface.width, surface.height),
+    };
     // Not `simulated()`. On the real panel that answered every battery read
     // with the same invented 72 percent, which is worse than refusing: an
     // application cannot tell an invented number from a measured one, so it
@@ -1915,8 +1979,11 @@ fn host_applications(
         PowerPolicy::DEFAULT,
         Backends::with(backends),
     );
-    let dictionaries = services.load_dictionaries(Path::new(DICTIONARIES));
-    println!("offline dictionaries loaded: {dictionaries}");
+    // Loaded on the first lookup, not here. Up to 64 MB of owner-installed TSV
+    // used to be parsed before the launcher could start, on every launch,
+    // whether or not anybody looked a word up in that session.
+    let mut dictionaries_loaded = false;
+    let mut launch_reported = false;
     if let Some(light) = &frontlight {
         if let Some(percent) = light.percent() {
             services.observe_frontlight(percent);
@@ -2568,6 +2635,20 @@ fn host_applications(
                                 );
                                 panel.paint(display, whole_screen, &surface)?;
                                 apps[index].painted += 1;
+                                if apps[index].painted == 1 {
+                                    timeline(&format!(
+                                        "open: {} first screen painted after {} ms",
+                                        apps[index].name,
+                                        apps[index].started.elapsed().as_millis()
+                                    ));
+                                    if apps[index].path == home && !launch_reported {
+                                        launch_reported = true;
+                                        timeline(&format!(
+                                            "launch: launcher's first screen painted after {} ms",
+                                            launch_started.elapsed().as_millis()
+                                        ));
+                                    }
+                                }
                             }
                             // Kept either way. A background application that
                             // finished its work has a finished screen waiting,
@@ -2732,6 +2813,24 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {
                                 match &request {
+                                    // Recovery may still be restarting the
+                                    // daemons the reader left behind. A switch
+                                    // thrown now would be a second owner of the
+                                    // same radio, so it waits for the outcome.
+                                    // Bluetooth's switch is one of them: turning
+                                    // it on brings Wi-Fi up first, and on the
+                                    // MediaTek boards both share one radio.
+                                    kobo_protocol::DeviceRequest::SetBluetooth { .. }
+                                    | kobo_protocol::DeviceRequest::SetWifi { .. }
+                                    | kobo_protocol::DeviceRequest::ScanWifi
+                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
+                                    | kobo_protocol::DeviceRequest::DisconnectWifi
+                                        if !network_settled.load(AtomicOrdering::Acquire) =>
+                                    {
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Busy,
+                                        )
+                                    }
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
                                         bluetooth.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
@@ -2799,6 +2898,18 @@ fn host_applications(
                                             ),
                                             |bluetooth| bluetooth.forget(address),
                                         )
+                                    }
+                                    kobo_protocol::DeviceRequest::LookupWord { .. } => {
+                                        if !dictionaries_loaded {
+                                            dictionaries_loaded = true;
+                                            let loaded =
+                                                services.load_dictionaries(Path::new(DICTIONARIES));
+                                            trace(&format!(
+                                                "offline dictionaries loaded: {loaded}"
+                                            ));
+                                            println!("offline dictionaries loaded: {loaded}");
+                                        }
+                                        services.handle(request.clone())
                                     }
                                     kobo_protocol::DeviceRequest::ReadWifi => wifi.as_ref().map_or(
                                         kobo_protocol::DeviceResult::Denied(
@@ -3798,21 +3909,25 @@ fn start_application(
     whole_screen: Rect,
     sender: &Sender<Event>,
 ) -> Result<u64, String> {
+    let opening = Instant::now();
     let expected_name = installed_name(path)?;
     // Capabilities are part of admission, not post-launch setup. Reading them
     // before any process exists means a corrupt or concurrently removed
-    // manifest cannot leave an unowned child and jail behind.
-    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
-        crate::app_store::declared(Path::new(COBALT_ROOT), &expected_name)
-            .ok_or_else(|| format!("read application manifest for {expected_name}"))?
+    // manifest cannot leave an unowned child and jail behind. A Store app is
+    // admitted from one read of its binary: the bytes its signature vouches
+    // for are the bytes the jail receives.
+    let (declared, verified) = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
+        let admitted = crate::app_store::admit(Path::new(COBALT_ROOT), &expected_name)?;
+        (admitted.declared, Some(admitted.binary))
     } else if let Some(declared) = crate::app_store::builtin_declared(&expected_name) {
-        declared
+        (declared, None)
     } else {
-        Declared::all()
+        (Declared::all(), None)
     };
+    let admitted_after = opening.elapsed();
     let identity_slot =
         identity_slot_for(apps.iter().filter_map(|app| app.identity_slot), *next_id);
-    let launch = AppLaunch::prepare(path, *next_id, identity_slot)?;
+    let launch = AppLaunch::prepare(path, verified.as_deref(), *next_id, identity_slot)?;
     let AppLaunch {
         listener,
         socket_path,
@@ -3867,6 +3982,11 @@ fn start_application(
         report_what_an_application_says(expected_name.clone(), stderr);
     }
     let greeting = greet(&listener, whole_screen, &expected_name);
+    timeline(&format!(
+        "open: {expected_name} admitted after {} ms, said hello after {} ms",
+        admitted_after.as_millis(),
+        opening.elapsed().as_millis()
+    ));
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
     let (stream, name, version) = match greeting {
@@ -3964,6 +4084,7 @@ fn start_application(
         orientation: kobo_ui::Orientation::Portrait,
         landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
+        started: opening,
         used: Instant::now(),
     });
     Ok(id)
@@ -4072,11 +4193,14 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     if !valid_application_name(name) {
         return Err(format!("{name:?} is not a valid application name"));
     }
+    // Only the path is chosen here. Every path this returns goes to
+    // `start_application`, which admits a Store binary from one verified read,
+    // so checking its bytes here too would read and hash it twice.
     if crate::app_store::manages_builtin(name) {
-        return crate::app_store::resolve(Path::new(COBALT_ROOT), name);
+        return crate::app_store::resolve_listed(Path::new(COBALT_ROOT), name);
     }
     prefer_installed(catalogue, name, || {
-        crate::app_store::resolve(Path::new(COBALT_ROOT), name)
+        crate::app_store::resolve_listed(Path::new(COBALT_ROOT), name)
     })
 }
 
@@ -4480,6 +4604,100 @@ impl Drop for KeepBeating {
     }
 }
 
+/// One line of the launch and open timeline.
+///
+/// To standard output, which costs nothing, and to the black box when that is
+/// recording. These lines exist to show where the seconds go before anything
+/// is changed to save them, so they have to be cheap enough not to move the
+/// numbers they report.
+fn timeline(line: &str) {
+    println!("{line}");
+    trace(line);
+}
+
+/// Network recovery, running beside the session instead of in front of it.
+///
+/// It needs nothing the launcher does. On a reader that stayed online, ruling
+/// out a dropped link takes the whole settle window, and the launcher no longer
+/// waits for it. The outcome is collected at teardown, the one place it is
+/// needed.
+enum NetworkRecovery {
+    Running(thread::JoinHandle<kobo_hal::network::SessionConnection>),
+    Finished(kobo_hal::network::SessionConnection),
+}
+
+impl NetworkRecovery {
+    fn start(
+        network: &Arc<kobo_hal::network::Connection>,
+        settled: &Arc<AtomicBool>,
+        wifi_trace: &TraceClient,
+        launch_started: Instant,
+    ) -> Self {
+        let thread_network = Arc::clone(network);
+        let thread_settled = Arc::clone(settled);
+        let mut thread_trace = wifi_trace.sidecar();
+        let spawned = thread::Builder::new()
+            .name("cobalt-network-recovery".to_owned())
+            .spawn(move || {
+                recover_session_network(
+                    &thread_network,
+                    &thread_settled,
+                    &mut thread_trace,
+                    launch_started,
+                )
+            });
+        match spawned {
+            Ok(handle) => Self::Running(handle),
+            // A thread that cannot start is not a reason to lose the network.
+            // Recovering first is how every session ran before this existed.
+            Err(error) => {
+                trace(&format!(
+                    "network recovery could not run beside the session ({error}); recovering first"
+                ));
+                Self::Finished(recover_session_network(
+                    network,
+                    settled,
+                    &mut wifi_trace.sidecar(),
+                    launch_started,
+                ))
+            }
+        }
+    }
+
+    /// The outcome, waiting for it if recovery is still running. `None` means
+    /// the recovery thread panicked, so nobody knows which daemons it left.
+    fn finish(self) -> Option<kobo_hal::network::SessionConnection> {
+        match self {
+            Self::Running(handle) => handle.join().ok(),
+            Self::Finished(session) => Some(session),
+        }
+    }
+}
+
+fn recover_session_network(
+    network: &kobo_hal::network::Connection,
+    settled: &AtomicBool,
+    wifi_trace: &mut kobo_wifi_trace::TraceSidecar,
+    launch_started: Instant,
+) -> kobo_hal::network::SessionConnection {
+    let session_network = network.restore_for_session(Duration::from_secs(30));
+    trace(&format!(
+        "launch: network recovery finished after {} ms",
+        launch_started.elapsed().as_millis()
+    ));
+    if network.was_online() && kobo_hal::network::online() {
+        wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
+    }
+    trace(&format!(
+        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
+        session_network.outcome(),
+        session_network.uncertain_executables(),
+        session_network.start_errors()
+    ));
+    settled.store(true, AtomicOrdering::Release);
+    session_network
+}
+
 /// What a tap turned out to mean, once the runtime has had its say.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tap {
@@ -4643,6 +4861,10 @@ impl Painter {
         Self {
             frames: FramePlanner::new(width, height),
         }
+    }
+
+    fn fits(&self, surface: &Surface) -> bool {
+        self.frames.fits(surface)
     }
 
     fn paint(
