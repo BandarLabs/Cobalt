@@ -368,6 +368,7 @@ fn native_power_delivery_pauses_tasks_and_resumes_each_host_once() {
         orientation: kobo_ui::Orientation::Portrait,
         landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
+        started: std::time::Instant::now(),
         used: std::time::Instant::now(),
     }];
     let mut power = kobod::power::Power::default();
@@ -511,6 +512,7 @@ fn hosted_peer(protocol: u8) -> (super::Hosted, std::os::unix::net::UnixStream, 
         orientation: kobo_ui::Orientation::Portrait,
         landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
+        started: std::time::Instant::now(),
         used: std::time::Instant::now(),
     };
     (hosted, client, root)

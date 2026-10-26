@@ -700,6 +700,10 @@ pub fn present(
         ),
         Err(error) => format!("none ({error})"),
     };
+    timeline(&format!(
+        "launch: fonts installed after {} ms",
+        launch_started.elapsed().as_millis()
+    ));
 
     wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
 
@@ -832,6 +836,7 @@ pub fn present(
             frontlight,
             &network_settled,
             launch_painter,
+            launch_started,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -1645,6 +1650,9 @@ struct Hosted {
     orientation: kobo_ui::Orientation,
     landscape_turn: kobo_ui::LandscapeTurn,
     painted: u32,
+    /// When this application's launch began, for the open timeline printed
+    /// with its first screen.
+    started: Instant,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
 }
@@ -1872,6 +1880,7 @@ fn host_applications(
     frontlight: Option<kobo_hal::frontlight::Frontlight>,
     network_settled: &AtomicBool,
     launch_painter: Option<Painter>,
+    launch_started: Instant,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -1974,6 +1983,7 @@ fn host_applications(
     // used to be parsed before the launcher could start, on every launch,
     // whether or not anybody looked a word up in that session.
     let mut dictionaries_loaded = false;
+    let mut launch_reported = false;
     if let Some(light) = &frontlight {
         if let Some(percent) = light.percent() {
             services.observe_frontlight(percent);
@@ -2625,6 +2635,20 @@ fn host_applications(
                                 );
                                 panel.paint(display, whole_screen, &surface)?;
                                 apps[index].painted += 1;
+                                if apps[index].painted == 1 {
+                                    timeline(&format!(
+                                        "open: {} first screen painted after {} ms",
+                                        apps[index].name,
+                                        apps[index].started.elapsed().as_millis()
+                                    ));
+                                    if apps[index].path == home && !launch_reported {
+                                        launch_reported = true;
+                                        timeline(&format!(
+                                            "launch: launcher's first screen painted after {} ms",
+                                            launch_started.elapsed().as_millis()
+                                        ));
+                                    }
+                                }
                             }
                             // Kept either way. A background application that
                             // finished its work has a finished screen waiting,
@@ -3881,6 +3905,7 @@ fn start_application(
     whole_screen: Rect,
     sender: &Sender<Event>,
 ) -> Result<u64, String> {
+    let opening = Instant::now();
     let expected_name = installed_name(path)?;
     // Capabilities are part of admission, not post-launch setup. Reading them
     // before any process exists means a corrupt or concurrently removed
@@ -3895,6 +3920,7 @@ fn start_application(
     } else {
         (Declared::all(), None)
     };
+    let admitted_after = opening.elapsed();
     let identity_slot =
         identity_slot_for(apps.iter().filter_map(|app| app.identity_slot), *next_id);
     let launch = AppLaunch::prepare(path, verified.as_deref(), *next_id, identity_slot)?;
@@ -3952,6 +3978,11 @@ fn start_application(
         report_what_an_application_says(expected_name.clone(), stderr);
     }
     let greeting = greet(&listener, whole_screen, &expected_name);
+    timeline(&format!(
+        "open: {expected_name} admitted after {} ms, said hello after {} ms",
+        admitted_after.as_millis(),
+        opening.elapsed().as_millis()
+    ));
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
     let (stream, name, version) = match greeting {
@@ -4049,6 +4080,7 @@ fn start_application(
         orientation: kobo_ui::Orientation::Portrait,
         landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
+        started: opening,
         used: Instant::now(),
     });
     Ok(id)
@@ -4566,6 +4598,17 @@ impl Drop for KeepBeating {
     fn drop(&mut self) {
         self.running.store(false, AtomicOrdering::Relaxed);
     }
+}
+
+/// One line of the launch and open timeline.
+///
+/// To standard output, which costs nothing, and to the black box when that is
+/// recording. These lines exist to show where the seconds go before anything
+/// is changed to save them, so they have to be cheap enough not to move the
+/// numbers they report.
+fn timeline(line: &str) {
+    println!("{line}");
+    trace(line);
 }
 
 /// Network recovery, running beside the session instead of in front of it.
