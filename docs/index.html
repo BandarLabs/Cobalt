@@ -166,7 +166,7 @@ p.quiet { color: var(--ink-soft); }
 
 /* ---------- tour ---------- */
 .tour { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; gap: 64px; align-items: start; }
-.tour figure img { border: 1px solid var(--rule); width: 100%; }
+.tour figure video { display: block; border: 1px solid var(--rule); width: 100%; height: auto; }
 .tour .measure { padding-top: 8px; }
 .tested-devices {
   margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--rule);
@@ -400,11 +400,13 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 <section id="tour">
   <div class="wrap tour">
     <figure>
-      <a href="cobalt-tour.mp4">
-        <img src="tour.gif" width="600" height="810" loading="lazy"
-             alt="A Kobo Clara BW running Audiobook Studio, Gutenbird, Terminal, Hacker News, Sidekick and the App Store, then installing, playing, removing and reinstalling Sudoku over Wi-Fi">
-      </a>
-      <figcaption>Recorded on-device at 3× speed. <a href="cobalt-tour.mp4">Watch as video.</a></figcaption>
+      <video width="600" height="810" poster="tour-poster.webp" preload="none" controls muted loop playsinline
+             aria-label="A Kobo Clara BW running Audiobook Studio, Gutenbird, Terminal, Hacker News, Sidekick and the App Store, then installing, playing, removing and reinstalling Sudoku over Wi-Fi">
+        <source src="cobalt-tour.webm" type='video/webm; codecs="av01.0.04M.08"'>
+        <source src="cobalt-tour.mp4" type="video/mp4">
+        <a href="cobalt-tour.mp4">Watch the tour as a video file.</a>
+      </video>
+      <figcaption>Recorded on-device at 3× speed.</figcaption>
     </figure>
     <div class="measure">
       <h2>More to do on your Kobo.</h2>
