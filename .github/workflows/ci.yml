@@ -366,12 +366,30 @@ jobs:
           # SliceRingBuffer<u8>, and a u8 has no destructor to run twice. It
           # calls none of the four methods either. Re-check if kobo-hal stops
           # using minimp3 or minimp3 changes its buffer.
+          #
+          # The flashcards importer reaches zstd 0.13 and zstd-safe 7 through
+          # anki's rslib, and anki at the pinned revision requires zstd 0.13,
+          # so the fixed zstd 0.14 and zstd-safe 8 cannot be taken. None of the
+          # three advisories is reachable from what the importer runs:
+          # - RUSTSEC-2026-0391 is in the raw encoder's and decoder's
+          #   with_context constructors. Neither anki nor async-compression
+          #   calls them.
+          # - RUSTSEC-2026-0398 is in zstd-safe's seekable module, and no
+          #   crate in that lockfile enables the seekable feature.
+          # - RUSTSEC-2026-0403 is in streaming decompression through
+          #   zstd::stream::write::Decoder. Importing a package decodes with
+          #   zstd::stream::copy_decode, which reads through read::Decoder,
+          #   and the advisory names that path as unaffected.
+          # Re-check when the anki pin moves.
           ignore=(
             --ignore RUSTSEC-2026-0367
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
             --ignore RUSTSEC-2026-0387
             --ignore RUSTSEC-2025-0044
+            --ignore RUSTSEC-2026-0391
+            --ignore RUSTSEC-2026-0398
+            --ignore RUSTSEC-2026-0403
           )
           set +e
           output="$(cargo audit "${ignore[@]}" --db advisory-db --no-fetch 2>&1)"

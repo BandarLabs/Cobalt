@@ -8819,7 +8819,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ===============================================================================
 BSD 3-Clause "New" or "Revised" License [BSD-3-Clause]
-Used by: zstd-safe 7.3.0, zstd-sys 2.1.0+zstd.1.5.7
+Used by: zstd-safe 7.3.0, zstd-sys 2.1.2+zstd.1.5.7
 -------------------------------------------------------------------------------
 BSD 3-Clause License
 
