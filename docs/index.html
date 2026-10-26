@@ -77,6 +77,7 @@ body {
 a { color: var(--cobalt); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 img { display: block; max-width: 100%; height: auto; }
+picture { display: block; }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
 /* ---------- masthead ---------- */
@@ -383,9 +384,15 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       </p>
     </div>
     <figure>
-      <img src="media/site/cobalt-launcher-kobo-clara-bw.jpg" width="1400" height="1867"
-           alt="The Cobalt launcher on a Kobo Clara BW showing Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird"
-           fetchpriority="high">
+      <picture>
+        <source type="image/avif" sizes="(max-width: 456px) calc(100vw - 36px), 420px"
+                srcset="media/site/cobalt-launcher-kobo-clara-bw-480.avif 480w, media/site/cobalt-launcher-kobo-clara-bw-840.avif 840w, media/site/cobalt-launcher-kobo-clara-bw-1200.avif 1200w">
+        <source type="image/webp" sizes="(max-width: 456px) calc(100vw - 36px), 420px"
+                srcset="media/site/cobalt-launcher-kobo-clara-bw-480.webp 480w, media/site/cobalt-launcher-kobo-clara-bw-840.webp 840w, media/site/cobalt-launcher-kobo-clara-bw-1200.webp 1200w">
+        <img src="media/site/cobalt-launcher-kobo-clara-bw.jpg" width="1400" height="1867"
+             alt="The Cobalt launcher on a Kobo Clara BW showing Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird"
+             fetchpriority="high">
+      </picture>
       <figcaption>The launcher on a Kobo Clara BW.</figcaption>
     </figure>
   </div>
