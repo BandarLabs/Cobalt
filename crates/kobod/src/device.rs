@@ -1721,9 +1721,17 @@ fn identity_slot_for(taken: impl Iterator<Item = u32>, id: u64) -> u32 {
 }
 
 impl AppLaunch {
-    fn prepare(path: &Path, id: u64, identity_slot: u32) -> Result<Self, String> {
+    /// `verified` is the binary exactly as admission checked it, for a Store
+    /// app. The jail is written from those bytes rather than from the file,
+    /// which could otherwise change between the check and the copy.
+    fn prepare(
+        path: &Path,
+        verified: Option<&[u8]>,
+        id: u64,
+        identity_slot: u32,
+    ) -> Result<Self, String> {
         if kobo_abi::sandbox::is_root() {
-            return Self::sandboxed(path, id, identity_slot);
+            return Self::sandboxed(path, verified, id, identity_slot);
         }
         let socket_path =
             std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
@@ -1741,7 +1749,12 @@ impl AppLaunch {
         })
     }
 
-    fn sandboxed(path: &Path, id: u64, identity_slot: u32) -> Result<Self, String> {
+    fn sandboxed(
+        path: &Path,
+        verified: Option<&[u8]>,
+        id: u64,
+        identity_slot: u32,
+    ) -> Result<Self, String> {
         if !kobo_abi::sandbox::network_boundary_available() {
             // Kobo's 4.1 i.MX6 kernels ship without CONFIG_SECCOMP and
             // CONFIG_NET_NS, so neither in-kernel network boundary exists
@@ -1761,8 +1774,15 @@ impl AppLaunch {
             fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
                 .map_err(|error| format!("protect application sandbox: {error}"))?;
             let program = root.join("app");
-            fs::copy(path, &program)
-                .map_err(|error| format!("copy {} into sandbox: {error}", path.display()))?;
+            match verified {
+                Some(bytes) => fs::write(&program, bytes)
+                    .map_err(|error| format!("write {} into sandbox: {error}", path.display()))?,
+                None => {
+                    fs::copy(path, &program).map_err(|error| {
+                        format!("copy {} into sandbox: {error}", path.display())
+                    })?;
+                }
+            }
             fs::set_permissions(&program, fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("protect sandboxed application: {error}"))?;
             let socket_path = root.join("runtime.sock");
@@ -3826,18 +3846,20 @@ fn start_application(
     let expected_name = installed_name(path)?;
     // Capabilities are part of admission, not post-launch setup. Reading them
     // before any process exists means a corrupt or concurrently removed
-    // manifest cannot leave an unowned child and jail behind.
-    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
-        crate::app_store::declared(Path::new(COBALT_ROOT), &expected_name)
-            .ok_or_else(|| format!("read application manifest for {expected_name}"))?
+    // manifest cannot leave an unowned child and jail behind. A Store app is
+    // admitted from one read of its binary: the bytes its signature vouches
+    // for are the bytes the jail receives.
+    let (declared, verified) = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
+        let admitted = crate::app_store::admit(Path::new(COBALT_ROOT), &expected_name)?;
+        (admitted.declared, Some(admitted.binary))
     } else if let Some(declared) = crate::app_store::builtin_declared(&expected_name) {
-        declared
+        (declared, None)
     } else {
-        Declared::all()
+        (Declared::all(), None)
     };
     let identity_slot =
         identity_slot_for(apps.iter().filter_map(|app| app.identity_slot), *next_id);
-    let launch = AppLaunch::prepare(path, *next_id, identity_slot)?;
+    let launch = AppLaunch::prepare(path, verified.as_deref(), *next_id, identity_slot)?;
     let AppLaunch {
         listener,
         socket_path,
@@ -4097,11 +4119,14 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     if !valid_application_name(name) {
         return Err(format!("{name:?} is not a valid application name"));
     }
+    // Only the path is chosen here. Every path this returns goes to
+    // `start_application`, which admits a Store binary from one verified read,
+    // so checking its bytes here too would read and hash it twice.
     if crate::app_store::manages_builtin(name) {
-        return crate::app_store::resolve(Path::new(COBALT_ROOT), name);
+        return crate::app_store::resolve_listed(Path::new(COBALT_ROOT), name);
     }
     prefer_installed(catalogue, name, || {
-        crate::app_store::resolve(Path::new(COBALT_ROOT), name)
+        crate::app_store::resolve_listed(Path::new(COBALT_ROOT), name)
     })
 }
 

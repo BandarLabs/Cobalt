@@ -548,6 +548,31 @@ pub fn resolve_launch(root: &Path, id: &str) -> Result<PathBuf, String> {
 /// Returns a description when the identity is invalid, package is absent, or
 /// installed metadata, signature, or binary bytes fail verification.
 pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<PathBuf, String> {
+    resolve_checked(root, id, key, Check::Full)
+}
+
+/// Picks the binary to open, checking only what the listing checks.
+///
+/// For the runtime's own launches, which never run the path this returns:
+/// they hand it to [`admit`], which reads the binary once and verifies those
+/// bytes before they go into the jail. Verifying them here as well was a
+/// second full read and hash of every binary opened.
+///
+/// # Errors
+///
+/// As [`resolve`], except that a binary of the right length with the wrong
+/// bytes is left for [`admit`] to refuse.
+pub fn resolve_listed(root: &Path, id: &str) -> Result<PathBuf, String> {
+    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
+    resolve_checked(root, id, &key, Check::Listing)
+}
+
+fn resolve_checked(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<PathBuf, String> {
     if !kobo_protocol::valid_app_id(id) {
         return Err(format!("{id:?} is not a valid application identity"));
     }
@@ -560,8 +585,11 @@ pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<Pa
     }
     let directory = apps_root(root).join(id);
     if safe_directory(&directory).map_err(|error| format!("read application {id}: {error:?}"))? {
-        let manifest = read_installed_manifest(&directory, id, key)
-            .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
+        let manifest = match check {
+            Check::Full => read_installed_manifest(&directory, id, key),
+            Check::Listing => read_listed_manifest(&directory, id, key),
+        }
+        .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
         return Ok(app_binary(root, manifest.id()));
     }
     let builtin = builtin_binary(root, id);
@@ -571,12 +599,53 @@ pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<Pa
     Err(format!("no application named {id} is installed"))
 }
 
-#[must_use]
-pub fn declared(root: &Path, id: &str) -> Option<kobo_policy::Declared> {
-    let key = public_key().ok()?;
-    installed_manifest(root, id, &key)
-        .ok()
-        .map(|manifest| manifest.declared_capabilities().clone())
+/// An installed Store application, verified from the bytes that will run.
+pub struct Admitted {
+    /// The capabilities its signed manifest declares, and nothing more.
+    pub declared: kobo_policy::Declared,
+    /// The binary exactly as it was verified. The jail is written from this,
+    /// never from the installed file.
+    pub binary: Vec<u8>,
+}
+
+/// Reads an installed application once and verifies those bytes.
+///
+/// Launch used to verify the installed file twice and then copy it into the
+/// jail with a third read, so the bytes that ran were never the bytes that
+/// were checked, and an application was hashed four times before it opened.
+/// This reads the binary once, holds it against its signed manifest's length
+/// and digest, and hands back that same buffer for the jail.
+///
+/// # Errors
+///
+/// Returns a description when the identity is invalid or reserved, the
+/// package is absent, or its manifest, signature or binary fail verification.
+pub fn admit(root: &Path, id: &str) -> Result<Admitted, String> {
+    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
+    admit_using(root, id, &key)
+}
+
+fn admit_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<Admitted, String> {
+    if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
+        return Err(format!("{id:?} is not an installable application identity"));
+    }
+    recover_interrupted_transaction(root, id, key)
+        .map_err(|error| format!("recover application {id}: {error:?}"))?;
+    let directory = apps_root(root).join(id);
+    if !safe_directory(&directory).map_err(|error| format!("read application {id}: {error:?}"))? {
+        return Err(format!("no application named {id} is installed"));
+    }
+    let invalid = |error: DeviceError| format!("installed application {id} is invalid: {error:?}");
+    let manifest = read_signed_manifest(&directory, id, key).map_err(invalid)?;
+    let binary = fs::read(app_binary(root, id))
+        .map_err(|error| invalid(installed_component_read_error(&error)))?;
+    if !binary_matches(&manifest, &binary) {
+        return Err(invalid(DeviceError::Integrity));
+    }
+    Ok(Admitted {
+        declared: manifest.declared_capabilities().clone(),
+        binary,
+    })
 }
 
 #[cfg(test)]
@@ -939,6 +1008,7 @@ fn installed_manifests_checked(
     Ok(manifests)
 }
 
+#[cfg(test)]
 fn installed_manifest(
     root: &Path,
     id: &str,
@@ -1978,6 +2048,39 @@ mod tests {
         binary.pop();
         fs::write(&binary_path, &binary).expect("truncate");
         assert_eq!(installed_using(&root, &key), Err(DeviceError::Integrity));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn admission_hands_back_the_bytes_it_verified() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        let binary_path = app_binary(&root, "word-count");
+        let installed = fs::read(&binary_path).expect("binary");
+        let manifest = installed_manifest(&root, "word-count", &key).expect("manifest");
+
+        let admitted = admit_using(&root, "word-count", &key).expect("admit");
+        assert_eq!(admitted.binary, installed);
+        assert_eq!(&admitted.declared, manifest.declared_capabilities());
+
+        let mut tampered = installed;
+        tampered[0] ^= 1;
+        fs::write(&binary_path, tampered).expect("tamper binary");
+        assert!(admit_using(&root, "word-count", &key)
+            .err()
+            .is_some_and(|error| error.contains("invalid")));
+        assert!(admit_using(&root, "store", &key).is_err());
         let _ignored = fs::remove_dir_all(root);
     }
 
