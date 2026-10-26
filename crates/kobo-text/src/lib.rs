@@ -804,11 +804,17 @@ impl SystemFonts {
             .unwrap_or(Path::new("AtkinsonHyperlegible-Bold.ttf"))
     }
 
+    /// Whether the title search would have found the face the prose search
+    /// did. Only when no override chose the prose face and both searches walk
+    /// the same list: `KOBO_READING_FONT` is for prose alone, and pointing it at
+    /// Vollkorn on a reader with Bitter must not reset every title in Vollkorn.
     fn reading_serves_as_title(reading: &Typeface) -> bool {
-        reading.source() == Path::new("Literata-Regular.ttf")
-            || DISPLAY_SERIF_REGULAR_CANDIDATES
-                .iter()
-                .any(|candidate| reading.source() == Path::new(candidate))
+        std::env::var_os(READING_FONT_OVERRIDE).is_none()
+            && READING_FONT_CANDIDATES == DISPLAY_SERIF_REGULAR_CANDIDATES
+            && (reading.source() == Path::new("Literata-Regular.ttf")
+                || DISPLAY_SERIF_REGULAR_CANDIDATES
+                    .iter()
+                    .any(|candidate| reading.source() == Path::new(candidate)))
     }
 
     /// The grid face, parsed on first use. The compiled-in bytes are checked by
