@@ -348,12 +348,17 @@ jobs:
           #
           # crypto-bigint before 0.7.6 has RUSTSEC-2026-0387: subtraction,
           # division and Montgomery multiplication may branch on secret values.
-          # kobod reaches 0.5.5 through p256 0.13, which does its field
-          # arithmetic, and so the device key's ECDH point multiplication, in
-          # its own limb code. crypto-bigint touches that key only when a poll
-          # decodes and range-checks it, inside an outbound request nobody else
-          # can time. ECDSA there verifies public values. The fix needs p256
-          # 0.14 and rustc 1.87, newer than the device toolchain.
+          # kobod reaches 0.5.5 through p256 0.13 for the app-link device key.
+          # The relay can time a poll, and by replaying an envelope a paired
+          # browser once signed it can make the device load that key and run
+          # ECDH as often as it likes, since the request id that refuses a
+          # replay is sealed inside. Of that work, crypto-bigint only checks
+          # the key against two constants, zero and the group order, so every
+          # replay runs it on the same values and the relay has nothing to
+          # vary. The multiplication reads the key as bytes in fixed four-bit
+          # windows and does its field arithmetic in p256's own limb code.
+          # ECDSA there verifies public values. The fix needs p256 0.14 and
+          # rustc 1.87, newer than the device toolchain.
           # Re-check when the device toolchain reaches 1.87.
           #
           # slice-ring-buffer has RUSTSEC-2025-0044, with no fixed release: four
