@@ -1970,8 +1970,10 @@ fn host_applications(
         PowerPolicy::DEFAULT,
         Backends::with(backends),
     );
-    let dictionaries = services.load_dictionaries(Path::new(DICTIONARIES));
-    println!("offline dictionaries loaded: {dictionaries}");
+    // Loaded on the first lookup, not here. Up to 64 MB of owner-installed TSV
+    // used to be parsed before the launcher could start, on every launch,
+    // whether or not anybody looked a word up in that session.
+    let mut dictionaries_loaded = false;
     if let Some(light) = &frontlight {
         if let Some(percent) = light.percent() {
             services.observe_frontlight(percent);
@@ -2854,6 +2856,18 @@ fn host_applications(
                                             ),
                                             |bluetooth| bluetooth.forget(address),
                                         )
+                                    }
+                                    kobo_protocol::DeviceRequest::LookupWord { .. } => {
+                                        if !dictionaries_loaded {
+                                            dictionaries_loaded = true;
+                                            let loaded =
+                                                services.load_dictionaries(Path::new(DICTIONARIES));
+                                            trace(&format!(
+                                                "offline dictionaries loaded: {loaded}"
+                                            ));
+                                            println!("offline dictionaries loaded: {loaded}");
+                                        }
+                                        services.handle(request.clone())
                                     }
                                     // Recovery may still be restarting the
                                     // daemons the reader left behind. A switch
