@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupPanel } from "./app-page-setup.mjs";
+import { thumbsFor } from "./app-thumbs.mjs";
 import { collectRegistry } from "./app-registry.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -640,10 +641,27 @@ const gridApps = [
   ...systemApps,
   ...[...catalog.apps].sort((a, b) => a.display_name.localeCompare(b.display_name))
 ];
+// A card is drawn at most 240 pixels wide on a laptop, 314 on a tablet, and
+// the width of the column on a phone; the breakpoints are where .apps-grid in
+// docs/index.html wraps. A screenshot with WebP copies offers them at those
+// sizes. One without keeps its PNG, so a new app is shown before anyone has
+// encoded it, and the run says which are waiting.
+const gridSizes = "(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px";
+const unencoded = new Set();
+const gridShot = (screenshot, alt) => {
+  const img = `<img src="media/site/apps/${screenshot}" width="1072" height="1448" loading="lazy" alt="${escape(alt)}">`;
+  const thumbs = thumbsFor(screenshot);
+  if (!thumbs) {
+    unencoded.add(screenshot);
+    return img;
+  }
+  const srcset = thumbs.map(([width, name]) => `media/site/app-thumbs/${name} ${width}w`).join(", ");
+  return `<picture><source type="image/webp" sizes="${gridSizes}" srcset="${srcset}">${img}</picture>`;
+};
 const gridCard = app => {
   const [screenshot, screenshotAlt] = screenshotFor(app);
   return `      <div class="app">
-        <a class="shot" href="apps/${app.id}/"><img src="media/site/apps/${screenshot}" width="1072" height="1448" loading="lazy" alt="${escape(screenshotAlt)}"></a>
+        <a class="shot" href="apps/${app.id}/">${gridShot(screenshot, screenshotAlt)}</a>
         <h3><a href="apps/${app.id}/">${escape(app.display_name)}</a></h3>
         <p>${escape(app.summary)}</p>
       </div>`;
@@ -663,6 +681,12 @@ writeFileSync(
     .map(gridCard)
     .join("\n")}\n      ${indexHtml.slice(endIndex)}`
 );
+if (unencoded.size > 0) {
+  console.warn(
+    `The apps grid serves PNG for ${[...unencoded].join(", ")}; `
+    + "node tools/encode-app-thumbs.mjs writes their WebP copies."
+  );
+}
 
 // The README's hand-written table had drifted to two Store apps out of
 // thirty-four. This table is derived, so publishing an app lists it.
