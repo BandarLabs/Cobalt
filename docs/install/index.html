@@ -137,7 +137,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
   <p class="lede">Writes Cobalt and NickelMenu to a Kobo plugged into this computer. No terminal, nothing uploaded.</p>
 
   <div class="banner" id="unsupported" hidden>
-    <strong>This browser cannot write to the reader.</strong>
+    <strong>This browser cannot install Cobalt.</strong>
     <p id="unsupported-why"></p>
   </div>
 
@@ -146,14 +146,14 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
     <div>
       <section class="way">
         <h3><span class="tag">Terminal</span> One command</h3>
-        <p>Plug the reader in, open Terminal, paste this:</p>
+        <p>Plug the Kobo into a computer and tap <strong>Connect</strong> on the reader's screen. Then in Terminal:</p>
         <pre>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</pre>
         <p class="note">Installs Cobalt and NickelMenu, adds the menu entry, ejects the drive. Keeps what is already on the reader.</p>
       </section>
 
       <section class="way">
         <h3><span class="tag">From source</span> Build it yourself</h3>
-        <p>Needs Rust. Builds the same thing the others download.</p>
+        <p>Needs Rust. Builds the same thing the others download. Plug the Kobo in and tap <strong>Connect</strong> on its screen first.</p>
         <pre>git clone https://github.com/BandarLabs/Cobalt.git
 cd Cobalt
 rustup target add armv7-unknown-linux-musleabihf
