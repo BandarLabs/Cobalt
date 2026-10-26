@@ -358,12 +358,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge. Re-pinned for the new Readeck app stanza (including the existing kobo-net parser) and the host-only kobo-cli to kobo-policy edge for server-account setup; existing Store app dependency closures are unchanged.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "34623dd900f83c762a6ac00d7f613317704235f3"
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
     }
    ]
   },
@@ -428,7 +428,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "34623dd900f83c762a6ac00d7f613317704235f3"
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
     }
    ]
   },
@@ -450,18 +450,18 @@
     {
      "path": "Cargo.lock",
      "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
-     "compatible_blob": "34623dd900f83c762a6ac00d7f613317704235f3"
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
     }
    ]
   },
   {
    "protocol_version": 15,
-   "reason": "Take rustls-webpki 0.103.16 and webpki-roots 1.0.11 for the two certificate trust advisories published on 2026-10-19 and 2026-10-20 (RUSTSEC-2026-0381 and RUSTSEC-2026-0382). Store apps keep their existing messages and cannot open a network socket inside the sandbox, so any TLS code they link is never reached; the runtime makes their requests, and the patched trust store reaches readers in the next platform package.",
+   "reason": "Take rustls-webpki 0.103.16 and webpki-roots 1.0.11 for the two certificate trust advisories published on 2026-10-19 and 2026-10-20 (RUSTSEC-2026-0381 and RUSTSEC-2026-0382). Store apps keep their existing messages and cannot open a network socket inside the sandbox, so any TLS code they link is never reached; the runtime makes their requests, and the patched trust store reaches readers in the next platform package. The lock also gains kobo-readeck, a new Store app that adds only its own package, and the host-only kobo-cli edge to kobo-policy for server-bound secrets.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "f394649a66bc235232478bb20240de9596390eff",
-     "compatible_blob": "34623dd900f83c762a6ac00d7f613317704235f3"
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
     }
    ]
   }
