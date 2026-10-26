@@ -219,15 +219,21 @@ pub fn catalog_using(
     }
 }
 
-/// Lists every verified installed Store application.
+/// Lists every installed Store application whose signed manifest verifies.
+///
+/// This is what the launcher draws its first screen from, so it checks the
+/// signature, the canonical manifest and the binary's length, and leaves the
+/// binary's bytes to launch, which hashes exactly what it runs. Hashing every
+/// installed binary here held the launcher's first frame behind megabytes of
+/// reads and hashing on a single core, and did it twice, on every start and
+/// every return to the launcher.
 ///
 /// # Errors
 ///
-/// Returns a bounded device error when installed metadata or package bytes
-/// cannot be verified.
+/// Returns a bounded device error when installed metadata cannot be verified.
 pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    installed_with_key(root, &key)
+    installed_with_key(root, &key, Check::Listing)
 }
 
 /// Lists installed applications using an explicitly supplied trust key.
@@ -237,14 +243,30 @@ pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
 ///
 /// # Errors
 ///
-/// Returns a bounded device error when installed metadata or package bytes
-/// cannot be verified.
+/// Returns a bounded device error when installed metadata cannot be verified.
 pub fn installed_using(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
-    installed_with_key(root, key)
+    installed_with_key(root, key, Check::Listing)
 }
 
-fn installed_with_key(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
-    let mut entries = installed_manifests(root, key)?
+/// How much of an installed package to verify before believing it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Check {
+    /// Signature, canonical manifest and binary bytes. Launch relies on it,
+    /// and so does every install decision: a binary that no longer matches
+    /// its manifest must not be taken for the installed version, or the
+    /// install meant to repair it would be skipped as already done.
+    Full,
+    /// Signature, canonical manifest and binary length, for showing what is
+    /// installed. Nothing is run on the strength of it.
+    Listing,
+}
+
+fn installed_with_key(
+    root: &Path,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<Vec<AppInfo>, DeviceError> {
+    let mut entries = installed_manifests_checked(root, key, check)?
         .into_iter()
         .map(|manifest| manifest_info(&manifest, Some(manifest.version())))
         .collect::<Result<Vec<_>, _>>()?;
@@ -344,7 +366,7 @@ fn prepare_remote_install_channel_with(
         });
     }
 
-    let installed = installed_with_key(root, key)?;
+    let installed = installed_with_key(root, key, Check::Full)?;
     let current = installed.iter().find(|candidate| candidate.id == id);
     if current.and_then(|candidate| candidate.installed_version.as_deref())
         == Some(entry.manifest().version())
@@ -670,7 +692,7 @@ pub fn install_using_fault(
     ) {
         return Err(DeviceError::InvalidInput);
     }
-    if let Some(current) = installed_with_key(root, key)?
+    if let Some(current) = installed_with_key(root, key, Check::Full)?
         .iter()
         .find(|candidate| candidate.id == id)
     {
@@ -771,7 +793,7 @@ fn catalog_info(
     catalog: &Catalog,
     key: &Ed25519PublicKey,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let installed = installed_with_key(root, key)?;
+    let installed = installed_with_key(root, key, Check::Listing)?;
     let mut entries = catalog
         .entries()
         .iter()
@@ -873,7 +895,16 @@ fn sort_info(entries: &mut [AppInfo]) {
     });
 }
 
+#[cfg(test)]
 fn installed_manifests(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<Manifest>, DeviceError> {
+    installed_manifests_checked(root, key, Check::Full)
+}
+
+fn installed_manifests_checked(
+    root: &Path,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<Vec<Manifest>, DeviceError> {
     let apps = apps_root(root);
     let directory = match fs::read_dir(&apps) {
         Ok(directory) => directory,
@@ -899,7 +930,7 @@ fn installed_manifests(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<Manife
     }
     let mut manifests = Vec::new();
     for id in ids {
-        match installed_manifest(root, &id, key) {
+        match installed_manifest_checked(root, &id, key, check) {
             Ok(manifest) => manifests.push(manifest),
             Err(DeviceError::NotFound) => {}
             Err(error) => return Err(error),
@@ -913,6 +944,15 @@ fn installed_manifest(
     id: &str,
     key: &Ed25519PublicKey,
 ) -> Result<Manifest, DeviceError> {
+    installed_manifest_checked(root, id, key, Check::Full)
+}
+
+fn installed_manifest_checked(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<Manifest, DeviceError> {
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
     }
@@ -921,10 +961,52 @@ fn installed_manifest(
     if !safe_directory(&directory)? {
         return Err(DeviceError::NotFound);
     }
-    read_installed_manifest(&directory, id, key)
+    match check {
+        Check::Full => read_installed_manifest(&directory, id, key),
+        Check::Listing => read_listed_manifest(&directory, id, key),
+    }
 }
 
 fn read_installed_manifest(
+    directory: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+) -> Result<Manifest, DeviceError> {
+    let manifest = read_signed_manifest(directory, id, key)?;
+    let binary = fs::read(directory.join("bin").join(format!("kobo-{id}")))
+        .map_err(|error| installed_component_read_error(&error))?;
+    if !binary_matches(&manifest, &binary) {
+        return Err(DeviceError::Integrity);
+    }
+    Ok(manifest)
+}
+
+/// The signed manifest, with the binary only measured, never read.
+///
+/// The length is checked because it costs one `lstat` and still catches a
+/// missing, truncated or replaced binary before the launcher offers it. The
+/// bytes are not: launch reads and hashes them anyway, right before it runs
+/// them.
+fn read_listed_manifest(
+    directory: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+) -> Result<Manifest, DeviceError> {
+    let manifest = read_signed_manifest(directory, id, key)?;
+    let binary = fs::symlink_metadata(directory.join("bin").join(format!("kobo-{id}")))
+        .map_err(|error| installed_component_read_error(&error))?;
+    if !binary.is_file() || binary.len() != manifest.binary_bytes() {
+        return Err(DeviceError::Integrity);
+    }
+    Ok(manifest)
+}
+
+fn binary_matches(manifest: &Manifest, binary: &[u8]) -> bool {
+    binary.len() as u64 == manifest.binary_bytes()
+        && kobo_net::sha256::hex_digest(binary) == manifest.binary_sha256().as_str()
+}
+
+fn read_signed_manifest(
     directory: &Path,
     id: &str,
     key: &Ed25519PublicKey,
@@ -945,13 +1027,6 @@ fn read_installed_manifest(
     let signature =
         DetachedSignature::from_hex(signature.trim()).map_err(|_| DeviceError::Integrity)?;
     verify(&bytes, &signature, key).map_err(|_| DeviceError::Integrity)?;
-    let binary = fs::read(directory.join("bin").join(format!("kobo-{id}")))
-        .map_err(|error| installed_component_read_error(&error))?;
-    if binary.len() as u64 != manifest.binary_bytes()
-        || kobo_net::sha256::hex_digest(&binary) != manifest.binary_sha256().as_str()
-    {
-        return Err(DeviceError::Integrity);
-    }
     Ok(manifest)
 }
 
@@ -980,6 +1055,13 @@ fn recover_interrupted_transaction(
         remove_directory(&current)?;
         remove_directory(&removed)?;
         remove_directory(&apps.join(format!("{id}.prev")))?;
+        return Ok(());
+    }
+    // With nothing to recover from there is nothing to decide, so the live
+    // folder is not verified here. This ran on every listing and every
+    // launch, and verifying the live folder means hashing its whole binary,
+    // only for the caller to verify it again a moment later.
+    if !safe_directory(&removed)? && !safe_directory(&apps.join(format!("{id}.prev")))? {
         return Ok(());
     }
     if safe_directory(&current)? && read_installed_manifest(&current, id, key).is_ok() {
@@ -1524,10 +1606,12 @@ mod tests {
         assert!(!builtin_binary(&root, "word-count").exists());
         fs::remove_file(app_binary(&root, "word-count")).expect("remove installed binary");
 
-        assert!(matches!(
-            installed_with_key(&root, &key),
-            Err(DeviceError::Integrity)
-        ));
+        for check in [Check::Full, Check::Listing] {
+            assert!(matches!(
+                installed_with_key(&root, &key, check),
+                Err(DeviceError::Integrity)
+            ));
+        }
         assert!(resolve_using(&root, "word-count", &key)
             .expect_err("missing binary must not resolve")
             .contains("invalid"));
@@ -1656,7 +1740,8 @@ mod tests {
             }
         );
         assert!(!plan.install);
-        let installed = installed_with_key(&root, &key).expect("installed app remains");
+        let installed =
+            installed_with_key(&root, &key, Check::Full).expect("installed app remains");
         assert!(installed.iter().any(|app| app.id == "word-count"));
         let _ignored = fs::remove_dir_all(root);
     }
@@ -1856,6 +1941,43 @@ mod tests {
             1
         );
         assert!(apps.join("word-count").is_dir());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_listing_measures_the_binary_and_leaves_its_bytes_to_launch() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        let binary_path = app_binary(&root, "word-count");
+        let mut binary = fs::read(&binary_path).expect("binary");
+
+        // Same length, different bytes: still listed, refused where it would
+        // run, and refused as the installed version an install would skip.
+        binary[0] ^= 1;
+        fs::write(&binary_path, &binary).expect("flip one byte");
+        let listed = installed_using(&root, &key).expect("listing reads only the length");
+        assert!(listed.iter().any(|app| app.id == "word-count"));
+        assert!(resolve_using(&root, "word-count", &key).is_err());
+        assert_eq!(
+            installed_with_key(&root, &key, Check::Full),
+            Err(DeviceError::Integrity)
+        );
+
+        // A different length is caught without reading a byte.
+        binary.pop();
+        fs::write(&binary_path, &binary).expect("truncate");
+        assert_eq!(installed_using(&root, &key), Err(DeviceError::Integrity));
         let _ignored = fs::remove_dir_all(root);
     }
 
