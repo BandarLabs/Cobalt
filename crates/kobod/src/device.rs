@@ -676,14 +676,19 @@ pub fn present(
         "launch: panel takeover after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if let Err(error) = show_launch_screen(&display, whole_screen) {
-        trace(&format!("launch screen unavailable: {error}"));
-    } else {
-        trace(&format!(
-            "launch: opening screen painted after {} ms",
-            launch_started.elapsed().as_millis()
-        ));
-    }
+    let mut launch_painter = match show_launch_screen(&display, whole_screen) {
+        Ok(painter) => {
+            trace(&format!(
+                "launch: opening screen painted after {} ms",
+                launch_started.elapsed().as_millis()
+            ));
+            Some(painter)
+        }
+        Err(error) => {
+            trace(&format!("launch screen unavailable: {error}"));
+            None
+        }
+    };
     // The display's exact profile is now retained for every later layout and
     // hit test. Installing a face may fail, but that is not fatal: `kobo-ui`
     // keeps its built-in bitmap, so the worst case is ugly text rather than a
@@ -788,23 +793,30 @@ pub fn present(
         Some(_) if crate::consent::already_accepted(Path::new(COBALT_ROOT), profile, &firmware) => {
             true
         }
-        Some(notice) => match ask_consent(&display, &taps, whole_screen, &notice) {
-            crate::consent::Decision::Accepted => {
-                if let Err(error) = crate::consent::record(
-                    Path::new(COBALT_ROOT),
-                    profile,
-                    &firmware,
-                    env!("CARGO_PKG_VERSION"),
-                ) {
-                    // The session still runs. Failing to remember the answer
-                    // costs one more question next time, which is a far
-                    // smaller wrong than refusing an owner who just said yes.
-                    trace(&format!("could not record the acceptance: {error}"));
+        Some(notice) => {
+            // The question replaces the splash on the panel, so a painter that
+            // remembers the splash would plan the launcher against a picture
+            // that is no longer there.
+            launch_painter = None;
+            match ask_consent(&display, &taps, whole_screen, &notice) {
+                crate::consent::Decision::Accepted => {
+                    if let Err(error) = crate::consent::record(
+                        Path::new(COBALT_ROOT),
+                        profile,
+                        &firmware,
+                        env!("CARGO_PKG_VERSION"),
+                    ) {
+                        // The session still runs. Failing to remember the
+                        // answer costs one more question next time, which is a
+                        // far smaller wrong than refusing an owner who just
+                        // said yes.
+                        trace(&format!("could not record the acceptance: {error}"));
+                    }
+                    true
                 }
-                true
+                crate::consent::Decision::Declined => false,
             }
-            crate::consent::Decision::Declined => false,
-        },
+        }
         None => true,
     };
 
@@ -819,6 +831,7 @@ pub fn present(
             &watchdog,
             frontlight,
             &network_settled,
+            launch_painter,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -1324,9 +1337,16 @@ fn launch_surface(whole_screen: Rect, colour_panel: bool) -> Surface {
 
 /// Paints the first Cobalt-owned frame as soon as Nickel releases the panel.
 /// Network recovery and application discovery continue behind this screen.
-fn show_launch_screen(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+///
+/// The painter comes back with the splash recorded in it. Handed on to the
+/// session, it lets the launcher's first frame be planned as a change from the
+/// splash instead of a second whole-panel flash over a picture the panel is
+/// already showing.
+fn show_launch_screen(display: &DisplaySession, whole_screen: Rect) -> Result<Painter, String> {
     let surface = launch_surface(whole_screen, display.colour().is_some());
-    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
+    let mut painter = Painter::new(surface.width, surface.height);
+    painter.paint(display, whole_screen, &surface)?;
+    Ok(painter)
 }
 
 /// Tells the reader a restart is coming, and that it is not a fault.
@@ -1851,6 +1871,7 @@ fn host_applications(
     watchdog: &Arc<Watchdog>,
     frontlight: Option<kobo_hal::frontlight::Frontlight>,
     network_settled: &AtomicBool,
+    launch_painter: Option<Painter>,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -1870,7 +1891,10 @@ fn host_applications(
     let mut apps: Vec<Hosted> = Vec::new();
     let mut next_id = 1_u64;
     let mut surface = Surface::new(whole_screen.width as usize, whole_screen.height as usize);
-    let mut panel = Painter::new(surface.width, surface.height);
+    let mut panel = match launch_painter {
+        Some(painter) if painter.fits(&surface) => painter,
+        _ => Painter::new(surface.width, surface.height),
+    };
     // Not `simulated()`. On the real panel that answered every battery read
     // with the same invented 72 percent, which is worse than refusing: an
     // application cannot tell an invented number from a measured one, so it
@@ -4776,6 +4800,10 @@ impl Painter {
         Self {
             frames: FramePlanner::new(width, height),
         }
+    }
+
+    fn fits(&self, surface: &Surface) -> bool {
+        self.frames.fits(surface)
     }
 
     fn paint(

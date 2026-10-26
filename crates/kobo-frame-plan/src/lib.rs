@@ -284,6 +284,16 @@ impl FramePlanner {
         self.dirty
     }
 
+    /// Whether this planner can plan updates for `surface` at all.
+    ///
+    /// A planner handed from one owner of the panel to another is only useful
+    /// if it was built for the same surface. One that is not plans nothing,
+    /// ever, so the receiver checks before keeping it.
+    #[must_use]
+    pub fn fits(&self, surface: &Surface) -> bool {
+        self.matches(surface)
+    }
+
     fn matches(&self, surface: &Surface) -> bool {
         surface.width == self.width
             && surface.height == self.height
@@ -643,6 +653,22 @@ mod tests {
     // kobo-ui keeps a parallel planner that nothing drives any more, and the
     // colour tests live over there. This is the planner the runtime actually
     // calls, so colour has to be proved here or it is proved nowhere.
+    #[test]
+    fn a_planner_handed_on_after_the_splash_plans_the_next_screen_as_a_change() {
+        // The splash is the panel's one cleaning flash. The planner that drew
+        // it goes on to plan the launcher, which then needs no second flash.
+        let (planner, mut launcher) = started(64, 64);
+        for y in 10..20 {
+            for x in 8..40 {
+                launcher.pixels[y * 64 + x] = tone::INK;
+            }
+        }
+        let next = planner.plan(&launcher).expect("the launcher differs");
+        assert!(!next.full, "the second screen must not flash the panel");
+        assert!(planner.fits(&launcher));
+        assert!(!planner.fits(&Surface::new(32, 64)));
+    }
+
     #[test]
     fn uncertain_panel_requires_cleaning_without_resetting_sequence() {
         let (mut planner, frame) = started(32, 32);
