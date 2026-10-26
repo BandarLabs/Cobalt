@@ -2813,6 +2813,24 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {
                                 match &request {
+                                    // Recovery may still be restarting the
+                                    // daemons the reader left behind. A switch
+                                    // thrown now would be a second owner of the
+                                    // same radio, so it waits for the outcome.
+                                    // Bluetooth's switch is one of them: turning
+                                    // it on brings Wi-Fi up first, and on the
+                                    // MediaTek boards both share one radio.
+                                    kobo_protocol::DeviceRequest::SetBluetooth { .. }
+                                    | kobo_protocol::DeviceRequest::SetWifi { .. }
+                                    | kobo_protocol::DeviceRequest::ScanWifi
+                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
+                                    | kobo_protocol::DeviceRequest::DisconnectWifi
+                                        if !network_settled.load(AtomicOrdering::Acquire) =>
+                                    {
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Busy,
+                                        )
+                                    }
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
                                         bluetooth.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
@@ -2892,20 +2910,6 @@ fn host_applications(
                                             println!("offline dictionaries loaded: {loaded}");
                                         }
                                         services.handle(request.clone())
-                                    }
-                                    // Recovery may still be restarting the
-                                    // daemons the reader left behind. A switch
-                                    // thrown now would be a second owner of the
-                                    // same radio, so it waits for the outcome.
-                                    kobo_protocol::DeviceRequest::SetWifi { .. }
-                                    | kobo_protocol::DeviceRequest::ScanWifi
-                                    | kobo_protocol::DeviceRequest::JoinWifi { .. }
-                                    | kobo_protocol::DeviceRequest::DisconnectWifi
-                                        if !network_settled.load(AtomicOrdering::Acquire) =>
-                                    {
-                                        kobo_protocol::DeviceResult::Denied(
-                                            kobo_protocol::DenyReason::Busy,
-                                        )
                                     }
                                     kobo_protocol::DeviceRequest::ReadWifi => wifi.as_ref().map_or(
                                         kobo_protocol::DeviceResult::Denied(
