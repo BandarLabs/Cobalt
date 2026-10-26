@@ -1,72 +1,103 @@
 # Flashcards
 
-Flashcards reviews a Cobalt-owned neutral `collection.cobfc` bundle in its
-private Kobo shelf. The device application contains no linked study-engine
-code, collection migration logic, upstream logo, or remote-network capability.
-It uses only Cobalt's required local Unix-domain runtime IPC.
+Review flashcard decks on your Kobo, offline. Import Anki packages on your
+computer and send them to the reader.
 
-The separate host converter accepts only the legacy package subset documented
-in [`docs/FLASHCARDS_COMPATIBILITY.md`](../../docs/FLASHCARDS_COMPATIBILITY.md)
-and uses pinned Anki rslib there. Its exact source and AGPL obligations are
-host-artifact notices, not device-package notices.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/first-use.png" alt="First launch offers a sample deck"><br>First launch offers a sample deck</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/complete.png" alt="A finished review"><br>A finished review</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/japanese.png" alt="A Japanese card"><br>A Japanese card</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/long-answer.png" alt="A long answer, with controls in place"><br>A long answer, with controls in place</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/media.png" alt="A card with an image"><br>A card with an image</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/preview.png" alt="Previewing a collection on the computer"><br>Previewing a collection on the computer</td>
+</tr>
+</table>
 
-Prepare and stage a collection on the host, with the Kobo USB volume mounted
-at `MOUNT` and Flashcards closed:
+## Features
+
+- Choose a deck with cards due, reveal each card and grade it Again, Hard,
+  Good or Easy. The buttons never move.
+- Long cards turn page by page without covering the controls.
+- Images (PNG, JPEG and SVG converted on the computer), cloze cards and
+  Japanese text.
+- Audio and video attachments are listed but do not play.
+- A built-in sample deck to try it without importing anything.
+- Grades are kept in a review log on the reader. A card you have graded is not
+  shown again after a restart.
+
+## Importing a collection
+
+Import runs on your computer with a separate helper, `flashcards-import`. With
+the Kobo connected over USB at `MOUNT` and Flashcards closed:
 
 ```sh
-cargo run -p kobo-flashcards-import -- \
-  import deck.apkg --merge collection.cobfc
-cargo run -p kobo-flashcards-import -- \
-  stage collection.cobfc --kobo-root MOUNT
+kobo flashcards status                                   # check the helper
+kobo flashcards formats                                  # supported package types and limits
+kobo flashcards import deck.apkg --merge collection.cobfc
+kobo flashcards verify collection.cobfc
+kobo flashcards preview collection.cobfc --out preview.html
+kobo flashcards stage collection.cobfc --kobo-root MOUNT
 ```
 
-The staging command copies only to the fixed private shelf entry
-`.adds/cobalt/data/flashcards/collection.cobfc`. It writes 256 KiB durable
-chunks with a digest-checked resume record and atomically replaces the final
-entry only after fully validating the bundle. The application reads that one
-validated name and refuses corrupt, unbounded, or path-addressable content.
-Pre-neutral version-3 bundles are intentionally rejected: rerun the current
-host import and stage commands to create version 4. The separately stored local
-review log is not replaced.
+- `--replace` replaces the collection from a `.colpkg`.
+- `--merge NEW.cobfc --merge-into EXISTING.cobfc` adds an `.apkg` to an
+  existing collection.
+- `preview` writes an HTML page showing each card's front and back, counts
+  and media. It does not reproduce the reader's page layout.
+- `stage` copies the collection to the reader and resumes if interrupted. The
+  reader's review log is kept.
 
-The host derives the due queue, deck order/limits, cloze ordinals, both rendered
-sides, and side-specific media references from pinned Anki rslib. The device
-reviews that finite queue once per launch; non-due, suspended, and buried cards
-are absent. Review grades append only to the separately preserved,
-bundle-digest-bound Cobalt owner log and do not claim to update Anki scheduling.
+To copy the review log back to your computer:
 
-The device UI is a sparse portrait review surface rather than a desktop-Anki
-clone: choose a due deck, read one dominant card, reveal it with one primary
-action, then grade with stable Again/Hard/Good/Easy positions. Long cards turn
-as measured pages without moving or clipping the controls. Secondary
-information, settings, and licences stay behind the top-bar menu. Semantic
-emphasis survives host conversion, while arbitrary template CSS remains inert.
+```sh
+kobo flashcards export-review-log --kobo-root MOUNT reviews.ndjson
+```
 
-The device draws bounded PNG/JPEG only. Accepted SVG is parsed with no
-file/data/network resolver and controlled bundled fonts on the host, then
-stored as a digest-addressed greyscale PNG. At admission the Kobo re-rasterizes
-SVG sources referenced by the bounded due queue and requires exact PNG
-equality, and decodes every due-card PNG/JPEG before accepting the bundle. It
-then displays only checked raster bytes. GIF and WebP are explicitly
-unsupported. Audio and video remain visible as non-playing attachments and
-cannot cause playback or network activity. Answer-only media is selected only
-after reveal. A card side with more than one rendered image is rejected on the
-host rather than silently dropping or reordering images for the app's single
-image slot.
+Grades on the reader are not applied to Anki's scheduling.
 
-Atkinson Hyperlegible remains the interface face. Japanese card and SVG text
-uses the deterministically derived Cobalt Japanese subset; unsupported glyphs
-fail closed instead of drawing empty boxes. Its SIL OFL text, exact Noto CJK
-source pin, and reproducible subset instructions ship in both applicable
-artifacts.
+### Installing the import helper
 
-Choose **Licences & about** from the top-bar menu to read the device notice,
-resvg/font terms, source pins, and resolved device dependency notices embedded
-in every `.cobalt-app` executable. Anki source and licence notices are
-intentionally absent because the device binary does not link Anki code.
+The helper is a separate program so the reader app contains no Anki code. Put
+it next to `kobo` or on your `PATH`, or set `KOBO_FLASHCARDS_IMPORT` to its
+path. To build it from source you need Rust 1.88 or newer and `protoc`:
 
-State-by-state 1072×1448 golden captures are under `screenshots/states/`.
+```sh
+cargo +1.88.0 build --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml
+```
 
-| Question | Answer |
-| --- | --- |
-| ![Japanese question with bounded SVG media and one Reveal answer action](screenshots/states/question-japanese-svg.png) | ![Revealed answer with stable Again, Hard, Good and Easy controls](screenshots/states/answer-reveal.png) |
+## Limits
+
+- Only the package formats in
+  [FLASHCARDS_COMPATIBILITY.md](../../docs/FLASHCARDS_COMPATIBILITY.md) are
+  supported. Modern `collection.anki21b` packages are not, whatever the file
+  name.
+- Collections from earlier versions of this app must be imported again.
+- GIF and WebP images are not supported, and a card side may have one image.
+- Template styles and scripts are not applied.
+
+## Permissions
+
+None. Flashcards runs offline.
+
+## Development
+
+```sh
+cargo test -p kobo-flashcards
+python3 scripts/check-apps-sim.py flashcards
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-flashcards-sim.py` produced the screenshots above, and `screenshots/states/` holds a capture of every screen state.
+
+## Credits
+
+The interface uses Atkinson Hyperlegible. Japanese text uses a subset of Noto CJK
+under the SIL Open Font License. **Licences & about**, in the app's
+menu, lists every notice. The import helper uses Anki's `rslib` under AGPL-3.0
+and carries its own notices, shown by `kobo flashcards --licenses`. See
+[THIRD-PARTY.md](THIRD-PARTY.md).

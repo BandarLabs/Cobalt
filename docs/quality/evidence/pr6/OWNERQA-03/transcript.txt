@@ -1,0 +1,27 @@
+Vault shelf ready at /tmp/cobalt-sim-data/vault; transfers stay on this computer.
+new note-3dcaca5d15e9a095 · project/follow-up.md · 82 byte(s)
+new note-3d8c9485b4aa3a86 · project/launch.md · 88 byte(s)
+remove note-e582bc00ff7a5e4e · Projects/launch.md
+remove note-aeb5608e980c8178 · Projects/postmortem.md
+2 note(s) on the shelf, 2 to transfer.
+Plan only. Nothing was transferred or removed.
+Launch notes
+1 page(s) at reader dimensions; the last page ends with:
+  Real owner notes for the simulator import. Link: [[follow-up]]. #reader
+new note-3dcaca5d15e9a095 · project/follow-up.md · 82 byte(s)
+new note-3d8c9485b4aa3a86 · project/launch.md · 88 byte(s)
+remove note-e582bc00ff7a5e4e · Projects/launch.md
+remove note-aeb5608e980c8178 · Projects/postmortem.md
+2 note(s) on the shelf, 2 to transfer.
+Transferred 2 note file(s); the simulator shelf now matches the plan.
+Vault indexes the shelf when it next opens.
+note-3dcaca5d15e9a095 · project/follow-up.md · 82 byte(s)
+note-3d8c9485b4aa3a86 · project/launch.md · 88 byte(s)
+usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP
+       kobo sync run [--foreground] [--seconds 1-86400]
+       kobo sync plan [--json]
+       kobo sync status [--json]
+       kobo sync publish --folder vault|frame
+       kobo sync pause
+       kobo sync resume
+       kobo sync stop

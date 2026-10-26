@@ -6,10 +6,10 @@
 //! every unit of work is registered, counted, cancellable, and reports back
 //! exactly once.
 
-use kobo_net::{LineStreamAction, LineStreamOwner, LineStreams, RequestOptions};
+use kobo_net::{LineStreamAction, LineStreamOwner, LineStreams, RequestOptions, WriteMethod};
 use kobo_protocol::{
-    Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
-    MAX_TASK_BYTES_U32,
+    Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, UpdateMethod,
+    MAX_TASK_BYTES, MAX_TASK_BYTES_U32,
 };
 use std::collections::HashMap;
 use std::io::Read;
@@ -46,6 +46,19 @@ pub enum RejectReason {
     DuplicateId,
 }
 
+impl RejectReason {
+    /// A duplicate is the existing task, not another completion for that ID.
+    /// Capacity refusal uses the established wire error until a future
+    /// protocol can expose a distinct busy result.
+    #[must_use]
+    pub const fn outcome(self) -> Option<TaskOutcome> {
+        match self {
+            Self::AtCapacity => Some(TaskOutcome::Failed(TaskError::Denied)),
+            Self::DuplicateId => None,
+        }
+    }
+}
+
 /// One finished task, ready to be reported to the application.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Finished {
@@ -57,6 +70,7 @@ struct Running {
     cancel: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
     stream: Option<RunningStream>,
+    manual_deadline: Option<u64>,
 }
 
 struct RunningStream {
@@ -110,12 +124,28 @@ pub type Poster = dyn Fn(
     + Send
     + Sync;
 
+/// Host backend for explicitly selected PUT/PATCH requests.
+pub type Updater = dyn Fn(
+        WriteMethod,
+        &str,
+        &[u8],
+        &str,
+        Option<(&str, &str)>,
+        &[(&str, &str)],
+        u32,
+        RequestOptions,
+        &AtomicBool,
+    ) -> Result<Vec<u8>, TaskError>
+    + Send
+    + Sync;
+
 /// Decides whether one named credential may be sent to one URL.
 ///
 /// Secret files alone are not authority: without this second decision an
 /// application could name a real key and an attacker-controlled destination.
-pub type CredentialAuthorizer =
-    dyn Fn(&Credential, &str, CredentialUse, Option<&str>, Option<&str>) -> bool + Send + Sync;
+pub type CredentialAuthorizer = dyn Fn(&Credential, &str, CredentialUse, Option<&str>, Option<&str>, Option<&str>) -> bool
+    + Send
+    + Sync;
 
 /// Headers an application may not set, because the runtime decides them.
 ///
@@ -164,14 +194,35 @@ fn resolved_credential(
     let Some(wanted) = wanted else {
         return Ok(None);
     };
-    if credentials.is_none_or(|allows| !allows(wanted, url, usage, body, content_type)) {
+    let bound = bound_secret(secrets, &wanted.secret)?;
+    let server = bound.as_ref().map(|record| record.server.as_str());
+    if let Some(server) = server {
+        let app = secrets
+            .and_then(|store| store.app.as_deref())
+            .ok_or(TaskError::Denied)?;
+        if !crate::credentials::allowed_request_with_server(
+            app,
+            wanted,
+            url,
+            usage,
+            body,
+            content_type,
+            Some(server),
+        ) {
+            return Err(TaskError::Denied);
+        }
+    }
+    if credentials.is_none_or(|allows| !allows(wanted, url, usage, body, content_type, server)) {
         return Err(TaskError::Denied);
     }
     // Not `Denied`. The application asked for a key it is allowed to ask for,
     // by the name the runtime publishes, and the check above already said so.
     // What is missing is the key itself, which is the reader owner's to
     // install.
-    let Some(value) = scoped_secret(secrets, &wanted.secret) else {
+    let Some(value) = bound
+        .map(|record| record.value)
+        .or_else(|| scoped_secret(secrets, &wanted.secret))
+    else {
         return Err(TaskError::NoCredential);
     };
     Ok(Some((
@@ -198,7 +249,7 @@ fn credential_is_authorized(
     let Some(wanted) = wanted else {
         return Err(TaskError::Denied);
     };
-    if credentials.is_some_and(|allows| allows(wanted, url, usage, body, content_type)) {
+    if credentials.is_some_and(|allows| allows(wanted, url, usage, body, content_type, None)) {
         Ok(())
     } else {
         Err(TaskError::Denied)
@@ -304,6 +355,7 @@ pub struct TaskRunner {
     receiver: Receiver<Finished>,
     fetch: Option<Arc<Fetcher>>,
     post: Option<Arc<Poster>>,
+    updates: Option<Arc<Updater>>,
     line_streams: Option<Arc<LineStreams>>,
     /// Where named secrets are read from, if anywhere.
     secrets: Option<SecretStore>,
@@ -317,6 +369,8 @@ pub struct TaskRunner {
     /// polled: a device that idles at zero power must not spin a loop to
     /// discover work it could have been told about.
     wake: Option<Arc<Wake>>,
+    manual_clock: Option<Arc<crate::clock::ManualClock>>,
+    paused: bool,
 }
 
 impl std::fmt::Debug for TaskRunner {
@@ -330,6 +384,7 @@ impl std::fmt::Debug for TaskRunner {
             // Deliberately whether, not where and never what. This type ends
             // up in error messages and traces.
             .field("posts", &self.post.is_some())
+            .field("updates", &self.updates.is_some())
             .field("line_streams", &self.line_streams.is_some())
             .field("secrets", &self.secrets.is_some())
             .field("credential_policy", &self.credentials.is_some())
@@ -354,11 +409,22 @@ impl TaskRunner {
             receiver,
             fetch: None,
             post: None,
+            updates: None,
             line_streams: None,
             secrets: None,
             credentials: None,
             wake: None,
+            manual_clock: None,
+            paused: false,
         }
+    }
+
+    /// Runs sleep tasks on an explicitly advanced clock. Network deadlines
+    /// remain real transport deadlines. Call drain after advancing the clock.
+    #[must_use]
+    pub fn with_manual_clock(mut self, clock: Arc<crate::clock::ManualClock>) -> Self {
+        self.manual_clock = Some(clock);
+        self
     }
 
     /// Grants capabilities. Anything not granted is refused at submission.
@@ -379,6 +445,14 @@ impl TaskRunner {
     #[must_use]
     pub fn with_post(mut self, post: Arc<Poster>) -> Self {
         self.post = Some(post);
+        self
+    }
+
+    /// Supplies the backend for PUT/PATCH. POST grants and backends remain
+    /// separate; this alone does not authorize any credential or network use.
+    #[must_use]
+    pub fn with_updates(mut self, updates: Arc<Updater>) -> Self {
+        self.updates = Some(updates);
         self
     }
 
@@ -461,6 +535,25 @@ impl TaskRunner {
     ///
     /// Returns the reason when the task could not be admitted at all.
     pub fn submit(&mut self, task: TaskId, work: Task) -> Result<(), RejectReason> {
+        self.submit_with_fault(task, work, None)
+    }
+
+    /// Host-only failure injection through normal admission, request validation,
+    /// credential authorization and result delivery. It cannot grant access or
+    /// fabricate successful data. Local reads and sleeps ignore network faults.
+    /// `NoCredential` models an unavailable secret store; other errors replace
+    /// transport only after the request passes its ordinary gates. `Denied`
+    /// withdraws the network grant before credential lookup. Stream close
+    /// remains local cleanup and works while offline.
+    ///
+    /// # Errors
+    /// Returns duplicate-ID or capacity refusal exactly as `submit` does.
+    pub fn submit_with_fault(
+        &mut self,
+        task: TaskId,
+        work: Task,
+        fault: Option<TaskError>,
+    ) -> Result<(), RejectReason> {
         if self.running.contains_key(&task) {
             return Err(RejectReason::DuplicateId);
         }
@@ -469,20 +562,40 @@ impl TaskRunner {
         }
 
         let required = match &work {
-            Task::Fetch { .. } | Task::Post { .. } => Some(Capability::Network),
+            Task::Fetch { .. } | Task::Post { .. } | Task::Update { .. } => {
+                Some(Capability::Network)
+            }
             Task::ReadFile { .. } | Task::Sleep { .. } => None,
         };
         if let Some(capability) = required {
-            if !self.grants(capability) {
-                let _ = self.sender.send(Finished {
-                    task,
-                    outcome: TaskOutcome::Failed(TaskError::Denied),
-                });
-                if let Some(wake) = &self.wake {
-                    wake();
-                }
+            if !self.grants(capability) || fault == Some(TaskError::Denied) {
+                self.finish_without_worker(task, TaskOutcome::Failed(TaskError::Denied));
                 return Ok(());
             }
+        }
+
+        if self.paused {
+            self.finish_without_worker(task, TaskOutcome::Cancelled);
+            return Ok(());
+        }
+
+        if let (Some(clock), Task::Sleep { seconds }) = (&self.manual_clock, &work) {
+            use crate::clock::Clock;
+            let now = clock.now().map_err(|_| RejectReason::AtCapacity)?;
+            let deadline = now
+                .monotonic_millis
+                .checked_add(u64::from((*seconds).min(MAX_SLEEP_SECONDS)) * 1000)
+                .ok_or(RejectReason::AtCapacity)?;
+            self.running.insert(
+                task,
+                Running {
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    handle: None,
+                    stream: None,
+                    manual_deadline: Some(deadline),
+                },
+            );
+            return Ok(());
         }
 
         let cancel = Arc::new(AtomicBool::new(false));
@@ -495,6 +608,7 @@ impl TaskRunner {
         let root = self.root.clone();
         let fetch = self.fetch.clone();
         let post = self.post.clone();
+        let updates = self.updates.clone();
         let line_streams = self.line_streams.clone();
         let secrets = self.secrets.clone();
         let credentials = self.credentials.clone();
@@ -509,9 +623,15 @@ impl TaskRunner {
                     Backends {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
+                        updates: updates.as_deref(),
                         line_streams: line_streams.as_deref(),
-                        secrets: secrets.as_ref(),
+                        secrets: if fault == Some(TaskError::NoCredential) {
+                            None
+                        } else {
+                            secrets.as_ref()
+                        },
                         credentials: credentials.as_deref(),
+                        network_failure: fault.filter(|error| *error != TaskError::NoCredential),
                     },
                     &flag,
                     stream_owner.as_ref(),
@@ -535,9 +655,28 @@ impl TaskRunner {
                 cancel,
                 handle: Some(handle),
                 stream,
+                manual_deadline: None,
             },
         );
         Ok(())
+    }
+
+    fn finish_without_worker(&mut self, task: TaskId, outcome: TaskOutcome) {
+        // Keep the ID and capacity slot until the queued result is drained,
+        // just like a worker that has already completed.
+        self.running.insert(
+            task,
+            Running {
+                cancel: Arc::new(AtomicBool::new(false)),
+                handle: None,
+                stream: None,
+                manual_deadline: None,
+            },
+        );
+        let _ = self.sender.send(Finished { task, outcome });
+        if let Some(wake) = &self.wake {
+            wake();
+        }
     }
 
     /// Asks a task to stop.
@@ -555,8 +694,35 @@ impl TaskRunner {
         }
     }
 
+    /// Cancels all current tasks while retaining their normal exactly-once
+    /// result delivery. Unlike shutdown, the application stays connected.
+    pub fn cancel_all(&mut self) {
+        let tasks = self.running.keys().copied().collect::<Vec<_>>();
+        for task in tasks {
+            self.cancel(task);
+        }
+    }
+
+    /// Stop current work and refuse new work until explicitly resumed.
+    /// Cancelled work keeps its normal single result; resume never replays it.
+    pub fn pause(&mut self) {
+        if !std::mem::replace(&mut self.paused, true) {
+            self.cancel_all();
+        }
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    #[must_use]
+    pub fn is_quiescent(&self) -> bool {
+        self.paused && self.running.is_empty()
+    }
+
     /// Collects any tasks that have finished, without blocking.
     pub fn drain(&mut self) -> Vec<Finished> {
+        self.queue_manual_timers();
         let mut finished = Vec::new();
         while let Ok(item) = self.receiver.try_recv() {
             self.reap(item.task);
@@ -568,12 +734,50 @@ impl TaskRunner {
     /// Waits up to `timeout` for one task to finish.
     #[must_use]
     pub fn wait(&mut self, timeout: Duration) -> Option<Finished> {
+        self.queue_manual_timers();
         match self.receiver.recv_timeout(timeout) {
             Ok(item) => {
                 self.reap(item.task);
                 Some(item)
             }
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => None,
+        }
+    }
+
+    fn queue_manual_timers(&mut self) {
+        use crate::clock::Clock;
+        let Some(now) = self
+            .manual_clock
+            .as_ref()
+            .and_then(|clock| clock.now().ok())
+        else {
+            return;
+        };
+        let mut due = self
+            .running
+            .iter()
+            .filter_map(|(task, running)| {
+                let deadline = running.manual_deadline?;
+                let cancelled = running.cancel.load(Ordering::SeqCst);
+                (cancelled || deadline <= now.monotonic_millis)
+                    .then_some((deadline, task.0, cancelled))
+            })
+            .collect::<Vec<_>>();
+        due.sort_unstable();
+        for (_, id, cancelled) in due {
+            let task = TaskId(id);
+            // Clear before queueing, so successive drains cannot duplicate it.
+            if let Some(running) = self.running.get_mut(&task) {
+                running.manual_deadline = None;
+            }
+            let _ = self.sender.send(Finished {
+                task,
+                outcome: if cancelled {
+                    TaskOutcome::Cancelled
+                } else {
+                    TaskOutcome::Completed(Vec::new())
+                },
+            });
         }
     }
 
@@ -616,9 +820,37 @@ impl Drop for TaskRunner {
 struct Backends<'a> {
     fetch: Option<&'a Fetcher>,
     post: Option<&'a Poster>,
+    updates: Option<&'a Updater>,
     line_streams: Option<&'a LineStreams>,
     secrets: Option<&'a SecretStore>,
     credentials: Option<&'a CredentialAuthorizer>,
+    network_failure: Option<TaskError>,
+}
+
+fn bound_secret(
+    store: Option<&SecretStore>,
+    name: &str,
+) -> Result<Option<crate::credentials::servers::Record>, TaskError> {
+    let Some(store) = store else {
+        return Ok(None);
+    };
+    let Some(app) = store.app.as_deref() else {
+        return Ok(None);
+    };
+    if !crate::credentials::servers::may_set(app, name) {
+        return Ok(None);
+    }
+    let path =
+        crate::credentials::servers::path(&store.root, app, name).ok_or(TaskError::Denied)?;
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(TaskError::Denied),
+        Ok(_) => {}
+    }
+    let bytes = read_secret_value(&store.root, &path, false).ok_or(TaskError::Denied)?;
+    crate::credentials::servers::decode(&bytes)
+        .map(Some)
+        .ok_or(TaskError::Denied)
 }
 
 /// Reads a named secret.
@@ -635,7 +867,7 @@ fn scoped_secret(store: Option<&SecretStore>, name: &str) -> Option<String> {
     }
     if let Some(app) = store.app.as_deref() {
         let path = crate::credentials::app_secret_path(&store.root, app, name)?;
-        if let Some(value) = read_secret(&store.root, &path) {
+        if let Some(value) = read_secret_value(&store.root, &path, false) {
             return Some(value);
         }
     }
@@ -652,6 +884,10 @@ fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
 }
 
 fn read_secret(root: &Path, path: &Path) -> Option<String> {
+    read_secret_value(root, path, true)
+}
+
+fn read_secret_value(root: &Path, path: &Path, trim: bool) -> Option<String> {
     let root_metadata = std::fs::symlink_metadata(root).ok()?;
     if !root_metadata.file_type().is_dir() {
         return None;
@@ -681,7 +917,7 @@ fn read_secret(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
     let value = String::from_utf8(bytes).ok()?;
-    let value = value.trim().to_owned();
+    let value = if trim { value.trim().to_owned() } else { value };
     if value.is_empty() {
         None
     } else {
@@ -754,12 +990,35 @@ fn run(
             credential: wanted,
             headers,
             max_bytes,
-        } => run_post(
+        } => run_body(
+            WriteMethod::Post,
             url,
             body,
             content_type,
             *max_bytes,
             wanted.as_ref(),
+            headers,
+            backends,
+            cancel,
+        ),
+        Task::Update {
+            method,
+            url,
+            body,
+            content_type,
+            credential,
+            headers,
+            max_bytes,
+        } => run_body(
+            match method {
+                UpdateMethod::Put => WriteMethod::Put,
+                UpdateMethod::Patch => WriteMethod::Patch,
+            },
+            url,
+            body,
+            content_type,
+            *max_bytes,
+            credential.as_ref(),
             headers,
             backends,
             cancel,
@@ -850,6 +1109,10 @@ fn run_fetch(
                 return TaskOutcome::Failed(error);
             }
         };
+        if let Some(error) = backends.network_failure {
+            streams.close_owned(url, owner);
+            return TaskOutcome::Failed(error);
+        }
         return match streams.request_owned(
             owner,
             action,
@@ -884,6 +1147,9 @@ fn run_fetch(
         Ok(credential) => credential,
         Err(error) => return TaskOutcome::Failed(error),
     };
+    if let Some(error) = backends.network_failure {
+        return TaskOutcome::Failed(error);
+    }
     match fetch(
         url,
         offset,
@@ -905,9 +1171,10 @@ fn run_fetch(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the closed Task::Post fields and runtime backends are passed explicitly"
+    reason = "the closed body-task fields and runtime backends are passed explicitly"
 )]
-fn run_post(
+fn run_body(
+    method: WriteMethod,
     url: &str,
     body: &str,
     content_type: &str,
@@ -917,21 +1184,29 @@ fn run_post(
     backends: Backends<'_>,
     cancel: &AtomicBool,
 ) -> TaskOutcome {
-    let Some(post) = backends.post else {
+    if (method == WriteMethod::Post && backends.post.is_none())
+        || (method != WriteMethod::Post && backends.updates.is_none())
+    {
         return TaskOutcome::Failed(TaskError::Denied);
-    };
+    }
     let prepared = match own_headers(headers) {
         Ok(prepared) => prepared,
         Err(error) => return TaskOutcome::Failed(error),
     };
     let (extra, controls) = (prepared.forwarded, prepared.controls);
-    if controls.stream.is_some() || (controls.wait_until_cancelled && wanted.is_none()) {
+    if controls.stream.is_some()
+        || (controls.wait_until_cancelled && (wanted.is_none() || method != WriteMethod::Post))
+    {
         return TaskOutcome::Failed(TaskError::Denied);
     }
     let resolved = match resolved_credential(
         wanted,
         url,
-        CredentialUse::Post,
+        match method {
+            WriteMethod::Post => CredentialUse::Post,
+            WriteMethod::Put => CredentialUse::Put,
+            WriteMethod::Patch => CredentialUse::Patch,
+        },
         Some(body),
         Some(content_type),
         backends.credentials,
@@ -940,21 +1215,44 @@ fn run_post(
         Ok(credential) => credential,
         Err(error) => return TaskOutcome::Failed(error),
     };
-    match post(
-        url,
-        body.as_bytes(),
-        content_type,
-        resolved
-            .as_ref()
-            .map(|(name, value)| (name.as_str(), value.as_str())),
-        &extra,
-        max_bytes.min(MAX_TASK_BYTES_U32),
-        RequestOptions {
-            report_rate_limit: controls.report_rate_limit,
-            wait_until_cancelled: controls.wait_until_cancelled,
-        },
-        cancel,
-    ) {
+    if let Some(error) = backends.network_failure {
+        return TaskOutcome::Failed(error);
+    }
+    let result = if method == WriteMethod::Post {
+        backends.post.expect("checked POST backend")(
+            url,
+            body.as_bytes(),
+            content_type,
+            resolved
+                .as_ref()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+            &extra,
+            max_bytes.min(MAX_TASK_BYTES_U32),
+            RequestOptions {
+                report_rate_limit: controls.report_rate_limit,
+                wait_until_cancelled: controls.wait_until_cancelled,
+            },
+            cancel,
+        )
+    } else {
+        backends.updates.expect("checked update backend")(
+            method,
+            url,
+            body.as_bytes(),
+            content_type,
+            resolved
+                .as_ref()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+            &extra,
+            max_bytes.min(MAX_TASK_BYTES_U32),
+            RequestOptions {
+                report_rate_limit: controls.report_rate_limit,
+                wait_until_cancelled: controls.wait_until_cancelled,
+            },
+            cancel,
+        )
+    };
+    match result {
         Ok(bytes) => TaskOutcome::Completed(bytes),
         Err(error) => TaskOutcome::Failed(error),
     }
@@ -1034,6 +1332,336 @@ mod tests {
             }
         }
         finished
+    }
+
+    fn fault_fetch() -> Task {
+        Task::Fetch {
+            url: "https://fixture.invalid/items".into(),
+            offset: 0,
+            max_bytes: 128,
+            credential: Some(Credential::bearer("fixture")),
+            headers: Vec::new(),
+        }
+    }
+    fn fault_runner(name: &str) -> TaskRunner {
+        let root = temp_root(name);
+        std::fs::write(root.join("fixture"), "original-test-secret").unwrap();
+        TaskRunner::simulated(&root)
+            .with_secrets(&root)
+            .with_capabilities([Capability::Network])
+            .with_fetch(Arc::new(|_, _, _, _, _, _, _| {
+                panic!("fault reached real transport")
+            }))
+            .with_post(Arc::new(|_, _, _, _, _, _, _, _| {
+                panic!("fault reached real transport")
+            }))
+            .with_line_streams(Arc::new(LineStreams::default()))
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
+    }
+
+    #[test]
+    fn app_entered_secret_preserves_spaces_while_legacy_files_keep_trimming() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-verbatim-secret-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        crate::credentials::install_app_secret(&root, "chat", "openai", "  synthetic key  ")
+            .unwrap();
+        let store = super::SecretStore {
+            root: root.clone(),
+            app: Some("chat".into()),
+        };
+        assert_eq!(
+            super::scoped_secret(Some(&store), "openai").as_deref(),
+            Some("  synthetic key  ")
+        );
+        std::fs::write(root.join("other"), b"legacy-key\n").unwrap();
+        assert_eq!(
+            super::scoped_secret(Some(&store), "other").as_deref(),
+            Some("legacy-key")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fault_injection_keeps_admission_and_pending_refusal_ownership() {
+        let mut runner = TaskRunner::simulated(temp_root("fault-admission"));
+        for id in 1..=4 {
+            runner.submit(TaskId(id), fault_fetch()).unwrap();
+        }
+        assert_eq!(runner.in_flight(), 4, "queued refusals still own their IDs");
+        assert_eq!(
+            runner.submit_with_fault(TaskId(1), fault_fetch(), Some(TaskError::Offline)),
+            Err(RejectReason::DuplicateId)
+        );
+        assert_eq!(
+            runner.submit_with_fault(TaskId(5), fault_fetch(), Some(TaskError::Offline)),
+            Err(RejectReason::AtCapacity)
+        );
+        let results = runner.drain();
+        assert_eq!(results.len(), 4);
+        assert!(results
+            .iter()
+            .all(|item| item.outcome == TaskOutcome::Failed(TaskError::Denied)));
+        assert!(runner.drain().is_empty());
+        assert_eq!(runner.in_flight(), 0);
+        assert_eq!(RejectReason::DuplicateId.outcome(), None);
+        assert_eq!(
+            RejectReason::AtCapacity.outcome(),
+            Some(TaskOutcome::Failed(TaskError::Denied))
+        );
+    }
+
+    #[test]
+    fn network_faults_preserve_real_header_and_credential_gates() {
+        let mut runner = fault_runner("fault-gates");
+        let mut invalid = fault_fetch();
+        if let Task::Fetch { headers, .. } = &mut invalid {
+            headers.push(Header::new("Authorization", "forbidden"));
+        }
+        runner
+            .submit_with_fault(TaskId(1), invalid, Some(TaskError::Offline))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
+        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _, _| false));
+        runner
+            .submit_with_fault(TaskId(2), fault_fetch(), Some(TaskError::NoCredential))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
+        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _, _| true));
+        for (id, fault) in [
+            (3, TaskError::NoCredential),
+            (4, TaskError::Offline),
+            (5, TaskError::TimedOut),
+            (6, TaskError::Unreachable),
+        ] {
+            runner
+                .submit_with_fault(TaskId(id), fault_fetch(), Some(fault))
+                .unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(fault)
+            );
+        }
+    }
+
+    #[test]
+    fn credentialed_post_and_stream_open_use_the_same_fault_pipeline() {
+        let mut runner = fault_runner("fault-post-stream");
+        let post = Task::Post {
+            url: "https://fixture.invalid/items".into(),
+            body: "{}".into(),
+            content_type: "application/json".into(),
+            max_bytes: 64,
+            credential: Some(Credential::bearer("fixture")),
+            headers: Vec::new(),
+        };
+        for (id, fault) in [(1, TaskError::NoCredential), (2, TaskError::TimedOut)] {
+            runner
+                .submit_with_fault(TaskId(id), post.clone(), Some(fault))
+                .unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(fault)
+            );
+        }
+        let mut stream = fault_fetch();
+        if let Task::Fetch { headers, .. } = &mut stream {
+            headers.push(Header::new("X-Cobalt-Line-Stream", "open"));
+        }
+        runner
+            .submit_with_fault(TaskId(3), stream.clone(), Some(TaskError::Offline))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Offline)
+        );
+        if let Task::Fetch { headers, .. } = &mut stream {
+            *headers = vec![Header::new("X-Cobalt-Line-Stream", "close")];
+        }
+        runner
+            .submit_with_fault(TaskId(4), stream, Some(TaskError::Offline))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new()),
+            "local stream cleanup must work offline"
+        );
+    }
+
+    #[test]
+    fn network_faults_do_not_block_local_file_or_timer_work() {
+        let root = temp_root("fault-local");
+        std::fs::write(root.join("note"), "original sample").unwrap();
+        let mut runner = TaskRunner::simulated(root);
+        runner
+            .submit_with_fault(
+                TaskId(1),
+                Task::ReadFile {
+                    path: "note".into(),
+                },
+                Some(TaskError::Offline),
+            )
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(b"original sample".to_vec())
+        );
+        runner
+            .submit_with_fault(
+                TaskId(2),
+                Task::Sleep { seconds: 0 },
+                Some(TaskError::TimedOut),
+            )
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new())
+        );
+    }
+
+    #[test]
+    fn paused_runner_cancels_once_and_resume_does_not_replay_work() {
+        let clock = Arc::new(
+            crate::clock::ManualClock::new(crate::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let mut runner = TaskRunner::simulated(".").with_manual_clock(clock);
+        assert!(!runner.is_quiescent());
+        runner
+            .submit(TaskId(1), Task::Sleep { seconds: 300 })
+            .unwrap();
+        runner.pause();
+        runner.pause();
+        assert!(!runner.is_quiescent());
+        let outcomes = runner.drain();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].outcome, TaskOutcome::Cancelled);
+        assert!(runner.is_quiescent());
+        runner
+            .submit(TaskId(2), Task::Sleep { seconds: 300 })
+            .unwrap();
+        assert!(!runner.is_quiescent());
+        assert_eq!(
+            runner.submit(TaskId(2), Task::Sleep { seconds: 0 }),
+            Err(RejectReason::DuplicateId)
+        );
+        assert_eq!(runner.drain()[0].outcome, TaskOutcome::Cancelled);
+        runner.resume();
+        runner.resume();
+        assert_eq!(runner.in_flight(), 0);
+        assert!(runner.drain().is_empty());
+        runner
+            .submit(TaskId(3), Task::Sleep { seconds: 0 })
+            .unwrap();
+        assert_eq!(
+            runner.drain()[0].outcome,
+            TaskOutcome::Completed(Vec::new())
+        );
+    }
+
+    #[test]
+    fn cancelling_all_preserves_outcomes_and_accepts_new_work() {
+        let clock = Arc::new(
+            crate::clock::ManualClock::new(crate::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let mut runner = TaskRunner::simulated(".").with_manual_clock(clock);
+        for id in 1..=4 {
+            runner
+                .submit(TaskId(id), Task::Sleep { seconds: 300 })
+                .unwrap();
+        }
+        runner.cancel_all();
+        runner.cancel_all();
+        let outcomes = runner.drain();
+        assert_eq!(outcomes.len(), 4);
+        assert!(outcomes
+            .iter()
+            .all(|item| item.outcome == TaskOutcome::Cancelled));
+        assert!(runner.drain().is_empty());
+        assert_eq!(runner.in_flight(), 0);
+        runner
+            .submit(TaskId(5), Task::Sleep { seconds: 0 })
+            .unwrap();
+        assert_eq!(
+            runner.drain(),
+            vec![Finished {
+                task: TaskId(5),
+                outcome: TaskOutcome::Completed(Vec::new()),
+            }]
+        );
+    }
+
+    #[test]
+    fn manual_timers_preserve_limits_order_cancellation_and_wall_independence() {
+        use crate::clock::{ManualClock, Snapshot};
+        let clock = Arc::new(
+            ManualClock::new(Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let mut runner = TaskRunner::simulated(".").with_manual_clock(Arc::clone(&clock));
+        for (id, seconds) in [(3, 2), (1, 2), (2, 1), (4, 300)] {
+            runner.submit(TaskId(id), Task::Sleep { seconds }).unwrap();
+        }
+        assert_eq!(
+            runner.submit(TaskId(5), Task::Sleep { seconds: 0 }),
+            Err(RejectReason::AtCapacity)
+        );
+        assert_eq!(
+            runner.submit(TaskId(1), Task::Sleep { seconds: 0 }),
+            Err(RejectReason::DuplicateId)
+        );
+        assert!(runner.drain().is_empty());
+        clock.set_wall(86_400_000, 0).unwrap();
+        assert!(runner.drain().is_empty());
+        runner.cancel(TaskId(4));
+        assert_eq!(
+            runner.drain(),
+            vec![Finished {
+                task: TaskId(4),
+                outcome: TaskOutcome::Cancelled
+            }]
+        );
+        clock.advance(Duration::from_secs(2)).unwrap();
+        let finished = runner.drain();
+        assert_eq!(
+            finished.iter().map(|item| item.task.0).collect::<Vec<_>>(),
+            vec![2, 1, 3]
+        );
+        assert!(finished
+            .iter()
+            .all(|item| item.outcome == TaskOutcome::Completed(Vec::new())));
+        assert!(runner.drain().is_empty());
+        assert_eq!(runner.in_flight(), 0);
+        runner
+            .submit(TaskId(9), Task::Sleep { seconds: 500 })
+            .unwrap();
+        clock.advance(Duration::from_secs(300)).unwrap();
+        assert_eq!(runner.wait(Duration::ZERO).unwrap().task, TaskId(9));
+        runner
+            .submit(TaskId(10), Task::Sleep { seconds: 1 })
+            .unwrap();
+        runner.shutdown();
+        clock.advance(Duration::from_secs(1)).unwrap();
+        assert!(runner.drain().is_empty());
     }
 
     #[test]
@@ -1302,7 +1930,7 @@ mod tests {
             .with_capabilities([Capability::Network])
             .with_secrets(secrets)
             .with_line_streams(streams)
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true));
         runner
             .submit(
                 TaskId(1),
@@ -1392,7 +2020,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("controls-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type| {
+            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type, _| {
                 credential.secret == "openai"
                     && url == "https://example.invalid/seek"
                     && usage == CredentialUse::Post
@@ -1514,7 +2142,7 @@ mod tests {
             .with_capabilities([Capability::Network])
             .with_secrets(secret_dir("stream-owner-race"))
             .with_line_streams(Arc::clone(&streams))
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true));
 
         runner.submit(TaskId(1), work()).expect("submit first open");
         accepted
@@ -1660,6 +2288,74 @@ mod tests {
     }
 
     #[test]
+    fn bound_accounts_fail_closed_without_legacy_fallback() {
+        let root = temp_root("bound-account-resolution");
+        std::fs::write(root.join("komga"), "legacy:must-not-leak").unwrap();
+        crate::credentials::servers::install(
+            &root,
+            "panels",
+            "komga",
+            "https://chosen.example/books",
+            "reader:  exact  ",
+        )
+        .unwrap();
+        let store = SecretStore {
+            root: root.clone(),
+            app: Some("panels".into()),
+        };
+        let allow: &super::CredentialAuthorizer = &|_, _, _, _, _, _| true;
+        let credential = Credential::basic("komga");
+        let resolve = |url| {
+            super::resolved_credential(
+                Some(&credential),
+                url,
+                CredentialUse::Fetch,
+                None,
+                None,
+                Some(allow),
+                Some(&store),
+            )
+        };
+        assert_eq!(
+            resolve("https://chosen.example/books/opds").unwrap(),
+            Some((
+                "Authorization".into(),
+                format!("Basic {}", super::base64(b"reader:  exact  "))
+            ))
+        );
+        for url in [
+            "https://elsewhere.example/books",
+            "https://chosen.example/other",
+            "https://komga.local/opds/v1.2/catalog",
+        ] {
+            assert_eq!(resolve(url), Err(TaskError::Denied), "{url}");
+        }
+        let deny: &super::CredentialAuthorizer = &|_, _, _, _, _, _| false;
+        assert_eq!(
+            super::resolved_credential(
+                Some(&credential),
+                "https://chosen.example/books",
+                CredentialUse::Fetch,
+                None,
+                None,
+                Some(deny),
+                Some(&store)
+            ),
+            Err(TaskError::Denied)
+        );
+        std::fs::write(root.join("apps/panels/servers/komga"), "corrupt").unwrap();
+        assert_eq!(
+            resolve("https://komga.local/opds/v1.2/catalog"),
+            Err(TaskError::Denied)
+        );
+        assert_eq!(
+            resolve("https://chosen.example/books"),
+            Err(TaskError::Denied)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn app_scoped_credentials_precede_global_owner_credentials() {
         let root = temp_root("app-secret-precedence");
         std::fs::write(root.join("openai"), "owner-global").expect("global secret");
@@ -1742,7 +2438,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("nosecret"))
             .with_capabilities([Capability::Network])
             .with_secrets(temp_root("nosecret-empty"))
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
             .with_post(Arc::new(move |_, _, _, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
@@ -1779,7 +2475,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("resolved-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, _, _, _| {
+            .with_credential_policy(Arc::new(|credential, url, _, _, _, _| {
                 credential.secret == "openai" && url == "https://example.invalid/"
             }))
             .with_post(Arc::new(|_, _, _, credential, _, _, _, _| {
@@ -1816,7 +2512,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("removed-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(&directory)
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
             .with_fetch(Arc::new(move |_, _, _, _, _, _, _| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 Ok(Vec::new())
@@ -1850,7 +2546,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("wrong-destination-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, _, _, _| {
+            .with_credential_policy(Arc::new(|credential, url, _, _, _, _| {
                 credential.secret == "openai" && url == "https://api.openai.com/v1/chat/completions"
             }))
             .with_post(Arc::new(move |_, _, _, _, _, _, _, _| {
@@ -1883,7 +2579,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("read-only-method-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, usage, _, _| {
+            .with_credential_policy(Arc::new(|credential, url, usage, _, _, _| {
                 credential.secret == "openai"
                     && url == "https://example.invalid/items"
                     && usage == CredentialUse::Fetch
@@ -1968,5 +2664,229 @@ mod tests {
             base64(b"reader@example.com:"),
             "cmVhZGVyQGV4YW1wbGUuY29tOg=="
         );
+    }
+    fn update_work(method: UpdateMethod) -> Task {
+        Task::Update {
+            method,
+            url: "https://example.invalid/entry/7".into(),
+            body: "{\"read\":true}".into(),
+            content_type: "application/json".into(),
+            credential: Some(Credential::bearer("openai")),
+            headers: Vec::new(),
+            max_bytes: 1024,
+        }
+    }
+
+    #[test]
+    fn updates_require_the_exact_method_and_resolve_secrets_only_for_authorized_sends() {
+        for (method, usage, wire) in [
+            (UpdateMethod::Put, CredentialUse::Put, WriteMethod::Put),
+            (
+                UpdateMethod::Patch,
+                CredentialUse::Patch,
+                WriteMethod::Patch,
+            ),
+        ] {
+            let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let observed = Arc::clone(&sent);
+            let mut runner = TaskRunner::simulated(temp_root(&format!("update-{method:?}")))
+                .with_capabilities([Capability::Network])
+                .with_secrets(secret_dir(&format!("update-{method:?}")))
+                .with_credential_policy(Arc::new(
+                    move |credential, url, actual, body, content_type, _| {
+                        credential == &Credential::bearer("openai")
+                            && url == "https://example.invalid/entry/7"
+                            && actual == usage
+                            && body == Some("{\"read\":true}")
+                            && content_type == Some("application/json")
+                    },
+                ))
+                .with_updates(Arc::new(
+                    move |actual,
+                          url,
+                          body,
+                          content_type,
+                          credential,
+                          headers,
+                          limit,
+                          options,
+                          _| {
+                        assert_eq!(actual, wire);
+                        assert_eq!(url, "https://example.invalid/entry/7");
+                        assert_eq!(body, b"{\"read\":true}");
+                        assert_eq!(content_type, "application/json");
+                        assert_eq!(credential, Some(("Authorization", "Bearer not-a-real-key")));
+                        assert!(headers.is_empty());
+                        assert_eq!(limit, 1024);
+                        assert!(!options.wait_until_cancelled);
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        Ok(Vec::new())
+                    },
+                ));
+            runner.submit(TaskId(1), update_work(method)).unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Completed(Vec::new())
+            );
+            let other = if method == UpdateMethod::Put {
+                UpdateMethod::Patch
+            } else {
+                UpdateMethod::Put
+            };
+            runner.submit(TaskId(2), update_work(other)).unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(TaskError::Denied)
+            );
+            assert_eq!(sent.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn update_gates_refuse_missing_capabilities_credentials_and_retained_controls() {
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            for case in [
+                "capability",
+                "secret",
+                "post-only",
+                "retained",
+                "stream",
+                "header",
+            ] {
+                let mut runner =
+                    TaskRunner::simulated(temp_root(&format!("update-{method:?}-{case}")))
+                        .with_updates(Arc::new(|_, _, _, _, _, _, _, _, _| {
+                            panic!("refused update reached network")
+                        }))
+                        .with_credential_policy(Arc::new(move |_, _, usage, _, _, _| {
+                            case != "post-only" || usage == CredentialUse::Post
+                        }));
+                if case != "capability" {
+                    runner = runner.with_capabilities([Capability::Network]);
+                }
+                if case != "secret" {
+                    runner = runner.with_secrets(secret_dir(&format!("update-{method:?}-{case}")));
+                }
+                let mut work = update_work(method);
+                if let Task::Update { headers, .. } = &mut work {
+                    match case {
+                        "retained" => headers.push(kobo_protocol::Header::new(WAIT_HEADER, "1")),
+                        "stream" => {
+                            headers.push(kobo_protocol::Header::new(LINE_STREAM_HEADER, "open"));
+                        }
+                        "header" => {
+                            headers.push(kobo_protocol::Header::new("Authorization", "injected"));
+                        }
+                        _ => {}
+                    }
+                }
+                runner.submit(TaskId(1), work).unwrap();
+                let expected = if case == "secret" {
+                    TaskError::NoCredential
+                } else {
+                    TaskError::Denied
+                };
+                assert_eq!(
+                    collect(&mut runner, 1)[0].outcome,
+                    TaskOutcome::Failed(expected),
+                    "{case}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn cancelling_an_update_delivers_one_cancelled_outcome() {
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            let (ready, started) = std::sync::mpsc::channel();
+            let mut runner = TaskRunner::simulated(temp_root(&format!("cancel-update-{method:?}")))
+                .with_capabilities([Capability::Network])
+                .with_updates(Arc::new(move |_, _, _, _, _, _, _, _, cancel| {
+                    ready.send(()).unwrap();
+                    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                    while !cancel.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    assert!(cancel.load(Ordering::SeqCst), "update was not cancelled");
+                    Err(TaskError::TimedOut)
+                }));
+            let mut work = update_work(method);
+            if let Task::Update { credential, .. } = &mut work {
+                *credential = None;
+            }
+            runner.submit(TaskId(1), work).unwrap();
+            started.recv_timeout(Duration::from_secs(5)).unwrap();
+            runner.cancel(TaskId(1));
+            let finished = collect(&mut runner, 1);
+            assert_eq!(finished.len(), 1);
+            assert_eq!(finished[0].outcome, TaskOutcome::Cancelled);
+            assert_eq!(runner.in_flight(), 0);
+            assert!(runner.wait(Duration::from_millis(10)).is_none());
+        }
+    }
+    #[test]
+    fn miniflux_update_uses_the_atomically_bound_token_and_cannot_move_servers() {
+        let root = temp_root("miniflux-bound-update");
+        crate::credentials::servers::install(
+            &root,
+            "rss-miniflux",
+            "miniflux",
+            "https://flux.example/reader",
+            "fixture-token",
+        )
+        .unwrap();
+        let sent = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&sent);
+        let mut runner = TaskRunner::simulated(temp_root("miniflux-update-root"))
+            .with_capabilities([Capability::Network])
+            .with_app_secrets(&root, "rss-miniflux")
+            // Even an over-broad host callback cannot bypass the saved account policy.
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
+            .with_updates(Arc::new(
+                move |method, url, body, _, credential, _, _, _, _| {
+                    assert_eq!(method, WriteMethod::Put);
+                    assert_eq!(url, "https://flux.example/reader/v1/entries");
+                    assert_eq!(body, br#"{"entry_ids":[7],"status":"read"}"#);
+                    assert_eq!(credential, Some(("X-Auth-Token", "fixture-token")));
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Ok(Vec::new())
+                },
+            ));
+        for (id, url, body, expected) in [
+            (
+                1,
+                "https://flux.example/reader/v1/entries",
+                r#"{"entry_ids":[7],"status":"read"}"#,
+                TaskOutcome::Completed(Vec::new()),
+            ),
+            (
+                2,
+                "https://other.example/reader/v1/entries",
+                r#"{"entry_ids":[7],"status":"read"}"#,
+                TaskOutcome::Failed(TaskError::Denied),
+            ),
+            (
+                3,
+                "https://flux.example/reader/v1/entries",
+                r#"{"entry_ids":[7],"status":"read","title":"overwrite"}"#,
+                TaskOutcome::Failed(TaskError::Denied),
+            ),
+        ] {
+            runner
+                .submit(
+                    TaskId(id),
+                    Task::Update {
+                        method: UpdateMethod::Put,
+                        url: url.into(),
+                        body: body.into(),
+                        content_type: "application/json".into(),
+                        credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
+                        headers: Vec::new(),
+                        max_bytes: 1024,
+                    },
+                )
+                .unwrap();
+            assert_eq!(collect(&mut runner, 1)[0].outcome, expected);
+        }
+        assert_eq!(sent.load(Ordering::SeqCst), 1);
     }
 }

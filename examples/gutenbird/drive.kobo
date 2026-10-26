@@ -1,0 +1,17 @@
+# The bundled catalogs stream live from Project Gutenberg; Popular opens a
+# real book grid, and a book names its editions.
+wait-for Project Gutenberg
+wait-for Popular
+clean
+shot gutenbird-catalogs
+tap Popular
+wait-for All Books
+clean
+shot gutenbird-popular
+tap Pride and Prejudice
+wait-for-id book-0
+wait-for-id book-1
+expect With
+expect No
+clean
+shot gutenbird-editions

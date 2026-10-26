@@ -63,8 +63,10 @@
 //! is, so a session that ends leaves nothing moved.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+
+mod recovery;
 
 /// Where Linux publishes backlight controls.
 const BACKLIGHTS: &str = "/sys/class/backlight";
@@ -86,6 +88,7 @@ pub struct Frontlight {
     control: PathBuf,
     maximum: u32,
     original: u8,
+    original_raw: u32,
     /// The balance between the banks, on a control that publishes one.
     ///
     /// [`None`] on a light with a single bank, and on any device that does not
@@ -129,6 +132,9 @@ impl Frontlight {
             return None;
         }
         let raw = read_number(&control.join("brightness"))?;
+        if raw > maximum {
+            return None;
+        }
         let original = to_percent(raw, maximum);
         // Two or more, because a scale of 0 and 1 is two ends and no middle:
         // there is no setting on it that lights both banks, so moving it would
@@ -141,10 +147,14 @@ impl Frontlight {
                     original: read_number(&control.join("color"))?,
                 })
             });
+        if balance.is_some_and(|balance| balance.original > balance.maximum) {
+            return None;
+        }
         Some(Self {
             control,
             maximum,
             original,
+            original_raw: raw,
             balance,
         })
     }
@@ -221,10 +231,41 @@ impl Frontlight {
     ///
     /// As [`Self::set`].
     pub fn restore(&self) -> io::Result<u8> {
-        if let Some(balance) = self.balance {
-            self.balance(balance.original)?;
+        if read_number(&self.control.join("max_brightness")) != Some(self.maximum) {
+            return Err(io::Error::other("front light range changed since capture"));
         }
-        self.brightness(self.original)
+        let balance_result = if let Some(balance) = self.balance {
+            if read_number(&self.control.join("max_color")) == Some(balance.maximum) {
+                self.balance(balance.original).and_then(|()| {
+                    if read_number(&self.control.join("color")) == Some(balance.original) {
+                        Ok(())
+                    } else {
+                        Err(io::Error::other("front light warmth was not restored"))
+                    }
+                })
+            } else {
+                Err(io::Error::other(
+                    "front light warmth range changed since capture",
+                ))
+            }
+        } else {
+            Ok(())
+        };
+        // Try brightness even when warmth failed. Do not make the owner keep
+        // an app's bright setting merely because one control disappeared.
+        let brightness_result = fs::write(
+            self.control.join("brightness"),
+            format!("{}\n", self.original_raw),
+        )
+        .and_then(|()| {
+            if read_number(&self.control.join("brightness")) == Some(self.original_raw) {
+                Ok(self.original)
+            } else {
+                Err(io::Error::other("front light brightness was not restored"))
+            }
+        });
+        balance_result?;
+        brightness_result
     }
 }
 
@@ -254,7 +295,15 @@ fn find_control(backlights: &Path) -> Option<PathBuf> {
 /// A non-negative integer from a sysfs file, or `None` when it is missing or is
 /// not one.
 fn read_number(path: &Path) -> Option<u32> {
-    fs::read_to_string(path).ok()?.trim().parse().ok()
+    let mut value = String::new();
+    fs::File::open(path)
+        .ok()?
+        .take(33)
+        .read_to_string(&mut value)
+        .ok()?;
+    (value.len() <= 32)
+        .then(|| value.trim().parse().ok())
+        .flatten()
 }
 
 /// Scales a hardware reading to a percentage, rounding to nearest.
@@ -283,7 +332,7 @@ mod tests {
     use std::path::Path;
 
     /// Builds a backlight directory the way the kernel publishes one.
-    fn control(root: &Path, name: &str, brightness: &str, maximum: &str) {
+    pub(super) fn control(root: &Path, name: &str, brightness: &str, maximum: &str) {
         let dir = root.join(name);
         fs::create_dir_all(&dir).expect("create");
         fs::write(dir.join("brightness"), brightness).expect("write");
@@ -291,7 +340,7 @@ mod tests {
     }
 
     /// Adds the balance between the banks, which only a two bank light has.
-    fn banks(root: &Path, name: &str, colour: &str, maximum: &str) {
+    pub(super) fn banks(root: &Path, name: &str, colour: &str, maximum: &str) {
         let dir = root.join(name);
         fs::write(dir.join("color"), colour).expect("write");
         fs::write(dir.join("max_color"), maximum).expect("write");
@@ -305,11 +354,46 @@ mod tests {
             .to_owned()
     }
 
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("kobo-frontlight-{name}"));
+    pub(super) fn scratch(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("kobo-frontlight-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("create");
         path
+    }
+
+    #[test]
+    fn restoration_keeps_the_exact_driver_value_instead_of_a_rounded_percentage() {
+        let root = scratch("raw-restore");
+        for raw in [1, 2, 128, 254] {
+            control(&root, "light", &raw.to_string(), "255");
+            let light = Frontlight::open_in(&root).unwrap();
+            light.set(90).unwrap();
+            light.restore().unwrap();
+            assert_eq!(
+                super::read_number(&root.join("light/brightness")),
+                Some(raw)
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn warmth_failure_still_attempts_brightness_and_changed_ranges_refuse() {
+        let root = scratch("restore-failure");
+        control(&root, "light", "1", "255");
+        banks(&root, "light", "3", "10");
+        let light = Frontlight::open_in(&root).unwrap();
+        light.set(80).unwrap();
+        fs::remove_file(root.join("light/color")).unwrap();
+        fs::create_dir(root.join("light/color")).unwrap();
+        assert!(light.restore().is_err());
+        assert_eq!(super::read_number(&root.join("light/brightness")), Some(1));
+        fs::write(root.join("light/max_brightness"), "100").unwrap();
+        fs::write(root.join("light/brightness"), "30").unwrap();
+        assert!(light.restore().is_err());
+        assert_eq!(super::read_number(&root.join("light/brightness")), Some(30));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

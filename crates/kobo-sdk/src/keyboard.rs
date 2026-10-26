@@ -41,7 +41,29 @@ const LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 /// The second layer. Chosen for what these applications actually need: digits,
 /// the punctuation of a sentence, and the handful of symbols that appear in
 /// search queries and addresses.
-const SYMBOLS: [&str; 3] = ["1234567890", "-/:;()&@\"", ".,?!'+="];
+///
+/// The hash is on it because applications on this device ask people to type
+/// one. The list of things to do groups itself by whatever tags the owner
+/// wrote into an item, and for as long as this layer had no `#` on it, that
+/// was a feature only reachable by somebody who had typed their list
+/// somewhere else and imported it.
+///
+/// The underscore is on it because access tokens contain one. Every Lichess
+/// token starts `lip_`, and a token the keyboard cannot type is a token that
+/// can only be installed from a computer. It sits at the end of its row so
+/// no other key moves.
+const SYMBOLS: [&str; 3] = ["1234567890", "-/:;()&@\"_", ".,?!'+=#"];
+
+/// What the symbol layer shows while shift is held.
+///
+/// The symbol layer has no room left, and a Wi-Fi password, a web address or
+/// a shell command can need any printable character, so the rest are under
+/// shift, where a physical keyboard keeps them. The top row is what shift
+/// makes of each digit on an American keyboard, so shift then 5 is a percent
+/// sign, as anyone who has typed one on a computer would guess. The second
+/// row is the brackets and marks no digit carries. The bottom row is the same
+/// as unshifted, so the punctuation either side of a symbol stays put.
+const SHIFTED_SYMBOLS: [&str; 3] = ["!@#$%^&*()", "[]{}<>\\|~`", ".,?!'+=#"];
 
 /// What a tap on the keyboard meant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +157,10 @@ impl Keyboard {
                 Layer::Letters => Layer::Symbols,
                 Layer::Symbols => Layer::Letters,
             };
+            // A shift is for the next key on the layer it was pressed on.
+            // Carried across, a shift pressed for a capital and abandoned for
+            // a digit would open the symbols on their shifted page.
+            self.shift = false;
             return Some(Pressed::Shifted);
         }
         if action == crate::action_id(SPACE) {
@@ -186,10 +212,18 @@ impl Keyboard {
         None
     }
 
-    pub(crate) fn rows(&self) -> [&'static str; 3] {
-        match self.layer {
-            Layer::Letters => LETTERS,
-            Layer::Symbols => SYMBOLS,
+    /// The characters the three rows of keys show right now, top row first.
+    ///
+    /// Public for an application that arranges its own keys around these, as
+    /// Paperterm does. A copy of the rows kept anywhere else falls behind the
+    /// moment a character is added here, and a key that is decoded but never
+    /// drawn is a character nobody can type.
+    #[must_use]
+    pub fn rows(&self) -> [&'static str; 3] {
+        match (self.layer, self.shift) {
+            (Layer::Letters, _) => LETTERS,
+            (Layer::Symbols, false) => SYMBOLS,
+            (Layer::Symbols, true) => SHIFTED_SYMBOLS,
         }
     }
 
@@ -264,9 +298,13 @@ impl TextEntry {
         &self.keyboard
     }
 
-    /// Opens the field with nothing in it.
+    /// Opens the field with nothing in it, on the letters and unshifted.
+    ///
+    /// A new keyboard rather than an emptied one. Emptying kept the layer and
+    /// the shift the last field was left on, so a field opened after a number
+    /// had been typed into another came up on the symbols.
     pub fn open(&mut self) {
-        self.keyboard.clear();
+        self.keyboard = Keyboard::new();
         self.open = true;
     }
 
@@ -278,7 +316,7 @@ impl TextEntry {
 
     /// Closes the field and throws away anything typed.
     pub fn close(&mut self) {
-        self.keyboard.clear();
+        self.keyboard = Keyboard::new();
         self.open = false;
     }
 
@@ -289,6 +327,16 @@ impl TextEntry {
     /// claims the cancel action too, because a keyboard covering the panel is
     /// modal whether or not the author thought of it that way.
     pub fn handle(&mut self, action: ActionId) -> Option<Typing> {
+        self.handle_text(action, true)
+    }
+
+    /// Handle private values without trimming meaningful password whitespace.
+    /// Empty input cancels; a nonempty value is returned exactly as entered.
+    pub fn handle_verbatim(&mut self, action: ActionId) -> Option<Typing> {
+        self.handle_text(action, false)
+    }
+
+    fn handle_text(&mut self, action: ActionId, trim: bool) -> Option<Typing> {
         if !self.open {
             if self.opens_on == Some(action) {
                 self.open();
@@ -307,10 +355,11 @@ impl TextEntry {
                 self.open = false;
                 // Whitespace only is nothing. Returning it would make every
                 // caller check, and half of them would forget.
-                if text.trim().is_empty() {
+                let text = if trim { text.trim().to_string() } else { text };
+                if text.is_empty() {
                     Some(Typing::Cancelled)
                 } else {
-                    Some(Typing::Submitted(text.trim().to_string()))
+                    Some(Typing::Submitted(text))
                 }
             }
         }
@@ -355,9 +404,9 @@ impl ScreenBuilder {
                 cells.push((
                     SHIFT.to_string(),
                     if keyboard.is_shifted() {
-                        "SHIFT".to_string()
+                        "Shift on".to_string()
                     } else {
-                        "shift".to_string()
+                        "Shift".to_string()
                     },
                 ));
             }
@@ -370,10 +419,21 @@ impl ScreenBuilder {
                 cells.push((key_name(index, column), label));
             }
             if index == 2 {
-                cells.push((BACKSPACE.to_string(), "back".to_string()));
+                cells.push((BACKSPACE.to_string(), "Delete character".to_string()));
             }
             let columns = u8::try_from(cells.len()).unwrap_or(u8::MAX);
             screen = screen.grid(columns, false, cells);
+            if index == 2 {
+                if let Some(kobo_ui::Node::Grid { cells, .. }) = screen.nodes.last_mut() {
+                    if let Some(cell) = cells.first_mut() {
+                        cell.glyph = Some(kobo_ui::Glyph::Shift);
+                        cell.selected = keyboard.is_shifted();
+                    }
+                    if let Some(cell) = cells.last_mut() {
+                        cell.glyph = Some(kobo_ui::Glyph::Backspace);
+                    }
+                }
+            }
         }
         screen.grid(
             3,
@@ -443,9 +503,94 @@ impl ScreenBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::TextEntry;
     use super::{Keyboard, Layer, Pressed, MAX_TEXT};
+    use super::{TextEntry, Typing};
     use crate::{action_id, ScreenBuilder};
+
+    /// The pages a reader can reach from a fresh keyboard, as the taps that
+    /// reach them.
+    const PAGES: [&[&str]; 4] = [&[], &["kb.shift"], &["kb.layer"], &["kb.layer", "kb.shift"]];
+
+    #[test]
+    fn every_printable_character_can_be_typed_on_the_keyboard() {
+        // A control that asks for a character the keyboard cannot produce is
+        // a control nobody can use. They went missing one at a time: the hash
+        // a todo tag starts with, the underscore in every Lichess token, then
+        // the percent sign a reader went looking for. A Wi-Fi password may be
+        // any printable character and so may a line typed into a shell, so
+        // this checks all of them rather than whichever was missed last.
+        let mut typed = String::new();
+        for page in PAGES {
+            for row in 0..3 {
+                for column in 0..16 {
+                    let mut keyboard = Keyboard::new();
+                    for name in page {
+                        tap(&mut keyboard, name);
+                    }
+                    tap(&mut keyboard, &format!("kb.r{row}c{column}"));
+                    typed.push_str(keyboard.text());
+                }
+            }
+        }
+        for wanted in '!'..='~' {
+            assert!(
+                typed.contains(wanted),
+                "the keyboard cannot type {wanted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shift_on_the_symbol_layer_types_what_shift_on_a_number_key_always_has() {
+        // Shift and 5 is a percent sign on every physical keyboard, and it
+        // releases after one symbol exactly as it does after one capital.
+        let mut keyboard = Keyboard::new();
+        tap(&mut keyboard, "kb.layer");
+        tap(&mut keyboard, "kb.shift");
+        tap(&mut keyboard, "kb.r0c4");
+        tap(&mut keyboard, "kb.r0c4");
+        assert_eq!(keyboard.text(), "%5");
+    }
+
+    #[test]
+    fn changing_layer_releases_a_shift_meant_for_the_other_one() {
+        // A shift pressed for a capital and abandoned for a digit would
+        // otherwise open the symbol layer on its shifted page, and the reader
+        // who wanted a 1 would get an exclamation mark.
+        let mut keyboard = Keyboard::new();
+        tap(&mut keyboard, "kb.shift");
+        tap(&mut keyboard, "kb.layer");
+        assert!(!keyboard.is_shifted());
+        tap(&mut keyboard, "kb.r0c0");
+        assert_eq!(keyboard.text(), "1");
+    }
+
+    #[test]
+    fn a_field_opens_on_letters_whatever_the_last_one_was_left_on() {
+        // Opening a field emptied the text but kept the layer and the shift,
+        // so a field opened after a number had been typed into another one
+        // came up on the symbol layer, with nothing on the panel to say why.
+        let mut entry = TextEntry::new();
+        entry.open();
+        for name in ["kb.layer", "kb.r0c0", "kb.shift"] {
+            entry.handle(action_id(name));
+        }
+        assert_eq!(
+            entry.handle(action_id("kb.enter")),
+            Some(Typing::Submitted("1".to_string()))
+        );
+        entry.open();
+        assert_eq!(entry.keyboard().layer(), Layer::Letters);
+        assert!(!entry.keyboard().is_shifted());
+
+        entry.handle(action_id("kb.layer"));
+        assert_eq!(
+            entry.handle(action_id("kb.cancel")),
+            Some(Typing::Cancelled)
+        );
+        entry.open();
+        assert_eq!(entry.keyboard().layer(), Layer::Letters);
+    }
     use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, TextScale};
 
     fn panels() -> Vec<(String, DisplayMetrics)> {
@@ -592,10 +737,10 @@ mod tests {
         // nothing but this test stops them drifting apart. It lays the real
         // screen out and taps the middle of every cell.
         for (name, metrics) in panels() {
-            for layer in [Layer::Letters, Layer::Symbols] {
+            for page in PAGES {
                 let mut drawn = Keyboard::new();
-                if layer == Layer::Symbols {
-                    drawn.press(action_id("kb.layer"));
+                for key in page {
+                    drawn.press(action_id(key));
                 }
                 let screen = ScreenBuilder::new("keyboard")
                     .keyboard(&drawn, "Send")
@@ -630,13 +775,16 @@ mod tests {
                         typed.push_str(keyboard.text());
                     }
                 }
-                // Every character of the layer, plus the space the space bar types.
-                for character in match layer {
-                    Layer::Letters => "qwertyuiopasdfghjklzxcvbnm",
-                    Layer::Symbols => "1234567890-/:;()&@\".,?!'+=",
-                }
-                .chars()
-                {
+                // Every character of the page, plus the space the space bar
+                // types. Read from the page rather than spelled out here,
+                // because a copy spelled out here is how the underscore and
+                // the hash were added to the keyboard and never checked.
+                for character in drawn.rows().concat().chars() {
+                    let character = if drawn.is_shifted() {
+                        character.to_ascii_uppercase()
+                    } else {
+                        character
+                    };
                     assert!(
                         typed.contains(character),
                         "{name}: {character} is drawn but cannot be typed"

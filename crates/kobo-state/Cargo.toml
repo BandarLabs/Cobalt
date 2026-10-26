@@ -1,0 +1,17 @@
+[package]
+name = "kobo-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-json = { path = "../kobo-json" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+kobo-policy = { path = "../kobo-policy" }
+kobo-protocol = { path = "../kobo-protocol" }

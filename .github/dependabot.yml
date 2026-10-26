@@ -1,0 +1,22 @@
+# Actions are pinned by commit, and a pin that is never moved is a pin to an
+# unmaintained version. Dependabot keeps the pins current, against beta like
+# every other change.
+#
+# Cargo is deliberately not listed. The Store release gate treats a changed
+# lockfile as a change to every app that resolves through it, and a dependency
+# update is taken together with the compatible-change review that says which
+# apps it does and does not rebuild (see tools/app-release-compatible-changes.json).
+# An automated lockfile bump without that review would fail the gate by design.
+# Advisories are caught by the audit job on every push.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: beta
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns:
+          - "*"

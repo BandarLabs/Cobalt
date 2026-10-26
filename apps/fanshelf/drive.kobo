@@ -3,24 +3,66 @@ wait 500
 expect Fanshelf
 expect The Clockwork Garden
 expect Лунная библиотека
+expect updates unchecked
+expect reading
 clean
 shot shelf
 
 tap The Clockwork Garden
 expect Rating: Teen And Up Audiences
 expect Archive warnings: No Archive Warnings Apply
+expect New chapters found
 expect Re-download
 clean
 shot work
 
 tap Shelf
+tap A Field Guide to Small Hours
+expect Updates never checked
+clean
+shot work-unchecked
+
+tap Shelf
 tap Updates
-expect Manual updates
 expect Unread update
+expect Never checked
 clean
 shot updates
 
 tap Shelf
+tap Filter
+expect Fandoms
+expect Public Domain Fairy Tales
+expect Synthetic Library Stories
+clean
+shot fandoms
+
+tap Public Domain Fairy Tales
+expect The Clockwork Garden
+expect All
+clean
+shot fandom-filter
+
+tap All
+expect A Field Guide to Small Hours
+
+tap Manage
+expect Download all updates
+expect 1 waiting
+expect 2 on the shelf
+clean
+shot manage
+
+tap Remove downloaded copies
+expect Remove 2 downloaded copies?
+expect Reading places are kept
+clean
+shot manage-confirm
+
+tap Go back
+expect Download all updates
+tap Shelf
+
 tap Followed tags
 expect Public Domain Fairy Tales
 expect Synthetic Library Stories

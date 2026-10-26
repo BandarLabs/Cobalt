@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "app_source": "pr5-apps-polish d0b2b7ce",
+  "cli_source": "local PR-B working tree after 76b3c3b",
+  "real_sources": [
+    "NASA PIA13227",
+    "NASA PIA00342"
+  ],
+  "checks": [
+    "CLI wrote two named puzzles to simulator",
+    "app imported and announced two",
+    "app listed both names",
+    "CLI synced shelf down to one",
+    "app announced one",
+    "removed puzzle disappeared while retained puzzle remained"
+  ],
+  "physical_reader": false
+}

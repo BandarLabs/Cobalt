@@ -1,0 +1,42 @@
+offline dictionaries loaded: 0
+screen 3813049233
+screen 3813049233
+touch up (1240,880) -> Some(ActionId(3276978864))
+screen 3506148592
+screen 3959723935
+tictactoe said: tictactoe: protocol error: UnsupportedVersion(13)
+tictactoe ended with exit status: 1
+screen 3813049233
+touch up (1240,960) -> Some(ActionId(3276978864))
+screen 3506148592
+screen 3959723935
+tictactoe said: tictactoe: protocol error: UnsupportedVersion(13)
+tictactoe ended with exit status: 1
+screen 3813049233
+touch up (1240,960) -> Some(ActionId(3276978864))
+screen 3506148592
+launch refused: installed application tictactoe is invalid: Integrity
+touch up (700,1790) -> Some(ActionId(1538531746))
+screen 3813049233
+touch up (1240,960) -> Some(ActionId(3276978864))
+screen 3506148592
+launch refused: installed application tictactoe is invalid: Integrity
+touch up (700,1790) -> Some(ActionId(1538531746))
+screen 3813049233
+touch up (1240,960) -> Some(ActionId(3276978864))
+screen 3506148592
+screen 3959723935
+touch up (1150,420) -> Some(ActionId(541915406))
+screen 3959723935
+touch up (250,1320) -> Some(ActionId(609025882))
+screen 3959723935
+touch up (700,870) -> Some(ActionId(575470644))
+screen 3959723935
+touch up (75,80) -> Some(ActionId(4294967295))
+screen 3813049233
+touch up (1230,1810) -> Some(ActionId(653517270))
+screen 1157350108
+launcher ended with exit status: 0
+session finished, handing the panel back
+panel released, restarting the reader
+waiting for the reader to feed the freeze watchdog

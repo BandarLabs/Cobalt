@@ -1,0 +1,11 @@
+Fieldbook
+Log bird sightings anywhere and build your life list.
+
+Bundled guide: version 0.1.2
+No special capabilities requested.
+
+Setup:
+Install the app from Cobalt's Store, then open it on your reader.
+No additional setup steps are listed in its manifest.
+
+This guide does not check installation or account access.

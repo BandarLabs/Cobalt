@@ -35,11 +35,11 @@
 //! reader losing their place in a novel because they scrolled past enough
 //! artwork. So a key under [`kobo_protocol::CACHE_PREFIX`] is a *cache* key: counted
 //! separately, capped separately, and thrown away oldest-first when its own
-//! cap is reached. Durable state can never be refused for want of room a cache
-//! is using, and a cache can never be refused at all.
+//! cap is reached. Durable keys have a separate allowance. Cache writes can
+//! still fail for invalid values, a full filesystem or an I/O failure.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -78,11 +78,21 @@ impl Store {
     /// Answers exactly one request.
     #[must_use]
     pub fn handle(&self, request: &StoreRequest) -> StoreResult {
+        self.handle_with_write_fault(request, None)
+    }
+
+    /// Uses the ordinary validation path, with an optional failure before a write.
+    #[must_use]
+    pub fn handle_with_write_fault(
+        &self,
+        request: &StoreRequest,
+        fault: Option<crate::WriteFault>,
+    ) -> StoreResult {
         let Some(root) = self.root.as_deref() else {
             return StoreResult::Denied(StoreError::Unwritable);
         };
         match request {
-            StoreRequest::Save { key, value } => Self::save(root, key, value),
+            StoreRequest::Save { key, value } => Self::save(root, key, value, fault),
             StoreRequest::Load { key } => Self::load(root, key),
             StoreRequest::Forget { key } => Self::forget(root, key),
             StoreRequest::List => Self::list(root),
@@ -96,7 +106,7 @@ impl Store {
         }
     }
 
-    fn save(root: &Path, key: &str, value: &[u8]) -> StoreResult {
+    fn save(root: &Path, key: &str, value: &[u8], fault: Option<crate::WriteFault>) -> StoreResult {
         if !is_valid_key(key) {
             return StoreResult::Denied(StoreError::BadKey);
         }
@@ -107,26 +117,27 @@ impl Store {
         // there, so rewriting an existing value can never be refused for want
         // of room. An application that cannot overwrite its own state is an
         // application that cannot recover from being nearly full.
-        if !root.join(key).exists() {
-            if is_cache_key(key) {
-                // A cache is never refused. It makes room instead, because the
-                // caller's alternative is to go back to the network for
-                // something it is holding in its hand, and because a refusal
-                // here would have to be handled by every caller identically.
-                Self::evict(root, MAX_CACHE_KEYS.saturating_sub(1));
-            } else if Self::count(root) >= MAX_STORE_KEYS {
-                return StoreResult::Denied(StoreError::TooFull);
+        let new_key = !root.join(key).exists();
+        if new_key && !is_cache_key(key) && Self::count(root) >= MAX_STORE_KEYS {
+            return StoreResult::Denied(StoreError::TooFull);
+        }
+        if let Some(fault) = fault {
+            return StoreResult::Denied(fault.error());
+        }
+        if new_key && is_cache_key(key) {
+            if let Err(error) = Self::evict(root, MAX_CACHE_KEYS.saturating_sub(1)) {
+                return StoreResult::Denied(crate::persistence::store_error(&error));
             }
         }
-        if fs::create_dir_all(root).is_err() {
-            return StoreResult::Denied(StoreError::Unwritable);
+        if let Err(error) = crate::persistence::ensure_directory(root) {
+            return StoreResult::Denied(crate::persistence::store_error(&error));
         }
         // The temporary name carries the key so two concurrent saves of
         // different keys cannot collide on one scratch file.
         let temporary = root.join(format!(".{key}.writing"));
-        if write_then_rename(&temporary, &root.join(key), value).is_err() {
+        if let Err(error) = write_then_rename(&temporary, &root.join(key), value) {
             let _ignored = fs::remove_file(&temporary);
-            return StoreResult::Denied(StoreError::Unwritable);
+            return StoreResult::Denied(crate::persistence::store_error(&error));
         }
         StoreResult::Saved { key: key.into() }
     }
@@ -135,16 +146,32 @@ impl Store {
         if !is_valid_key(key) {
             return StoreResult::Denied(StoreError::BadKey);
         }
-        // A key that was never written and a key that cannot be read are the
-        // same answer on purpose: both mean there is nothing to restore, and an
-        // application that treated them differently would have two first-run
-        // paths, only one of which ever gets tested.
-        let value = fs::read(root.join(key))
-            .ok()
-            .filter(|value| value.len() <= MAX_STORE_VALUE);
+        let file = match fs::File::open(root.join(key)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return StoreResult::Loaded {
+                    key: key.into(),
+                    value: None,
+                };
+            }
+            Err(_) => return StoreResult::Denied(StoreError::Unwritable),
+        };
+        // A damaged or externally replaced file must not allocate beyond the
+        // store bound or look like first launch. Preserve it for recovery.
+        let mut value = Vec::new();
+        if file
+            .take(MAX_STORE_VALUE as u64 + 1)
+            .read_to_end(&mut value)
+            .is_err()
+        {
+            return StoreResult::Denied(StoreError::Unwritable);
+        }
+        if value.len() > MAX_STORE_VALUE {
+            return StoreResult::Denied(StoreError::TooFull);
+        }
         StoreResult::Loaded {
             key: key.into(),
-            value,
+            value: Some(value),
         }
     }
 
@@ -152,10 +179,10 @@ impl Store {
         if !is_valid_key(key) {
             return StoreResult::Denied(StoreError::BadKey);
         }
-        // Removing something that is not there is a success. The caller wanted
-        // it gone, and it is gone.
-        let _ignored = fs::remove_file(root.join(key));
-        StoreResult::Forgotten { key: key.into() }
+        match crate::persistence::remove(root, &[&root.join(key)]) {
+            Ok(()) => StoreResult::Forgotten { key: key.into() },
+            Err(_) => StoreResult::Denied(StoreError::Unwritable),
+        }
     }
 
     fn list(root: &Path) -> StoreResult {
@@ -198,7 +225,7 @@ impl Store {
     ///
     /// A file whose age cannot be read sorts oldest, so a directory the clock
     /// went backwards on still shrinks rather than growing without limit.
-    fn evict(root: &Path, keep: usize) {
+    fn evict(root: &Path, keep: usize) -> std::io::Result<()> {
         let mut cached: Vec<(SystemTime, String)> = Self::names(root)
             .into_iter()
             .filter(|key| is_cache_key(key))
@@ -210,12 +237,17 @@ impl Store {
             })
             .collect();
         if cached.len() <= keep {
-            return;
+            return Ok(());
         }
         cached.sort();
         for (_, key) in &cached[..cached.len() - keep] {
-            let _ignored = fs::remove_file(root.join(key));
+            match fs::remove_file(root.join(key)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
         }
+        Ok(())
     }
 }
 
@@ -223,29 +255,8 @@ fn write_then_rename(temporary: &Path, final_path: &Path, value: &[u8]) -> std::
     {
         let mut file = fs::File::create(temporary)?;
         file.write_all(value)?;
-        // Without this the rename can land before the bytes do, and a power
-        // loss in that window leaves a correctly named file full of nothing.
-        file.sync_all()?;
     }
-    fs::rename(temporary, final_path)?;
-    // The rename is atomic, but atomic is not the same as durable: until the
-    // *directory* is synced the new entry may not have reached the disk, and a
-    // reset in that window silently keeps the old value. That window is not
-    // theoretical here -- this device can be reset at any instant by a hardware
-    // watchdog, with nothing flushed.
-    //
-    // This is also the whole of what an embedded database would have given us
-    // for a store that is capped at 256 keys and never queried: write a new
-    // copy, make it durable, swap it in atomically, make the swap durable.
-    // Failing to sync the directory is not fatal on its own -- the value is
-    // either the old one or the new one, never a torn one -- so it is reported
-    // rather than allowed to fail a write that has already landed.
-    if let Some(directory) = final_path.parent() {
-        if let Ok(handle) = fs::File::open(directory) {
-            let _ = handle.sync_all();
-        }
-    }
-    Ok(())
+    crate::persistence::publish(temporary, final_path)
 }
 
 #[cfg(test)]
@@ -260,6 +271,117 @@ mod tests {
         ));
         let _ignored = fs::remove_dir_all(&root);
         root
+    }
+
+    #[test]
+    fn injected_write_failure_keeps_validation_and_does_not_evict_or_replace() {
+        let root = temporary_root();
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..MAX_CACHE_KEYS {
+            fs::write(root.join(format!("cache.item-{index}")), b"cached").unwrap();
+        }
+        fs::write(root.join("note"), b"original").unwrap();
+        let store = Store::new(&root);
+        let save = |key: &str, value: Vec<u8>| StoreRequest::Save {
+            key: key.into(),
+            value,
+        };
+        let fault = Some(crate::WriteFault::NoRoom);
+        assert_eq!(
+            store.handle_with_write_fault(&save("../note", vec![]), fault),
+            StoreResult::Denied(StoreError::BadKey)
+        );
+        assert_eq!(
+            store.handle_with_write_fault(&save("note", vec![0; MAX_STORE_VALUE + 1]), fault),
+            StoreResult::Denied(StoreError::TooFull)
+        );
+        for key in ["note", "cache.new"] {
+            assert_eq!(
+                store.handle_with_write_fault(&save(key, b"replacement".to_vec()), fault),
+                StoreResult::Denied(StoreError::NoRoom)
+            );
+        }
+        assert_eq!(fs::read(root.join("note")).unwrap(), b"original");
+        assert_eq!(
+            Store::names(&root)
+                .iter()
+                .filter(|key| is_cache_key(key))
+                .count(),
+            MAX_CACHE_KEYS
+        );
+        assert!(!root.join("cache.new").exists());
+        assert_eq!(
+            store.handle_with_write_fault(&StoreRequest::Load { key: "note".into() }, fault),
+            StoreResult::Loaded {
+                key: "note".into(),
+                value: Some(b"original".to_vec())
+            }
+        );
+        assert_eq!(
+            store.handle_with_write_fault(&StoreRequest::Forget { key: "note".into() }, fault),
+            StoreResult::Forgotten { key: "note".into() }
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_cache_eviction_does_not_exceed_the_allowance() {
+        let root = temporary_root();
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..MAX_CACHE_KEYS {
+            fs::create_dir(root.join(format!("cache.item-{index}"))).unwrap();
+        }
+        let store = Store::new(&root);
+        assert_eq!(
+            store.handle(&StoreRequest::Save {
+                key: "cache.new".into(),
+                value: vec![1]
+            }),
+            StoreResult::Denied(StoreError::Unwritable)
+        );
+        assert_eq!(Store::names(&root).len(), MAX_CACHE_KEYS);
+        assert!(!root.join("cache.new").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_corrupt_and_unreadable_records_are_distinct_without_deletion() {
+        let root = temporary_root();
+        let store = Store::new(&root);
+        let load = StoreRequest::Load {
+            key: "article".into(),
+        };
+        assert_eq!(
+            store.handle(&load),
+            StoreResult::Loaded {
+                key: "article".into(),
+                value: None
+            }
+        );
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("article"), vec![0; MAX_STORE_VALUE + 1]).unwrap();
+        assert_eq!(
+            store.handle(&load),
+            StoreResult::Denied(StoreError::TooFull)
+        );
+        assert_eq!(
+            fs::metadata(root.join("article")).unwrap().len(),
+            MAX_STORE_VALUE as u64 + 1
+        );
+        fs::remove_file(root.join("article")).unwrap();
+        fs::create_dir(root.join("article")).unwrap();
+        assert_eq!(
+            store.handle(&load),
+            StoreResult::Denied(StoreError::Unwritable)
+        );
+        assert_eq!(
+            store.handle(&StoreRequest::Forget {
+                key: "article".into()
+            }),
+            StoreResult::Denied(StoreError::Unwritable)
+        );
+        assert!(root.join("article").is_dir());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

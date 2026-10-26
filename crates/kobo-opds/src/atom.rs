@@ -65,14 +65,10 @@ pub(crate) fn parse(input: &str, base: &str) -> Feed {
     };
 
     match cursor.next() {
-        Some(Event::Open {
-            name: "feed" | "atom:feed",
-            ..
-        }) => walk_feed(&mut cursor, base, &mut feed),
-        Some(Event::Open {
-            name: "entry" | "atom:entry",
-            attributes: _,
-        }) => {
+        Some(Event::Open { name, .. }) if local(name) == "feed" => {
+            walk_feed(&mut cursor, base, &mut feed);
+        }
+        Some(Event::Open { name, .. }) if local(name) == "entry" => {
             if let Some(outcome) = parse_entry(&mut cursor, base) {
                 push_entry(&mut feed, outcome);
             }
@@ -80,6 +76,44 @@ pub(crate) fn parse(input: &str, base: &str) -> Feed {
         _ => {}
     }
     feed
+}
+
+/// Admit only a complete feed/entry document. The tolerant entry walker must
+/// not turn an HTML login page or a truncated response into an empty catalog.
+pub(crate) fn is_document(input: &str) -> bool {
+    let mut decoded = Vec::new();
+    let mut stack = Vec::new();
+    let mut root = false;
+    let mut closed = false;
+    let mut valid = true;
+    scan(input, &mut decoded, |event| match event {
+        Event::Open { name, .. } => {
+            if closed || (!root && !matches!(local(name), "feed" | "entry")) {
+                valid = false;
+            }
+            root = true;
+            stack.push(name);
+        }
+        Event::Close { name } => {
+            if stack.pop() != Some(name) {
+                valid = false;
+            }
+            if stack.is_empty() {
+                closed = true;
+            }
+        }
+        Event::Text(text) => {
+            if stack.is_empty() && !text.trim().is_empty() {
+                valid = false;
+            }
+        }
+        Event::Owned(_) => {
+            if stack.is_empty() {
+                valid = false;
+            }
+        }
+    });
+    valid && root && closed && stack.is_empty()
 }
 
 /// A cursor over the flat event stream a whole document was scanned into.

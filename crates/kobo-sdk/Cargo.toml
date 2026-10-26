@@ -7,7 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Application SDK for declarative Kobo E Ink applications"
-documentation = "https://docs.rs/kobo-sdk"
 
 [features]
 # On by default, because an application that measures text with different type
@@ -29,6 +28,9 @@ text = ["dep:kobo-text"]
 runtime-settings = []
 
 [dependencies]
+kobo-json = { version = "0.3.2", path = "../kobo-json" }
+kobo-state = { path = "../kobo-state" }
+kobo-net = { version = "0.3.2", path = "../kobo-net" }
 kobo-policy = { version = "0.3.2", path = "../kobo-policy" }
 kobo-protocol = { version = "0.3.2", path = "../kobo-protocol" }
 kobo-text = { version = "0.3.2", path = "../kobo-text", optional = true }

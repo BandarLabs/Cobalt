@@ -1,0 +1,14 @@
+$ cat $KOBO_CONFIG_DIR/readers   (the saved-reader store behind the runs below)
+reader = clara
+serial = N365410043013
+address = 169.254.0.99
+paired = yes
+
+reader = beckett
+serial = N418999999999
+address = 169.254.0.100
+paired = no
+$ kobo wait --reader clara --timeout 1
+(clara is saved with address 169.254.0.99, which answers to nobody: the serial check fails, the sweep finds no N365..., so this is an honest target error - not a guess at another reader)
+kobo: "clara" (serial N365…) is not answering at its saved address or anywhere on this network
+exit: 3

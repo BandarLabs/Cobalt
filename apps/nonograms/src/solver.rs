@@ -128,10 +128,21 @@ pub fn solve_board(
     row_clues: &[Vec<u8>],
     column_clues: &[Vec<u8>],
 ) -> Option<Vec<Cell>> {
+    solve_board_rated(side, row_clues, column_clues).map(|(board, _)| board)
+}
+
+/// Number of productive row/column passes is a repeatable difficulty guide.
+#[must_use]
+pub fn solve_board_rated(
+    side: usize,
+    row_clues: &[Vec<u8>],
+    column_clues: &[Vec<u8>],
+) -> Option<(Vec<Cell>, usize)> {
     if side == 0 || row_clues.len() != side || column_clues.len() != side {
         return None;
     }
     let mut board = vec![Cell::Unknown; side * side];
+    let mut rounds = 0;
     loop {
         let mut changed = false;
         for row in 0..side {
@@ -165,8 +176,9 @@ pub fn solve_board(
             }
         }
         if !changed {
-            return Some(board);
+            return Some((board, rounds));
         }
+        rounds += 1;
     }
 }
 

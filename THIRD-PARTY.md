@@ -17,7 +17,7 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
+| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100`, `zip` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |
@@ -35,6 +35,21 @@ Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 `shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
 
+## Comic archive dependency
+
+The shared CBZ reader uses `zip` 4.6.1 (MIT), with default features disabled,
+Stored and DEFLATE compression only, and `flate2`'s pure Rust backend. Its
+resolved normal dependency closure is `crc32fast` 1.5.1, `cfg-if` 1.0.4,
+`flate2` 1.1.10, `miniz_oxide` 0.9.1, `adler2` 2.0.1,
+`simd-adler32` 0.3.10, `indexmap` 2.14.2, `equivalent` 1.0.2,
+`hashbrown` 0.17.1 and `memchr` 2.8.3. Each offers MIT or Apache-2.0;
+select Apache-2.0 when offered, otherwise MIT. ZIP's notice is included in
+the Rust dependency notices above. No upstream archive fixtures are copied.
+CBR is deferred; no RAR decoder is linked or invoked.
+
+See [the shared comic decision](docs/quality/comic-reader-decision.md) for
+resource limits, remaining release checks and the dependency assessment.
+
 ## Bundled content
 
 | Application | Content | Terms |
@@ -42,6 +57,15 @@ CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 | `grimoire` | Excerpts from the System Reference Document 5.1 and 5.2 by Wizards of the Coast LLC | Creative Commons Attribution 4.0 International; attribution is also included in the app |
 | `pubquiz` | Starter questions sourced from Open Trivia DB | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` |
 | `verses` | Short poems by Emily Dickinson, William Blake and Percy Bysshe Shelley | Public domain; source and publication year are retained with each poem |
+
+## Test fixtures
+
+These files are copied for tests only; they are not bundled into an
+application or distributed to readers.
+
+| Application | Fixture | Terms | Notice |
+| --- | --- | --- | --- |
+| `parser` | Compiled Lamplight story (`apps/parser/fixtures/lamplight.z3`), Z-machine version 3 release 1 serial 260919, from the original source in `apps/parser/fixtures/lamplight.inf` built with Inform 6 and the PunyInform library | MIT | `licenses/LICENSE-PunyInform.txt`; provenance in `licenses/SOURCE-Parser-Lamplight.md` |
 
 ## Icons
 
@@ -64,7 +88,7 @@ travels too, which is what the file above is for.
 
 ## Fonts
 
-Two typefaces are embedded in the `kobo-text` crate and end up inside every
+Three typefaces are embedded in the `kobo-text` crate and end up inside every
 binary. Atkinson Hyperlegible is embedded in two weights, which the one licence
 below covers. Flashcards additionally embeds the bounded Cobalt Japanese font
 subset in its own host/device dependency closure. Their licences ship beside
@@ -74,6 +98,7 @@ the artifacts that contain them.
 | --- | --- | --- |
 | Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
 | DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
+| Literata (Regular and SemiBold, Latin subset) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt`; subset recipe in `licenses/SOURCE-Literata.md` |
 | Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |
 
 Both permit embedding and redistribution. The OFL forbids selling the font on

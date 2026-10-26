@@ -46,6 +46,12 @@ pub struct Story {
     pub created: i64,
     /// The self-post body of an Ask HN or a Show HN, already plain text.
     pub text: Option<String>,
+    /// Where a link story points, whole, so the article can be read here.
+    ///
+    /// Kept as well as the host rather than instead of it: the host is what a
+    /// summary line can show, and the address is what a request needs. A
+    /// self-post has neither.
+    pub link: Option<String>,
     /// Where a link story points, reduced to a host worth reading.
     ///
     /// A whole URL is unreadable in a summary line and a bare title says
@@ -178,6 +184,7 @@ impl Item {
             comments: self.descendants,
             created: self.time,
             text: (!self.text.is_empty()).then(|| self.text.clone()),
+            link: self.url.clone().filter(|url| !url.is_empty()),
             site: self.url.as_deref().and_then(host_of),
         })
     }
@@ -349,9 +356,172 @@ fn plural(count: u32, noun: &str) -> String {
     }
 }
 
+/// What the reader has already done with a story.
+///
+/// Two things, both of which the site itself keeps for a logged-in reader and
+/// neither of which it will keep for this application: which stories have been
+/// opened, and which ones were put aside to come back to. Held on the device,
+/// because the alternative is asking a reader for their Hacker News password
+/// to remember that they read a story.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Marks {
+    /// The item numbers whose discussion or article has been opened.
+    pub read: std::collections::BTreeSet<String>,
+    /// Stories put aside, newest first, whole rather than by number.
+    ///
+    /// Whole, so that the saved list is readable with the radio off: a list of
+    /// thirty item numbers is thirty requests before anything can be drawn,
+    /// which is exactly the situation saving a story is supposed to rescue.
+    pub saved: Vec<Story>,
+}
+
+/// The most stories kept aside.
+///
+/// A cap rather than a policy: the marks travel in one small state file, and a
+/// reader who saves everything should lose the oldest rather than the file.
+pub const MAX_SAVED: usize = 60;
+
+/// The most read stories remembered.
+///
+/// Past this the oldest are forgotten, in insertion order, because "read" only
+/// has to survive as long as a story is on the front page.
+pub const MAX_READ: usize = 500;
+
+impl Marks {
+    /// Whether this story has been opened before.
+    #[must_use]
+    pub fn was_read(&self, id: &str) -> bool {
+        self.read.contains(id)
+    }
+
+    /// Whether this story is on the saved list.
+    #[must_use]
+    pub fn was_saved(&self, id: &str) -> bool {
+        self.saved.iter().any(|story| story.id == id)
+    }
+
+    /// Remembers that a story was opened.
+    pub fn mark_read(&mut self, id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        self.read.insert(id.to_owned());
+        while self.read.len() > MAX_READ {
+            let Some(oldest) = self.read.iter().next().cloned() else {
+                break;
+            };
+            self.read.remove(&oldest);
+        }
+    }
+
+    /// Puts a story aside, or takes it off the list if it is already there.
+    ///
+    /// Returns whether it is saved afterwards, because the screen that asked
+    /// has to say which of the two just happened.
+    pub fn toggle_saved(&mut self, story: &Story) -> bool {
+        if let Some(at) = self.saved.iter().position(|saved| saved.id == story.id) {
+            self.saved.remove(at);
+            return false;
+        }
+        self.saved.insert(0, story.clone());
+        self.saved.truncate(MAX_SAVED);
+        true
+    }
+
+    /// The marks as one state file.
+    ///
+    /// A line each, tab separated, because this is written and read only here
+    /// and a hand-rolled JSON writer is a bug waiting for the first story
+    /// whose title contains a quotation mark. Tabs cannot appear in any of
+    /// these fields: the site's titles arrive with whitespace collapsed, and
+    /// anything else is dropped on the way back in rather than trusted.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let mut out = String::from("hn-marks-v1\n");
+        for id in &self.read {
+            out.push_str("read\t");
+            out.push_str(id);
+            out.push('\n');
+        }
+        for story in &self.saved {
+            use std::fmt::Write;
+            let _ = writeln!(
+                out,
+                "saved\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                story.id,
+                clean(&story.title),
+                clean(&story.author),
+                story.points,
+                story.comments,
+                story.created,
+                clean(story.link.as_deref().unwrap_or_default()),
+                clean(story.site.as_deref().unwrap_or_default()),
+            );
+        }
+        out
+    }
+
+    /// The marks as they were written, and nothing else.
+    ///
+    /// A file from a newer version, a truncated line, a number that is not one:
+    /// each is simply not a mark. Losing which stories were read is a small
+    /// loss and refusing to start is a large one.
+    #[must_use]
+    pub fn decode(text: &str) -> Self {
+        let mut marks = Self::default();
+        let mut lines = text.lines();
+        if lines.next() != Some("hn-marks-v1") {
+            return marks;
+        }
+        for line in lines {
+            let mut fields = line.split('\t');
+            match fields.next() {
+                Some("read") => {
+                    if let Some(id) = fields.next().filter(|id| !id.is_empty()) {
+                        marks.read.insert(id.to_owned());
+                    }
+                }
+                Some("saved") => {
+                    let fields: Vec<&str> = fields.collect();
+                    let [id, title, author, points, comments, created, link, site] = fields[..]
+                    else {
+                        continue;
+                    };
+                    if id.is_empty() || title.is_empty() {
+                        continue;
+                    }
+                    marks.saved.push(Story {
+                        id: id.to_owned(),
+                        title: title.to_owned(),
+                        author: author.to_owned(),
+                        points: points.parse().unwrap_or_default(),
+                        comments: comments.parse().unwrap_or_default(),
+                        created: created.parse().unwrap_or_default(),
+                        text: None,
+                        link: (!link.is_empty()).then(|| link.to_owned()),
+                        site: (!site.is_empty()).then(|| site.to_owned()),
+                    });
+                }
+                _ => {}
+            }
+        }
+        marks.saved.truncate(MAX_SAVED);
+        marks
+    }
+}
+
+/// One field of a state line, with the two characters that are structure in it
+/// turned into spaces.
+fn clean(value: &str) -> String {
+    value.replace(['\t', '\n'], " ")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{age, host_of, item_from, score, summary, Item, MAX_COMMENTS, MAX_INDENT};
+    use super::{
+        age, host_of, item_from, score, summary, Item, Marks, Story, MAX_COMMENTS, MAX_INDENT,
+        MAX_SAVED,
+    };
 
     const STORY: &str = include_str!("../tests/item_story.json");
     const ASK: &str = include_str!("../tests/item_ask.json");
@@ -569,6 +739,79 @@ mod tests {
                             "score": 342, "descendants": 1, "time": 0}"#,
         );
         assert_eq!(score(&many.story().expect("a row")), "342 points");
+    }
+
+    fn story_named(id: &str) -> Story {
+        Story {
+            id: id.to_owned(),
+            title: format!("Story {id}\twith a tab in it"),
+            author: "someone".to_owned(),
+            points: 42,
+            comments: 7,
+            created: 1_700_000_000,
+            text: None,
+            link: Some(format!("https://example.com/{id}")),
+            site: Some("example.com".to_owned()),
+        }
+    }
+
+    #[test]
+    fn what_was_read_and_what_was_put_aside_survive_being_written_down() {
+        let mut marks = Marks::default();
+        marks.mark_read("111");
+        assert!(marks.toggle_saved(&story_named("222")));
+        let read_back = Marks::decode(&marks.encode());
+        assert!(read_back.was_read("111"));
+        assert!(read_back.was_saved("222"));
+        let saved = read_back.saved.first().expect("the saved story");
+        // The tab in the title is structure in the file and a space on the
+        // panel, rather than the end of the story and the start of a field
+        // that was never written.
+        assert_eq!(saved.title, "Story 222 with a tab in it");
+        assert_eq!(saved.points, 42);
+        assert_eq!(saved.link.as_deref(), Some("https://example.com/222"));
+    }
+
+    #[test]
+    fn saving_a_story_that_is_already_saved_takes_it_off_the_list() {
+        let mut marks = Marks::default();
+        let story = story_named("1");
+        assert!(marks.toggle_saved(&story));
+        assert!(!marks.toggle_saved(&story));
+        assert!(!marks.was_saved("1"));
+        assert!(marks.saved.is_empty());
+    }
+
+    #[test]
+    fn the_newest_story_put_aside_is_the_first_one_offered() {
+        let mut marks = Marks::default();
+        for id in 0..3 {
+            marks.toggle_saved(&story_named(&id.to_string()));
+        }
+        let ids: Vec<&str> = marks.saved.iter().map(|story| story.id.as_str()).collect();
+        assert_eq!(ids, ["2", "1", "0"]);
+    }
+
+    #[test]
+    fn a_reader_who_saves_everything_loses_the_oldest_rather_than_the_file() {
+        let mut marks = Marks::default();
+        for id in 0..MAX_SAVED + 10 {
+            marks.toggle_saved(&story_named(&id.to_string()));
+        }
+        assert_eq!(marks.saved.len(), MAX_SAVED);
+        assert!(marks.was_saved(&(MAX_SAVED + 9).to_string()));
+        assert!(!marks.was_saved("0"));
+    }
+
+    #[test]
+    fn a_state_file_from_somewhere_else_is_no_marks_rather_than_no_start() {
+        assert_eq!(Marks::decode("hn-marks-v2\nread\t1"), Marks::default());
+        assert_eq!(Marks::decode(""), Marks::default());
+        // A truncated line is dropped; the lines around it are not.
+        let partial = "hn-marks-v1\nsaved\t9\ttruncated\nread\t8\n";
+        let marks = Marks::decode(partial);
+        assert!(marks.saved.is_empty());
+        assert!(marks.was_read("8"));
     }
 
     #[test]

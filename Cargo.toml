@@ -4,16 +4,22 @@ members = [
     "crates/kobo-app-store",
     "crates/kobo-bookview",
     "crates/kobo-cli",
+    "crates/kobo-catalog",
+    "crates/kobo-comic",
     "crates/kobo-doc",
     "crates/kobo-doctor",
     "crates/kobo-dict",
     "crates/kobo-flashcards-format",
     "crates/kobo-frame-host",
+    "crates/kobo-frame-plan",
+    "crates/kobo-music-host",
+    "crates/kobo-vault-host",
     "crates/kobo-hal",
     "crates/kobo-html",
     "crates/kobo-image",
     "crates/kobo-json",
     "crates/kobo-net",
+    "crates/kobo-opml",
     "crates/kobo-opds",
     "crates/kobo-term",
     "crates/kobo-text",
@@ -24,6 +30,7 @@ members = [
     "crates/kobo-sdk",
     "crates/kobo-shell",
     "crates/kobo-stream",
+    "crates/kobo-state",
     "crates/kobo-sidekickd",
     "crates/kobo-sim",
     "crates/kobo-smoke",
@@ -33,6 +40,7 @@ members = [
     "crates/kobo-handoff",
     "crates/kobo-wifi-trace",
     "crates/kobo-xml",
+    "crates/kobo-zstory",
     "crates/kobod",
     "examples/brief",
     "examples/audiobook",
@@ -53,6 +61,7 @@ members = [
     "examples/store",
     "apps/arxiv",
     "apps/backgammon",
+    "apps/birds",
     "apps/calibre-web",
     "apps/crossword",
     "apps/deck",
@@ -89,7 +98,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.10"
+version = "0.3.29"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"

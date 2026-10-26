@@ -3,9 +3,9 @@
   "display_name": "Kitchen Card",
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
-  "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
-  "version": "0.1.0",
-  "release_notes": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
+  "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
+  "version": "0.1.8",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "reader",
   "capabilities": [
     "network",
@@ -14,11 +14,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Make the Mealie API available to the Kobo at https://mealie.local."
+        "text": "Create an API token in Mealie's user settings."
       },
       {
-        "text": "Create a long-lived Mealie API token and install it under the exact name mealie.",
-        "command": "kobo secret set mealie --device <address>"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Install the token under the name mealie, then add the address in the app.",
+        "command": "kobo secret set mealie"
       }
     ]
   }

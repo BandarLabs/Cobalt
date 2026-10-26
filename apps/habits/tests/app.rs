@@ -17,6 +17,21 @@ fn custom_schedule_and_skip_keep_streak_honest() {
     assert_eq!(habit.best_streak(8), 4);
 }
 #[test]
+fn a_backup_merges_days_onto_the_habit_with_the_same_name() {
+    let mut existing = vec![Habit::new("Read".into())];
+    existing[0].toggle_complete(1);
+    existing[0].skip(3);
+    let mut incoming = Habit::new("Read".into());
+    incoming.toggle_complete(2);
+    incoming.toggle_complete(3);
+    incoming.schedule = Schedule::Weekdays;
+    merge(&mut existing, vec![incoming]);
+    assert_eq!(existing[0].done, vec![1, 2, 3]);
+    assert!(existing[0].skipped.is_empty());
+    assert_eq!(existing[0].schedule, Schedule::Daily);
+}
+
+#[test]
 fn persisted_habits_round_trip() {
     let mut habit = Habit::new("Walk".into());
     habit.toggle_complete(12);
@@ -147,4 +162,25 @@ fn clara_bw_today_controls_fit() {
         .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
         .issues
         .is_empty());
+}
+#[test]
+fn a_week_sums_only_due_days() {
+    let mut habit = Habit::new("Read".into());
+    habit.schedule = Schedule::Weekdays;
+    // 20004 is a Tuesday by the model's Monday-zero shift, so the seven days
+    // ending there hold five weekdays.
+    let today = 20_004;
+    habit.done = vec![today];
+    habit.skipped = vec![today - 1];
+    let (due, done, skipped) = week_summary(&[habit], today);
+    assert_eq!((due, done, skipped), (5, 1, 1));
+}
+#[test]
+fn an_undone_skip_leaves_the_day_plainly_not_done() {
+    let mut habit = Habit::new("Read".into());
+    habit.skipped = vec![4];
+    assert!(habit.unskip(4));
+    assert!(habit.skipped.is_empty());
+    assert!(habit.done.is_empty());
+    assert!(!habit.unskip(4));
 }

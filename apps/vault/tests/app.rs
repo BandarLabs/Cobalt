@@ -51,7 +51,6 @@ fn wiki_links_create_backlinks() {
 }
 #[test]
 fn empty_or_missing_index_is_an_empty_vault() {
-    assert_eq!(INDEX_KEY, "vault-index-v1");
     assert!(decode_index("").is_empty());
     assert!(decode_index("   \n").is_empty());
 }

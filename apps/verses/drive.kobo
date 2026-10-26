@@ -1,3 +1,12 @@
-expect Today
+# Today's poem is PoetryDB's when the reader is online and a bundled one when
+# it is not, so the route asserts what both share: the day's heading and a
+# quote card made from the page on screen.
+wait-for Make a quote card
+expect Today's poem
 clean
-shot today
+shot verses-today
+tap Make a quote card
+wait-for Save a copy
+expect Ready for your computer.
+clean
+shot verses-card

@@ -1,0 +1,75 @@
+{
+  "format": "fieldbook-shelf",
+  "version": "1",
+  "packs": [
+    {
+      "id": "gbif-central-park",
+      "title": "Central Park GBIF observations",
+      "region": "New York, US",
+      "issued": "2026-09-18",
+      "species": [
+        {
+          "code": "LS",
+          "common": "Larus smithsonianus",
+          "scientific": "Larus smithsonianus"
+        },
+        {
+          "code": "LA",
+          "common": "Leucophaeus atricilla",
+          "scientific": "Leucophaeus atricilla"
+        },
+        {
+          "code": "V",
+          "common": "Veery",
+          "scientific": "Catharus fuscescens"
+        },
+        {
+          "code": "HF",
+          "common": "House Finch",
+          "scientific": "Haemorhous mexicanus"
+        },
+        {
+          "code": "NW",
+          "common": "Northern Waterthrush",
+          "scientific": "Parkesia noveboracensis"
+        },
+        {
+          "code": "BW",
+          "common": "Black-and-white Warbler",
+          "scientific": "Mniotilta varia"
+        },
+        {
+          "code": "NW",
+          "common": "Nashville Warbler",
+          "scientific": "Leiothlypis ruficapilla"
+        },
+        {
+          "code": "MW",
+          "common": "Magnolia Warbler",
+          "scientific": "Setophaga magnolia"
+        },
+        {
+          "code": "AR",
+          "common": "American Redstart",
+          "scientific": "Setophaga ruticilla"
+        },
+        {
+          "code": "BGW",
+          "common": "Black-throated Green Warbler",
+          "scientific": "Setophaga virens"
+        },
+        {
+          "code": "CW",
+          "common": "Chestnut-sided Warbler",
+          "scientific": "Setophaga pensylvanica"
+        },
+        {
+          "code": "BW",
+          "common": "Bay-breasted Warbler",
+          "scientific": "Setophaga castanea"
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

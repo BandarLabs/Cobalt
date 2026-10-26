@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+pub mod observation;
+pub mod provisional;
+
 /// Which panel-controller interface the device's framebuffer speaks.
 ///
 /// Declared on the profile rather than inferred from `framebuffer_id`, so
@@ -299,6 +302,16 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     colour_panel: false,
 };
 
+/// Tolino Shine 5 T302 running the Kobo Clara BW 391 software stack.
+/// Owner-attended evidence is captured; maintainer review is pending.
+pub const TOLINO_SHINE_5_T302: DeviceProfile = DeviceProfile {
+    id: "tolino-shine-5-t302",
+    model: "Tolino Shine 5",
+    serial_prefix: "T302",
+    write_ready: false,
+    ..CLARA_BW_391
+};
+
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
 /// under the same product; this profile records the distinct device code and
 /// `TPV board` identity reported by the refreshed hardware.
@@ -507,7 +520,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     },
     touch_transform: TouchTransform::TransposeMirrorY,
     reference_rotation: 1,
-    verified_rotations: &[1],
+    verified_rotations: &[1, 3],
     geometry_rule: GeometryRule::Fixed,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
@@ -519,7 +532,10 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     leftover_radio_daemons: &[],
-    reap_nickel_supplicant: false,
+    // N605 / 4.38.23697: issue #91 traces the detached owner colliding with
+    // Nickel's replacement. The measured reap restores scanning/association.
+    // This does not initialize the MediaTek driver or touch Bluetooth.
+    reap_nickel_supplicant: true,
     colour_panel: false,
 };
 
@@ -721,11 +737,134 @@ pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
     id: "libra-colour-390-4.46.23836",
     firmware_versions: &["4.46.23836"],
     write_ready: true,
+    leftover_radio_daemons: &["/bin/wpa_supplicant"],
+    reap_nickel_supplicant: true,
     ..LIBRA_COLOUR_390
+};
+
+/// Kobo Libra H2O, an older i.MX6SLL Libra sibling to the Libra 2, on the same
+/// firmware branch (4.38.23697) but a different kernel build
+/// (4.1.15-00417-g0c800cffe1f9 against the Libra 2's -00868-).
+///
+/// Measured with `kobo doctor`: geometry, pixel layout and `memory_length` are
+/// byte-identical to the Libra 2's, which the shared `MxcEpdcV2` derivation
+/// (`num_screens: 2`) reproduces exactly. The touch controller reports
+/// `cyttsp5_mt` rather than the Libra 2's Elan, with axis maximums one short
+/// of the Libra 2's (1679/1263 against 1680/1264) -- a different digitiser.
+///
+/// Unlike the Elipsa and Libra profiles above, whose framebuffers report
+/// `rotation: 1` for this same pose, the Libra H2O's own `rotation` reads
+/// back as `0`; kept as read rather than mapped onto their convention that
+/// `rotation: 1` means "buttons on the right".
+///
+/// `touch_transform` was measured with `kobo touch-probe` against the
+/// physical device across both verified rotations (0, normal reading
+/// orientation, and 2, the framebuffer's own reported half-turn pairing with
+/// 0). Touch maximums are exactly one less than the display dimensions in
+/// both axes, making `scale_touch_axis` the identity, so the taps could be
+/// checked by hand. Result: `TransposeMirrorX` -- the Clara BW/Clara HD
+/// transform, not the Libra 2's plain `Transpose`, despite sharing its exact
+/// panel geometry.
+///
+/// Rotation 2 (buttons-left) was re-measured directly against the physical
+/// device to settle a discrepancy between the touch-probe pass originally
+/// recorded in BandarLabs/Cobalt#184 and the one first committed here --
+/// free-hand taps land tens of pixels apart run to run, so the two were
+/// never going to match exactly, but they needed to be resolved to one
+/// traceable source rather than left disagreeing. The re-measurement (three
+/// passes, four corners each, all landing within the tolerance
+/// `libra_h2o_composed_touch_at_the_buttons_left_pose` checks) replaces both
+/// earlier readings; its cleanest pass, tapped in order top-left/top-right/
+/// bottom-right/bottom-left, is the one that test asserts against: raw
+/// `(1576,45)` -> display `(45,103)`, raw `(1576,1201)` -> `(1201,103)`, raw
+/// `(64,1204)` -> `(1204,1615)`, raw `(66,58)` -> `(58,1613)`.
+///
+/// `write_ready` is `true` per maintainer sign-off in BandarLabs/Cobalt#184,
+/// backed by the full attended `--features device-write` pass, all five
+/// stages confirmed: `DISPLAY_ONLY_GC16` (refresh writing no pixel byte),
+/// `REVERSIBLE_PIXELS_GC16` (4096 bytes inverted, restored, verified),
+/// `SCREEN_SNAPSHOT_RESTORE` (the full 8,494,080-byte visible screen
+/// snapshotted, changed, and restored -- the guarantee everything else rests
+/// on), `REVERSIBLE_PIXELS_DU` (same, partial-refresh waveform), and
+/// `WAIT_TIMING_GC16_DU` (GC16/GL16/DU waveforms timed, a further region
+/// restored and verified). `kobo guard-test` then restored the full screen
+/// after a deliberately-failed child, and Nickel was alive and healthy after
+/// six stop/hand-back cycles with no kernel reset.
+pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
+    id: "libra-h2o-384",
+    model: "Kobo Libra H2O",
+    device_code: 384,
+    device_tree_model: "Freescale i.MX6SLL NTX Board",
+    compatible_fragments: &["fsl,imx6sll"],
+    framebuffer_id: "mxc_epdc_fb",
+    framebuffer_controller: FramebufferController::MxcfbV2,
+    width: 1264,
+    height: 1680,
+    pixels_per_inch: 300,
+    virtual_width: 1280,
+    virtual_height: 1792,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5120,
+    memory_length: 9_175_040,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 0,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 0,
+    // Rotation 2 (buttons-left) is the framebuffer's own reported half-turn
+    // pairing with rotation 0, confirmed by `kobo doctor`. The composed
+    // transform at that pose (`swap_axes: true, mirror_x: false,
+    // mirror_y: true` -- the mechanical `rotated_180` of the base transform)
+    // was itself confirmed with a four-corner `kobo touch-probe` pass: all
+    // four taps landed in their correct quadrant. See the doc comment above
+    // this constant for the raw values.
+    verified_rotations: &[0, 2],
+    geometry_rule: GeometryRule::MxcEpdcV2 { num_screens: 2 },
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1679,
+    touch_y_min: 0,
+    touch_y_max: 1263,
+    serial_prefix: "N873",
+    firmware_versions: &["4.38.23697"],
+    kernel_release: "4.1.15-00417-g0c800cffe1f9",
+    // True per maintainer sign-off in BandarLabs/Cobalt#184; see the doc
+    // comment above.
+    write_ready: true,
+    // Unmeasured on this device. Not copied from the Libra 2: that evidence
+    // is specific to its wpa_supplicant behaviour and this is older, different
+    // firmware on the same SoC family.
+    leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
+    colour_panel: false,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
+    &TOLINO_SHINE_5_T302,
     &CLARA_BW_395,
     &CLARA_HD_376,
     &CLARA_COLOUR_393,
@@ -733,10 +872,61 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &LIBRA_2_388,
     &LIBRA_COLOUR_390,
     &LIBRA_COLOUR_390_446,
+    &LIBRA_H2O_384,
 ];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
+
+/// How well known the hardware a session resolved is.
+///
+/// The distinction lives here rather than beside the framebuffer because it is
+/// a statement about the profile table: whether this reader is in it, and
+/// whether the firmware it is running was measured. What is done about that is
+/// somebody else's decision, and the two callers who make it disagree, so this
+/// deliberately carries no policy of its own.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Standing {
+    /// A measured profile claims this model, on a firmware branch it covers.
+    Measured,
+    /// A profile claims this model on a firmware branch it covers, but its
+    /// owner-attended evidence is still awaiting review, so it is not
+    /// write-ready. The firmware is not the reason for any notice.
+    AwaitingReview,
+    /// A measured profile claims this model, but not this firmware branch.
+    UntestedFirmware,
+    /// No profile claims this reader, so one was derived from its own probe.
+    Unmeasured,
+}
+
+/// The firmware generation Cobalt can be started on.
+///
+/// NickelMenu is the only way into Cobalt from the reader's own menus, and it
+/// hooks Nickel by resolving mangled C++ symbols out of `libnickel` and
+/// rewriting a GOT entry behind one of them. That is a 4.x arrangement. It does
+/// not hold on the 5.x firmware, so a 5.x reader could be installed onto and
+/// then have no way to start what was installed.
+///
+/// This is why the generation is checked apart from the branch. An untested
+/// branch is a risk an owner can weigh, and [`Standing::UntestedFirmware`]
+/// lets them. A reader that cannot launch Cobalt at all is not a risk, it is a
+/// dead end, and consenting to it would only mean agreeing to a device that
+/// does nothing.
+pub const SUPPORTED_FIRMWARE_GENERATION: u32 = 4;
+
+/// How the blocker for an unlaunchable firmware generation begins.
+///
+/// Deliberately not [`FIRMWARE_BLOCKER`]. That prefix marks the blockers an
+/// informed owner may waive, and this one must outlive any consent.
+pub const FIRMWARE_GENERATION_BLOCKER: &str = "firmware generation";
+
+/// How every firmware-version blocker begins.
+///
+/// Shared so that the message and the rule deciding whether an owner may waive
+/// it are written once. Two copies of this string would let a reworded refusal
+/// silently become unwaivable, and the symptom would be a device that stops
+/// offering the choice rather than anything that looks like a bug.
+pub const FIRMWARE_BLOCKER: &str = "firmware version";
 
 /// Returns the exact supported profile authorized for ordinary device writes.
 ///
@@ -768,6 +958,9 @@ pub fn write_ready_profile(
 /// the same geometry and controller interfaces as Clara BW.
 ///
 /// The fallback to a geometry-only match is deliberate and read-only-safe.
+/// Before it, a profile whose device code and serial prefix agree is
+/// preferred, so a reader on firmware nobody measured is still recognised as
+/// itself rather than as the first profile that shares its panel.
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
     let geometry_matched = |profile: &&'static DeviceProfile| {
@@ -779,7 +972,47 @@ pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProf
         .find(|profile| {
             geometry_matched(profile) && profile.write_identity_blockers(snapshot).is_empty()
         })
+        .or_else(|| claimed_profile(snapshot))
         .or_else(|| SUPPORTED_PROFILES.iter().copied().find(geometry_matched))
+}
+
+/// The profile that claims this reader by identity: the geometry matches and
+/// the device code and serial prefix agree. The firmware may differ, and the
+/// profile need not be write-ready.
+///
+/// This is what recognises a reader as itself, as opposed to a profile that
+/// merely shares its panel. Recovery uses it too: it has to undo what a
+/// session changed, and an owner can run a session on a profile that is not
+/// yet write-ready.
+#[must_use]
+pub fn claimed_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
+    let identity = &snapshot.identity;
+    SUPPORTED_PROFILES.iter().copied().find(|profile| {
+        identity.device_code == Some(profile.device_code)
+            && identity.serial_prefix.as_deref() == Some(profile.serial_prefix)
+            && profile.validate(snapshot).readiness != Readiness::Rejected
+    })
+}
+
+/// True when a serial is shaped like an identity Cobalt can match.
+///
+/// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+/// passes, including model codes with no profile, because profile support is
+/// checked once the device is matched. The only other shapes accepted are the
+/// exact serial prefixes of supported profiles that are not Kobo-shaped,
+/// which today is the converted Tolino Shine 5's `T302`.
+#[must_use]
+pub fn is_matchable_serial(serial: &str) -> bool {
+    fn kobo_shaped(bytes: &[u8]) -> bool {
+        bytes.len() >= 4
+            && (bytes[0] == b'N' || bytes[0] == b'P')
+            && bytes[1..4].iter().all(u8::is_ascii_digit)
+    }
+    kobo_shaped(serial.as_bytes())
+        || SUPPORTED_PROFILES.iter().any(|profile| {
+            !kobo_shaped(profile.serial_prefix.as_bytes())
+                && serial.starts_with(profile.serial_prefix)
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1126,13 +1359,77 @@ impl DeviceProfile {
         }
     }
 
+    /// Whether this profile covers `observed`, which it does for any build on a
+    /// release branch the profile has actually been measured on.
+    ///
+    /// The exact builds in [`DeviceProfile::firmware_versions`] remain the
+    /// record of what was put on a physical device, and the branch is derived
+    /// from them rather than stored beside them. Two lists cannot drift apart
+    /// that way, and nobody can widen the gate without also claiming a device
+    /// was tested.
+    #[must_use]
+    pub fn accepts_firmware(&self, observed: &str) -> bool {
+        let Some(observed) = firmware_branch(observed) else {
+            return false;
+        };
+        self.firmware_branches().contains(&observed)
+    }
+
+    /// The release branches this profile has been measured on.
+    ///
+    /// Only used to say what would have been accepted, so a refusal names a
+    /// branch an owner can compare against rather than a build number that
+    /// tells them nothing.
+    #[must_use]
+    pub fn firmware_branches(&self) -> Vec<&'static str> {
+        let mut branches = self
+            .firmware_versions
+            .iter()
+            .copied()
+            .filter_map(firmware_branch)
+            .collect::<Vec<_>>();
+        branches.sort_unstable();
+        branches.dedup();
+        branches
+    }
+
+    /// The reasons a write must be refused even after an informed owner has
+    /// accepted the risk.
+    ///
+    /// Two blockers describe something an owner is in a position to decide
+    /// about: that nobody has measured this firmware branch, and that nobody
+    /// has watched this panel take a write. Saying so plainly and letting them
+    /// answer is the whole of the consent path.
+    ///
+    /// Nothing else here is theirs to waive. A device code, serial prefix or
+    /// kernel release that disagrees with the profile means the profile is
+    /// describing different hardware, and an owner accepting that would be
+    /// accepting a mistake rather than a risk.
+    #[must_use]
+    pub fn unwaivable_write_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
+        self.validate(snapshot)
+            .write_blockers
+            .into_iter()
+            .filter(|blocker| {
+                blocker.as_str() != WRITE_EVIDENCE_PENDING && !blocker.starts_with(FIRMWARE_BLOCKER)
+            })
+            .collect()
+    }
+
     /// Returns the reasons this device may not be written to.
     ///
     /// Hardware geometry alone is not proof of identity, because another device
     /// could report a compatible framebuffer. Any write path additionally
-    /// requires the exact device code, firmware version, kernel release, and
-    /// serial model prefix this profile was measured against. An empty result
-    /// means every identity field matched exactly.
+    /// requires the exact device code, kernel release, and serial model prefix
+    /// this profile was measured against, and a firmware version on a branch it
+    /// was measured on.
+    ///
+    /// Firmware is the one field here that moves under an owner who changed
+    /// nothing about their device. Kobo updates readers on its own schedule, so
+    /// pinning the build number took the platform away from everybody on a
+    /// model each time a wave shipped, until somebody holding that hardware
+    /// re-tested it. The kernel release is the field that actually tracks the
+    /// driver stack a profile was measured against, and it stays exact.
     #[must_use]
     pub fn write_identity_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
         let mut blockers = Vec::new();
@@ -1152,12 +1449,21 @@ impl DeviceProfile {
             self.serial_prefix,
             identity.serial_prefix.as_deref(),
         );
-        compare_identity_one_of(
-            &mut blockers,
-            "firmware version",
-            self.firmware_versions,
-            identity.firmware_version.as_deref(),
-        );
+        match identity.firmware_version.as_deref() {
+            // Checked before the branch, and separately from it, because a
+            // reader NickelMenu cannot hook has nothing to weigh: it would be
+            // installed onto and then never able to start.
+            Some(version) if !launchable_generation(version) => blockers.push(format!(
+                "{FIRMWARE_GENERATION_BLOCKER}: expected {SUPPORTED_FIRMWARE_GENERATION}.x, \
+                 found {version}, which NickelMenu cannot hook"
+            )),
+            Some(version) if self.accepts_firmware(version) => {}
+            Some(version) => blockers.push(format!(
+                "{FIRMWARE_BLOCKER}: expected a {} build, found {version}",
+                self.firmware_branches().join(" or ")
+            )),
+            None => blockers.push("firmware version could not be read".to_owned()),
+        }
         compare_identity(
             &mut blockers,
             "kernel release",
@@ -1670,23 +1976,39 @@ where
     }
 }
 
-fn compare_identity_one_of(
-    blockers: &mut Vec<String>,
-    name: &str,
-    expected: &[&str],
-    actual: Option<&str>,
-) {
-    match actual {
-        Some(value) if expected.contains(&value) => {}
-        Some(value) => {
-            let wanted = match expected {
-                [only] => (*only).to_owned(),
-                choices => format!("one of {}", choices.join(", ")),
-            };
-            blockers.push(format!("{name}: expected {wanted}, found {value}"));
-        }
-        None => blockers.push(format!("{name} could not be read")),
+/// Whether a firmware version is one NickelMenu can start Cobalt from.
+///
+/// A version that names no branch is refused here too. Nothing can be said
+/// about a generation that could not be read, and guessing that an unreadable
+/// version is a launchable one is the guess that ends with a reader carrying
+/// an installation it cannot run.
+#[must_use]
+pub fn launchable_generation(version: &str) -> bool {
+    firmware_branch(version)
+        .and_then(|branch| branch.split('.').next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major == SUPPORTED_FIRMWARE_GENERATION)
+}
+
+/// The release branch a firmware version belongs to, as `major.minor`.
+///
+/// Kobo's third component is a build number shared across a whole release
+/// wave rather than anything about one model: 23697 shipped as 4.38.23697 on
+/// the Clara HD, Elipsa 2E and Libra 2, and as 4.45.23697 on the Clara BW and
+/// Clara Colour. The first two components are what follow a model's own driver
+/// stack, so they are the largest unit a single measurement can honestly be
+/// carried across.
+///
+/// A string that is not two components followed by a build belongs to no
+/// branch and is matched by nothing, which is the direction that fails safe.
+#[must_use]
+pub fn firmware_branch(version: &str) -> Option<&str> {
+    let (major, rest) = version.split_once('.')?;
+    let (minor, build) = rest.split_once('.')?;
+    if major.is_empty() || minor.is_empty() || build.is_empty() {
+        return None;
     }
+    Some(&version[..major.len() + 1 + minor.len()])
 }
 
 fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actual: Option<&str>) {
@@ -1708,12 +2030,16 @@ mod tests {
     const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
     const ELIPSA_2E_POSE: PanelPose<'static> = PanelPose::reference(&ELIPSA_2E_389);
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
+    /// The Libra H2O at its reference pose: `rotation: 0` as the framebuffer
+    /// reports it. The other verified pose, `rotation: 2` (buttons-left), has
+    /// its own composed-pose test below rather than a second reference here.
+    const LIBRA_H2O_POSE: PanelPose<'static> = PanelPose::reference(&LIBRA_H2O_384);
 
     use super::{
         identify_profile, write_ready_profile, Bitfield, DeviceProfile, DeviceSnapshot,
         FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391,
         CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
-        LIBRA_COLOUR_390_446, WRITE_EVIDENCE_PENDING,
+        LIBRA_COLOUR_390_446, LIBRA_H2O_384, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -1785,6 +2111,252 @@ mod tests {
         );
     }
 
+    /// The Libra H2O as `kobo doctor` read it from a cold boot into Nickel.
+    /// Unlike the Libra 2's snapshot builder, `rotation` never changes the
+    /// geometry fields here: both this device's verified poses (0 and 2) are
+    /// portrait, buttons-right and buttons-left, with an identical
+    /// framebuffer -- there is no measured landscape pose to represent.
+    fn measured_libra_h2o(rotation: u32) -> DeviceSnapshot {
+        let red = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
+            model: Some("Freescale i.MX6SLL NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 1264,
+                height: 1680,
+                virtual_width: 1280,
+                virtual_height: 1792,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 5120,
+                memory_length: 9_175_040,
+                kind: 0,
+                visual: 2,
+                rotation,
+                red,
+                green: Bitfield { offset: 8, ..red },
+                blue: Bitfield { offset: 0, ..red },
+                alpha: Bitfield { offset: 24, ..red },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "cyttsp5_mt".into(),
+                x_min: 0,
+                x_max: 1679,
+                y_min: 0,
+                y_max: 1263,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N873".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.1.15-00417-g0c800cffe1f9".into()),
+                device_code: Some(384),
+            },
+        }
+    }
+
+    #[test]
+    fn libra_h2o_matches_the_measured_device() {
+        let snapshot = measured_libra_h2o(0);
+        let report = LIBRA_H2O_384.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert!(LIBRA_H2O_384.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-h2o-384")
+        );
+    }
+
+    /// The same hardware with the buttons on the left, which it reports as
+    /// rotation 2 with every geometry field unchanged. Accepted since the
+    /// pose was verified with a physical four-corner `kobo touch-probe` pass.
+    #[test]
+    fn libra_h2o_matches_the_buttons_left_pose() {
+        let snapshot = measured_libra_h2o(2);
+        let report = LIBRA_H2O_384.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-h2o-384")
+        );
+        let pose = PanelPose::resolve(
+            &LIBRA_H2O_384,
+            snapshot.framebuffer.as_ref().expect("a framebuffer"),
+        )
+        .expect("a verified pose resolves");
+        assert_eq!(
+            pose.touch_mapping(),
+            TouchMapping {
+                swap_axes: true,
+                mirror_x: false,
+                mirror_y: true,
+            },
+            "a half turn from TransposeMirrorX flips both mirrors"
+        );
+    }
+
+    #[test]
+    fn libra_h2o_composed_touch_at_the_buttons_left_pose() {
+        const SAME_EDGE_TOLERANCE: u32 = 48;
+        let pose = PanelPose::for_test(&LIBRA_H2O_384, 2).expect("a half turn from the reference");
+        assert_eq!(
+            pose.touch_mapping(),
+            TouchMapping {
+                swap_axes: true,
+                mirror_x: false,
+                mirror_y: true,
+            },
+            "a half turn flips both mirrors and leaves the swap alone"
+        );
+
+        // Four corners, tapped in order with the reader physically flipped
+        // buttons-left: top-left, top-right, bottom-right, bottom-left. The
+        // cleanest of a three-pass re-measurement against the physical
+        // device -- see the doc comment on `LIBRA_H2O_384` for why this
+        // replaces both the value originally committed here and the pass
+        // recorded in BandarLabs/Cobalt#184.
+        let top_left = pose
+            .touch_to_display(1576, 45)
+            .expect("measured tap maps to the display");
+        let top_right = pose
+            .touch_to_display(1576, 1201)
+            .expect("measured tap maps to the display");
+        let bottom_right = pose
+            .touch_to_display(64, 1204)
+            .expect("measured tap maps to the display");
+        let bottom_left = pose
+            .touch_to_display(66, 58)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(top_left, (45, 103));
+        assert_eq!(top_right, (1201, 103));
+        assert_eq!(bottom_right, (1204, 1615));
+        assert_eq!(bottom_left, (58, 1613));
+
+        assert!(top_left.0 < top_right.0, "the top edge runs rightward");
+        assert!(
+            top_left.1.abs_diff(top_right.1) < SAME_EDGE_TOLERANCE,
+            "the top edge stays at one end"
+        );
+        assert!(top_right.1 < bottom_right.1, "the right edge runs downward");
+        assert!(
+            top_right.0.abs_diff(bottom_right.0) < SAME_EDGE_TOLERANCE,
+            "the right edge stays at one side"
+        );
+        assert!(
+            bottom_left.0 < bottom_right.0,
+            "the bottom edge runs rightward"
+        );
+        assert!(
+            bottom_left.1.abs_diff(bottom_right.1) < SAME_EDGE_TOLERANCE,
+            "the bottom edge stays at one end"
+        );
+        assert!(top_left.1 < bottom_left.1, "the left edge runs downward");
+        assert!(
+            top_left.0.abs_diff(bottom_left.0) < SAME_EDGE_TOLERANCE,
+            "the left edge stays at one side"
+        );
+    }
+
+    #[test]
+    fn libra_h2o_touch_matches_four_physically_measured_taps() {
+        // The tolerance the shape assertions below check against. Wider than
+        // the Libra 2 test's: these four corners were tapped by hand across
+        // two live passes rather than measured once in a lab, and the
+        // largest same-edge spread observed (39px, bottom edge) is real tap
+        // imprecision, not a transform defect -- the exact-value assertions
+        // below already pin down the transform itself.
+        const SAME_EDGE_TOLERANCE: u32 = 48;
+        // Four corners, tapped in order on the physical device with `kobo
+        // touch-probe`: top-left, top-right, bottom-right, bottom-left. Every
+        // one landed in its correct quadrant; see the evidence recorded on
+        // `LIBRA_H2O_384` itself.
+        let top_left = LIBRA_H2O_POSE
+            .touch_to_display(127, 1138)
+            .expect("measured tap maps to the display");
+        let top_right = LIBRA_H2O_POSE
+            .touch_to_display(126, 100)
+            .expect("measured tap maps to the display");
+        let bottom_right = LIBRA_H2O_POSE
+            .touch_to_display(1620, 125)
+            .expect("measured tap maps to the display");
+        let bottom_left = LIBRA_H2O_POSE
+            .touch_to_display(1659, 1163)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(top_left, (125, 127));
+        assert_eq!(top_right, (1163, 126));
+        assert_eq!(bottom_right, (1138, 1620));
+        assert_eq!(bottom_left, (100, 1659));
+
+        // The shape of the square, stated independently of the exact
+        // numbers, so a mirrored or unswapped axis fails here even if the
+        // constants above are edited.
+        assert!(top_left.0 < top_right.0, "the top edge runs rightward");
+        assert!(
+            top_left.1.abs_diff(top_right.1) < SAME_EDGE_TOLERANCE,
+            "the top edge stays at one end"
+        );
+        assert!(top_right.1 < bottom_right.1, "the right edge runs downward");
+        assert!(
+            top_right.0.abs_diff(bottom_right.0) < SAME_EDGE_TOLERANCE,
+            "the right edge stays at one side"
+        );
+        assert!(
+            bottom_left.0 < bottom_right.0,
+            "the bottom edge runs rightward"
+        );
+        assert!(
+            bottom_left.1.abs_diff(bottom_right.1) < SAME_EDGE_TOLERANCE,
+            "the bottom edge stays at one end"
+        );
+        assert!(top_left.1 < bottom_left.1, "the left edge runs downward");
+        assert!(
+            top_left.0.abs_diff(bottom_left.0) < SAME_EDGE_TOLERANCE,
+            "the left edge stays at one side"
+        );
+    }
+
+    #[test]
+    fn libra_h2o_touch_edges_stay_inside_the_panel_and_round_trip() {
+        for raw in [(0, 0), (0, 1263), (1679, 0), (1679, 1263)] {
+            let display = LIBRA_H2O_POSE
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Libra H2O edge maps to the display");
+            assert!(display.0 < LIBRA_H2O_384.width, "x escaped: {display:?}");
+            assert!(display.1 < LIBRA_H2O_384.height, "y escaped: {display:?}");
+        }
+        assert_eq!(LIBRA_H2O_POSE.touch_to_display(0, 0), Some((1263, 0)));
+        assert_eq!(LIBRA_H2O_POSE.touch_to_display(1679, 1263), Some((0, 1679)));
+        for display in [(0, 0), (1263, 0), (0, 1679), (1263, 1679), (632, 840)] {
+            let raw = LIBRA_H2O_POSE
+                .display_to_touch(display.0, display.1)
+                .expect("Libra H2O display point maps to the controller");
+            assert_eq!(LIBRA_H2O_POSE.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(LIBRA_H2O_POSE.display_to_touch(1264, 0), None);
+        assert_eq!(LIBRA_H2O_POSE.display_to_touch(0, 1680), None);
+    }
+
     /// A leftover daemon is named for a device, not guessed at. The Libra 2
     /// has both halves measured: the two-supplicant collision after a normal
     /// hand-back, and the clean recovery once the leftover one was killed. The
@@ -1808,13 +2380,15 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", &["/usr/bin/wmt_launcher"][..]),
+                ("tolino-shine-5-t302", &["/usr/bin/wmt_launcher"][..]),
                 ("clara-bw-395", &[][..]),
                 ("clara-hd-376", &[][..]),
                 ("clara-colour-393", &[][..]),
                 ("elipsa-2e-389", &[][..]),
                 ("libra-2-388", &["/bin/wpa_supplicant"][..]),
                 ("libra-colour-390", &[][..]),
-                ("libra-colour-390-4.46.23836", &[][..]),
+                ("libra-colour-390-4.46.23836", &["/bin/wpa_supplicant"][..]),
+                ("libra-h2o-384", &[][..]),
             ]
         );
     }
@@ -1829,13 +2403,15 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", true),
+                ("tolino-shine-5-t302", true),
                 ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
-                ("elipsa-2e-389", false),
+                ("elipsa-2e-389", true),
                 ("libra-2-388", true),
                 ("libra-colour-390", false),
-                ("libra-colour-390-4.46.23836", false),
+                ("libra-colour-390-4.46.23836", true),
+                ("libra-h2o-384", false),
             ]
         );
     }
@@ -2263,6 +2839,107 @@ mod tests {
         }
         assert_eq!(CLARA_BW_POSE.display_to_touch(1072, 0), None);
         assert_eq!(CLARA_BW_POSE.display_to_touch(0, 1448), None);
+    }
+
+    /// N605 doctor fields measured on firmware 4.38.23697. Keep the fixture
+    /// independent of the profile so changes to its gate cannot change the
+    /// evidence the test supplies at the same time.
+    fn measured_elipsa(rotation: u32) -> DeviceSnapshot {
+        let channel = Bitfield {
+            offset: 0,
+            length: 0,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
+            model: Some("MediaTek MT8110 board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "hwtcon".into(),
+                width: 1404,
+                height: 1872,
+                virtual_width: 1404,
+                virtual_height: 1872,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 5616,
+                memory_length: 10_543_104,
+                kind: 0,
+                visual: 2,
+                rotation,
+                red: channel,
+                green: channel,
+                blue: channel,
+                alpha: channel,
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event2".into(),
+                name: "Elan Touchscreen".into(),
+                x_min: 0,
+                x_max: 1872,
+                y_min: 0,
+                y_max: 1404,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N605".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(389),
+            },
+        }
+    }
+
+    #[test]
+    fn elipsa_both_portrait_poses_pass_the_write_gate_and_map_touch() {
+        for (rotation, mapping, sample) in [
+            (
+                1,
+                TouchMapping {
+                    swap_axes: true,
+                    mirror_x: false,
+                    mirror_y: true,
+                },
+                (30, 34),
+            ),
+            // The measured rotation-1 sample (30, 34), reflected through
+            // the panel centre: (1403 - 30, 1871 - 34).
+            (
+                3,
+                TouchMapping {
+                    swap_axes: true,
+                    mirror_x: true,
+                    mirror_y: false,
+                },
+                (1373, 1837),
+            ),
+        ] {
+            let snapshot = measured_elipsa(rotation);
+            let profile = write_ready_profile(&snapshot).expect("portrait is write-ready");
+            assert_eq!(profile.id, "elipsa-2e-389");
+            let pose = PanelPose::resolve(profile, snapshot.framebuffer.as_ref().unwrap())
+                .expect("verified portrait resolves");
+            assert_eq!(pose.touch_mapping(), mapping);
+            assert_eq!(pose.touch_to_display(1838, 30), Some(sample));
+            for display in [(0, 0), (1403, 0), (0, 1871), (1403, 1871), (702, 936)] {
+                let raw = pose.display_to_touch(display.0, display.1).unwrap();
+                assert_eq!(pose.touch_to_display(raw.0, raw.1), Some(display));
+            }
+        }
+    }
+
+    #[test]
+    fn elipsa_portrait_support_does_not_relax_landscape_or_identity() {
+        for rotation in [0, 2] {
+            let snapshot = measured_elipsa(rotation);
+            assert!(write_ready_profile(&snapshot).is_err());
+            assert!(
+                PanelPose::resolve(&ELIPSA_2E_389, snapshot.framebuffer.as_ref().unwrap()).is_err()
+            );
+        }
+        let mut snapshot = measured_elipsa(3);
+        snapshot.identity.firmware_version = Some("unverified".into());
+        assert!(write_ready_profile(&snapshot).is_err());
     }
 
     #[test]
@@ -2756,6 +3433,145 @@ mod tests {
         assert!(!CLARA_COLOUR_393
             .write_identity_blockers(&clara_bw)
             .is_empty());
+    }
+
+    fn clara_bw_on_firmware(version: &str) -> DeviceSnapshot {
+        let mut identity = clara_bw_identity();
+        identity.firmware_version = Some(version.into());
+        clara_panel_snapshot(identity)
+    }
+
+    fn t302_on_firmware(version: &str) -> DeviceSnapshot {
+        let mut snapshot = clara_bw_on_firmware(version);
+        snapshot.identity.serial_prefix = Some("T302".into());
+        snapshot
+    }
+
+    #[test]
+    fn a_t302_is_recognised_as_itself_on_firmware_nobody_measured() {
+        // The T302 shares the Clara BW 391 panel and sits after it in the
+        // table. On an unmeasured build the geometry fallback used to return
+        // the Clara BW, whose serial prefix then disowned the reader and sent
+        // it to a provisional profile with a guessed touch mapping.
+        for version in ["4.45.23697", "4.46.23836"] {
+            assert_eq!(
+                super::identify_profile(&t302_on_firmware(version)).map(|profile| profile.id),
+                Some(super::TOLINO_SHINE_5_T302.id),
+                "{version}"
+            );
+        }
+        assert_eq!(
+            super::claimed_profile(&t302_on_firmware("4.46.23836")).map(|profile| profile.id),
+            Some(super::TOLINO_SHINE_5_T302.id)
+        );
+        assert_eq!(
+            super::identify_profile(&clara_bw_on_firmware("4.46.23836")).map(|profile| profile.id),
+            Some(CLARA_BW_391.id)
+        );
+    }
+
+    #[test]
+    fn matchable_serials_are_kobo_shaped_or_a_supported_prefix() {
+        assert!(super::is_matchable_serial("N365410043013"));
+        assert!(super::is_matchable_serial("P365000000000"));
+        assert!(super::is_matchable_serial("N999000000000"));
+        assert!(super::is_matchable_serial("T302593005757"));
+        assert!(!super::is_matchable_serial("T303000000000"));
+        assert!(!super::is_matchable_serial("X365000000000"));
+        assert!(!super::is_matchable_serial("N36"));
+    }
+
+    #[test]
+    fn a_later_build_on_a_measured_branch_is_accepted() {
+        // The case that took Cobalt off owners' devices without warning: Kobo
+        // moved the Clara BW from 4.45.23697 to 4.45.23792 on its own
+        // schedule, and nothing this profile describes changed underneath it.
+        assert!(CLARA_BW_391
+            .write_identity_blockers(&clara_bw_on_firmware("4.45.23792"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_branch_the_profile_was_never_measured_on_is_refused() {
+        let blockers = CLARA_BW_391.write_identity_blockers(&clara_bw_on_firmware("4.46.23836"));
+        assert!(
+            blockers.iter().any(|blocker| blocker.contains("4.45")),
+            "a refusal has to name the branch that would have been taken: {blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_shared_build_number_does_not_carry_a_measurement_between_branches() {
+        // 23697 shipped as 4.38.23697 on three models and as 4.45.23697 on
+        // two others, so the build number alone says nothing about which
+        // driver stack is underneath it.
+        assert!(!CLARA_BW_391
+            .write_identity_blockers(&clara_bw_on_firmware("4.38.23697"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_firmware_version_that_names_no_branch_is_refused() {
+        for version in ["", "4", "4.45", "4.45.", "unknown"] {
+            assert!(
+                !CLARA_BW_391
+                    .write_identity_blockers(&clara_bw_on_firmware(version))
+                    .is_empty(),
+                "{version:?} names no branch and must not be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_firmware_generation_nickelmenu_cannot_hook_is_refused_past_any_consent() {
+        // NickelMenu is the only way into Cobalt from the reader's own menus
+        // and it does not hook the 5.x firmware. A reader there is not
+        // untested hardware an owner can decide about, it is hardware with no
+        // way to start what would be installed on it, so this blocker has to
+        // survive the consent path that waives the other two.
+        let snapshot = clara_bw_on_firmware("5.0.24000");
+        let blockers = CLARA_BW_391.unwaivable_write_blockers(&snapshot);
+        assert!(
+            !blockers.is_empty(),
+            "a 5.x reader must not be waivable: {blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_derived_profile_does_not_excuse_its_own_unsupported_generation() {
+        // The provisional profile takes its firmware from the device, so the
+        // branch check can never fail on it. Without a separate generation
+        // check an unrecognised reader on 5.x would raise nothing at all.
+        let mut snapshot = clara_bw_on_firmware("5.0.24000");
+        snapshot.identity.serial_prefix = Some("N999".into());
+        snapshot.identity.device_code = Some(999);
+        let profile = crate::provisional::profile_from_probe(&snapshot, TouchTransform::Direct)
+            .expect("derivable");
+        assert!(
+            !profile.unwaivable_write_blockers(&snapshot).is_empty(),
+            "a derived 5.x profile must still refuse"
+        );
+    }
+
+    #[test]
+    fn one_profile_claims_a_model_and_branch_so_installation_never_has_to_guess() {
+        // Matching a branch rather than a build widens what each profile
+        // answers to, and the installation path refuses outright when two of
+        // them claim one device. This is the invariant that keeps that
+        // refusal unreachable.
+        let mut claimed: Vec<(&str, &str)> = Vec::new();
+        for profile in SUPPORTED_PROFILES {
+            for branch in profile.firmware_branches() {
+                let claim = (profile.serial_prefix, branch);
+                assert!(
+                    !claimed.contains(&claim),
+                    "{} shares {} on branch {branch} with an earlier profile",
+                    profile.id,
+                    profile.serial_prefix
+                );
+                claimed.push(claim);
+            }
+        }
     }
 
     #[test]

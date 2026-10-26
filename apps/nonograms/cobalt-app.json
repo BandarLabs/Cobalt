@@ -2,10 +2,25 @@
   "id": "nonograms",
   "display_name": "Nonograms",
   "short_label": "Nonograms",
-  "summary": "Solve a bundled touch-first picture grid offline.",
-  "page_description": "Solve a touch-first picture grid by cycling each square through fill, X, and blank.",
-  "version": "0.1.2",
-  "release_notes": "Rebuild Nonograms against the picture field renamed for colour. The puzzle behaves exactly as it did.",
+  "summary": "Solve 18 original picture puzzles with attached clues, saved undo and larger grids.",
+  "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
+  "version": "0.1.11",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "grid",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "The bundled puzzles play straight away. To make one from a photo:"
+      },
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Turn a photo into a puzzle and send it.",
+        "command": "kobo nonograms push photo.jpg --name Garden --size 9"
+      }
+    ]
+  }
 }

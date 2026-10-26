@@ -1,0 +1,45 @@
+$ kobo send /tmp/send-subs.opml --sim   (a real OPML list, routed to Feeds, staged on the simulator shelf)
+1 feed staged at /tmp/cobalt-sim-data/rss/send-subs.opml; open Feeds ▸ Import OPML.
+exit: 0
+
+$ kobo send /tmp/send-photo.png --sim   (a real 1x1 PNG, routed to Frame)
+1 new, 0 already present, 0 removed; 11520 image bytes to send
+  Add: send-photo.png / send-photo.png (photo-d50492a307dcde3c)
+Frame transfer verified: 1 photo(s), 1 new, 0 removed
+exit: 0
+
+$ kobo send /tmp/send-comic.cbz --sim   (a real CBZ, routed to Panels)
+Panels comic ready: send-comic · 1 pages
+exit: 0
+
+$ kobo send /tmp/send-mystery --sim </dev/null   (extensionless zip: two companions could take it; a pipe must choose with --app)
+kobo: usage: several companions could take it: panels, flashcards - name one with --app (panels|flashcards)
+exit: 2
+
+$ printf "1\n" | script -qec "kobo send /tmp/send-mystery --sim" /dev/null   (a terminal gets the numbered picker; 1 = panels)
+1
+1. panels
+2. flashcards
+Send it to which companion (blank cancels): kobo: The CBZ is damaged: missing directory. Download or export a new copy.
+
+$ kobo send /tmp/send-mystery --app flashcards --sim   (--app settles it; decks get their real two-step commands)
+/tmp/send-mystery is a study deck. Decks import into a collection first, then stage:
+  kobo flashcards import /tmp/send-mystery --merge COLLECTION.cobfc
+  kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT
+exit: 0
+
+$ kobo send /tmp/send-photo.png --app feeds --sim   (an --app that does not fit the file is a usage error)
+kobo: usage: --app feeds does not fit this file; it looks like: frame
+exit: 2
+
+$ kobo send /tmp/send-notes.txt --sim   (nothing knows this file: unsupported, exit 4)
+kobo: no companion knows this file; photos, OPML subscription lists, CBZ comics, story files and APKG/COLPKG decks are understood
+exit: 4
+
+$ kobo send /tmp/no-such-file.png --sim   (missing file: usage, exit 2)
+kobo: usage: /tmp/no-such-file.png: no such file on this computer
+exit: 2
+
+$ kobo send /tmp/send-photo.png   (no target: usage, exit 2)
+kobo: usage: choose a target (--sim | --device HOST | --reader NAME)
+exit: 2

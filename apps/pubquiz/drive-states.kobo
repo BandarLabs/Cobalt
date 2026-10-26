@@ -1,19 +1,23 @@
-wait 800
-expect Question packs
-tap About
+wait-for Play with friends
+tap About the questions
 expect opentdb.com
 clean
 shot about
 tap Back to packs
-tap Start pass-around
-expect Ada answers
+tap Play with friends
+tap Choose players
+tap 2
+tap Start round
+expect Ada's turn
 clean
 shot question
-tap A · Mercury
-expect Answer locked
+tap-id answer-0
+expect Pass to Bert
 clean
 shot pass
-tap Show result
-expect Round result
+tap-id show-question
+expect Bert's turn
+tap-id answer-0
+expect Right answer
 clean
 shot reveal

@@ -1,9 +1,11 @@
-wait 500
-expect Flashcards
+# The empty collection offers the sample deck; starting it lands on the
+# deck list with the imported Getting started deck due.
+wait-for No collection yet
 clean
-shot decks
-# First-run handling must state the compatibility gate rather than sample cards.
-tap Transfer
-expect Import paused
+shot flashcards-empty
+tap Start with the sample
+wait-for Choose a deck
+expect Getting started
+expect 6 due
 clean
-shot transfer
+shot flashcards-decks

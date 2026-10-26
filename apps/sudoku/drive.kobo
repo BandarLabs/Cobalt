@@ -1,0 +1,18 @@
+# Use disposable simulator storage for this original first-puzzle route.
+wait-for-id more
+tap-id cell-0
+tap-id pencil
+tap-id digit-2
+wait-idle
+expect Notes
+shot sudoku-notes
+tap-id undo
+tap-id pencil
+tap-id more
+tap-id view
+tap-id how-to-play
+expect Use 1–9 once
+shot sudoku-help
+tap Back
+wait-idle
+shot sudoku-game

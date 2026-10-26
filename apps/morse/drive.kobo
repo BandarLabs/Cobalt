@@ -1,4 +1,31 @@
 wait 800
 expect Morse
+expect one second of light
 clean
 shot writing
+tap Learning
+wait 300
+tap ?123
+wait 200
+type !
+tap Send
+wait-for Stop
+expect Morse has no code for
+clean
+shot sending
+tap Stop
+wait-for Send again
+clean
+shot resting
+tap Edit
+wait-for one second of light
+tap-id more
+wait-for Letter reference
+clean
+shot menu
+tap Letter reference
+wait-for The letters Morse can send
+clean
+shot reference
+tap Back
+wait-for one second of light

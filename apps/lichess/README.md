@@ -1,84 +1,99 @@
 # Lichess
 
-An unofficial, touch-first Lichess Board API client for Cobalt. It supports
-responsive Folio time-control presets, incoming standard-clock challenges,
-outgoing casual player challenges, live games, and an offline computer game.
-Boards use two-tap moves, vector pieces, promotion, dark clocks, draw actions,
-resign, and conservative abort.
+Play [Lichess](https://lichess.org/) on your Kobo, or play the computer
+offline.
 
-| Responsive presets | Live board | Pairing |
-| --- | --- | --- |
-| ![Responsive time controls and puzzles](screenshots/home.png) | ![Live Lichess board](screenshots/game.png) | ![Rated pairing](screenshots/pairing.png) |
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Time controls and puzzles"><br>Time controls and puzzles</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/game.png" alt="A live game"><br>A live game</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/computer-selection.png" alt="Offline play, with legal moves marked"><br>Offline play, with legal moves marked</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/pairing.png" alt="Looking for a rated opponent"><br>Looking for a rated opponent</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/challenge.png" alt="An incoming challenge"><br>An incoming challenge</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reconnecting.png" alt="Reconnecting after the connection drops"><br>Reconnecting after the connection drops</td>
+</tr>
+</table>
 
-## Requirements
+## Features
 
-- Cobalt **0.3.5 or newer**, speaking protocol **12** for responsive Folio
-  card tiles and layout metrics.
-- A Lichess Personal Access Token with the `board:play` scope.
-- Install the token under the exact secret name `lichess`:
+- Rated games with a random colour at 10+0, 10+5, 15+10, 30+0 and 30+20.
+- Casual challenges to a player by username, with time control and side.
+- Accept or decline incoming challenges with standard clocks.
+- Offline play against the computer, with no account needed. An unfinished
+  game resumes from the home screen.
+- Offline puzzles. Solving them does not affect your Lichess rating.
+- Two-tap moves, castling, en passant and promotion. The board turns to your
+  side.
+- Clocks above and below the board. The filled clock shows whose turn it is.
+- Offer, accept and decline draws, resign, claim victory when the opponent
+  leaves, and abort before both players have moved.
+- If a game starts without the reader being told, the app finds it within ten
+  seconds. A seek is never sent twice.
+- If the connection drops, the last confirmed position stays on screen, clocks
+  show `--:--`, and moves are paused until the board reconnects.
+- After a restart, **Resume current** reopens the game from Lichess without
+  guessing the position.
 
-  ```sh
-  kobo secret set lichess --from <token-file> --device <address>
-  ```
+## Setup
 
-The application sends only the secret name. Cobalt resolves the value inside
-the runtime and binds it to the exact HTTPS `lichess.org` Board API routes used
-by the app. The token is never returned to the process, shown in UI, written to
-state, or included in logs. Redirects carrying the token are denied, and POST
-requests are never replayed.
+1. Create a Lichess
+   [personal access token](https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt)
+   with only the `board:play` scope.
+   A phone works.
+2. On the reader, open Lichess, tap **Account/Games**, then
+   **Connect Lichess**, and type the token.
 
-Only the official Lichess origin is supported. This release deliberately does
-not accept a custom server URL because Cobalt has no owner-scoped,
-app-specific origin policy that could broaden the destination without also
-broadening credential authority.
+Or install it from a computer with the
+[`kobo` command](../../docs/INSTALL.md#1-install-the-kobo-command), under the
+secret name `lichess`:
 
-## Supported
+```sh
+kobo secret set lichess --from <token-file> --device <address>
+```
 
-- Account validation and live detection of CLI-installed token changes
-- Rated random-color 10+0, 10+5, 15+10, 30+0, and 30+20 seeks
-- Casual challenges by Lichess username, time control, and side
-- Offline play against a bounded safe-Rust engine
-- One selected seek at a time, opened only after the event stream and
-  current-game snapshot are ready
-- A uniquely matching new game opens immediately
-- Ended seeks reconcile once and are never replayed automatically
-- `gameStart`, `gameFinish`, and incoming challenge events
-- Board stream reconstruction from server-acknowledged UCI moves
-- White/black vector pieces, dark player clocks above and below the board,
-  and a portrait board that follows the player's side
-- Two-tap source/destination moves with a brief invalid-square mark
-- Castling, en passant, and four promotion choices
-- Last move, check, result, turn, server clocks, and opponent-gone countdown
-- Move, resign, abort during Lichess's first-two-ply window, draw offer/accept/decline, and
-  claim-victory requests
-- Restart/reconnect using only game ID, color, opponent label, rated flag, and
-  a bounded server retry deadline
-- Anonymous offline puzzle batches; local solves do not affect Lichess rating
+The runtime keeps the token and attaches it only to the official Lichess Board
+API over HTTPS. A token typed on the reader passes through the app once, on its
+way to the runtime. After that the app cannot read it, and it is never shown or
+logged.
 
-## Deliberate boundaries
+Cobalt 0.3.18 or newer is required. Typing the token on the reader needs a
+newer Cobalt, and the app says so if yours is too old.
 
-- No chat is requested, rendered, or persisted.
-- Takeback controls are not offered. A takeback made elsewhere causes an
-  authoritative stream reopen instead of guessing at local history.
-- Only standard chess clock challenges are accepted.
-- Outgoing challenges are casual.
-- The offline engine uses deterministic alpha-beta search capped at depth four
-  and 5,000 nodes.
-- Abort is shown only before both players have moved; Lichess still makes the
-  final API decision.
-- Draw acceptance and decline remain pending until the authoritative board
-  stream reports the resulting state.
-- No custom Lichess-compatible base URL is accepted.
+## Limits
 
-## Validate
+- No chat.
+- No takebacks. A takeback made elsewhere reloads the game from Lichess.
+- Outgoing challenges are casual. Only standard clocks are accepted.
+- Only lichess.org is supported, not other servers.
+- The offline computer is modest: it searches four moves ahead.
+
+## Permissions
+
+- `network`: talks to the Lichess Board API.
+- `hold-wifi`: keeps Wi-Fi connected during a game.
+- `keep-awake`: keeps the screen on during a game.
+
+## Development
 
 ```sh
 cargo test -p kobo-lichess
 cargo test -p kobo-net --test lichess_stream_mock -- --test-threads=1
-cargo run --locked -p kobo-cli -- app-check --registry apps/catalog.json \
-  --package kobo-lichess
+python3 scripts/check-apps-sim.py lichess
 ```
 
-The HTTPS mock uses a generated test-only CA/key pair under
-`crates/kobo-net/tests/fixtures`; it carries no owner credential and never
-contacts Lichess.
+The stream test uses a local HTTPS mock with a test-only certificate and
+never contacts Lichess. Longer simulator checks, each taking `--output DIR`:
+
+| Script | Covers |
+| --- | --- |
+| `scripts/quality/check-lichess-computer-sim.py` | Offline play, resuming and resigning |
+| `scripts/quality/check-lichess-session-sim.py` | Pairing, moves, restart and draws against a local server. Add `--drop-start-event` or `--disconnect-board` for recovery cases, and `--scale 170` for large text |
+| `scripts/quality/check-lichess-pairing-sim.py` | Pairing screens. Add `--scenario pairing-error` for failures |
+
+## Credits
+
+This is an unofficial client, not affiliated with Lichess.

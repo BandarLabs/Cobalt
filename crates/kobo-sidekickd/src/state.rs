@@ -340,6 +340,9 @@ fn trust_directory() -> Result<PathBuf, String> {
 }
 
 fn config_kobo() -> Result<PathBuf, String> {
+    if let Some(directory) = std::env::var_os("KOBO_SIDEKICK_CONFIG_DIR") {
+        return Ok(PathBuf::from(directory));
+    }
     let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
     Ok(PathBuf::from(home).join(".config").join("kobo"))
 }

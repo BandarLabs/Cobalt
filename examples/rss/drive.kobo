@@ -1,0 +1,14 @@
+# An empty library points at the directory; Browse lists the bundled feeds.
+wait-for Feeds
+expect No feeds yet
+clean
+shot rss-empty
+tap Add a feed
+wait-for Import OPML
+clean
+shot rss-add
+tap Browse
+wait-for Browse feeds
+expect NASA Science
+clean
+shot rss-browse

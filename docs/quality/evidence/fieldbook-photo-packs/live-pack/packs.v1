@@ -1,0 +1,99 @@
+{
+  "failures": [],
+  "format": "fieldbook-shelf",
+  "packs": [
+    {
+      "id": "gbif-central-park",
+      "issued": "2026-09-18",
+      "region": "New York, US",
+      "species": [
+        {
+          "code": "LS",
+          "common": "Larus smithsonianus",
+          "scientific": "Larus smithsonianus"
+        },
+        {
+          "code": "LA",
+          "common": "Leucophaeus atricilla",
+          "scientific": "Leucophaeus atricilla"
+        },
+        {
+          "code": "V",
+          "common": "Veery",
+          "photo": {
+            "asset": "photos/d9aa71bda6f359dcfd2f73e4365f16076f632b8ef62662b6ce0786077fd6cbc9.jpg",
+            "attribution": "d9aa71bda6f359dcfd2f73e4365f16076f632b8ef62662b6ce0786077fd6cbc9"
+          },
+          "scientific": "Catharus fuscescens"
+        },
+        {
+          "code": "HF",
+          "common": "House Finch",
+          "photo": {
+            "asset": "photos/d169db069e22b61fa06cd7057939d65e8e3c6acefc311f54378e91d5d3e887a2.jpg",
+            "attribution": "d169db069e22b61fa06cd7057939d65e8e3c6acefc311f54378e91d5d3e887a2"
+          },
+          "scientific": "Haemorhous mexicanus"
+        },
+        {
+          "code": "NW",
+          "common": "Northern Waterthrush",
+          "scientific": "Parkesia noveboracensis"
+        },
+        {
+          "code": "BW",
+          "common": "Black-and-white Warbler",
+          "photo": {
+            "asset": "photos/e773e9836928f69f508f550a859d6ebb85d26753659703606072582cb9d2ecfd.jpg",
+            "attribution": "e773e9836928f69f508f550a859d6ebb85d26753659703606072582cb9d2ecfd"
+          },
+          "scientific": "Mniotilta varia"
+        },
+        {
+          "code": "NW",
+          "common": "Nashville Warbler",
+          "scientific": "Leiothlypis ruficapilla"
+        },
+        {
+          "code": "MW",
+          "common": "Magnolia Warbler",
+          "scientific": "Setophaga magnolia"
+        },
+        {
+          "code": "AR",
+          "common": "American Redstart",
+          "photo": {
+            "asset": "photos/f50178f885f18bb69c59b20c0401644bfd7607f735ec3e6f8afb90900ac1ddc9.jpg",
+            "attribution": "f50178f885f18bb69c59b20c0401644bfd7607f735ec3e6f8afb90900ac1ddc9"
+          },
+          "scientific": "Setophaga ruticilla"
+        },
+        {
+          "code": "BGW",
+          "common": "Black-throated Green Warbler",
+          "photo": {
+            "asset": "photos/7a6a0cc2823290f7ac7698c229cb7c44e52cbde9b22b27b967c9fac60c39cbb9.jpg",
+            "attribution": "7a6a0cc2823290f7ac7698c229cb7c44e52cbde9b22b27b967c9fac60c39cbb9"
+          },
+          "scientific": "Setophaga virens"
+        },
+        {
+          "code": "CW",
+          "common": "Chestnut-sided Warbler",
+          "scientific": "Setophaga pensylvanica"
+        },
+        {
+          "code": "BW",
+          "common": "Bay-breasted Warbler",
+          "photo": {
+            "asset": "photos/b6bf82e5ba4ba2b6760e9922867aaece9b979b8d072f379b5a34cc334564b99b.jpg",
+            "attribution": "b6bf82e5ba4ba2b6760e9922867aaece9b979b8d072f379b5a34cc334564b99b"
+          },
+          "scientific": "Setophaga castanea"
+        }
+      ],
+      "title": "Central Park GBIF observations"
+    }
+  ],
+  "version": "2"
+}

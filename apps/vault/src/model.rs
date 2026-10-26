@@ -1,9 +1,9 @@
 use crate::md::render;
 
-/// Note boundary inside [`INDEX_KEY`]. Markdown thematic breaks are a single
-/// `---`, so a vault that uses those must not be split on the same bytes.
+/// Note boundary inside the legacy packed index. Markdown thematic breaks are
+/// a single `---`, so a vault that uses those must not be split on the same
+/// bytes.
 pub const INDEX_SEPARATOR: &str = "\n\n---vault-note---\n\n";
-pub const INDEX_KEY: &str = "vault-index-v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Note {
@@ -20,6 +20,7 @@ impl Note {
             .trim_end_matches(".md")
             .replace('-', " ")
     }
+    #[allow(dead_code)]
     pub fn rendered(&self) -> String {
         render(&self.body)
     }
@@ -121,7 +122,7 @@ impl PathExt<'_> {
     }
 }
 
-fn link_matches_path(link: &str, path: &str) -> bool {
+pub fn link_matches_path(link: &str, path: &str) -> bool {
     let link = link.trim();
     if link.is_empty() {
         return false;
@@ -165,6 +166,7 @@ pub fn search(notes: &[Note], query: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn backlinks(notes: &[Note], path: &str) -> Vec<(usize, String)> {
     notes
         .iter()

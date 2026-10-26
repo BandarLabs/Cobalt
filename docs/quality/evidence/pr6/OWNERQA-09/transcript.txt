@@ -1,0 +1,20 @@
+=== bare expected-empty owner flow ===
+Cobalt - tools for your reader
+
+  kobo setup
+    Set up a reader connected by USB
+  kobo apps
+    Find apps and read setup guides
+  kobo frame --help
+    Prepare and send photos
+  kobo flashcards --help
+    Import cards and review progress
+  kobo feeds --help
+    Check and send feed subscriptions
+  kobo stream
+    Share a terminal with Paperterm
+
+Run kobo in a terminal for guided choices.
+Developer and release commands: kobo --help
+=== committed expected-empty app evidence ===
+cat: docs/quality/evidence/sidekick-companion/result.json: No such file or directory

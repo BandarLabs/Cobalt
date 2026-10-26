@@ -1,60 +1,39 @@
 # Hacker News
 
-Hacker News, on a panel with no scrollbar and no keyboard.
+Read Hacker News stories, discussions and articles on your Kobo.
 
-Four tabs along the bottom (Top, New, Ask, Show) and a comment thread behind
-every story. Nothing animates, nothing scrolls, and nothing moves under a
-finger that is already reaching for it.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/stories.png" alt="Ranked stories with scores"><br>Ranked stories with scores</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/thread.png" alt="A story's comment thread"><br>A story's comment thread</td>
+</tr>
+</table>
 
-| The stories | A thread |
-| --- | --- |
-| ![Numbered stories with scores down the right, and the page count in the top bar](screenshots/stories.png) | ![A comment thread, nested, with the story's facts above it and the page count at the foot](screenshots/thread.png) |
+## Features
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+- Top, New, Ask and Show, plus **Saved** for stories you set aside.
+- Tap a story to open its discussion. Its linked article opens in the shared
+  reader from the story's screen.
+- Stories you have opened and saved are marked in the list.
+- Saved stories keep their article, so they open offline.
+- Comments load as you page through them. Deep replies show their depth, and
+  any comment can be folded with its replies.
+- Uses Hacker News' own API, so scores, new stories and reply order match the
+  site.
 
-## Why Algolia rather than the official API
+## Permissions
 
-Hacker News' own Firebase API returns one item per request. A story with four
-hundred replies is four hundred and one requests, which on a device whose radio
-is the largest single draw on the battery would flatten a charge. Algolia's
-`items/:id` returns the entire thread, nested, in
-one. That single fact is the reason this application is possible at all.
+- `network`: reads stories, comments and articles.
 
-## What happens to a thread that does not fit
-
-The transport carries half a megabyte and a busy thread is comfortably more. A
-real one measured while writing this was 734 KB for 925 comments. Algolia
-ignores `Range`, so the trick that lets Gutenbird read a novel in pieces does
-not work here: asking for the second half returns the whole document again and
-the ceiling rejects it.
-
-So the request comes back `TaskError::TooLarge`. Rather than showing a dead
-end, this asks a different question: `search_by_date` over that story's
-comments, thirty at a time, which is bounded by construction. The nesting is
-gone in that answer, so the screen says the nesting is gone.
-
-## Running it
+## Development
 
 ```sh
-kobo run --sim --app hn                 # in the browser simulator
-kobo deploy --device <ip>               # onto a reader over Wi-Fi
+cargo test -p kobo-hn
+kobo run --sim --app hn      # in the browser simulator
+python3 scripts/check-apps-sim.py hn
+kobo deploy --device <ip>       # onto a reader over Wi-Fi
 ```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

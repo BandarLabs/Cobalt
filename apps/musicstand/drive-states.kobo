@@ -1,18 +1,10 @@
-wait 800
-expect Library
+# Library and its setlists after a seeded push.
+wait-for Library
 clean
 shot library
-tap Evening rehearsal setlist
-expect Setlist
+tap Setlists
+wait-for New setlist
 clean
-shot setlist
+shot setlists
 tap Library
-tap Add scores
-expect Transfer
-clean
-shot about
-tap Library
-tap Cello Suite No. 1
-expect Half-page mode
-clean
-shot stand
+wait-for Library

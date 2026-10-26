@@ -13,6 +13,11 @@
 //! of Markdown's constructs mean something on a six-inch panel with one
 //! column, one typeface and no colour, and what the rest should become.
 //!
+//! A picture keeps its place and its words: the block names the file exactly
+//! as the document did, and the alt text becomes the caption, so a panel
+//! that cannot draw the figure still says what it shows. Whoever opens the
+//! document decides where the bytes come from.
+//!
 //! # What is deliberately dropped
 //!
 //! Links keep their words and lose their destination. A URL cannot be followed
@@ -93,6 +98,9 @@ struct State {
     /// Set when the metadata block at the top of the file has been seen, so a
     /// horizontal rule further down is not mistaken for more of it.
     seen_metadata: bool,
+    /// The picture being read, if one is open: the name the document gave it
+    /// and the caption words collected so far.
+    image: Option<(String, String)>,
 }
 
 impl State {
@@ -106,6 +114,7 @@ impl State {
             cells: Vec::new(),
             prefix: String::new(),
             seen_metadata: false,
+            image: None,
         }
     }
 
@@ -114,7 +123,11 @@ impl State {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
             Event::Text(text) | Event::InlineMath(text) | Event::DisplayMath(text) => {
-                self.text.push_str(&text);
+                if let Some((_, alt)) = &mut self.image {
+                    alt.push_str(&text);
+                } else {
+                    self.text.push_str(&text);
+                }
             }
             // Inline code keeps its words. There is no second typeface to set
             // it in, and the alternative is losing the word entirely.
@@ -172,11 +185,18 @@ impl State {
                 self.flush();
                 self.prefix = format!("[{name}] ");
             }
-            // A destination that cannot be followed, or a picture that cannot
-            // be fetched: in both cases the words inside the tag are the part
-            // worth keeping, and they arrive as ordinary text events.
+            // The picture stands where it was written, so it keeps its place
+            // among the paragraphs. The name is left exactly as the document
+            // wrote it -- resolving it against where the bytes live needs to
+            // know what supplied the document, which only the caller does.
+            Tag::Image { dest_url, .. } => {
+                self.flush();
+                self.image = Some((dest_url.to_string(), String::new()));
+            }
+            // A destination that cannot be followed: the words inside the tag
+            // are the part worth keeping, and they arrive as ordinary text
+            // events.
             Tag::Link { .. }
-            | Tag::Image { .. }
             | Tag::Emphasis
             | Tag::Strong
             | Tag::Strikethrough
@@ -216,9 +236,17 @@ impl State {
             | TagEnd::CodeBlock
             | TagEnd::Item
             | TagEnd::MetadataBlock(_) => self.flush(),
+            TagEnd::Image => {
+                if let Some((name, alt)) = self.image.take() {
+                    self.builder.push(Block::Picture {
+                        name,
+                        alt: crate::collapse(&alt),
+                        illustration: true,
+                    });
+                }
+            }
             TagEnd::Table
             | TagEnd::Link
-            | TagEnd::Image
             | TagEnd::Emphasis
             | TagEnd::Strong
             | TagEnd::Strikethrough
@@ -339,6 +367,38 @@ fn number(level: HeadingLevel) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_keeps_its_place_and_its_caption() {
+        let document = parse(
+            "Work the cuff.\n\n![Cable chart, repeat rows 2 to 9](chart-cable.png)\n\nThen the heel.",
+        );
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Paragraph("Work the cuff.".to_owned()),
+                Block::Picture {
+                    name: "chart-cable.png".to_owned(),
+                    alt: "Cable chart, repeat rows 2 to 9".to_owned(),
+                    illustration: true,
+                },
+                Block::Paragraph("Then the heel.".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_picture_without_words_still_names_itself() {
+        let document = parse("![ ](chart-blank.png)");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Picture {
+                name: "chart-blank.png".to_owned(),
+                alt: String::new(),
+                illustration: true,
+            }]
+        );
+    }
 
     #[test]
     fn a_heading_is_a_heading_however_it_was_written() {

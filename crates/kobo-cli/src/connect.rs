@@ -79,6 +79,22 @@ reader powering the radio down while you work, and 'kobo session --device <ip>
 --keep-awake on' stops it suspending. Both are reversible and both clear on a
 reboot.";
 
+/// This computer's own address on the network the reader is on.
+///
+/// A certificate for Paperterm has to name an address the reader can reach,
+/// and "your-computer" is what the pairing screen used to say when nobody had
+/// passed --host: an instruction to go and find something the companion
+/// already knows.
+#[must_use]
+pub fn local_address() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    let IpAddr::V4(address) = socket.local_addr().ok()?.ip() else {
+        return None;
+    };
+    Some(address.to_string())
+}
+
 /// Guesses the /24 this machine is on, as the first three octets.
 ///
 /// Opening a UDP socket and asking it for its own address is the shortest way
@@ -228,17 +244,17 @@ impl Identity {
         identity
     }
 
-    /// True when this answer came from something that is recognisably a Kobo.
+    /// True when this answer's serial is shaped like a Kobo identity, or is
+    /// the converted Tolino Shine 5's exact `T302` prefix.
     ///
-    /// Every known Kobo serial begins with an `N` or `P` followed by three digits, and no
-    /// other machine on a home network has a `/mnt/onboard/.kobo/version` at
-    /// all, so the presence of the file is most of the evidence.
+    /// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+    /// passes here, including model codes with no profile, because profile
+    /// support is checked separately once the device is matched. The
+    /// converted Tolino Shine 5 keeps its `T302` prefix in `.kobo/version`
+    /// and is the one non-Kobo shape accepted.
     #[must_use]
     pub fn is_kobo(&self) -> bool {
-        let bytes = self.serial.as_bytes();
-        bytes.len() >= 4
-            && (bytes[0] == b'N' || bytes[0] == b'P')
-            && bytes[1..4].iter().all(u8::is_ascii_digit)
+        kobo_profile::is_matchable_serial(&self.serial)
     }
 
     /// The four-character model code, which is what a device profile matches.
@@ -354,6 +370,15 @@ mod tests {
             Identity::parse("serial=P365410043013\nfirmware=4.45.23697\nmodel=\ncobalt=\n");
         assert!(identity.is_kobo());
         assert_eq!(identity.model_code(), "P365");
+    }
+
+    #[test]
+    fn only_the_reviewed_tolino_prefix_is_recognised_over_the_network() {
+        let tolino = Identity::parse("serial=T302000000000\nfirmware=4.45.23697\n");
+        assert!(tolino.is_kobo());
+        assert_eq!(tolino.model_code(), "T302");
+        let other = Identity::parse("serial=T303000000000\nfirmware=4.45.23697\n");
+        assert!(!other.is_kobo());
     }
 
     #[test]

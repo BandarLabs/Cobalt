@@ -1,0 +1,43 @@
+$ kobo < /dev/null (stdin and stdout not terminals)
+Cobalt - tools for your reader
+
+  kobo setup
+    Set up a reader connected by USB
+  kobo apps
+    Find apps and read setup guides
+  kobo frame --help
+    Prepare and send photos
+  kobo flashcards --help
+    Import cards and review progress
+  kobo feeds --help
+    Check and send feed subscriptions
+  kobo stream
+    Share a terminal with Paperterm
+
+Run kobo in a terminal for guided choices.
+Developer and release commands: kobo --help
+exit: 0
+
+$ kobo nonsense
+kobo: unknown command 'nonsense'
+exit: 2
+
+$ kobo doctor --bogus
+kobo: usage: kobo doctor [--device HOST | --reader NAME] [--json]
+exit: 2
+
+$ kobo wait
+kobo: usage: kobo wait (--device <host> | --reader <name>) [--timeout <seconds>]
+exit: 2
+
+$ kobo wait --sim
+kobo: usage: the simulator is already here; wait is for a reader on the network
+exit: 2
+
+$ kobo wait --reader nobody --timeout 1
+kobo: no reader is saved under the name 'nobody'
+exit: 3
+
+$ kobo guard-test
+kobo: guard-test is not compiled in; rebuild the CLI with --features device-write
+exit: 4

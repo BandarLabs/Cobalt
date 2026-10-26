@@ -1,0 +1,7 @@
+Title: zork1
+Format: Z-machine v3
+Compatibility: Playable in Parser's text-only v3/v5/v8 interpreter
+Release: 119
+Serial: 880429
+Checksum: bf44
+Size: 86838 bytes

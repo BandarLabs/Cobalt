@@ -41,6 +41,11 @@ make_release() {
 printf '%s\n' '$marker'
 EOF
     chmod 755 "$directory/package/kobo"
+    cat > "$directory/package/flashcards-import" <<EOF
+#!/bin/sh
+printf '%s\n' '$marker importer'
+EOF
+    chmod 755 "$directory/package/flashcards-import"
     cp "$INSTALLER" "$directory/package/updater.sh"
     chmod 700 "$directory/package/updater.sh"
     printf 'license\n' > "$directory/package/LICENSE"

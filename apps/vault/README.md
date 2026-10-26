@@ -1,32 +1,75 @@
 # Vault
 
-A read-only, offline reader for Obsidian vaults. It keeps browsing, note text,
-tags, backlinks, and a case-insensitive search on the reader. It is unofficial
-and not affiliated with Dynalist Inc.; the UI is named simply **Vault**.
+A read-only, offline reader for your Obsidian notes.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Home: Browse, Tags, Recent and Search"><br>Home: Browse, Tags, Recent and Search</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/browse.png" alt="Folders with note counts"><br>Folders with note counts</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/note.png" alt="A long note, paged"><br>A long note, paged</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/tags.png" alt="Tags with note counts"><br>Tags with note counts</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/search.png" alt="A search result opened at the matching line"><br>A search result opened at the matching line</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/backlinks.png" alt="Notes linking to the open note"><br>Notes linking to the open note</td>
+</tr>
+</table>
+
+## Features
+
+- Browse folders, filter by tag, see recent notes and search every note's
+  text.
+- Wiki links (`[[Note]]` and `[[Note|label]]`) show as text and build a
+  backlinks view for each note.
+- Long notes are paged, and each note reopens where you left off.
+
+## Setup
+
+Send a folder of notes from your computer:
 
 ```sh
 kobo vault init --device 192.168.1.42
 kobo vault push ~/Notes --device 192.168.1.42
 ```
 
-For the simulator, push the same folder into the host store the app reads:
+Use `--sim` instead of `--device` to send notes to the simulator. Other
+commands:
 
 ```sh
-kobo vault init --sim
-kobo vault push ~/Notes --sim
+kobo vault plan ~/Notes --device IP       # what a push would change
+kobo vault preview NOTE.md                # how one note will read
+kobo vault ls --device IP                 # notes on the reader
+kobo vault rm ID --device IP              # remove one note
 ```
 
-`kobo sync setup DIR --folder vault` copies files onto the reader under
-`sync/vault`. Vault does not read that folder. It loads one packed index
-(`vault-index-v1`) from the app store, so the companion that writes that key
-is `kobo vault push`.
+`--exclude TEXT` skips matching files, and can be repeated.
 
-<img width="300" src="screenshots/home.png" alt="Vault on a Clara BW explaining how to push a vault">
+Your computer's folder is the source. A push mirrors it: notes removed from
+the folder leave the reader, and a renamed note keeps its place. Edits made on
+the reader are not sent back.
 
-## Dependencies
+Notes delivered by [Sync](../syncthing/) are added with
+`kobo vault ingest SYNCED_DIR --device IP`. They appear alongside pushed notes,
+labelled with their source, and pushes and ingests never overwrite each
+other.
 
-The app quarantines `pulldown-cmark` (MIT) in `src/md.rs` and sends its HTML
-through Cobalt's `kobo-html` renderer. Wiki links (`[[Note]]`) resolve to
-notes in the packed index. PDF, audio, video, canvas, and image attachments
-are not rendered; they are skipped when packing. The packed index must fit
-in the 256 KB app-store value limit.
+## Permissions
+
+None. Vault runs offline.
+
+## Development
+
+```sh
+cargo test -p kobo-vault
+python3 scripts/check-apps-sim.py vault
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+Markdown is parsed with `pulldown-cmark` (MIT). Vault is unofficial and not
+affiliated with Obsidian or Dynalist Inc.

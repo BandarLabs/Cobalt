@@ -5,9 +5,9 @@
 //! it never receives a package URL or chooses an installation path.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, AppLinkState, Context, DenyReason, DeviceRequest, DeviceResult,
-    Glyph, Heartbeat, KoboApp, PictureHandle, Position, RemoteInstallOutcome, RowLead, Screen,
-    ScreenBuilder, TaskId, TaskOutcome, TilePicture,
+    action_id, ActionId, AppInfo, AppLinkState, Context, DenyReason, DeviceError, DeviceRequest,
+    DeviceResult, Glyph, Heartbeat, KoboApp, PictureHandle, Position, RemoteInstallOutcome,
+    RowLead, Screen, ScreenBuilder, TaskId, TaskOutcome, TilePicture,
 };
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::process::ExitCode;
@@ -86,12 +86,21 @@ impl Store {
             .zip(&states)
             .map(|(entry, state)| (entry.title.as_str(), entry.summary.as_str(), state.as_str()))
             .collect::<Vec<_>>();
-        let without_controls =
-            context.paginate_rows_with_trailing_after_section_at(&rows, false, Position::Elsewhere);
+        let without_controls = context.paginate_rows_below_section(
+            &rows,
+            false,
+            Position::Elsewhere,
+            self.notice.as_deref(),
+        );
         // A one-page catalog draws no bottom bar and gets that room for apps.
         // Once it turns, measure again with the navigation bar it will draw.
         let page_indices = if without_controls.len() > 1 {
-            context.paginate_rows_with_trailing_after_section_at(&rows, true, Position::Elsewhere)
+            context.paginate_rows_below_section(
+                &rows,
+                true,
+                Position::Elsewhere,
+                self.notice.as_deref(),
+            )
         } else {
             without_controls
         };
@@ -386,7 +395,7 @@ impl Store {
             }
             screen.action_bar_marked(actions)
         } else {
-            screen.bottom_action_marked(install_action(id), "Install over Wi-Fi", Glyph::Download)
+            screen.bottom_action_marked(install_action(id), "Install", Glyph::Download)
         };
         screen.build()
     }
@@ -402,7 +411,7 @@ impl Store {
             .splash(
                 Some(Glyph::Download),
                 format!("{action} {title}"),
-                "Keep Cobalt open. The verified app transaction is completed before the installed copy changes.",
+                "Keep Cobalt open until this finishes.",
             )
             .build()
     }
@@ -605,8 +614,11 @@ impl KoboApp for Store {
                 DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. },
                 DeviceResult::Failed(error),
             ) => {
-                self.notice = Some(format!("Nothing changed: {}.", error.describe()));
+                self.notice = Some(app_failure(error).to_owned());
                 self.view = View::Catalog;
+                // A write may have reached disk before its final flush failed.
+                // Re-read verified installed metadata instead of promising rollback.
+                context.applications().cached_catalog();
             }
             (_, DeviceResult::Denied(reason)) => {
                 self.link_request_pending = false;
@@ -720,6 +732,18 @@ fn denied(reason: DenyReason) -> &'static str {
         DenyReason::Unsupported => "This Cobalt build does not include app-store support.",
         DenyReason::Busy => "Another operation is still in progress.",
         DenyReason::PolicyRejected => "The runtime policy refused this operation.",
+    }
+}
+
+fn app_failure(error: DeviceError) -> &'static str {
+    match error {
+        DeviceError::NotFound => "This app is no longer available. Refresh the app list.",
+        DeviceError::Authentication => "The download was refused. Refresh the app list and try again.",
+        DeviceError::TimedOut => "The download took too long. Check Wi-Fi and try again.",
+        DeviceError::Unreachable => "Couldn't reach the download. Check Wi-Fi and try again.",
+        DeviceError::InvalidInput => "This app needs a compatible Cobalt version. Refresh the app list and check for a Cobalt update.",
+        DeviceError::Backend => "Couldn't finish saving the change. Check free space and the installed version before trying again.",
+        DeviceError::Integrity => "The downloaded app could not be verified. Refresh the app list and try again.",
     }
 }
 
@@ -963,6 +987,35 @@ mod tests {
     }
 
     #[test]
+    fn uncertain_write_refreshes_verified_state_without_claiming_rollback() {
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.0.0"))],
+        });
+        runner.device_result(DeviceResult::AppLink(AppLinkState::Unpaired));
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.0.0"))],
+        });
+        runner.action(action_id(&app_action("sudoku")));
+        runner.action(action_id(&install_action("sudoku")));
+        let commands = runner.device_result(DeviceResult::Failed(DeviceError::Backend));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ReadAppCatalog))));
+        let notice = runner.app().notice.clone();
+        assert!(notice.as_deref().unwrap().contains("installed version"));
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.1.0"))],
+        });
+        assert_eq!(
+            runner.app().entries[0].installed_version.as_deref(),
+            Some("1.1.0")
+        );
+        assert_eq!(runner.app().notice, notice);
+    }
+
+    #[test]
     fn a_late_refresh_does_not_hide_an_install_in_progress() {
         let mut runner = AppRunner::new(Store::default());
         runner.start();
@@ -976,6 +1029,59 @@ mod tests {
             entries: vec![app("notes", None)],
         });
         assert!(matches!(runner.app().view, View::Working { .. }));
+    }
+
+    #[test]
+    fn actual_catalog_and_result_banners_fit_at_each_interface_size() {
+        let entries = kobo_catalog::bundled()
+            .unwrap()
+            .into_iter()
+            .map(|entry| AppInfo {
+                id: entry.id,
+                title: entry.title,
+                label: entry.label,
+                summary: entry.summary,
+                version: entry.version,
+                minimum_cobalt_version: env!("CARGO_PKG_VERSION").into(),
+                glyph: Glyph::App,
+                capabilities: entry.capabilities,
+                installed_version: None,
+            })
+            .collect::<Vec<_>>();
+        for panel in [CLARA_BW_METRICS, ELIPSA_2E_METRICS] {
+            for scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..panel
+                };
+                for notice in [
+                    None,
+                    Some(app_failure(DeviceError::Backend)),
+                    Some("Quality fixture installed."),
+                ] {
+                    let context = AppRunner::with_metrics(Store::default(), metrics).context();
+                    let mut store = Store::default();
+                    store.replace_entries(entries.clone());
+                    store.notice = notice.map(str::to_owned);
+                    let mut shown = BTreeSet::new();
+                    for page in 0..entries.len() {
+                        store.page = page;
+                        let screen = store.catalog(&context);
+                        let report = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(!report.has_errors(), "{metrics:?}: {:?}", report.issues);
+                        for node in report.layout.nodes {
+                            if let LayoutKind::Row(action, ..) = node.kind {
+                                shown.insert(action);
+                            }
+                        }
+                        if store.page < page {
+                            break;
+                        }
+                    }
+                    assert_eq!(shown.len(), entries.len());
+                }
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,37 @@
+expect Computer
+tap-id play-computer
+wait-for Kobo
+expect You
+clean
+shot computer-start
+tap-id square-e2
+expect e2 →
+clean
+shot computer-selection
+tap-id square-e4
+wait 300
+expect-missing e2 →
+clean
+shot computer-reply
+tap Back
+expect Computer
+tap-id play-computer
+expect Kobo
+clean
+shot computer-resumed
+tap-id game-menu
+expect Resign
+shot computer-menu
+tap-id confirm-resign
+expect Resign?
+tap-id cancel-confirm
+expect-missing Resign?
+tap-id game-menu
+tap-id confirm-resign
+tap-id resign
+wait 200
+clean
+shot computer-result
+tap-id dismiss-result
+tap Back
+expect Computer

@@ -6,12 +6,22 @@ Part of [Cobalt](../README.md).
 
 ## Device support matrix
 
-Support is tied to an exact model, device code, firmware, kernel, framebuffer,
-and touch profile. A matching model name alone is not sufficient.
+The devices below are the ones somebody has physically tested, on the firmware
+named. Cobalt also runs on Kobos that are not listed. It says so first: a reader
+outside this table, or on a firmware branch that is not listed, is shown what
+has not been tested about it and asked whether to continue or go back. Nothing
+on this page is a claim about hardware that is not on it.
+
+A firmware entry covers its release branch. `4.45.23697` means every `4.45.x`
+build is taken without asking, because Kobo's third component is a build number
+shared across a whole release wave rather than anything about one model: 23697
+shipped as `4.38.23697` on three of the devices below and as `4.45.23697` on two
+others. A branch that is not listed still runs, behind the notice.
 
 | Device | Exact tested identity | Evidence status | Installation status |
 |---|---|---|---|
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
+| Tolino Shine 5 (Kobo Clara BW conversion) | T302, code 391, firmware 4.45.23697, kernel 4.9.77 | Doctor matches Clara BW 391 hardware and software fields; owner-attended display, touch, power-button handback, exit, recovery, and Wi-Fi tests captured for maintainer review. Evidence on [issue #292](https://github.com/BandarLabs/Cobalt/issues/292) and [PR #293](https://github.com/BandarLabs/Cobalt/pull/293) | Read-only profile pending review |
 | Kobo Clara BW (2025 refresh) | P365, code 395, firmware 4.45.23697, kernel 4.9.77 | Read-only doctor matches the N365 panel, touch controller and ranges, firmware, and kernel exactly; write evidence inherited from the same official Clara BW product | Supported |
 | Kobo Clara Colour | N367, code 393, firmware 4.45.23697, kernel 4.9.77 | Read-only doctor match and owner-attended Cobalt launcher and application testing complete on the physical device. The measured framebuffer geometry, HWTCON interface, and touch controller match Clara BW; the device instead has a Kaleido 3 panel and dual-core MT8113T. Evidence and screenshots on [issue #30](https://github.com/BandarLabs/Cobalt/issues/30) and [PR #38](https://github.com/BandarLabs/Cobalt/pull/38) | Fully tested |
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
@@ -19,6 +29,7 @@ and touch profile. A matching model name alone is not sufficient.
 | Kobo Libra 2 | N418, code 388, firmware 4.38.23697, kernel 4.1.15-00868-g58a2758be07 | Read-only probe and owner-attended display, touch, page-button, exit, and recovery tests complete | Fully tested |
 | Kobo Libra Colour | N428, code 390, firmware 4.45.23697, kernel 4.9.77 | Read-only probe, measured touch transform, all four bounded display stages, wait timing, guardian restoration, an end-to-end tap, page-button presses (upper 193 pages back, lower 194 forward, the Libra 2's mapping), and a clean stock-reader restart with no watchdog reset all complete on the owner's device. Evidence on [issue #28](https://github.com/BandarLabs/Cobalt/issues/28) and [PR #49](https://github.com/BandarLabs/Cobalt/pull/49). Colour path and suspend/resume not exercised | Fully tested |
 | Kobo Libra Colour | N428, code 390, firmware 4.46.23836, kernel 4.9.77 | Read-only doctor and physical touch match; all four bounded display stages, wait timing, guardian restoration, and a launcher hand-back test complete. Page buttons, colour path, and suspend/resume remain untested | Fully tested |
+| Kobo Libra H2O | N873, code 384, firmware 4.38.23697, kernel 4.1.15-00417-g0c800cffe1f9 | Read-only doctor match, measured touch transform across both verified rotations, all five bounded display stages, wait timing, guardian restoration, and a clean stock-reader restart with no kernel reset all complete on the owner's device. Evidence on [issue #184](https://github.com/BandarLabs/Cobalt/issues/184) and [PR #185](https://github.com/BandarLabs/Cobalt/pull/185) | Fully tested |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
@@ -26,8 +37,26 @@ direction, panel refresh behavior, or recovery after Cobalt takes ownership of
 the device. Those claims require owner-attended hardware runs; simulator and
 fixture results are not substitutes.
 
-Firmware versions not listed here are unsupported even on the same model until
-a new read-only probe and the applicable attended evidence have been reviewed.
+Firmware branches not listed here have not been reviewed on that model, and
+neither have devices missing from the table. Both still start, after the owner
+has been told what is untested and has agreed. What that notice cannot do is
+turn either into tested hardware: adding a row still takes a read-only probe
+and the applicable attended evidence.
+
+### Elipsa 2E portrait orientations
+
+The N605 profile accepts both portrait launch poses, framebuffer rotations 1
+and 3. Rotation 1 remains the reference for the measured touch transform;
+rotation 3 composes it with a half-turn. The model, firmware, framebuffer and
+touch identity checks remain unchanged, and landscape rotations 0 and 2 are
+still rejected. See [issue #89](https://github.com/BandarLabs/Cobalt/issues/89).
+
+The pose is resolved when a Cobalt session starts. To change portrait
+orientation, return to the Kobo reader, rotate the device there, and launch
+Cobalt again. This change does not add live autorotation within a session.
+
+See the [N605 acceptance record](testing/elipsa-rotation-89/README.md) for
+attended results in both portrait poses and device framebuffer captures.
 
 ## Connecting a device
 
@@ -71,8 +100,9 @@ kobo session --device <address> --keep-awake on
 
 `--wifi-always-on` writes the reader's own developer setting, which is read at
 startup, so it applies from the next reader restart. `--keep-awake` takes a
-kernel wake lock that lives in RAM. Both clear on a reboot, and neither is
-sufficient on its own on this firmware. *Keeping a device reachable while
+two-minute kernel wake-lock lease. It expires without renewal and clears on
+reboot; the Wi-Fi setting persists until restored. Neither is sufficient on its
+own on this firmware. *Keeping a device reachable while
 developing*, below, explains what actually stops the suspend and how it was
 measured.
 
@@ -119,7 +149,7 @@ the single NickelMenu line the packaged `README.txt` gives you.
 
 **A stock device cannot launch either of those, and this is the prerequisite
 rather than a footnote.** Running `start.sh` needs a shell, and the NickelMenu
-line needs NickelMenu; Cobalt deliberately installs neither, because writing to
+line needs NickelMenu; Cobalt installs neither, because writing to
 the root filesystem is the one thing the packaging promises never to do.
 
 `kobo setup` is the answer, and it needs nothing on the device beforehand:
@@ -194,7 +224,7 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 password at all** and still does not give you `kobo deploy`.
 
 > [!NOTE]
-> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself — which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
+> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself, which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
 
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
@@ -255,7 +285,7 @@ it has, it writes NickelMenu's own uninstall flag, unless another mod still has
 a configuration file beside ours, in which case the plugin stays and only the
 Cobalt entry goes, because it is shared.
 
-The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has
+The entry starts Cobalt **on demand**, and not at boot. `kobod` has
 one mode and it is to stop `nickel` and take the panel, so starting it at boot
 would leave a device with no stock reader on it, and would spend the safety net
 every risky thing in this project leans on, which is that restarting always
@@ -330,6 +360,12 @@ reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
 before Nickel returns, then waits for Nickel's association and default route
 to remain healthy for ten seconds.
 
+On the N605 Elipsa 2E, hand-back also stops the captured firmware
+supplicant before Nickel starts its replacement. This uses the existing
+bounded cleanup; it does not initialize the radio or change saved networks.
+[PR #164](https://github.com/BandarLabs/Cobalt/pull/164) records the earlier
+device tests and their limits. Those tests have not been repeated on this beta.
+
 That immediate gate is not evidence that the handoff stays healthy minutes
 later. For the N365 investigation, the owner-attended
 [`KOBO_WIFI_HANDOFF_TRACE`](WIFI_HANDOFF_TRACE.md) mode records the process and
@@ -396,7 +432,7 @@ with buffered writes, so the last several seconds -- exactly the seconds that
 matter -- are never on the card when the device comes back.
 
 So `crates/kobod/src/blackbox.rs` writes to the book partition and calls
-`fsync` after every single line. That is deliberately expensive, and it is the
+`fsync` after every single line. That is expensive, and it is the
 only way to learn *when* the device died and *what it was doing* at the time.
 
 | | |
@@ -581,8 +617,15 @@ kobo session --device <address> --wifi-always-on on
 kobo session --device <address> --restore-reader-config
 ```
 
-`--keep-awake` holds a named kernel wake lock. It lives in RAM only and always
-clears on reboot, so it cannot leave a device permanently unable to sleep.
+`--keep-awake on` acquires a named two-minute kernel wake-lock lease. Every
+acquisition includes the timeout, including renewal of an already-held lock.
+For a longer attended session, use `kobo session --device <address> --hold 15`: it
+renews every 30 seconds for 15 minutes (at most eight hours). If the command or
+connection stops, the last lease expires after two minutes without a reboot.
+`--keep-awake off` releases it immediately. This bounds the kernel lock; it does
+not override a stock-reader request to suspend, as the measurements below show.
+The timed writes are covered by host tests; physical expiry will be checked in
+the combined Clara BW acceptance run.
 
 `--wifi-always-on` sets the reader's own `ForceWifiOn` developer setting. A
 pristine backup is taken before the first change, the file is rewritten through

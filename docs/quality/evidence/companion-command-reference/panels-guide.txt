@@ -1,0 +1,14 @@
+Panels
+Read comics added from your computer or Komga library.
+
+Bundled guide: version 0.1.3
+
+What the app can use:
+  - Connects to online services
+
+Setup:
+1. Choose Try a sample comic to read offline, or Add comic for USB import instructions. CBZ files up to 32 MB are supported; CBR and PDF are not.
+2. To use Komga, choose Browse and enter your HTTPS server address. Add your username and password in Account details, then check the connection.
+3. Open Download on your shelf to retry a paused transfer. A completed download can be added to the shelf offline; saved comics remain available.
+
+This guide does not check installation or account access.

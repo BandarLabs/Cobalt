@@ -1,0 +1,12 @@
+{
+  "work": "Pepper & Carrot, Episode 1: The Potion of Flight",
+  "creator": "David Revoy",
+  "license": "Creative Commons Attribution 4.0",
+  "official_project": "https://www.peppercarrot.com/",
+  "opds_catalog": "https://dodoledev.gitlab.io/pepperandcarrot-cbz/opds/index.xml",
+  "download_url": "https://dodoledev.gitlab.io/pepperandcarrot-cbz/library/Pepper%20and%20Carrot/ep01_Potion-of-Flight.cbz",
+  "download_sha256": "26b8da12a7a888f291fb010794af9a81fffd80964485beaffb35d36b3e3aed95",
+  "normalized_sha256": "e59add4bc6d05cbddae090e0fb5a66830bc6f432bbce4cc056080e044f69adb4",
+  "normalization": "Flattened the five JPEG entries because the third-party generator placed pages under a hidden .workdir path, which Panels correctly excludes. JPEG bytes were copied unchanged and re-zipped as CBZ.",
+  "visual_review": "Host cover preview, app import preview, receipt and reader screenshots inspected. Cover and first page are sharp and readable with no clipping or overlap."
+}

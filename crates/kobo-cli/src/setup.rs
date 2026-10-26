@@ -33,6 +33,9 @@
 //! is one button held down, in exchange for never handing the boot script an
 //! archive. It is the right trade.
 
+#[path = "setup_settings.rs"]
+mod settings_record;
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
@@ -91,8 +94,8 @@ pub const SETTINGS: &str = ".kobo/Kobo/Kobo eReader.conf";
 /// strings beside the `PowerSettings` type information in `libnickel`, then
 /// confirmed on hardware: the reader reported it as supported, and a device
 /// that had been suspending for ninety-three per cent of its life stayed awake
-/// for thirty-eight unattended minutes afterwards. `kobo setup --undo` removes
-/// both, and the reader's own Energy saving screen overrides them at any time.
+/// for thirty-eight unattended minutes afterwards. `kobo setup --undo` restores
+/// their original values when a setup record is available, and the reader's own Energy saving screen overrides them at any time.
 pub const SETTINGS_APPLIED: &[(&str, &str, &str)] = &[
     ("DeveloperSettings", "ForceWifiOn", "true"),
     ("PowerOptions", "AutoSleepMinutes", "90"),
@@ -131,8 +134,9 @@ impl Mounted {
 /// Resolves USB-visible identity through the shared device profile table.
 ///
 /// A mounted book partition exposes only the serial prefix and firmware. That
-/// is enough to select one reviewed profile because those pairs are unique in
-/// [`kobo_profile::SUPPORTED_PROFILES`]. Panel geometry and kernel identity are
+/// is enough to select one reviewed profile because each entry in
+/// [`kobo_profile::SUPPORTED_PROFILES`] claims a model and a firmware branch,
+/// and no two claim the same pair. Panel geometry and kernel identity are
 /// checked again by the runtime before it can write to a display.
 ///
 /// # Errors
@@ -140,6 +144,27 @@ impl Mounted {
 /// Returns a hardware- or firmware-specific refusal, or an ambiguity error if
 /// profile data ever stops being unique.
 pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
+    install_or_undo_profile(reader, false)
+}
+
+/// Picks the profile to name a reader by while removing Cobalt from it.
+///
+/// Removal only takes back what Cobalt put on the reader, so it is not gated
+/// on write evidence or on the firmware: a reader whose profile awaits
+/// review, or whose firmware has moved on, must still be able to return to
+/// stock. The hardware must still be one a profile describes.
+///
+/// # Errors
+///
+/// Returns a refusal when no profile describes this model code.
+pub fn undo_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
+    install_or_undo_profile(reader, true)
+}
+
+fn install_or_undo_profile(
+    reader: &Mounted,
+    undo: bool,
+) -> Result<&'static kobo_profile::DeviceProfile, String> {
     let hardware = kobo_profile::SUPPORTED_PROFILES
         .iter()
         .copied()
@@ -151,14 +176,31 @@ pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::Device
             reader.model_code()
         ));
     }
+    if undo {
+        return Ok(hardware
+            .iter()
+            .copied()
+            .find(|profile| profile.accepts_firmware(&reader.firmware))
+            .unwrap_or(hardware[0]));
+    }
+    // Checked before the model's own branches, and named for the reason rather
+    // than the symptom. Falling through to "reviewed branches: 4.45" would be
+    // true and would send an owner looking for a 4.45 build of a reader that
+    // Kobo has moved on from, when the answer is that nothing can start Cobalt
+    // there at all.
+    if !kobo_profile::launchable_generation(&reader.firmware) {
+        return Err(format!(
+            "firmware {} cannot start Cobalt: NickelMenu is the only way in from the \
+             reader's own menus and it does not hook the {}.x firmware, so an installation \
+             here could never be launched",
+            reader.firmware,
+            reader.firmware.split('.').next().unwrap_or("that")
+        ));
+    }
     let matching = hardware
         .iter()
         .copied()
-        .filter(|profile| {
-            profile
-                .firmware_versions
-                .contains(&reader.firmware.as_str())
-        })
+        .filter(|profile| profile.accepts_firmware(&reader.firmware))
         .collect::<Vec<_>>();
     match matching.as_slice() {
         [profile] if profile.write_ready => Ok(*profile),
@@ -171,13 +213,13 @@ pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::Device
         [] => {
             let supported = hardware
                 .iter()
-                .flat_map(|profile| profile.firmware_versions.iter().copied())
+                .flat_map(|profile| profile.firmware_branches())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(format!(
-                "unsupported firmware {} on {}; reviewed firmware: {}",
+                "unsupported firmware {} on {}; reviewed branches: {}",
                 reader.firmware, hardware[0].model, supported
             ))
         }
@@ -203,17 +245,17 @@ pub fn parse_version(line: &str) -> (String, String) {
     (serial, firmware)
 }
 
-/// True when a serial is recognisably a Kobo's.
+/// True when a serial is shaped like a Kobo identity, or carries the
+/// converted Tolino Shine 5's exact `T302` prefix.
 ///
-/// Every known Kobo serial begins with `N` or `P` and three digits. This is the same test
-/// [`crate::connect::Identity::is_kobo`] applies over the network, kept
-/// separate because the evidence arrives by a different route.
+/// Kobo serials begin with `N` or `P` and three digits. Any such prefix
+/// passes here, including model codes with no profile, because profile
+/// support is checked separately once the device is matched. The converted
+/// Tolino Shine 5 keeps its `T302` prefix in `.kobo/version` and is the one
+/// non-Kobo shape accepted.
 #[must_use]
 pub fn is_kobo_serial(serial: &str) -> bool {
-    let bytes = serial.as_bytes();
-    bytes.len() >= 4
-        && (bytes[0] == b'N' || bytes[0] == b'P')
-        && bytes[1..4].iter().all(u8::is_ascii_digit)
+    kobo_profile::is_matchable_serial(serial)
 }
 
 /// Every place a removable volume is mounted on this operating system.
@@ -438,7 +480,7 @@ fn push_into_section(out: &mut Vec<String>, assignment: String) {
 ///
 /// When the settings file cannot be read or written.
 pub fn apply_settings(volume: &Path) -> Result<Vec<String>, String> {
-    edit_settings(volume, SETTINGS_APPLIED.iter().copied(), true)
+    settings_record::edit(volume, true)
 }
 
 /// Copies this machine's trust roots onto the reader, returning their names.
@@ -523,50 +565,13 @@ fn valid_roots(source: &Path) -> Vec<(String, String)> {
     roots
 }
 
-/// Removes [`SETTINGS_APPLIED`] again.
+/// Restores original values for [`SETTINGS_APPLIED`], preserving later owner changes.
 ///
 /// # Errors
 ///
 /// When the settings file cannot be read or written.
 pub fn revert_settings(volume: &Path) -> Result<Vec<String>, String> {
-    edit_settings(volume, SETTINGS_APPLIED.iter().copied(), false)
-}
-
-fn edit_settings<'a>(
-    volume: &Path,
-    settings: impl Iterator<Item = (&'a str, &'a str, &'a str)>,
-    set: bool,
-) -> Result<Vec<String>, String> {
-    let path = volume.join(SETTINGS);
-    let original = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        // A reader that has never finished its own setup has no settings file.
-        // Creating one is fine; nickel merges what it finds.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
-    };
-
-    let mut text = original.clone();
-    let mut changed = Vec::new();
-    for (section, key, value) in settings {
-        let edited = if set {
-            set_setting(&text, section, key, value)
-        } else {
-            clear_setting(&text, section, key)
-        };
-        if edited != text {
-            changed.push(format!("{section}/{key}"));
-            text = edited;
-        }
-    }
-
-    if text != original {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-        }
-        fs::write(&path, &text).map_err(|error| format!("write {}: {error}", path.display()))?;
-    }
-    Ok(changed)
+    settings_record::edit(volume, false)
 }
 
 /// Copies Cobalt into `.adds/cobalt` on a mounted reader.
@@ -978,6 +983,50 @@ pub struct Removal {
     pub removed: bool,
     pub recoveries: Vec<String>,
     pub quarantines: Vec<String>,
+}
+
+/// The name the welcome note lands under in the reader's library, beside the
+/// owner's own books, so the first reconnect shows something new to open.
+pub const SAMPLE_NAME: &str = "Welcome from Cobalt.txt";
+
+/// The original welcome note a first-time setup sends.
+///
+/// Deliberately short and deliberately deletable: it exists so a first
+/// success is something the owner can see and open, not to document the
+/// install. It says what setup did in owner language and points at the one
+/// next step.
+#[must_use]
+pub fn sample_text() -> &'static str {
+    "Welcome from Cobalt\n\
+     \n\
+     This note arrived with the Cobalt setup, so there is something new to open\n\
+     the first time this reader reconnects. Nothing depends on it; delete it\n\
+     whenever you like.\n\
+     \n\
+     What setup did:\n\
+     - Installed Cobalt under .adds/cobalt. Leave that folder alone.\n\
+     - Staged a NickelMenu entry for Cobalt, unless you asked it not to.\n\
+     - Left your books, settings and annotations untouched.\n\
+     \n\
+     Next: connect this reader to Wi-Fi, then run `kobo devices` on the computer\n\
+     that set it up. Running `kobo` with no arguments there walks through photos,\n\
+     feeds and the rest.\n"
+}
+
+/// Sends the welcome note to a mounted reader.
+///
+/// Written like any other file of the install and synced before the eject,
+/// but never allowed to fail one: a reader with Cobalt and without the note
+/// is still set up, so the caller reports a failure and carries on.
+pub fn write_sample(volume: &Path) -> Result<PathBuf, String> {
+    let path = volume.join(SAMPLE_NAME);
+    fs::write(&path, sample_text())
+        .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
+    let file = fs::File::open(&path)
+        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
+    file.sync_all()
+        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
+    Ok(path)
 }
 
 /// Removes an installed Cobalt from a mounted reader while moving every owner
@@ -1928,6 +1977,26 @@ mod tests {
     }
 
     #[test]
+    fn the_welcome_note_lands_beside_the_library_and_is_deletable() {
+        let volume = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("kobo-sample-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&volume);
+        std::fs::create_dir_all(&volume).expect("a volume");
+        let path = super::write_sample(&volume).expect("the note writes");
+        assert_eq!(path.file_name().unwrap(), super::SAMPLE_NAME);
+        let text = std::fs::read_to_string(&path).expect("the note reads back");
+        assert!(text.contains("delete it"), "{text}");
+        assert!(text.contains("Wi-Fi"), "{text}");
+        assert!(
+            !text.contains("ssh"),
+            "owner copy stays free of plumbing: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&volume);
+    }
+
+    #[test]
     fn a_version_line_yields_the_serial_and_the_firmware() {
         let (serial, firmware) =
             parse_version("N365410043013,4.9.77,4.45.23697,4.9.77,4.9.77,00000000-0000\n");
@@ -1946,6 +2015,26 @@ mod tests {
         assert_eq!(profile.model, "Kobo Clara BW");
         assert_eq!(profile.device_code, 391);
         assert_eq!(profile.id, "clara-bw-391");
+
+        let tolino = Mounted {
+            serial: "T302000000000".to_owned(),
+            ..reader
+        };
+        let refusal = install_profile(&tolino).expect_err("T302 awaiting review");
+        assert!(refusal.contains("not enabled for installation"));
+        // Removal is not gated on review: an owner can always get back to stock.
+        assert_eq!(
+            super::undo_profile(&tolino).map(|profile| profile.id),
+            Ok("tolino-shine-5-t302")
+        );
+        let moved_on = Mounted {
+            firmware: "4.46.23836".to_owned(),
+            ..tolino
+        };
+        assert_eq!(
+            super::undo_profile(&moved_on).map(|profile| profile.id),
+            Ok("tolino-shine-5-t302")
+        );
     }
 
     #[test]
@@ -1958,9 +2047,49 @@ mod tests {
         assert!(install_profile(&reader("N999000000000", "4.45.23697"))
             .expect_err("hardware")
             .contains("unsupported Kobo hardware"));
-        assert!(install_profile(&reader("N365000000000", "9.9.9"))
-            .expect_err("firmware")
-            .contains("unsupported firmware"));
+        // A branch this model was never measured on, but one NickelMenu can
+        // still hook. Held at 4.x deliberately: a version from another
+        // generation is refused earlier and for a different reason, and using
+        // one here would test that refusal twice and this one never.
+        let refusal =
+            install_profile(&reader("N365000000000", "4.20.11000")).expect_err("firmware");
+        assert!(refusal.contains("unsupported firmware"));
+        assert!(
+            refusal.contains("4.45"),
+            "a refusal has to name the branch that would have been taken: {refusal}"
+        );
+    }
+
+    #[test]
+    fn installation_refuses_a_firmware_generation_that_could_never_be_launched() {
+        // Installing here would succeed and leave the owner with a payload no
+        // menu entry can reach, so the refusal names NickelMenu rather than
+        // sending them to look for a 4.45 build of a reader that has none.
+        let reader = Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: "N365410043013".to_owned(),
+            firmware: "5.0.24000".to_owned(),
+        };
+        let refusal = install_profile(&reader).expect_err("5.x cannot be launched");
+        assert!(refusal.contains("NickelMenu"), "{refusal}");
+        assert!(!refusal.contains("reviewed branches"), "{refusal}");
+    }
+
+    #[test]
+    fn installation_accepts_a_later_build_on_a_reviewed_branch() {
+        // A mounted volume is all `kobo setup` can see, so this gate is a
+        // second one, separate from the runtime's, and it used to pin the
+        // build number on its own. A wave Kobo pushed unasked would otherwise
+        // refuse a first install onto hardware that is fully reviewed.
+        let reader = Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: "N365410043013".to_owned(),
+            firmware: "4.45.23792".to_owned(),
+        };
+        assert_eq!(
+            install_profile(&reader).expect("supported").id,
+            "clara-bw-391"
+        );
     }
 
     #[test]
@@ -1971,9 +2100,11 @@ mod tests {
     }
 
     #[test]
-    fn only_a_known_prefix_and_three_digits_is_a_reader() {
+    fn only_reviewed_reader_prefixes_are_accepted() {
         assert!(is_kobo_serial("N365410043013"));
         assert!(is_kobo_serial("P365410043013"));
+        assert!(is_kobo_serial("T302000000000"));
+        assert!(!is_kobo_serial("T303000000000"));
         assert!(!is_kobo_serial("Macintosh HD"));
         assert!(!is_kobo_serial("N36"));
         assert!(!is_kobo_serial("NABC410043013"));

@@ -33,6 +33,19 @@ pub fn legal(fen: &str, uci: &str) -> bool {
     move_for(fen, uci).is_some()
 }
 
+pub fn destinations(fen: &str, from: &str) -> std::collections::BTreeSet<String> {
+    let Some(position) = position(fen) else {
+        return std::collections::BTreeSet::new();
+    };
+    position
+        .legal_moves()
+        .iter()
+        .map(|movement| movement.to_uci(CastlingMode::Standard).to_string())
+        .filter(|uci| uci.starts_with(from))
+        .filter_map(|uci| uci.get(2..4).map(str::to_owned))
+        .collect()
+}
+
 pub fn play(fen: &str, uci: &str) -> Option<(String, String)> {
     let position = position(fen)?;
     let movement = UciMove::from_ascii(uci.as_bytes())

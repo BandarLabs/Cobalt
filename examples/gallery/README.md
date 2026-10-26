@@ -1,61 +1,45 @@
-# UI Components Showcase
+# Components
 
-Every UI primitive, on one device, so each can be checked by eye.
+Every Cobalt interface component on one device, for checking by eye.
 
-This is a test instrument as much as a demonstration. If a primitive looks
-wrong here it looks wrong everywhere, and the layout tests only prove that
-sizes are right, not that the result is worth reading.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/text.png" alt="Headings, text, rules and facts"><br>Headings, text, rules and facts</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/controls.png" alt="Buttons, from the one primary action down"><br>Buttons, from the one primary action down</td>
+</tr>
+</table>
 
-| Type and structure | A standard state |
-| --- | --- |
-| ![Headings, body, secondary text, section rules and a facts block](screenshots/text.png) | ![A centred empty state with a recovery button beneath it](screenshots/controls.png) |
+## What it covers
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+- Every node in `kobo-ui` appears here. A new component should be added to the
+  gallery when it is added to the SDK.
+- The **Panel** tab shows the Folio components: masthead, card tiles, section
+  links, page rail and navigation.
+- The App Store card on the Panel tab walks through one task end to end:
+  choosing a book, confirming it, downloading it and opening it.
+- Pages are split by measurement, so every page fits every supported screen at
+  every text size. A test lays out every page on all eight supported screens
+  at all nine text sizes.
+- The gallery triggers two layout warnings on purpose: the tone budget on the
+  launcher-style shelf, and two primary actions on the buttons page. Any other
+  warning fails the tests.
 
-The **V2** tab is the Folio acceptance surface: masthead, featured card tiles
-(including caption and live-value variants), a trailing section link, page
-rail, active nav notch, and a deliberately alternating ghosting comparison.
-Its ordinary action is a centered content-width button; only primary actions
-expand to the full content measure.
-It is captured by `scripts/shoot-apps.sh` with the normal gallery pass.
+`kobo drive` can tap through the tabs and capture each one, so a change to the
+layout engine can be compared as pictures.
 
-## Why this is the conformance screen
+## Permissions
 
-Every node in `kobo-ui` has an instance here. Adding a node to the vocabulary
-without adding it to this gallery is how a primitive ends up shipped and never
-looked at: it passes its own unit test, it never appears on a panel, and the
-first person to reach for it finds out that it is nine pixels too tall.
+- `network`: used by the activity and cancellation example, which starts a real request.
 
-The conformance test measures every page against the status band the runtime
-draws above it. Without that band the content starts sixty pixels higher than
-it does on the device, and the slack is enough to hide a page that overflows.
-
-The gallery is also the fastest way to see a rendering change. `kobo drive`
-taps through its tabs and captures each one, so a change to the layout engine
-can be diffed as pictures rather than as numbers.
-
-## Running it
+## Development
 
 ```sh
-kobo run --sim --app gallery            # in the browser simulator
-kobo deploy --device <ip>               # onto a reader over Wi-Fi
+cargo test -p kobo-gallery
+kobo run --sim --app gallery      # in the browser simulator
+python3 scripts/check-apps-sim.py gallery
+kobo deploy --device <ip>       # onto a reader over Wi-Fi
 ```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

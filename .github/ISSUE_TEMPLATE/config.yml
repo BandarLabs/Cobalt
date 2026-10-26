@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Request an app or an improvement
+    url: https://github.com/BandarLabs/Cobalt/issues/26
+    about: App requests and product ideas are collected on one thread.
+  - name: Report a security problem
+    url: https://github.com/BandarLabs/Cobalt/security/advisories/new
+    about: Private vulnerability reporting, as SECURITY.md describes. Never in a public issue.
+  - name: Ask the community
+    url: https://www.reddit.com/r/CobaltForKobo/
+    about: Questions about using Cobalt, and what other owners have tried.

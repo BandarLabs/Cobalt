@@ -1,0 +1,20 @@
+$ COLUMNS=48 script -qec "kobo --help" /dev/null   (narrow terminal: over-long lines reflow, none exceed 48)
+longest line: 76 docs/quality/evidence/pr6/CLI-31/narrow-help.txt
+Kobo application SDK
+
+Usage: kobo <command>
+
+Commands:
+apps [search WORD | setup APP] Find apps and
+read offline setup guides
+new <name>             Create a Rust application
+dev [--builtin] [address] Run this SDK app in
+the browser simulator
+dev --runtime [address] [--apps IDs] Run
+launcher and selected local apps
+
+$ TERM=dumb NO_COLOR=1 KOBO_REDUCED_MOTION=1 script -qec "kobo --help" /dev/null | escape-sequence check
+escape lines: 0
+$ printf "0\n" | TERM=dumb script -qec "kobo" /dev/null   (menu on a dumb terminal, plain lines only)
+escape lines: 0
+longest content line: 76

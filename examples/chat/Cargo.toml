@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+unicode-segmentation = "1.13"
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

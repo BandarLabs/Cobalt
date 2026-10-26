@@ -1,6 +1,6 @@
 use kobo_policy::{DeviceServices, TaskRunner};
 
-use kobo_protocol::{Frame, LogLevel, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, LogLevel, Message};
 use kobo_ui::{display_metrics_from_env, Screen, Surface};
 use std::env;
 use std::error::Error;
@@ -71,9 +71,9 @@ mod app_store;
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+mod consent;
 #[cfg(feature = "device-write")]
 mod device;
-mod frame;
 mod syncthing;
 mod update;
 
@@ -319,14 +319,19 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Reads the button device without grabbing it and prints every event.
+/// Reads the button devices without grabbing them and prints every event.
 ///
 /// The point is to learn the keycodes the page-turn and power buttons emit
 /// on hardware nobody has captured yet, at both poses. Numeric codes are
 /// printed verbatim so nothing is lost to an incomplete name table.
+///
+/// The Tolino Shine 5 reports its power key on a separate PMIC input node
+/// rather than on `gpio-keys`, so that node is read alongside the button
+/// device whenever it exists. Each line names the node the event came from.
 fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     use kobo_hal::touch::InputEvent32;
     use std::io::Read;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
@@ -334,44 +339,101 @@ fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let content = std::fs::read_to_string("/proc/bus/input/devices")?;
     let path = discover_key_path(&content)
         .ok_or_else(|| "no gpio-keys device found in /proc/bus/input/devices".to_owned())?;
-    let mut device = std::fs::File::open(&path)?;
-    let name = kobo_abi::input::device_name(&device)?;
-    println!("button device: {} ({name})", path.display());
+    let mut sources = vec![("button", path)];
+    if let Some(power) = kobo_hal::gpio::discover_power_path() {
+        sources.push(("power", power));
+    }
+
+    // One reader thread per node, because a blocking read on either would
+    // starve the other. The threads are left blocked at exit; nothing is
+    // grabbed, so the process ending leaves the devices exactly as found.
+    let (sender, events) = mpsc::channel();
+    for (label, path) in sources {
+        // The button node is what the test is for, so failing to open it ends
+        // the test. The power node is extra: a reader where it cannot be
+        // opened still has buttons worth capturing.
+        let opened = std::fs::File::open(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|device| {
+                kobo_abi::input::device_name(&device)
+                    .map(|name| (device, name))
+                    .map_err(|error| error.to_string())
+            });
+        let (mut device, name) = match opened {
+            Ok(opened) => opened,
+            Err(error) if label == "power" => {
+                println!(
+                    "power device: {} unavailable ({error}); reading buttons only",
+                    path.display()
+                );
+                continue;
+            }
+            Err(error) => return Err(format!("{label} device {}: {error}", path.display()).into()),
+        };
+        println!("{label} device: {} ({name})", path.display());
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let mut buffer = [0_u8; 16 * 64];
+            loop {
+                let read = match device.read(&mut buffer) {
+                    Ok(0) => {
+                        let _ = sender.send(Err((label, "the device closed".to_owned())));
+                        return;
+                    }
+                    Ok(read) => read,
+                    Err(error) => {
+                        let _ = sender.send(Err((label, error.to_string())));
+                        return;
+                    }
+                };
+                for chunk in buffer[..read].chunks_exact(16) {
+                    let Some(event) = InputEvent32::decode(chunk) else {
+                        continue;
+                    };
+                    if sender.send(Ok((label, event))).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+    drop(sender);
     println!("reading for {seconds}s, no grab; press each button, at both poses");
 
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let started = Instant::now();
-    let mut buffer = [0_u8; 16 * 64];
     let mut count = 0_u32;
-    while Instant::now() < deadline {
-        // A blocking read sits here until a press arrives; the deadline is
-        // only checked between reads, so the capture ends on the first
-        // event after time is up, or at the final press of Enter... it does
-        // not, so the run simply overshoots by however long the last quiet
-        // stretch lasts. Acceptable for an owner-attended probe.
-        let read = device.read(&mut buffer)?;
-        for chunk in buffer[..read].chunks_exact(16) {
-            let Some(event) = InputEvent32::decode(chunk) else {
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let Ok(message) = events.recv_timeout(remaining) else {
+            break;
+        };
+        let (label, event) = match message {
+            Ok(received) => received,
+            Err(("power", error)) => {
+                println!("power device stopped: {error}; still reading buttons");
                 continue;
-            };
-            count += 1;
-            let at = started.elapsed().as_millis();
-            let kind = match event.kind {
-                0 => "SYN",
-                1 => "KEY",
-                _ => "???",
-            };
-            let action = match (event.kind, event.value) {
-                (1, 0) => " up",
-                (1, 1) => " down",
-                (1, 2) => " repeat",
-                _ => "",
-            };
-            println!(
-                "{at:>7} ms  {kind} code={} value={}{action}",
-                event.code, event.value
-            );
-        }
+            }
+            Err((label, error)) => {
+                return Err(format!("{label} device failed after {count} events: {error}").into());
+            }
+        };
+        count += 1;
+        let at = started.elapsed().as_millis();
+        let kind = match event.kind {
+            0 => "SYN",
+            1 => "KEY",
+            _ => "???",
+        };
+        let action = match (event.kind, event.value) {
+            (1, 0) => " up",
+            (1, 1) => " down",
+            (1, 2) => " repeat",
+            _ => "",
+        };
+        println!(
+            "{at:>7} ms  {label:<6} {kind} code={} value={}{action}",
+            event.code, event.value
+        );
     }
     println!("captured {count} events");
     Ok(())
@@ -463,9 +525,30 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let reader = Reader::load(state)?;
+    let mut light_recovery = if state.join("frontlight").exists() {
+        Err("front light recovery was not permitted by the hardware profile".to_owned())
+    } else {
+        Ok(())
+    };
     match kobo_hal::probe_device() {
-        Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot) {
+        // Recovery undoes what a session changed, and an owner can run a
+        // session on a profile that is not yet write-ready, so the hardware
+        // facts of the profile that claims this reader are enough here.
+        Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot)
+            .or_else(|blockers| kobo_profile::claimed_profile(&snapshot).ok_or(blockers))
+        {
             Ok(profile) => {
+                light_recovery = kobo_hal::frontlight::Frontlight::recover(state)
+                    .map_err(|error| format!("front light recovery failed: {error}"))
+                    .map(|restored| {
+                        if restored {
+                            println!("original front light restored and verified");
+                        }
+                    });
+                if let Err(error) = &light_recovery {
+                    blackbox::trace(error);
+                    println!("{error}; restarting the reader anyway");
+                }
                 let mut executables = profile.leftover_radio_daemons.to_vec();
                 if profile.reap_nickel_supplicant
                     && !executables.contains(&kobo_hal::network::SUPPLICANT_EXECUTABLE)
@@ -508,8 +591,19 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
             "reader restarted as pid {pid}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     }
-    println!("{}", clear_session_files(state));
+    println!("{}", complete_recovery(state, light_recovery)?);
     Ok(())
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+fn complete_recovery(state: &Path, light: Result<(), String>) -> Result<String, String> {
+    light.map_err(|error| {
+        format!(
+            "the reader is running, but {error}; recovery state retained at {}",
+            state.display()
+        )
+    })?;
+    Ok(clear_session_files(state))
 }
 
 /// Removes what a session that died without cleaning up left behind.
@@ -748,14 +842,15 @@ fn serve_application(
             .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&secrets, name)
             .with_credential_policy(std::sync::Arc::new(
-                move |credential, url, usage, body, content_type| {
-                    kobo_policy::credentials::allowed_request(
+                move |credential, url, usage, body, content_type, server| {
+                    kobo_policy::credentials::allowed_request_with_server(
                         &credential_app,
                         credential,
                         url,
                         usage,
                         body,
                         content_type,
+                        server,
                     )
                 },
             ))
@@ -861,27 +956,8 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = if let kobo_protocol::DeviceRequest::SetSecret {
-                    name: secret_name,
-                    value,
-                } = &request
-                {
-                    if kobo_policy::credentials::may_set(name, secret_name) {
-                        kobo_policy::credentials::install_app_secret(
-                            &secrets,
-                            name,
-                            secret_name,
-                            value.as_str(),
-                        )
-                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
-                            kobo_protocol::DeviceResult::Done
-                        })
-                    } else {
-                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
-                    }
-                } else {
-                    services.handle(request.clone())
-                };
+                let result = kobo_policy::credentials::handle_install(&secrets, name, &request)
+                    .unwrap_or_else(|| services.handle(request.clone()));
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
@@ -899,17 +975,16 @@ fn serve_application(
                     .submit(task, work);
                 if let Err(reason) = submitted {
                     println!("task {} refused: {reason:?}", task.0);
-                    write_shared(
-                        &writer,
-                        &Frame {
-                            version: frame.version,
-                            request_id: frame.request_id,
-                            message: Message::TaskOutcome {
-                                task,
-                                outcome: TaskOutcome::Failed(TaskError::Denied),
+                    if let Some(outcome) = reason.outcome() {
+                        write_shared(
+                            &writer,
+                            &Frame {
+                                version: frame.version,
+                                request_id: frame.request_id,
+                                message: Message::TaskOutcome { task, outcome },
                             },
-                        },
-                    )?;
+                        )?;
+                    }
                 }
             }
             Message::StoreRequest(request) => {
@@ -960,6 +1035,10 @@ fn serve_application(
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
             | Message::Lifecycle(_)
+            | Message::PrepareSuspend { .. }
+            | Message::SuspendReady { .. }
+            | Message::Resume { .. }
+            | Message::ScheduledWake { .. }
             | Message::CoverChanged { .. }
             | Message::PageTurn { .. }
             | Message::ShellEvent(_) => {
@@ -1031,11 +1110,7 @@ fn deliver_outcomes(
 /// layout fault that put the first row of the launcher's grid underneath the
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
-    let chrome = kobo_ui::Chrome::with_back(name != HOME_APPLICATION);
-    if screen.reading {
-        return chrome;
-    }
-    chrome.with_status(simulated_status())
+    kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
 }
 
 /// Everything the band shows, invented and fixed.
@@ -1046,16 +1121,16 @@ fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
 /// says anything true. Deliberately not round numbers, so nobody mistakes a
 /// simulated reading for a real one.
 fn simulated_status() -> kobo_ui::Status {
-    kobo_ui::Status {
-        clock: "09:41".to_owned(),
-        signal: kobo_ui::Signal::Strong,
-        battery: Some(kobo_ui::Percent::new(72)),
-        charging: false,
-        // On, so the simulator draws the mark and a layout fault beside the
-        // radio shows up here rather than only on hardware with headphones
-        // paired.
-        bluetooth: true,
-    }
+    // Bluetooth on, so the simulator draws the mark and a layout fault beside
+    // the radio shows up here rather than only on hardware with headphones
+    // paired.
+    kobo_ui::Status::standard(
+        "09:41",
+        Some(kobo_ui::Percent::new(72)),
+        false,
+        kobo_ui::Signal::Strong,
+        true,
+    )
 }
 
 /// The application that is home, and so has no way back to draw.
@@ -1342,6 +1417,27 @@ mod tests {
         // Recovery runs on every abnormal exit, including ones that already
         // cleaned up, so a second sweep has to be silent rather than an error.
         assert!(super::clear_session_files(&state).contains("cleared 0"));
+    }
+
+    #[test]
+    fn a_failed_light_restore_retains_the_original_recovery_record() {
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-light-recovery-failed-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("frontlight"), b"original fixture record").unwrap();
+        let error =
+            super::complete_recovery(&root, Err("driver range changed".into())).unwrap_err();
+        assert!(error.contains("the reader is running"));
+        assert_eq!(
+            fs::read(root.join("frontlight")).unwrap(),
+            b"original fixture record"
+        );
+        assert!(super::complete_recovery(&root, Ok(()))
+            .unwrap()
+            .contains("cleared"));
+        assert!(!root.exists());
     }
 
     #[test]

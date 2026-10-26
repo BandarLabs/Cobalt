@@ -267,6 +267,19 @@ pub struct Memory {
     /// `None` means the reader has never set one here, so the device's own
     /// level is left alone. Zero is a real setting and is not the same thing.
     pub light: Option<u8>,
+    /// Whether the bar stays out of the way while reading.
+    ///
+    /// Off unless asked for, and asked for from the panel rather than guessed
+    /// at: the bar is what teaches the middle-column tap, so a reader who has
+    /// not yet learned the gesture must not be the one it is taken from.
+    ///
+    /// Kept here, so it belongs to this book the way the type size does. A
+    /// reader who wants a bare page for a novel and the bar for a manual gets
+    /// both; a reader who wants it everywhere asks for it once per book. An
+    /// application-wide preference would be a better answer to the second
+    /// reader and a worse one to the first, and this record is the only
+    /// storage the reader itself has.
+    pub full_page: bool,
 }
 
 impl Default for Memory {
@@ -276,6 +289,7 @@ impl Default for Memory {
             bookmarks: BTreeSet::new(),
             highlights: BTreeSet::new(),
             annotations: BTreeMap::new(),
+            full_page: false,
             next_annotation_id: 1,
             scale: TextScale::default(),
             light: None,
@@ -299,6 +313,9 @@ impl Memory {
         let _ = writeln!(text, "scale {}", self.scale.wire_value());
         if let Some(light) = self.light {
             let _ = writeln!(text, "light {light}");
+        }
+        if self.full_page {
+            let _ = writeln!(text, "full 1");
         }
         for bookmark in &self.bookmarks {
             let _ = writeln!(text, "mark {bookmark}");
@@ -342,6 +359,7 @@ impl Memory {
                     }
                 }
                 "light" => memory.light = value.parse().ok(),
+                "full" => memory.full_page = value == "1",
                 "mark" => {
                     if let Ok(at) = value.parse() {
                         memory.bookmarks.insert(at);
@@ -480,6 +498,8 @@ pub mod action {
     pub const MARK: &str = "reader-mark-";
     /// One per stored mark, suffixed with its block index.
     pub const GO: &str = "reader-go-";
+    /// Turns the bar away while reading, or asks for it back.
+    pub const FULL_PAGE: &str = "reader-full-page";
     /// Opens the book's own table of contents.
     pub const CONTENTS: &str = "reader-contents";
     /// Opens the links the page being read points at.
@@ -523,6 +543,7 @@ pub struct Reader {
     page: usize,
     chrome: Chrome,
     problem: Option<String>,
+    panel: DisplayMetrics,
     /// Whether the last page is the end of the book or merely where it stopped.
     ///
     /// A copy that arrived cut short, or one so long that pagination hit its
@@ -569,6 +590,7 @@ impl Reader {
             page: 0,
             chrome: Chrome::Hidden,
             problem: None,
+            panel: *panel,
             cut: false,
             pending: false,
         };
@@ -582,6 +604,7 @@ impl Reader {
     /// first, pages second: the block index does not change when the setting
     /// does, which is the whole reason a position is stored the way it is.
     fn repaginate(&mut self, panel: &DisplayMetrics) {
+        self.panel = *panel;
         kobo_ui::with_reading_font(self.publisher_font, || self.repaginate_selected_font(panel));
     }
 
@@ -598,7 +621,17 @@ impl Reader {
         // the layout engine takes it out of the content before it places
         // anything. Measured without it, the last two lines of every page were
         // set underneath "22 of 226" and the chevrons beside it.
-        let full = metrics.prose_area_in(true, false, Face::Reading);
+        let mut full = metrics.prose_area_in(true, false, Face::Reading);
+        if let Some(problem) = &self.problem {
+            let notice = kobo_ui::with_text_scale(panel.text_scale, || {
+                kobo_ui::banner_height(problem, full.width, panel)
+            });
+            full.height = full
+                .height
+                .saturating_sub(notice)
+                .saturating_sub(full.gap)
+                .max(1);
+        }
         let mut area = full;
         area.height = area
             .height
@@ -1184,6 +1217,8 @@ impl Reader {
     /// Says something went wrong, on the next repaint.
     pub fn report(&mut self, problem: impl Into<String>) {
         self.problem = Some(problem.into());
+        let panel = self.panel;
+        self.repaginate(&panel);
     }
 
     #[must_use]
@@ -1216,7 +1251,13 @@ impl Reader {
 
     /// Applies one named action.
     pub fn act(&mut self, name: &str, panel: &DisplayMetrics) -> Outcome {
-        self.problem = None;
+        if self.problem.take().is_some() {
+            let at_end = !self.can_go_forward();
+            self.repaginate(panel);
+            if at_end {
+                self.page = self.pages.len().saturating_sub(1);
+            }
+        }
         match name {
             action::FORWARD => {
                 if self.forward() {
@@ -1254,6 +1295,7 @@ impl Reader {
                 self.set_chrome(next, panel);
                 Outcome::Repaint
             }
+            action::FULL_PAGE => self.turn_full_page_over(panel),
             action::HIGHLIGHTS => {
                 self.set_chrome(Chrome::Highlights, panel);
                 Outcome::Repaint
@@ -1315,6 +1357,18 @@ impl Reader {
         }
     }
 
+    /// Gives the page the panel, or gives the bar back.
+    ///
+    /// The panel goes away with it: the setting is about what the page looks
+    /// like, and a reader cannot see what they changed through the panel that
+    /// changed it. Saved rather than merely repainted, so the book reopens the
+    /// way it was left.
+    fn turn_full_page_over(&mut self, panel: &DisplayMetrics) -> Outcome {
+        self.memory.full_page = !self.memory.full_page;
+        self.set_chrome(Chrome::Hidden, panel);
+        Outcome::Save
+    }
+
     /// The same as [`Self::act`], for an application that is handed a hashed
     /// identifier rather than a name.
     ///
@@ -1334,6 +1388,7 @@ impl Reader {
             action::BACK.into(),
             action::CONTROLS.into(),
             action::LIGHT.into(),
+            action::FULL_PAGE.into(),
             action::CLOSE.into(),
             action::LARGER.into(),
             action::SMALLER.into(),
@@ -1438,6 +1493,21 @@ impl Reader {
         let mut at = 0;
         while let Some(piece) = pieces.get(at) {
             at += 1;
+            // A figure, the caption under it and the paragraph after it were
+            // separated by the one gap the layout puts between any two nodes,
+            // so a plate and its three lines of caption ran together into a
+            // single grey slab and none of it read as a thing set into the
+            // page rather than more of the page. The group is given air on
+            // both sides of it; the lines inside keep the gap they had.
+            //
+            // Nothing at the top or bottom of a page: the margin there is
+            // already the separation, and a spacer would spend a line of
+            // reading on saying so twice.
+            if at > 1 {
+                if let Some(space) = self.between(&pieces[at - 2], piece) {
+                    screen = screen.spacer(space);
+                }
+            }
             // Rows are gathered back into the table they were cut out of.
             // Every row of it has to be handed over at once, because the
             // columns can only be lined up by something that can see all of
@@ -1465,6 +1535,17 @@ impl Reader {
                         Some((drawn, true)) => screen.picture(drawn, MAX_PICTURE_MM),
                         Some((drawn, false)) => screen.unframed_picture(drawn, MAX_PICTURE_MM),
                         None if piece.text.is_empty() => screen,
+                        // A figure's description is writing *about* the page
+                        // and is set as such. A displayed formula's is the
+                        // page: it is the mathematics, written out in a line
+                        // instead of typeset, and setting it in the smaller
+                        // grey of a caption would demote a sentence of the
+                        // paper for the length of time its picture takes to
+                        // arrive -- or permanently, on a build that cannot
+                        // draw formulae at all.
+                        None if !self.illustration_at(piece.block) => {
+                            screen.text(piece.text.clone())
+                        }
                         None => screen.secondary(piece.text.clone()),
                     }
                 }
@@ -1524,7 +1605,9 @@ impl Reader {
             // No panel and no bar over the page: a book, the reader's own
             // hands, and the muted place at the foot. This is the point of the
             // reading screen.
-            return screen.build();
+            return screen
+                .build()
+                .with_auto_hidden_top_bar(self.memory.full_page);
         }
         // A panel over the page rather than a bar under it. A bar takes its
         // height out of the content, so opening the controls repaginated the
@@ -1622,6 +1705,21 @@ impl Reader {
             row.push((action::LINKS.to_owned(), "Links", Glyph::Globe));
         }
         row.push((action::HIGHLIGHTS.to_owned(), "Notes", Glyph::Note));
+        // Named rather than gestured. The bar is what teaches the tap that
+        // opens this panel, so the reader who gives it up should be one who
+        // has already found their way here and can read what they are turning
+        // off. It says what the next tap does, not what is true now, which is
+        // the one wording that never leaves somebody guessing which state they
+        // are looking at.
+        row.push((
+            action::FULL_PAGE.to_owned(),
+            if self.memory.full_page {
+                "Show bar"
+            } else {
+                "Full page"
+            },
+            Glyph::Reader,
+        ));
         // Four across at most: a fifth control on this panel would be narrower
         // than a fingertip, and the row wraps rather than shrinking.
         let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
@@ -2102,12 +2200,14 @@ impl Reader {
                     self.links_in(piece),
                 )
                 .with_formulae(formulae)
-        } else if piece.spans.is_empty()
-            && formulae.is_empty()
-            && piece.presentation == kobo_ui::ParagraphPresentation::default()
-        {
-            screen.text_linking(piece.text.clone(), self.links_in(piece))
         } else {
+            // Every paragraph goes through the same node, including the plain
+            // ones. A page is measured with the book's line spacing, and a
+            // plain text node is measured with the interface's: the tail of a
+            // paragraph split across a page break came out as the one node on
+            // the page whose lines were taller than the room the paginator had
+            // reserved for them, so its last line was dropped and the renderer
+            // refused the screen.
             screen
                 .rich_text_linking(
                     piece.text.clone(),
@@ -2142,6 +2242,54 @@ impl Reader {
             .collect()
     }
 
+    /// What kind of thing a piece is, for deciding what stands around it.
+    fn set_of(&self, piece: &Piece) -> Set {
+        match piece.kind {
+            Kind::Caption => Set::Plate,
+            Kind::Picture if self.illustration_at(piece.block) => Set::Plate,
+            Kind::Picture => Set::Formula,
+            _ => Set::Prose,
+        }
+    }
+
+    /// The air owed between two pieces that follow each other on a page.
+    ///
+    /// Only at the seam between a group and what is not in it. A plate asks
+    /// for more than a formula does: it is an illustration, a thing set into
+    /// the text, and the caption belongs to it rather than to the prose. A
+    /// displayed formula asks for less, because it *is* the text -- a
+    /// sentence of the paper, set as mathematics -- and wants to be told apart
+    /// from the paragraph it interrupts rather than lifted out of it.
+    fn between(&self, previous: &Piece, piece: &Piece) -> Option<kobo_ui::Space> {
+        let (before, after) = (self.set_of(previous), self.set_of(piece));
+        if before == after {
+            return None;
+        }
+        if before == Set::Plate || after == Set::Plate {
+            return Some(kobo_ui::Space::Small);
+        }
+        Some(kobo_ui::Space::Tight)
+    }
+
+    /// Whether a block is an illustration rather than a drawn piece of text.
+    ///
+    /// Asked when there is no picture to draw, which is exactly when
+    /// [`Self::picture_for`] cannot answer it.
+    fn illustration_at(&self, block: Locator) -> bool {
+        usize::try_from(block)
+            .ok()
+            .and_then(|at| self.document.blocks.get(at))
+            .is_some_and(|block| {
+                matches!(
+                    block,
+                    Block::Picture {
+                        illustration: true,
+                        ..
+                    }
+                )
+            })
+    }
+
     /// The picture to draw for a block, when one has been handed over, and
     /// whether it is an illustration rather than a drawn piece of the text.
     fn picture_for(&self, block: Locator) -> Option<(kobo_ui::TilePicture, bool)> {
@@ -2157,6 +2305,129 @@ impl Reader {
             .copied()
             .map(|drawn| (drawn, *illustration))
     }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::{Memory, Reader};
+    use kobo_doc::{Block, Document};
+    use std::collections::BTreeMap;
+
+    fn panel() -> kobo_ui::DisplayMetrics {
+        kobo_ui::CLARA_BW_METRICS
+    }
+
+    /// A figure and its caption are set apart from the reading around them.
+    ///
+    /// Every node on a reading screen used to be separated by the one gap the
+    /// layout puts between any two of them, so a plate, the three lines of
+    /// caption under it and the paragraph after it ran together: the caption
+    /// stood as far from the figure it belongs to as from the body text it
+    /// does not, and a page carrying a figure read as one undifferentiated
+    /// column. The group gets air on both sides of it and keeps the tighter
+    /// gap inside.
+    #[test]
+    fn a_figure_and_its_caption_are_set_apart_from_the_prose_around_them() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("Before the figure.".into()),
+                Block::Picture {
+                    name: "plate.png".into(),
+                    alt: "A plot".into(),
+                    illustration: true,
+                },
+                Block::Caption("Figure 1: a plot.".into()),
+                Block::Paragraph("After the figure.".into()),
+            ],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.set_pictures(
+            [(
+                "plate.png".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 400, 300),
+            )]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+            &panel(),
+        );
+
+        let kinds: Vec<&'static str> = reader
+            .screen("A Paper")
+            .nodes
+            .iter()
+            .map(|node| match node {
+                kobo_sdk::Node::Spacer { .. } => "space",
+                kobo_sdk::Node::Picture { .. } => "picture",
+                kobo_sdk::Node::Secondary { .. } => "caption",
+                _ => "prose",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["prose", "space", "picture", "caption", "space", "prose"],
+            "the figure group was not set apart from the prose"
+        );
+    }
+
+    /// A displayed formula is told apart from its paragraph without being
+    /// lifted out of it: it is a sentence of the paper, not an illustration.
+    #[test]
+    fn a_displayed_formula_is_told_apart_from_the_paragraph_it_interrupts() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("We write".into()),
+                Block::Picture {
+                    name: "formula:0".into(),
+                    alt: "V = U V^(j)".into(),
+                    illustration: false,
+                },
+                Block::Paragraph("for the union.".into()),
+            ],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.set_pictures(
+            [(
+                "formula:0".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 300, 60),
+            )]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+            &panel(),
+        );
+
+        let spaces: Vec<i32> = reader
+            .screen("A Paper")
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Spacer { space, .. } => Some(panel().space(*space)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spaces.len(), 2, "the formula was not set apart at all");
+        assert!(
+            spaces
+                .iter()
+                .all(|space| *space < panel().space(kobo_ui::Space::Small)),
+            "a formula was given the air an illustration gets: {spaces:?}"
+        );
+    }
+}
+
+/// What a piece of a page is, as far as the space around it is concerned.
+///
+/// Three kinds rather than the dozen [`Kind`] has, because this is only ever
+/// asked in order to find the seam between a figure and the reading around it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Set {
+    /// Prose, headings, quotes, rows: the body of the document.
+    Prose,
+    /// An illustration, or a caption belonging to one.
+    Plate,
+    /// A formula set on a line of its own.
+    Formula,
 }
 
 fn is_outline_font(bytes: &[u8]) -> bool {
@@ -3737,6 +4008,55 @@ mod tests {
     /// The panel is what the controls are, so everything a reader can do to a
     /// book has to be on it. The bar it replaced carried five things and
     /// dropped the sixth without saying so.
+    #[test]
+    fn a_full_page_is_asked_for_from_the_panel_and_kept_with_the_book() {
+        // The bar is what teaches the middle-column tap, so it is never taken
+        // from a reader who has not gone looking for the setting themselves.
+        let mut reader = reader(40);
+        assert!(
+            !reader.memory().full_page,
+            "a reader who has asked for nothing keeps the bar"
+        );
+        assert!(
+            !reader.screen("Pride and Prejudice").auto_hide_top_bar,
+            "and the shell is not told to hide it"
+        );
+
+        reader.act(action::CONTROLS, &panel());
+        let outcome = reader.act(action::FULL_PAGE, &panel());
+        assert_eq!(
+            outcome,
+            Outcome::Save,
+            "the book has to reopen the way it was left, so it is written down"
+        );
+        assert!(reader.memory().full_page);
+        let screen = reader.screen("Pride and Prejudice");
+        assert!(screen.auto_hide_top_bar, "the page is the whole page now");
+        assert!(
+            screen.overlay.is_none(),
+            "the panel that changed the page cannot be what hides it"
+        );
+
+        // Written and read back by name, so a reader that has never heard of
+        // the setting simply skips the line rather than losing the record.
+        let carried = Memory::decode(&reader.memory().encode());
+        assert!(carried.full_page);
+
+        // This record belongs to one book, so the next book starts with the
+        // bar. That is the same place the type size is kept, and it is worth
+        // being plain about: setting it here does not set it everywhere.
+        assert!(
+            !Memory::default().full_page,
+            "another book opens with its bar until it is asked otherwise"
+        );
+
+        // And it is a setting, not a trap: the same control gives the bar back.
+        reader.act(action::CONTROLS, &panel());
+        reader.act(action::FULL_PAGE, &panel());
+        assert!(!reader.memory().full_page);
+        assert!(!reader.screen("Pride and Prejudice").auto_hide_top_bar);
+    }
+
     #[test]
     fn the_controls_panel_carries_every_reading_control() {
         let mut reader = reader(40);

@@ -12,10 +12,12 @@ import {
   checkProtocolMinimums,
   COMMAND_MAX_BUFFER,
   compatibleChangePaths,
+  globalBuildInputsChanged,
   isContributionManifest,
   meaningfulReleaseNotes,
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
+  manifestOnlyChangesVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
   packagesToBuild,
   registeredConsumers,
@@ -27,7 +29,7 @@ import {
   releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
-import { collectRegistry, deriveMinimumCobalt } from "./app-registry.mjs";
+import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
   registeredStorePackages,
   storeCatalogChanges,
@@ -551,10 +553,22 @@ test("prose beside an application is not a release input", () => {
   // Source is source, whatever it is named.
   assert.equal(isDocumentation("apps/notes/src/main.rs", "apps/notes"), false);
   assert.equal(isDocumentation("apps/notes/build-armv7.sh", "apps/notes"), false);
-  // A nested path may be a screenshot the app page publishes, so only prose
-  // directly beside the package is excused.
+  // Only prose directly beside the package is excused.
   assert.equal(isDocumentation("apps/notes/docs/guide.md", "apps/notes"), false);
   assert.equal(isDocumentation("apps/notes-extra/README.md", "apps/notes"), false);
+});
+
+// The README's own pictures are no more downloaded than its prose. The app
+// page publishes from docs/media/site, so a refreshed still beside the package
+// must not owe every reader a new version of the app.
+test("the screenshots a README shows are not a release input", () => {
+  assert.equal(isDocumentation("apps/notes/screenshots/home.png", "apps/notes"), true);
+  assert.equal(isDocumentation("examples/todo/screenshots/list.png", "examples/todo"), true);
+  // Only that folder, only beside the package.
+  assert.equal(isDocumentation("apps/notes/src/screenshots/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/assets/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes-extra/screenshots/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/screenshots", "apps/notes"), false);
 });
 
 // One route per application was the assumption, and the shelf broke it: an
@@ -593,6 +607,69 @@ test("no drive script in this tree counts as a release input", () => {
     }
   }
   assert.ok(seen > 30, `expected the shelf's drive scripts, found ${seen}`);
+});
+
+// A node the runtime only learned to draw in a later release is a floor on
+// which readers may install the app, and the protocol map cannot express it:
+// protocol 14 dates from 0.3.12, while the numbered board and the pencil board
+// arrived with 0.3.14. Crossword and Logic Pack were installable on 0.3.12 and
+// failed when their first board screen was encoded, which is a blank refusal
+// on a reader rather than a message anybody can act on.
+test("an app drawing a board the runtime learned late says which release it needs", () => {
+  const LATE_NODES = [
+    ["crossword_board", "0.3.14"],
+    ["pencil_board", "0.3.14"],
+    ["PencilMarkKind::Candidates", "0.3.18"]
+  ];
+  const packages = [
+    ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),
+    ...readdirSync("examples", { withFileTypes: true }).map(e => ["examples", e])
+  ].filter(([, entry]) => entry.isDirectory());
+
+  let checked = 0;
+  for (const [root, entry] of packages) {
+    const directory = `${root}/${entry.name}`;
+    let manifest;
+    try {
+      manifest = JSON.parse(readFileSync(`${directory}/cobalt-app.json`, "utf8"));
+    } catch {
+      continue;
+    }
+    let sources = "";
+    const walk = source => {
+      for (const file of readdirSync(source, { withFileTypes: true })) {
+        const path = `${source}/${file.name}`;
+        if (file.isDirectory()) {
+          walk(path);
+        } else if (file.name.endsWith(".rs")) {
+          sources += readFileSync(path, "utf8");
+        }
+      }
+    };
+    try {
+      walk(`${directory}/src`);
+    } catch {
+      continue;
+    }
+    const floors = LATE_NODES.filter(([node]) => sources.includes(`${node}(`));
+    if (floors.length === 0) continue;
+    checked += 1;
+    // The install floor is the newest node the app draws.
+    const floor = floors
+      .map(([, version]) => version)
+      .sort((a, b) => {
+        const pa = a.split(".").map(Number);
+        const pb = b.split(".").map(Number);
+        return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+      })
+      .at(-1);
+    assert.equal(
+      manifest.minimum_cobalt_version,
+      floor,
+      `${entry.name} draws ${floors.map(([node]) => node).join(" and ")} and must declare minimum_cobalt_version ${floor}`
+    );
+  }
+  assert.ok(checked >= 2, `expected the board apps, found ${checked}`);
 });
 
 test("drive scripts do not count as unpublished Store catalog inputs", () => {
@@ -721,11 +798,14 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
   );
 });
 
-test("reviewed compatible-change entries name the exact current files", () => {
+test("active protocol compatible-change entries name the exact current files", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
   for (const change of manifest.changes) {
+    // Historical exemptions cannot affect a new protocol's release selection.
+    // Keep their exact historical blobs rather than re-blessing changed SDK code.
+    if (change.protocol_version !== currentProtocolVersion()) continue;
     for (const file of change.files) {
       const current = execFileSync("git", ["hash-object", file.path], {
         encoding: "utf8"
@@ -1141,4 +1221,106 @@ test("the previous complete-set artifact is still excluded from per-app reuse", 
   assert.match(source, /\$1 !~ \/\^verified-app-set-\[0-9\]\+\$\//);
   assert.match(source, /previous_artifact="set"/);
   assert.match(source, /the set has to/);
+});
+
+test("the standalone importer is isolated without changing device workspace inputs", () => {
+  const metadata = manifestPath => JSON.parse(execFileSync("cargo", [
+    "metadata", "--locked", "--no-deps", "--format-version", "1",
+    ...(manifestPath ? ["--manifest-path", manifestPath] : [])
+  ], { encoding: "utf8", maxBuffer: COMMAND_MAX_BUFFER }));
+  const workspace = metadata();
+  assert.ok(!workspace.workspace_members.some(member => member.includes("kobo-flashcards-import")));
+  const importer = metadata("crates/kobo-flashcards-import/Cargo.toml");
+  assert.equal(importer.workspace_members.length, 1);
+  assert.ok(importer.workspace_members[0].includes("kobo-flashcards-import"));
+});
+
+test("a package manifest that only moves its version lines is not a Store change", () => {
+  const previous = [
+    "[package]",
+    'name = "kobo-sudoku"',
+    'version = "1.0.11"',
+    "edition.workspace = true",
+    "",
+    "[dependencies]",
+    'kobo-sdk = { path = "../../crates/kobo-sdk", version = "0.3.2" }',
+    ""
+  ].join("\n");
+  const inherited = previous.replace('version = "1.0.11"', "version.workspace = true");
+  assert.equal(manifestOnlyChangesVersions(previous, inherited), true);
+  assert.equal(manifestOnlyChangesVersions(previous, previous.replace('"1.0.11"', '"1.0.15"')), true);
+  assert.equal(
+    manifestOnlyChangesVersions(previous, inherited.replace('version = "0.3.2"', 'version = "0.3.3"')),
+    true
+  );
+  assert.equal(
+    manifestOnlyChangesVersions(previous, inherited.replace("[dependencies]\n", '[dependencies]\nserde = "1"\n')),
+    false
+  );
+  assert.equal(manifestOnlyChangesVersions(previous, inherited.replace("kobo-sudoku", "kobo-sudoku2")), false);
+  const dependencyTable = `${previous}\n[dependencies.serde]\nversion = "1"\n`;
+  assert.equal(
+    manifestOnlyChangesVersions(dependencyTable, dependencyTable.replace('version = "1"\n', 'version = "2"\n')),
+    false
+  );
+});
+
+test("a toolchain pin rebuilds every app unless its exact content was reviewed", () => {
+  const compatible = new Set(["rust-toolchain.toml"]);
+  const unchangedRoot = () => true;
+  assert.equal(globalBuildInputsChanged([], compatible, unchangedRoot), false);
+  assert.equal(globalBuildInputsChanged(["rust-toolchain.toml"], new Set(), unchangedRoot), true);
+  assert.equal(globalBuildInputsChanged(["rust-toolchain"], compatible, unchangedRoot), true);
+  assert.equal(globalBuildInputsChanged(["rust-toolchain.toml"], compatible, unchangedRoot), false);
+  assert.equal(globalBuildInputsChanged([".cargo/config.toml"], compatible, unchangedRoot), true);
+  assert.equal(globalBuildInputsChanged(["Cargo.toml"], compatible, () => false), true);
+  assert.equal(globalBuildInputsChanged(["Cargo.toml"], compatible, unchangedRoot), false);
+  assert.equal(
+    globalBuildInputsChanged(["apps/sudoku/src/main.rs", "docs/README.md"], new Set(), unchangedRoot),
+    false
+  );
+});
+
+test("the reviewed toolchain pin is the file in the tree, and only that file", () => {
+  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
+  const file = manifest.changes
+    .flatMap(change => change.files)
+    .find(entry => entry.path === "rust-toolchain.toml");
+  assert.ok(file);
+  assert.equal(file.base_blob, null);
+  const inTree = execFileSync("git", ["hash-object", "rust-toolchain.toml"], { encoding: "utf8" }).trim();
+  assert.equal(file.compatible_blob, inTree);
+  const protocol = currentProtocolVersion();
+  assert.deepEqual(
+    compatibleChangePaths(manifest, protocol, [file.path], () => null, () => file.compatible_blob),
+    new Set([file.path])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(manifest, protocol, [file.path], () => null, () => "f".repeat(40)),
+    new Set()
+  );
+  assert.deepEqual(
+    compatibleChangePaths(manifest, protocol, [file.path], () => "f".repeat(40), () => file.compatible_blob),
+    new Set()
+  );
+});
+
+test("the Flashcards test-only exemption refuses a changed production blob", () => {
+  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
+  const file = manifest.changes.flatMap(change => change.files)
+    .find(entry => entry.path === "apps/flashcards/src/main.rs");
+  assert.ok(file);
+  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => file.compatible_blob), new Set([file.path]));
+  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => "f".repeat(40)), new Set());
+});
+
+test("both catalog gates share package-root exclusions without hiding nested source", () => {
+  const packages = new Map([["kobo-frame", "apps/frame"]]);
+  const registered = ["kobo-frame"];
+  const hostOnly = ["apps/frame/drive.kobo", "apps/frame/drive/scenes.txt", "apps/frame/README.md"];
+  assert.equal(storeImpactOfChangedPaths(hostOnly, packages, registered).catalogQuiet, true);
+  const source = ["apps/frame/src/drive.txt", "apps/frame/src/notes.md", "apps/drive.kobo", "apps/drive/src/main.rs"];
+  const expected = [...source].sort();
+  assert.deepEqual(storeImpactOfChangedPaths([...hostOnly, ...source], packages, registered).storeChanges, expected);
+  assert.deepEqual(storeCatalogChanges([...hostOnly, ...source], storeWatchDirectories(packages, registered)), expected);
 });

@@ -1,0 +1,15 @@
+{
+  "app_source": "pr5-apps-polish 7e1ef39",
+  "cli_source": "pr6-companion-clis bf63a01",
+  "journey": [
+    "CLI build preset",
+    "CLI app/URL/action assignments",
+    "CLI push --sim",
+    "running app grid preview",
+    "paired with real kobo-sidekickd",
+    "pressed harmless CLI-configured action",
+    "app displayed exact command output"
+  ],
+  "action_output": "deck companion check passed",
+  "physical_reader": "unverified"
+}

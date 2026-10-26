@@ -1,0 +1,15 @@
+$ kobo send --preview /tmp/send-photo.png --out /tmp/preview-out   (renders at reader size locally; nothing is sent)
+Prepared 1 photos at 1072 × 1448. Open /tmp/preview-out/index.html to compare crop and pad. No photos were transferred.
+exit: 0
+0-crop.png
+0-pad.png
+index.html
+
+$ kobo send --preview /tmp/send-subs.opml   (a list is checked, not rendered)
+1 feed
+  Example https://example.com/feed.xml
+exit: 0
+
+$ kobo send --preview /tmp/send-photo.png --sim --out /tmp/x   (a preview takes no target: usage, exit 2)
+kobo: usage: a preview is local; it takes no target flags
+exit: 2

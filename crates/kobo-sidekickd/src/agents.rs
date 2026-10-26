@@ -283,20 +283,28 @@ pub fn own_path() -> String {
 
 /// Registers the hook with one agent, writing its configuration file.
 ///
-/// Keeps a copy of whatever was there as `<file>.bak` before replacing it,
+/// Keeps a new backup of the previous configuration before replacing it,
 /// and says in one line what it did.
 ///
 /// # Errors
 ///
 /// When the file cannot be read, cannot be parsed, or cannot be written.
 pub fn install(agent: &Agent, dry_run: bool) -> Result<bool, String> {
-    let path = agent.config_path()?;
-    let current = match std::fs::read_to_string(&path) {
+    install_at(agent, &agent.config_path()?, &own_path(), dry_run)
+}
+
+fn install_at(
+    agent: &Agent,
+    path: &std::path::Path,
+    binary: &str,
+    dry_run: bool,
+) -> Result<bool, String> {
+    let current = match std::fs::read_to_string(path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
-    let outcome = agent.merge(current.as_deref(), &own_path())?;
+    let outcome = agent.merge(current.as_deref(), binary)?;
     let Outcome::Write(text) = outcome else {
         println!("{:<12} already registered", agent.name);
         return Ok(false);
@@ -309,23 +317,143 @@ pub fn install(agent: &Agent, dry_run: bool) -> Result<bool, String> {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    let saved = if current.is_some() {
-        let backup = path.with_extension("json.bak");
-        std::fs::copy(&path, &backup)
-            .map_err(|error| format!("cannot back up {}: {error}", path.display()))?;
-        format!(", previous kept as {}", backup.display())
-    } else {
-        String::new()
-    };
-    std::fs::write(&path, text)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    let saved = publish_config(path, &text, current.as_deref())?;
     println!("{:<12} registered in {}{saved}", agent.name, path.display());
     Ok(true)
+}
+
+fn publish_config(
+    path: &std::path::Path,
+    text: &str,
+    previous: Option<&str>,
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let partial = path.with_extension("json.writing");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&partial)
+        .map_err(|error| {
+            format!("Cannot prepare configuration; previous file unchanged: {error}")
+        })?;
+    let result = (|| {
+        file.write_all(text.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("Cannot prepare configuration: {error}"))?;
+        let saved = if let Some(previous) = previous {
+            let backup = backup_config(path, previous)?;
+            format!(", previous kept as {}", backup.display())
+        } else {
+            String::new()
+        };
+        std::fs::rename(&partial, path).map_err(|error| {
+            format!("Cannot publish configuration; previous file unchanged: {error}")
+        })?;
+        Ok(saved)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result
+}
+
+fn backup_config(path: &std::path::Path, previous: &str) -> Result<PathBuf, String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    for index in 0..1000 {
+        let extension = if index == 0 {
+            "json.bak".to_owned()
+        } else {
+            format!("json.bak.{index}")
+        };
+        let backup = path.with_extension(extension);
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&backup)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Cannot create configuration backup: {error}")),
+        };
+        if let Err(error) = file
+            .write_all(previous.as_bytes())
+            .and_then(|()| file.sync_all())
+        {
+            let _ = std::fs::remove_file(&backup);
+            return Err(format!("Cannot save configuration backup: {error}"));
+        }
+        return Ok(backup);
+    }
+    Err("Configuration backup slots are full; move older backups before retrying.".to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{find, Outcome};
+
+    #[test]
+    fn setup_preview_backup_retry_and_invalid_config_preserve_owner_files() {
+        let root = std::env::temp_dir().join(format!(
+            "sidekick-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        let agent = find("claude").unwrap();
+        let original = "{\"theme\":\"light\",\"permissions\":{\"allow\":[\"Read\"]}}";
+        std::fs::write(&path, original).unwrap();
+        assert!(super::install_at(agent, &path, BINARY, true).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        let partial = path.with_extension("json.writing");
+        std::fs::write(&partial, "other operation").unwrap();
+        assert!(super::install_at(agent, &path, BINARY, false).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::read_to_string(&partial).unwrap(),
+            "other operation"
+        );
+        std::fs::remove_file(&partial).unwrap();
+        assert!(super::install_at(agent, &path, BINARY, false).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.bak")).unwrap(),
+            original
+        );
+        assert!(!super::install_at(agent, &path, BINARY, false).unwrap());
+        assert!(!path.with_extension("json.bak.1").exists());
+        let edited = "{\"theme\":\"dark\"}";
+        std::fs::write(&path, edited).unwrap();
+        assert!(super::install_at(agent, &path, BINARY, false).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.bak")).unwrap(),
+            original
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.bak.1")).unwrap(),
+            edited
+        );
+        let installed = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            kobo_json::parse(&installed)
+                .unwrap()
+                .get("theme")
+                .and_then(kobo_json::Value::as_str),
+            Some("dark")
+        );
+        std::fs::write(&path, "{broken").unwrap();
+        assert!(super::install_at(agent, &path, BINARY, false).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
+        assert!(!partial.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// The path an agent would be given, which is never the bare name.
     const BINARY: &str = "/opt/kobo-sidekickd";

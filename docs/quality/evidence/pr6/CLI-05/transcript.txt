@@ -1,0 +1,11 @@
+$ kobo wait --reader nobody --timeout 1   (a name nobody saved)
+kobo: no reader is saved as "nobody" (saved readers: clara, beckett)
+exit: 3
+
+$ kobo wait --reader beckett --timeout 1   (saved, unpaired, unreachable)
+kobo: "beckett" (serial N418…) is not answering at its saved address or anywhere on this network
+exit: 3
+
+$ kobo wait --reader clara --device 169.254.0.99   (naming two targets is still a usage error)
+kobo: usage: kobo wait (--device <host> | --reader <name>) [--timeout <seconds>]
+exit: 2

@@ -620,7 +620,8 @@ pub(crate) fn acquisition_kind(rel: &str) -> Option<AcquisitionKind> {
 ///
 /// # Errors
 ///
-/// Returns [`Fault::NotAFeed`] when the body is neither, and
+/// Returns [`Fault::NotAFeed`] for other document roots, incomplete XML roots,
+/// or JSON without catalog fields, and
 /// [`Fault::Json`] when it looks like JSON but is not well formed. A
 /// malformed *entry* inside an otherwise valid feed is not an error at this
 /// level — it is simply missing from the result.
@@ -628,8 +629,8 @@ pub fn parse(bytes: &[u8], base: &str) -> Result<Feed, Fault> {
     let text = String::from_utf8_lossy(bytes);
     let body = text.trim_start_matches(['\u{feff}', ' ', '\t', '\n', '\r']);
     if body.starts_with('{') {
-        json::parse(body, base).map_err(Fault::Json)
-    } else if body.starts_with('<') {
+        json::parse(body, base)
+    } else if body.starts_with('<') && atom::is_document(body) {
         Ok(atom::parse(body, base))
     } else {
         Err(Fault::NotAFeed)
@@ -669,6 +670,38 @@ mod tests {
         let with_bom = format!("\u{feff}  \n\t{ATOM_FEED}");
         let feed = parse(with_bom.as_bytes(), "https://example.org/catalog").expect("atom");
         assert_eq!(feed.version, Version::Atom);
+    }
+
+    #[test]
+    fn login_pages_errors_and_incomplete_catalogs_are_not_empty_feeds() {
+        for input in [
+            "<html><title>Sign in</title></html>",
+            "<error>Unavailable</error>",
+            "<feed><title>Books</title>",
+            "<feed></entry>",
+            "<feed></feed><html></html>",
+            r#"{"error":"unauthorized"}"#,
+            "{}",
+            r#"{"publications":"unavailable"}"#,
+        ] {
+            assert_eq!(
+                parse(input.as_bytes(), "https://library.example/"),
+                Err(Fault::NotAFeed),
+                "{input}"
+            );
+        }
+        for input in [ATOM_FEED, JSON_FEED, "<feed/>", r#"{"publications":[]}"#] {
+            assert!(
+                parse(input.as_bytes(), "https://library.example/").is_ok(),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn atom_prefixes_do_not_hide_a_valid_catalog() {
+        let feed = parse(br#"<a:feed xmlns:a="http://www.w3.org/2005/Atom"><a:title>My comics</a:title></a:feed>"#, "https://library.example/").unwrap();
+        assert_eq!(feed.title.as_deref(), Some("My comics"));
     }
 
     #[test]

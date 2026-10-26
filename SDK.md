@@ -48,12 +48,14 @@ fn main() {
 
 ## 0. Your own application, end to end
 
-Before anything else: Cobalt is hardware-tested on the exact Clara BW, Clara
-Colour, Elipsa 2E, Clara HD, Libra 2, and Libra Colour identities in the
-[device support matrix](docs/DEVICES.md#device-support-matrix). It is
-AGPL-3.0 licensed and comes with no warranty. Every device write is gated on an
-exact hardware match; do not install it on an unlisted identity or firmware.
-To help support another model, start with
+Cobalt is tested on the Clara BW, Clara Colour, Elipsa 2E, Clara HD, Libra 2,
+Libra Colour and Libra H2O at the firmware in the
+[device support matrix](docs/DEVICES.md#device-support-matrix). Other models
+run after the owner accepts a notice listing what is untested, and developer
+write tools require an exact match. Cobalt, including the SDK an application
+links, is AGPL-3.0-only with no linking exception, so an application built with
+it carries the same licence; it comes with no warranty. To help support another
+model, start with
 [Porting to another Kobo](docs/PORTING.md).
 
 Six steps from nothing to a tile on the reader's launcher.
@@ -185,7 +187,7 @@ context.set_screen(ScreenBuilder::new("results").heading("Results").build());
 
 ### Portrait and landscape
 
-Portrait is the compatibility default. An application that genuinely benefits
+Portrait is the compatibility default. An application that benefits
 from a wide viewport may request landscape for its current app session:
 
 ```rust
@@ -232,20 +234,25 @@ pub trait KoboApp {
 
     fn on_resume(&mut self, context: &mut Context) {}
     fn on_suspend(&mut self, context: &mut Context) {}
+    fn can_suspend(&self) -> bool { true }
     fn on_scheduled_wake(&mut self, context: &mut Context) {}
     fn on_exit(&mut self, context: &mut Context) {}
     fn on_device_result(&mut self, cx: &mut Context, request: DeviceRequest, result: DeviceResult) {}
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {}
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {}
+    // These default to forwarding the result to on_store. Override to route failures by key.
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {}
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {}
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {}
     fn on_shell_event(&mut self, context: &mut Context, event: ShellEvent) {}
     fn on_background(&mut self, context: &mut Context) {}
     fn on_foreground(&mut self, context: &mut Context) {}
 }
 ```
 
-Only the first two are required. Every callback is handed a `&mut Context`,
-which is the only way to affect the outside world; a method that does not take
-one cannot.
+Only the first two are required. Event callbacks receive a `&mut Context` to
+request effects. `can_suspend` only reports whether required state is durable;
+it cannot start work.
 
 `fn main` is `kobo_sdk::run("name", app)`, which reads the socket path from
 `KOBO_SOCKET`. Use `run_on` to name a socket yourself.
@@ -429,14 +436,14 @@ glyph is one byte, so the set can hold 256 and no more, which is why it
 is curated.
 
 Three places take one: `rows` and `tiles`, where the icon leads a title, and
-`controls`, where it replaces one. There is deliberately no way to put a glyph
+`controls`, where it replaces one. There is no way to put a glyph
 on `button`. A full-width button already has room to say what it does.
 
 A `controls` button draws the picture and nothing else. Setting both is the
 worst of the two, because an icon that has to be checked against a word
 underneath it is slower to read than either on its own.
 
-That is a high bar, so reach for `controls` only when the picture is genuinely
+That is a high bar, so reach for `controls` only when the picture is
 universal. Play, pause and skip are drawn the same way on every device anyone
 has used. "Create another" has no such picture, and a shape invented for it is
 a shape nobody can read.
@@ -454,7 +461,7 @@ line above it, which was going to change anyway.
 
 ### How a screen is composed
 
-The vocabulary above is deliberately small, and a small vocabulary only reads
+The vocabulary above is small, and a small vocabulary only reads
 as a product if it is spent the same way every time. These are the rules the
 nine shipped applications follow. Some of them the renderer now enforces as
 diagnostics; the rest are here because a screen that breaks them looks wrong
@@ -624,7 +631,7 @@ tapped out of a book landed at home instead of the shelf, and reopening the
 application showed the book again, because its retained screen had never
 changed.
 
-Confirmations are deliberately whole screens, not floating desktop windows:
+Confirmations are whole screens, not floating desktop windows:
 
 ```rust
 ScreenBuilder::new("delete-note")
@@ -688,6 +695,15 @@ many and the last one is drawn under the bottom bar. The trailing-aware pair is
 built with `rows_with_menu` gives up a whole touch target to the mark, whatever
 its title says, and its pair is `one_line_row_with_menu(text, nav_bar)` and
 `paginate_rows_with_menu(&[(title, summary), …], nav_bar)`.
+
+A screen whose list sits under more than a notice, such as tabs, a heading or a
+pending count that is there only sometimes, measures against what it is about to
+draw rather than against a list of things to subtract:
+`paginate_rows_under(rows, nav_bar, position, &prefix)`, and
+`paginate_rows_with_menu_under(…)` for rows carrying an overflow mark. Both take
+the built screen that precedes the list and reserve exactly its measured height.
+Build that prefix with the same function the screen itself uses, and leave the
+list and the page-position strip out of it.
 
 Two other things a page's measure has to be told, because both cost whole rows
 rather than a few pixels:
@@ -825,6 +841,8 @@ let task = context.spawn(Task::Fetch {
     url: "https://gutendex.com/books?search=austen".into(),
     offset: 0,
     max_bytes: 64 * 1024,
+    credential: None,
+    headers: Vec::new(),
 });
 ```
 
@@ -843,14 +861,31 @@ fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome)
 }
 ```
 
-The four kinds of work:
+The task kinds:
 
-- **`Fetch { url, offset, max_bytes }`**. HTTPS only. `offset` reads a long
+- **`Fetch { url, offset, max_bytes, credential, headers }`**. HTTPS only. `offset` reads a long
   document in pieces; a range is sent for every piece including the first.
-- **`Post { url, body, content_type, secret, max_bytes }`**. `secret` is the
-  *name* of a credential the runtime holds. Never its value.
+- **`Post { url, body, content_type, credential, headers, max_bytes }`**.
+  `credential` names an account held by the runtime; it never contains its value.
+- **`Update { method, url, body, content_type, credential, headers, max_bytes }`**.
+  `method` is `UpdateMethod::Put` or `UpdateMethod::Patch`. Each method requires
+  its own credential grant. A POST grant does not authorize either one.
 - **`ReadFile { path }`**. Confined to the application's own directory.
 - **`Sleep { seconds }`**. Waits without holding a wake lock.
+
+`Task::Update` uses beta protocol 14 task tag 4; existing task tags are
+unchanged. Rebuild the app, runtime and simulator together. Historical protocol
+versions reject update tasks. The reviewed Miniflux token policy permits bounded
+entry PUTs only within the saved server scope. Other provider grants remain
+method-specific; adding a new provider requires reviewing its destinations and
+body fields before an account can be used for updates.
+
+Updates are sent once, including through `spawn_retrying`. The transport refuses
+redirects and retained-stream controls for updates. A timeout or lost connection
+may follow a change that the server already applied: retain the pending action,
+read back server state and reconcile before retrying. Do not blindly repeat
+operations that toggle state. `cancel` stops waiting; it cannot undo a request
+already accepted by a server.
 
 Show that something is happening. `activity(label, None)` plus `skeleton(n)`
 puts a placeholder where the content will land, which reads far better on a
@@ -912,7 +947,7 @@ the runtime dies of.
 ### Credentials
 
 ```rust
-Task::Post { secret: Some("openai".into()), .. }
+Task::Post { credential: Some(Credential::bearer("openai")), .. }
 ```
 
 ```rust
@@ -929,7 +964,7 @@ logs, or crash dump, and it cannot be sent anywhere the application did not
 name: the request is not replayed across a redirect.
 
 `Failure::of(error)` turns a task failure into a state, a sentence and an
-honest answer about whether a Retry control would help. For a missing
+clear answer about whether a Retry control would help. For a missing
 credential, `Failure::naming(secret)` says which one: an application running
 against three providers that only says "install a key" leaves whoever is
 holding the reader to guess which of the three.
@@ -958,6 +993,9 @@ private namespace first. A file installed by `kobo secret set` remains a
 global owner credential at `secrets/<name>` and is used only when the calling
 app has no private value. Thus Chat and Audiobook may hold different `openai`
 credentials, while existing CLI-installed credentials continue to work.
+Setting or removing a secret with `kobo secret` also deletes the values apps
+saved under that name, so the owner's latest choice from a computer is the one
+used, and a rejected token typed on the reader can be replaced from a computer.
 Applications cannot name or write another app's namespace, and secret paths
 and symbolic links are refused rather than followed.
 
@@ -976,6 +1014,41 @@ Pass actions to `setup.on_action(...)` and device replies to
 only credential names authorized for the calling app, and the app cannot read
 the stored value back. The setup prompt also shows the CLI alternative and
 instructs the owner to restart the app after using it.
+
+For an owner-hosted service, bind the account to its HTTPS server with
+`CredentialSetup::bind_server` or `context.secrets().set_server(name, server,
+value)`. Protocol 14 checks the origin, port and base path before attaching an
+account to a request. The app must be authorized for that named account;
+Panels uses `komga`. Changing servers requires entering the account for the new
+address. Use `ProviderSetup::with_server_accounts` for separate username and
+password steps; keep the setup object until the matching save reply arrives.
+A save acknowledgement confirms storage, not a successful connection. Validate
+the provider response before showing Connected. See
+[Panels' server flow](apps/panels/src/server.rs).
+
+### Public library setup
+
+Use `ProviderSetup::public("catalog")` for a public HTTPS catalog or library
+endpoint. It reuses the address editor, connection check, cancellation and
+response-validation flow without offering account entry or sending a credential.
+Unlike an authenticated provider's base address, a public endpoint is fetched
+exactly as entered, preserving its path, trailing slash and query. The response
+is bounded to 256 KiB. HTTP, user information in the URL and fragments are refused.
+
+```rust
+let mut setup = kobo_sdk::provider::ProviderSetup::public("catalog")?;
+setup.restore_address("https://library.example/opds/?language=en")?;
+```
+
+Handle `provider::Event::Response(bytes)` by parsing the expected catalog format.
+Only call `setup.verified()` and persist the address after that validation.
+Call `setup.invalid_response()` for an HTML page or a malformed catalog. An
+HTTP success alone does not verify a library. Cancelled or superseded check
+responses are ignored by the shared flow.
+
+Gutenbird uses this flow and validates the response as OPDS before saving the
+address. Its simulator check covers address entry, the connection check,
+a single catalog fetch, download and an offline restart.
 
 ### Owner trust roots
 
@@ -1003,7 +1076,7 @@ command is rarely needed by hand: `kobo setup` carries everything in
 ## 6. Typing, where it is unavoidable
 
 Tapping beats typing on this panel, so a screen asks a question with `choose`
-wherever it can. When words are genuinely required, the keyboard is a composite
+wherever it can. When words are required, the keyboard is a composite
 rather than a node: rows of ordinary tappable cells and a small state machine.
 
 ```rust
@@ -1021,6 +1094,13 @@ Keys are addressed **positionally**: `kb.r1c2` is the third key of the middle
 row, whatever it currently says. Shift and the symbol layer change every label
 without moving a single cell, so a finger already resting on a key does not
 have to be lifted and re-aimed.
+
+Shift works on the symbol layer as it does on a computer: shift then 5 types
+`%`. The shifted page also holds `$ ^ * [ ] { } < > \ | ~` and the backtick, so
+every printable ASCII character can be typed, which a Wi-Fi password or a shell
+command may need. An app that arranges its own keys reads the current rows
+from `Keyboard::rows` instead of copying them. `TextEntry::open` always starts
+on the letters, unshifted.
 
 ---
 
@@ -1041,6 +1121,60 @@ Every call answers exactly once at `on_store`, including its failures. Writes
 are atomic, so the worst a power loss can cost is the change that was in
 flight. The application names a key and never a path: where the bytes live, and
 that they cannot be another application's bytes, is the runtime's problem.
+
+### Durable edits and verified copies
+
+Use `kobo_state::draft::Draft` to retain the latest edit through pending or failed
+writes. A failed acknowledgement must leave a Retry action and the unsaved data.
+`kobo_state::record::Schema` bounds and versions stored records; preserve corrupt
+or newer records rather than interpreting them as empty. `kobo_state::outbox`
+provides a durable queue for deferred work; enqueueing is not remote delivery.
+
+For files, use `kobo_sdk::imports::Import`: show its preview, begin on the owner's
+confirmation, and forward shelf/save results until copy verification and receipt
+storage complete. Use `kobo_sdk::exports::Export` for text, Markdown, PNG or JPEG
+copies up to 32 MiB. Preparing an export makes an acknowledged offer on the
+reader. The computer receives it with:
+
+```sh
+kobo export --app APP --device reader.local --out "$HOME/Downloads"
+# A running simulator, using the same TMPDIR:
+kobo export --app APP --sim --out "$HOME/Downloads"
+```
+
+Replace `APP` with an app that has prepared an export. Receiving uses the existing
+SSH connection and verifies the complete file before publishing a local copy. It
+keeps the reader's original and never replaces a different local file. A failed
+transfer can be retried. See the [export integration guide](docs/quality/sdk-export-and-copy.md)
+and [working SDK example](crates/kobo-sim/examples/export.rs) for callback routing,
+retry and save-barrier handling.
+
+Not every app offers export yet.
+
+### Shared comic reading
+
+`kobo_comic` inspects bounded CBZ archives and decodes PNG/JPEG pages.
+`kobo_bookview::comic::ComicView` provides fit, zoom, pan, thumbnails, page jump,
+rotation, spreads and right-to-left reading. Persist `memory()` through an
+acknowledged draft, forward actions to `act`, reflow when metrics change, and
+`close` to release picture resources. Restore a position only against its comic.
+For cover lists, pair `Context::clamped_cover_row` with
+`paginate_cover_rows_below_section`. Both reserve the renderer's wider picture
+column. Use `RowLead::Picture` with a missing handle and glyph fallback for
+uncached covers, so text does not shift when a cover arrives.
+
+For shelf covers, `cover_preview()` returns a bounded image without moving the
+reading position. `kobo_comic::reader::Memory::saved_page(bytes, page_count)`
+validates stored reading memory and returns an optional zero-based page without
+decoding the archive. Use the summary only with unchanged page order, such as a
+content-addressed CBZ; opening the reader still resolves its filename anchor.
+Missing positions and unreadable records remain distinct. See
+[Panels](apps/panels/README.md) for a complete app integration. CBR/RAR decoding
+is deferred; no RAR codec or library is included.
+
+<img src="apps/panels/screenshots/reader.png" width="320" alt="The shared ComicView rendering the first page of the original A small garden sample in Panels">
+
+*Shared comic reader in the Clara BW simulator; [capture provenance](apps/panels/screenshots/README.md).*
 
 ---
 
@@ -1068,6 +1202,17 @@ screen out with an empty terminal and measures what is left, so the program
 wraps its lines exactly where the reader sees them wrap; an application that
 did its own arithmetic about bars and keyboards would be wrong the first time
 either changed.
+
+An empty terminal is a valid waiting state, not hidden content. It still
+negotiates a measured grid; diagnostics do not report an empty terminal as
+offscreen.
+
+Terminal text uses `FontSize::Terminal`, a 1.8 mm monospace em before the owner's
+text scale. Interface labels retain their normal sizes. The same font metrics
+control layout, cursor cells, painting and the negotiated PTY grid. Width is
+measured from the actual content area, not fixed at 80 columns: Clara BW portrait
+at Default currently fits 75. Larger text reduces the grid; a keyboard changes
+the available rows. See [Paperterm's actual portrait capture](apps/paperterm/screenshots/terminal.png).
 
 `terminal_keys` sends a byte the instant a key is tapped rather than collecting
 a word, because `Ctrl-C` has to arrive while the program is still running.
@@ -1105,6 +1250,15 @@ Drawing while backgrounded is not an error, it is just traffic for no picture.
 A long-running job should keep its state and rebuild the screen once on the way
 back, instead of sending one per chunk of progress.
 
+During power preparation, `on_suspend` must enqueue durable state writes;
+`can_suspend` must remain false while required writes or retries are unresolved.
+The SDK drains storage acknowledgements, including chained writes, before
+accepting preparation. Native preparation requires protocol 14 from every
+hosted app. Current device behavior returns to the stock reader after the save
+barrier and panel fence. Native kernel suspend, RTC wake and automatic cover
+sleep remain disabled pending hardware validation; simulator scenarios do not
+establish those hardware capabilities.
+
 ---
 
 ## 10. Hardware
@@ -1132,7 +1286,7 @@ things:
 
 - **`NotDeclared`**. The application did not ask for the capability.
 - **`WithheldForBattery`**. Policy will not spend the charge right now.
-- **`Unsupported`**. This build genuinely cannot do it.
+- **`Unsupported`**. This build cannot do it.
 
 A build performs only what it has a proven backend for. The device backend
 uses the firmware's running `wpa_supplicant` and Bluetooth service; it does not
@@ -1253,7 +1407,7 @@ root of a single-application session is drawn with no back control at all, so
 tapping a book is a one way door. With it the application receives
 `ActionId::BACK` and answers with the list it came from.
 
-The author is the hero's byline and is stated exactly once. It is deliberately
+The author is the hero's byline and is stated exactly once. It is
 not repeated as a fact row two lines below.
 
 ---
@@ -1412,6 +1566,7 @@ A script is one step per line; `#` is a comment.
 | `shot NAME` | writes `NAME.png` into the shots folder |
 | `dump` | prints every node and its text, for writing the next step |
 | `scenario NAME` | switches to a deterministic failure scenario |
+| `wifi FAULT` | makes the simulated radio fail: `absent`, `hung`, `unresponsive`, `wrong-password`, or `none` |
 | `lifecycle background` / `foreground` | delivers a real lifecycle message |
 | `wait MS` | waits |
 
@@ -1449,8 +1604,8 @@ one simulator at a time, with no reader anywhere near it.
 
 **Pass `--ideal` when you are reading the screenshots rather than the
 refreshes.** A screenshot is taken from the simulated panel, and the simulated
-panel keeps the e-ink residue of what it drew last, exactly as the device
-does. That is what you want when the question is whether a screen refreshes
+panel models residue from previous refreshes. Its timing and ghosting are
+approximations that still need comparison with physical reader captures. That is what you want when the question is whether a screen refreshes
 cleanly, and exactly what you do not want when the question is whether it
 *reads* well: two screens overlaid are hard for a person to judge and worse
 for a model. `--ideal` takes the frame without the residue. `kobo shot`
@@ -1581,3 +1736,102 @@ Worked examples, smallest first: `examples/tictactoe`, `examples/todo` (state
 that survives a restart), `examples/gallery` (every primitive on one screen),
 `examples/terminal`, `examples/brief` (work that continues in the background),
 `examples/launcher`, `examples/chat`, `examples/gutenbird`.
+
+### Marks on a square board
+
+`ScreenBuilder::board` and `board_with_selection` keep puzzle geometry fixed as interface text grows. The shared renderer and diagnostics choose the largest semantic mark size that fits each square (heading, body, then caption). Key labels retain their normal body size. Keep board labels short; long words and labels that exceed caption capacity remain layout errors. A selected row or column can use the existing per-cell selection state; the app should identify the focused square independently.
+
+At the smallest legal square, up to three-character board marks can step down the interface scale if even caption size would clip. Rendering and diagnostics use the same bounded choice. Long labels and ordinary keys do not receive this fallback.
+
+`ScreenBuilder::grid_with_selection(columns, square, cells)` accepts `(action, label, selected)` tuples. On nonsquare key grids, selected keys keep their filled field and add an ink outline. Use this for candidate toggles or retained keypad choices; keep labels unchanged so selection does not increase their measured width.
+
+`Context::paginate_oriented(text, nav_bar, orientation)` measures interface prose for an app-requested orientation, retaining status and page-control space. Pair it with `Context::set_orientation` and `metrics().oriented(orientation)` for the rest of the view.
+
+Board viewports shade and outline the selected square’s matching row and column clue targets. Panning retains absolute row/column identities; the complete clue remains available through its existing inspection action. Nonograms provides an app-level example with attached clues and persistent undo.
+
+### Numbered crossword grids (beta)
+
+`ScreenBuilder::crossword_board(columns, cells)` takes `(action_name, letter,
+corner_number, active_word)` tuples. It draws joined black rules, centered
+letters and small upper-left clue numbers. `'#'` denotes a solid, noninteractive
+block; `' '` denotes an empty letter square. Numbers are 1–99. Number at least
+one start square. Keep the same absolute action IDs as letters change; the app
+owns clue navigation and answer checking. Crossword's screenshot and complete
+example are in `apps/crossword`.
+
+The protocol-14 beta uses a distinct numbered-grid node tag (33), so ordinary
+grid frames remain byte-compatible with installed apps. Numbered boards refuse
+older protocol versions; deploy the matching beta runtime with the app. No
+existing grid label is interpreted as an embedded numbering format.
+
+Short keyboard labels fit their physical key rectangles, including compact
+landscape rows at large text settings. Top-bar text actions use caption size
+when body text cannot fit the bar's height; measurement and drawing agree.
+Touch targets are not reduced. `kobo drive` typing first resolves visible SDK
+keyboard actions, preventing an existing crossword letter from stealing a tap.
+It still taps actual screen coordinates, and custom keyboards retain label
+matching when no SDK keyboard is present.
+
+### Root-relative article images
+
+`BookView::open_html` resolves an image path such as `/images/photo.png` against
+the document's HTTPS host, in addition to directory-relative image references.
+This is a network URL, never a shelf or device filesystem path. Call `close`
+when leaving the document to release pictures and cancel outstanding image
+requests. Apps that promise offline images must persist and restore the image
+bytes themselves; opening HTML alone does not provide durable image storage.
+
+Image URL resolution also supports explicit HTTPS ports. Absolute image URLs
+must keep the document's effective port; a page on port 8443 cannot cause an
+image request on 443 or another port. Relative paths retain the document's
+host and port. Credentials embedded in URLs remain refused by the shared
+HTTPS parser.
+
+For lists with a recovery notice, use
+`Context::paginate_rows_below_notice(rows, bottom_action_present, notice)` and
+render the same notice text. It reserves the banner's measured height and the
+fixed bottom action, preventing long lists from clipping rows during failures.
+
+Reader quotes use the reading face and scale for both layout and rendering,
+including when the interface text is larger. `Reader::report` reserves space
+for its warning before repaginating around the saved document location. Clearing
+the warning restores the available reading area.
+
+For rows with overflow menus, `Context::clamped_row_with_menu(text, lines,
+nav_bar)` measures the width left by the menu. Use
+`paginate_rows_with_menu_below_notice(rows, nav_bar, notice)` when the same list
+has a banner; it reserves both the menu column and the measured banner height.
+
+### Verified offline snapshots
+
+Use `kobo_sdk::snapshot::Snapshot` for a complete feed response or other
+replaceable offline content larger than a small store value. Create it with a
+stable identity that includes the server and account scope, then call `start`.
+The default bound is 512 KiB; `Snapshot::new(identity).at_most(768 * 1024)`
+accommodates a bounded Miniflux article response. The maximum is the SDK shelf
+download limit. Validate the response before saving it.
+
+Route key loads/saves matching `snapshot.key` to `stored`, and shelf results
+matching `snapshot.owns_file(name)` to `shelf`. Both return optional
+`SnapshotEvent` values. `Loaded` makes verified bytes available in `bytes`,
+or leaves it empty for a missing/damaged snapshot. `Saved` means both the file
+and its published pointer were acknowledged. `Failed` leaves earlier published
+content intact and exposes `retryable()`; offer explicit recovery with `retry`.
+Retry rereads the pointer before choosing a slot, including after uncertain
+acknowledgements.
+
+Keep the snapshot alive while `busy()` or `retryable()` is true. A new candidate
+received after a failed save replaces the pending candidate but starts no write
+until retry. `save` returns false for a busy snapshot, an oversized candidate or
+a retained candidate awaiting retry; do not report it as saved. An app should
+serialize refreshes with active saves. Releasing an idle snapshot from memory
+does not remove its files. Disk retention and cleanup remain the app's policy.
+
+### Chess boards
+
+An eight-by-eight square grid containing chess-piece glyphs renders as a joined
+checkerboard. Keep it at the screen root so the shared layout can reserve space
+for player names, clocks and controls below it. Wrapping a board in a fixed-width
+band prevents that height adjustment and can clip controls at large text sizes.
+Selected dark squares retain a visible border. Apps remain responsible for legal
+move hints and for accepting only acknowledged game state.

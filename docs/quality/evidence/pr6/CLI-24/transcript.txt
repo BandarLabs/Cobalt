@@ -1,0 +1,19 @@
+=== kobo sync help explains wake/network effects ===
+       kobo sync resume
+       kobo sync stop
+       
+       While the peer runs it uses this computer's network. A sleeping
+       reader is not kept awake; it syncs during the windows its owner
+       opens on the Kobo.
+
+=== sync setup completion message (source, printed on real setup) ===
+150:        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled and wakes only for the windows its owner\nopens; continuous sync does not keep a sleeping reader awake. While the peer runs it\nuses this computer's network. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
+151-        local.display(),
+152-        host_folder_type(folder),
+153-        home.display(),
+154-        state.version
+
+=== sync run startup messages (source) ===
+150:        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled and wakes only for the windows its owner\nopens; continuous sync does not keep a sleeping reader awake. While the peer runs it\nuses this computer's network. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
+257:            "Sync peer started in the background (PID {}).\nIt uses this computer's network until stopped; it does not keep a sleeping reader awake.\nRun 'kobo sync status' for folder state, 'kobo sync pause' to pause transfers, or 'kobo sync stop' to quit.",
+263:        "Sync peer is running for at most {seconds} seconds; it uses this computer's network during that window and does not keep a sleeping reader awake. 'kobo sync stop' can end it sooner."

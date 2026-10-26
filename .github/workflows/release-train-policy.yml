@@ -45,12 +45,14 @@ jobs:
           # arrives only by going there; routing it through beta would mean no
           # fix to the website could ship without also shipping whatever else
           # beta is carrying that day. It is held to the site: the check below
-          # refuses one that touches anything a reader runs.
+          # refuses one that touches anything a reader runs. Codex's default
+          # branch names use the same site-only restriction; the prefix does
+          # not grant permission to ship device or host code directly to main.
           case "$HEAD_REF" in
             beta|release/v*) exit 0 ;;
-            site/*) ;;
+            site/*|codex/*) ;;
             *)
-              echo "Pull requests into main must come from beta, release/v*, or site/*." >&2
+              echo "Pull requests into main must come from beta, release/v*, or a site-only site/* or codex/* branch." >&2
               exit 1
               ;;
           esac
@@ -58,7 +60,7 @@ jobs:
           outside="$(git diff --name-only "origin/${BASE_REF}...HEAD" \
             | grep -Ev '^(docs/|\.github/workflows/(pages|release-train-policy)\.yml$)' || true)"
           if [ -n "$outside" ]; then
-            echo "A site/* branch may change only the site and how it is published." >&2
+            echo "A site/* or codex/* branch into main may change only the site and how it is published." >&2
             echo "These fall outside that:" >&2
             # Quoted, and fed by line rather than by word: a path with a space
             # in it would otherwise be reported as two, and one holding a glob
@@ -67,3 +69,6 @@ jobs:
             printf '  %s\n' "$outside" >&2
             exit 1
           fi
+      - name: Test the browser installer
+        if: ${{ hashFiles('docs/install/*.test.mjs') != '' }}
+        run: node --test docs/install/*.test.mjs

@@ -24,6 +24,14 @@ impl Cadence {
             Self::Daily => 5,
         }
     }
+    pub const fn seconds(self) -> Option<u32> {
+        match self {
+            Self::Manual => None,
+            Self::Hourly => Some(3_600),
+            Self::FourHourly => Some(14_400),
+            Self::Daily => Some(86_400),
+        }
+    }
     pub const fn next(self) -> Self {
         match self {
             Self::Manual => Self::Hourly,

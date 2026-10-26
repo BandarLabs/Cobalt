@@ -1,4 +1,6 @@
 const SETUP_FIELDS = new Set(["steps"]);
+const KOBO_COMMAND_INSTALL =
+  "curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup";
 const STEP_FIELDS = new Set(["text", "link", "command"]);
 const LINK_FIELDS = new Set(["label", "url"]);
 
@@ -85,12 +87,21 @@ export function setupPanel(app) {
       return `      <li>${escapeHtml(step.text)}${link}${command}</li>`;
     })
     .join("\n");
+  // Someone who installed Cobalt from the browser has no kobo command, and
+  // the only other install route they are likely to find builds from source
+  // and needs Rust. Every page whose steps use the command says where the
+  // ready-built one comes from, without setting the reader up a second time.
+  const tool = setup.steps.some(step => step.command)
+    ? `
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">${escapeHtml(KOBO_COMMAND_INSTALL)}</code></p>`
+    : "";
   return `
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
 ${steps}
-    </ol>
+    </ol>${tool}
   </section>`;
 }

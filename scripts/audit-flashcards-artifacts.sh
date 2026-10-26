@@ -105,14 +105,22 @@ find_rust_lld() {
 
 if [ -x "$HOME/.cargo/bin/rustup" ]; then
   RUSTUP="$HOME/.cargo/bin/rustup"
-  default_toolchain=$("$RUSTUP" default)
+  # The device workspace builds with the compiler its tracked
+  # rust-toolchain.toml names. A rustup directory override outranks that
+  # file and would build the reader with a compiler nobody reviewed.
   active_toolchain=$(CDPATH= cd -- "$repo" && "$RUSTUP" show active-toolchain)
-  if [ "$active_toolchain" != "$default_toolchain" ]; then
-    echo "repository inherits a non-default rustup toolchain override" >&2
-    exit 1
-  fi
-  toolchain_name=${default_toolchain%% *}
+  case $active_toolchain in
+    *" (overridden by '$repo/rust-toolchain.toml')") ;;
+    *)
+      echo "repository toolchain does not come from its rust-toolchain.toml" >&2
+      exit 1
+      ;;
+  esac
+  toolchain_name=${active_toolchain%% *}
   rust_sysroot=$("$RUSTUP" run "$toolchain_name" rustc --print sysroot)
+  # The standalone importer requires Rust 1.88, newer than the device pin,
+  # and the pin applies in the importer's directory too.
+  importer_sysroot=$("$RUSTUP" run 1.88.0 rustc --print sysroot)
 else
   rust_driver=
   for candidate in /usr/bin/rustc /opt/homebrew/bin/rustc; do
@@ -126,11 +134,15 @@ else
     exit 1
   fi
   rust_sysroot=$(CDPATH= cd -- "$repo" && "$rust_driver" --print sysroot)
+  importer_sysroot=$rust_sysroot
 fi
 RUSTC="$rust_sysroot/bin/rustc"
 CARGO="$rust_sysroot/bin/cargo"
-if [ ! -x "$RUSTC" ] || [ ! -x "$CARGO" ]; then
-  echo "the active Rust sysroot lacks rustc or cargo" >&2
+IMPORTER_RUSTC="$importer_sysroot/bin/rustc"
+IMPORTER_CARGO="$importer_sysroot/bin/cargo"
+if [ ! -x "$RUSTC" ] || [ ! -x "$CARGO" ] ||
+  [ ! -x "$IMPORTER_RUSTC" ] || [ ! -x "$IMPORTER_CARGO" ]; then
+  echo "a selected Rust sysroot lacks rustc or cargo" >&2
   exit 1
 fi
 PATH="$rust_sysroot/bin:$PATH"
@@ -288,9 +300,15 @@ mkdir -p "$audit_tools"
 (
   cd "$repo"
   TMPDIR="$target_root/build-tmp" \
+  CARGO_TARGET_DIR="$audit_tools" \
+    "$CARGO" build --quiet --locked --release -p kobo-cli
+  TMPDIR="$target_root/build-tmp" \
   COBALT_SOURCE_COMMIT="$source_commit" \
   CARGO_TARGET_DIR="$audit_tools" \
-    "$CARGO" build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
+  RUSTC="$IMPORTER_RUSTC" \
+  PATH="$importer_sysroot/bin:$PATH" \
+    "$IMPORTER_CARGO" build --quiet --locked --release \
+      --manifest-path "$repo/crates/kobo-flashcards-import/Cargo.toml"
 )
 assert_source_unchanged
 trusted_cli="$audit_tools/release/kobo"
@@ -318,7 +336,9 @@ fi
 
 host_tree=$(
   cd "$repo"
-  "$CARGO" tree --locked --offline -p kobo-flashcards-import --edges normal --prefix none
+  "$CARGO" tree --locked --offline \
+    --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+    --edges normal --prefix none
 )
 for package_name in anki anki_i18n anki_io anki_proto; do
   if ! printf '%s\n' "$host_tree" |
@@ -407,7 +427,10 @@ if printf '%s\n' "$audit_symbols" |
   exit 1
 fi
 
-"$PYTHON3" -I - "$repo/apps/catalog.json" "$device" "$manifest" "$catalog" "$package" <<'PY'
+# Use the same contributed-app normalization and protocol minimums as releases.
+registry="$target_root/.flashcards-collected-registry.json"
+node "$repo/tools/collect-app-registry.mjs" --out "$registry"
+"$PYTHON3" -I - "$registry" "$device" "$manifest" "$catalog" "$package" <<'PY'
 import hashlib
 import json
 import sys
@@ -456,7 +479,7 @@ expected = (
     + "}"
 ).encode()
 if actual != expected:
-    raise SystemExit("artifact manifest differs from apps/catalog.json and device ELF")
+    raise SystemExit("artifact manifest differs from the collected app registry and device ELF")
 entries = validation_catalog.get("entries", [])
 if len(entries) != 1:
     raise SystemExit("validation catalog must contain exactly one entry")
@@ -470,6 +493,7 @@ if entry.get("package_bytes") != len(package):
 if entry.get("package_url") != "https://example.invalid/flashcards-validation.cobalt-app":
     raise SystemExit("validation catalog package URL differs")
 PY
+rm -f "$registry"
 
 "$trusted_cli" app-verify \
   --package "$package" \
@@ -482,9 +506,11 @@ PY
   --public-key "$public_key" \
   --package "$package" >/dev/null
 
+# rslib has to stand alone. The pinned compiler's standard library stores its
+# panic paths back to back, so a bare match finds `pattern.rslibrary/core`.
 for path in "$device" "$package"; do
   if strings "$path" |
-    grep -E 'Anki|AnkiDroid|ankitects|anki_i18n|rslib|9e32ad8849068510a82273889c21b22e1acf0949' >/dev/null; then
+    grep -E 'Anki|AnkiDroid|ankitects|anki_i18n|(^|[^[:alnum:]_])rslib([^[:alnum:]_]|$)|9e32ad8849068510a82273889c21b22e1acf0949' >/dev/null; then
     echo "device artifact contains host-only Anki branding or source material: $path" >&2
     exit 1
   fi

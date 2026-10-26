@@ -1,0 +1,15 @@
+{
+  "app_source": "pr5-apps-polish 193de6e",
+  "cli_source": "pr6-companion-clis 840cad1 plus Panels CLI patch",
+  "source_url": "https://dodoledev.gitlab.io/pepperandcarrot-cbz/library/Pepper%20and%20Carrot/ep01_Potion-of-Flight.cbz",
+  "source_sha256_original": "26b8da12a7a888f291fb010794af9a81fffd80964485beaffb35d36b3e3aed95",
+  "normalized_cbz_sha256": "e59add4bc6d05cbddae090e0fb5a66830bc6f432bbce4cc056080e044f69adb4",
+  "license": "Pepper&Carrot by David Revoy, CC BY 4.0",
+  "assertions": [
+    "CLI changed simulator shelf",
+    "app previewed real cover",
+    "app imported with receipt",
+    "app opened page 1 of 5"
+  ],
+  "physical_reader": "unverified"
+}

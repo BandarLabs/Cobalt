@@ -1,0 +1,11 @@
+# Pairing asks for the daemon address first, then the six-character code.
+wait-for Sidekick
+expect Pair with your computer
+clean
+shot sidekick-address
+type example
+tap Next
+wait-for Now the pairing code
+expect The six characters shown beside the address.
+clean
+shot sidekick-code

@@ -1,9 +1,9 @@
 expect KnightReader
 expect You
 shot live-board
-tap-at 472,1037
+tap-id square-e7
 wait-for e7 →
-tap-at 472,669
+tap-id square-e4
 wait-for Illegal
 shot illegal-move
 tap More

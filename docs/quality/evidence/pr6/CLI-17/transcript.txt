@@ -1,0 +1,43 @@
+$ kobo send /tmp/send-photo3.png --sim   (first send of these bytes: pushed, receipt written)
+preparing /tmp/send-photo3.png for frame
+0 new, 1 already present, 0 removed; 0 image bytes to send
+  Keep: send-photo.png / send-photo.png (photo-d50492a307dcde3c)
+Frame transfer verified: 2 photo(s), 0 new, 0 removed
+sent to sim
+exit: 0
+
+$ cat $KOBO_CONFIG_DIR/receipts   (the receipt the acknowledged send left)
+send = /tmp/send-photo3.png
+app = frame
+target = sim
+sha256 = c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96
+at = 1789818050
+
+$ kobo send /tmp/send-photo3.png --sim   (same bytes, same target: reported done, not pushed again)
+preparing /tmp/send-photo3.png for frame
+/tmp/send-photo3.png is unchanged since it was sent to sim (receipt at 1789818050); nothing to do
+exit: 0
+
+$ printf x >> the photo, then: kobo send /tmp/send-photo3.png --sim   (changed bytes are a new send, receipt refreshes)
+preparing /tmp/send-photo3.png for frame
+0 new, 1 already present, 0 removed; 0 image bytes to send
+  Keep: send-photo2.png / send-photo2.png (photo-914195d8686706f9)
+exit: 0
+receipts now: 1
+$ kobo send /tmp/send-photo3.png --sim   (first send of these bytes: pushed, receipt written)
+preparing /tmp/send-photo3.png for frame
+1 new, 0 already present, 0 removed; 11520 image bytes to send
+  Add: send-photo3.png / send-photo3.png (photo-4aac4340321fad36)
+Frame transfer verified: 3 photo(s), 1 new, 0 removed
+sent to sim
+exit: 0
+(the shelf is content-addressed: the re-encoded image bytes matched, so Frame kept its copy - and the receipt ledger still records this send, because the file on this computer changed)
+receipts now: 3
+
+$ tail of the ledger
+send = /tmp/send-photo3.png
+app = frame
+target = sim
+sha256 = 7e317e9b0c6da4d81c05d23a7f28fc17384f66380fe5c54fd08fa3a170c4c56f
+at = 1789818059
+

@@ -172,6 +172,38 @@ pub struct Picture {
 }
 
 impl Picture {
+    /// Copies a bounded source rectangle without enlarging or altering its colors.
+    ///
+    /// # Errors
+    /// Refuses empty or out-of-bounds rectangles before allocating a result.
+    pub fn crop(&self, x: u32, y: u32, width: u32, height: u32) -> Result<Self, ImageError> {
+        if width == 0 || height == 0 {
+            return Err(ImageError::EmptyBox);
+        }
+        if x.checked_add(width).is_none_or(|end| end > self.width)
+            || y.checked_add(height).is_none_or(|end| end > self.height)
+        {
+            return Err(ImageError::Undecodable(
+                "the crop is outside the page".into(),
+            ));
+        }
+        checked_pixels(width, height)?;
+        let plane = |source: &[u8], channels: usize| {
+            let mut out = Vec::with_capacity(width as usize * height as usize * channels);
+            for row in y..y + height {
+                let start = (row as usize * self.width as usize + x as usize) * channels;
+                out.extend_from_slice(&source[start..start + width as usize * channels]);
+            }
+            out
+        };
+        Ok(Self {
+            width,
+            height,
+            grey: plane(&self.grey, 1),
+            colour: self.colour.as_ref().map(|c| plane(c, 3)),
+        })
+    }
+
     /// Builds a picture from grey bytes that are already the right shape.
     ///
     /// # Errors

@@ -1,55 +1,41 @@
 # Tic-tac-toe
 
-Two players, one panel, three in a row.
+Tic-tac-toe for two players on one Kobo, or against the Kobo.
 
-This exists to prove a point about the SDK as much as to be a game: it is
-written entirely against the public builders, and the board is not a board
-primitive. It is a `grid`, which is the same thing a keypad or an on-screen
-keyboard is. If a game needs the framework to grow a new node type, the
-framework is not general enough yet.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/game.png" alt="A finished game, with the winning line marked"><br>A finished game, with the winning line marked</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/solo.png" alt="Playing against the Kobo"><br>Playing against the Kobo</td>
+</tr>
+</table>
 
-![A finished game, with O winning down the third column](screenshots/game.png)
+## Features
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+- Two players take turns on one Kobo. Noughts go first.
+- **Against the Kobo** plays a simple opponent: it wins when it can, blocks
+  when it must, and can be beaten.
+- The winning line is marked on the board.
+- The score for the session is shown under the heading. **Next game** keeps
+  it, and **Clear score** resets it. The score survives closing the app. An
+  unfinished game does not.
 
-## The rules
+The board is built from the SDK's ordinary `grid`, with no game-specific
+components. It is a quick check that the layout engine still handles the
+basics.
 
-The ones people actually play at a table: whoever is holding the device taps,
-and the mark alternates. Nought goes first.
+## Permissions
 
-## Why it is the floor
+None.
 
-Tic-tac-toe gets nothing. When the SDK's vocabulary was expanded from a handful
-of nodes to nearly thirty, this application was deliberately left untouched: if
-a proposed component turns out to be needed *here*, in a game that is a
-three-by-three grid and a line of text, then the component is wrong and the
-primitive it should have been built from is missing.
-
-That makes it a useful canary. A change to the layout engine that this cannot
-survive is a change that has broken something fundamental.
-
-## Running it
+## Development
 
 ```sh
-kobo run --sim --app tictactoe          # in the browser simulator
-kobo deploy --device <ip>               # onto a reader over Wi-Fi
+cargo test -p kobo-tictactoe
+kobo run --sim --app tictactoe      # in the browser simulator
+python3 scripts/check-apps-sim.py tictactoe
+kobo deploy --device <ip>       # onto a reader over Wi-Fi
 ```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Magnet Sensor](../magnet/README.md)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

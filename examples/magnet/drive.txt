@@ -1,0 +1,26 @@
+# Controlled hall-sensor events, which is the only way to test this without a
+# magnet and a hand. The simulator's own device controls stand in for both.
+wait-for No magnet
+expect top edge
+clean
+shot magnet-sweeping-top
+device cover closed
+wait-for Magnet
+expect Found on
+clean
+shot magnet-found
+device cover open
+wait-for No magnet
+expect 2 changes so far
+tap Sweep the right edge
+wait-for right edge
+device cover closed
+wait-for Magnet
+device cover open
+wait-for No magnet
+expect 4 changes so far
+clean
+shot magnet-swept-right
+tap Reset the count
+wait-for Nothing has answered yet
+wait 600

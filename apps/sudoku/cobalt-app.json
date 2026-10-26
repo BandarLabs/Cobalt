@@ -1,1 +1,12 @@
-{"id":"sudoku","display_name":"Sudoku","short_label":"Sudoku","summary":"Play touch-first Sudoku designed for an e-ink screen.","version":"1.0.8","glyph":"grid","capabilities":[],"release_notes":"Keep Sudoku compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "sudoku",
+  "display_name": "Sudoku",
+  "short_label": "Sudoku",
+  "summary": "Play 36 original Sudoku puzzles with pencil notes, undo and saved games.",
+  "version": "1.0.16",
+  "glyph": "grid",
+  "capabilities": [],
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "minimum_cobalt_version": "0.3.18",
+  "page_description": "Play 36 original Sudoku puzzles across three difficulties, each with exactly one solution. Pencil notes, undo, checking preference, and saved games survive reopening."
+}

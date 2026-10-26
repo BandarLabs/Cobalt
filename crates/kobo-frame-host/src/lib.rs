@@ -20,6 +20,11 @@ pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_FRAME_CAPACITY: usize = 150 * 1024 * 1024;
 pub const MANIFEST: &str = "manifest.v1";
 pub const MANIFEST_HEADER: &str = "cobalt-frame-v1";
+/// Sidecar recording each photo's panel fit; older app builds ignore it.
+pub const FIT_MANIFEST: &str = "fit.v1";
+/// Sidecar recording the digest of each pushed photo's shelf bytes, so the
+/// reader can verify a transfer; older app builds ignore it.
+pub const DIGEST_MANIFEST: &str = "digests.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Panel {
@@ -45,6 +50,65 @@ impl Fit {
             _ => Err("--fit must be crop or pad".to_owned()),
         }
     }
+}
+
+/// Encode the per-photo fit sidecar as `id<TAB>crop|pad` lines, ordered by id.
+#[must_use]
+pub fn encode_fit_map(map: &BTreeMap<String, Fit>) -> Vec<u8> {
+    let mut output = String::new();
+    for (id, fit) in map {
+        let value = match fit {
+            Fit::Crop => "crop",
+            Fit::Pad => "pad",
+        };
+        let _ = writeln!(output, "{id}\t{value}");
+    }
+    output.into_bytes()
+}
+
+/// Decode a fit sidecar, skipping lines that are not `id<TAB>crop|pad`.
+#[must_use]
+pub fn decode_fit_map(bytes: &[u8]) -> BTreeMap<String, Fit> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, fit) = line.split_once('\t')?;
+            if !valid_id(id) {
+                return None;
+            }
+            Fit::parse(fit).ok().map(|fit| (id.to_owned(), fit))
+        })
+        .collect()
+}
+
+/// Encode the transfer-digest sidecar as `id<TAB>hex` lines, ordered by id.
+#[must_use]
+pub fn encode_digest_map(map: &BTreeMap<String, String>) -> Vec<u8> {
+    let mut output = String::new();
+    for (id, digest) in map {
+        let _ = writeln!(output, "{id}\t{digest}");
+    }
+    output.into_bytes()
+}
+
+/// Decode a transfer-digest sidecar, skipping lines that are not
+/// `id<TAB>64 hex digits`.
+#[must_use]
+pub fn decode_digest_map(bytes: &[u8]) -> BTreeMap<String, String> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, digest) = line.split_once('\t')?;
+            (valid_id(id)
+                && digest.len() == 64
+                && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| (id.to_owned(), digest.to_owned()))
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,6 +197,9 @@ impl Manifest {
 pub struct PreparedPhoto {
     pub photo: Photo,
     pub png: Option<Vec<u8>>,
+    /// Digest of the prepared shelf bytes; `None` when the photo was
+    /// already on the shelf and its bytes were not re-prepared.
+    pub shelf_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -167,13 +234,42 @@ pub fn prepare_for_panel(
     delete_missing: bool,
     panel: Panel,
 ) -> Result<Push, String> {
+    prepare_for_panel_excluding(
+        input,
+        fit,
+        existing,
+        delete_missing,
+        panel,
+        &BTreeSet::new(),
+    )
+}
+
+/// The same preparation, skipping input files by relative name. A publisher
+/// that keeps its shelf inside the source folder uses this to leave its own
+/// manifest, sidecars and previously prepared photos out of the next walk.
+///
+/// # Errors
+///
+/// Returns an error when the panel dimensions or prepared shelf are invalid.
+#[allow(clippy::too_many_lines)]
+pub fn prepare_for_panel_excluding(
+    input: &Path,
+    fit: Fit,
+    existing: &Manifest,
+    delete_missing: bool,
+    panel: Panel,
+    exclude: &BTreeSet<String>,
+) -> Result<Push, String> {
     if panel.width == 0
         || panel.height == 0
         || u64::from(panel.width) * u64::from(panel.height) > 8_000_000
     {
         return Err("Frame received unsupported panel dimensions".to_owned());
     }
-    let paths = input_paths(input)?;
+    let paths = input_paths_excluding(input, exclude)?;
+    if paths.is_empty() && !delete_missing {
+        return Err(format!("{} has no supported images", input.display()));
+    }
     if paths.len() > MAX_PHOTOS {
         return Err(format!(
             "{} has {} supported images; Frame accepts at most {MAX_PHOTOS}",
@@ -204,6 +300,7 @@ pub fn prepare_for_panel(
             prepared.push(PreparedPhoto {
                 photo: (*old).clone(),
                 png: None,
+                shelf_digest: None,
             });
             continue;
         }
@@ -226,6 +323,7 @@ pub fn prepare_for_panel(
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("{} has no UTF-8 file name", path.display()))?
             .to_owned();
+        let shelf_digest = blake3::hash(&png).to_hex().to_string();
         prepared.push(PreparedPhoto {
             photo: Photo {
                 id,
@@ -235,6 +333,7 @@ pub fn prepare_for_panel(
                 name,
             },
             png: Some(png),
+            shelf_digest: Some(shelf_digest),
         });
     }
     let wanted = prepared
@@ -293,7 +392,7 @@ pub fn prepare_for_panel(
     })
 }
 
-fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
+fn input_paths_excluding(input: &Path, exclude: &BTreeSet<String>) -> Result<Vec<PathBuf>, String> {
     let metadata =
         fs::metadata(input).map_err(|error| format!("read {}: {error}", input.display()))?;
     let mut paths = Vec::new();
@@ -302,6 +401,12 @@ fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
         paths.push(input.to_path_buf());
     } else if metadata.is_dir() {
         collect(input, &mut paths)?;
+        paths.retain(|path| {
+            path.strip_prefix(input)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .is_none_or(|relative| !exclude.contains(relative))
+        });
     } else {
         return Err(format!(
             "{} is not a regular file or directory",
@@ -309,9 +414,6 @@ fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
         ));
     }
     paths.sort();
-    if paths.is_empty() {
-        return Err(format!("{} has no supported images", input.display()));
-    }
     Ok(paths)
 }
 
@@ -532,6 +634,27 @@ fn album_name(input: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn digest_map_round_trips() {
+        let digest = "a".repeat(64);
+        let map = BTreeMap::from([("photo-aaaa".to_owned(), digest.clone())]);
+        let encoded = encode_digest_map(&map);
+        assert_eq!(encoded, format!("photo-aaaa\t{digest}\n").into_bytes());
+        assert_eq!(decode_digest_map(&encoded), map);
+        assert!(decode_digest_map(b"photo-aaaa\tnothex\n").is_empty());
+        assert!(decode_digest_map(b"../bad\tabcdef\n").is_empty());
+    }
+
+    #[test]
+    fn fit_map_round_trips() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("photo-bbbb".to_owned(), Fit::Pad);
+        map.insert("photo-aaaa".to_owned(), Fit::Crop);
+        let encoded = encode_fit_map(&map);
+        assert_eq!(encoded, b"photo-aaaa\tcrop\nphoto-bbbb\tpad\n".to_vec());
+        assert_eq!(decode_fit_map(&encoded), map);
+    }
+
     use super::*;
     use image::{GenericImageView, ImageBuffer, Rgb};
 

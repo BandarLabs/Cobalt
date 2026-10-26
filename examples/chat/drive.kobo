@@ -1,0 +1,61 @@
+wait 800
+expect AI Command Center
+expect question 7
+clean
+shot conversation
+# Page capacity depends on the measured font and panel. Reach the oldest turn.
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+maybe-tap-id earlier
+expect question 0
+clean
+shot conversation-earlier
+tap-id later
+expect A reply long enough
+tap more
+expect New conversation
+expect Save a copy
+clean
+shot menu
+tap New conversation
+expect Start over
+tap Keep talking
+expect A reply long enough
+tap more
+tap Save a copy
+wait-for Ready for your computer
+clean
+shot export-ready
+tap Back
+expect A reply long enough
+tap Service
+expect OpenAI
+expect gpt-4o-mini
+expect Anthropic
+expect claude-3-5-haiku-latest
+expect Google Gemini
+expect gemini-3.6-flash
+clean
+shot service
+tap Conversation
+expect A reply long enough
+tap Type
+type hello there
+tap Send
+wait 1500
+wait-for Try again
+clean
+shot no-key

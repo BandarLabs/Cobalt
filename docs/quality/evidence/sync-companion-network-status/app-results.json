@@ -1,0 +1,13 @@
+{
+  "source_sha": "a385d22a85a2cae9802f5e704cf915a966b1c80b",
+  "dirty": true,
+  "results": [
+    {
+      "app": "syncthing",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/syncthing/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

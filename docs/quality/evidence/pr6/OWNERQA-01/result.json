@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "checks": [
+    "noninteractive help exits without prompting",
+    "real PTY displays numbered owner choices",
+    "menu reads a path containing spaces",
+    "existing feed checker validates original OPML fixture",
+    "32/48-column dumb terminals and NO_COLOR keep compact stable escape-free output"
+  ]
+}

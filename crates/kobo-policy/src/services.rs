@@ -321,13 +321,17 @@ impl DeviceServices {
             DeviceRequest::ListInstalledApps
             | DeviceRequest::ReadAppCatalog
             | DeviceRequest::RefreshAppCatalog => Self::empty_apps(),
-            DeviceRequest::InstallApp { .. }
-            | DeviceRequest::UninstallApp { .. }
-            | DeviceRequest::SetSecret { .. } => DeviceResult::Done,
+            DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
+                DeviceResult::Done
+            }
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
             }
-            DeviceRequest::ReadAppLink
+            // Only the host's durable credential handler can answer for secrets.
+            DeviceRequest::SetSecret { .. }
+            | DeviceRequest::SetServerSecret { .. }
+            | DeviceRequest::CheckSecrets { .. }
+            | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
             | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
@@ -721,7 +725,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::SetAutoUpdate { .. }
         | DeviceRequest::ReadUpdateChannel
         | DeviceRequest::SetUpdateChannel { .. }
-        | DeviceRequest::SetSecret { .. } => return None,
+        | DeviceRequest::SetSecret { .. }
+        | DeviceRequest::SetServerSecret { .. }
+        | DeviceRequest::CheckSecrets { .. } => return None,
         DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
     })
 }

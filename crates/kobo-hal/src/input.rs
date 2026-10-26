@@ -24,6 +24,10 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -76,12 +80,29 @@ impl From<io::Error> for InputError {
     }
 }
 
+/// A read-only view of the input decoder's latest contact state.
+#[derive(Clone, Default)]
+pub struct Quiescence(Arc<AtomicBool>);
+impl Quiescence {
+    #[must_use]
+    pub fn is_quiet(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+struct DecoderLifetime(Arc<AtomicBool>);
+impl Drop for DecoderLifetime {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Exclusive ownership of the touch panel for the lifetime of this value.
 pub struct TouchSession {
     device: File,
     events: Option<Receiver<TouchEvent>>,
     released: bool,
     grabbed: bool,
+    quiet: Arc<AtomicBool>,
 }
 
 impl TouchSession {
@@ -109,10 +130,13 @@ impl TouchSession {
         // never assembles a complete touch, so taps silently did nothing.
         let reader = device.try_clone()?;
         let (sender, events) = mpsc::channel();
+        let quiescent = Arc::new(AtomicBool::new(true));
+        let decoder_quiescent = Arc::clone(&quiescent);
         // Raw tracing is opt-in because it is the only way to tell a device
         // that reports nothing from a decoder that discards everything.
         let trace = std::env::var_os("KOBO_TOUCH_TRACE").is_some();
         thread::spawn(move || {
+            let _health = DecoderLifetime(Arc::clone(&decoder_quiescent));
             let mut reader = reader;
             let mut decoder = TouchDecoder::default();
             let mut buffer = [0_u8; EVENT_BYTES * READ_CHUNK_EVENTS];
@@ -133,10 +157,28 @@ impl TouchSession {
                             event.kind, event.code, event.value
                         );
                     }
-                    if let Some(touch) = decoder.push(event, &pose) {
+                    let touch = decoder.push(event, &pose);
+                    if event.kind == input::EV_SYN
+                        && matches!(event.code, input::SYN_REPORT | input::SYN_DROPPED)
+                    {
+                        decoder_quiescent.store(decoder.is_quiescent(), Ordering::Release);
+                    }
+                    if let Some(touch) = touch {
                         if sender.send(touch).is_err() {
                             return;
                         }
+                    }
+                    if decoder.needs_resynchronization() {
+                        let snapshot = input::touch_snapshot(&reader);
+                        if trace {
+                            println!("touch resynchronization: {snapshot:?}");
+                        }
+                        decoder.resynchronize(snapshot.ok());
+                    }
+                    if event.kind == input::EV_SYN
+                        && matches!(event.code, input::SYN_REPORT | input::SYN_DROPPED)
+                    {
+                        decoder_quiescent.store(decoder.is_quiescent(), Ordering::Release);
                     }
                 }
             }
@@ -145,7 +187,7 @@ impl TouchSession {
         // Quiescence is simply the absence of any touch for a whole window,
         // observed on that same stream. Grabbing while a finger is down would
         // leave the stock reader waiting forever for a release it never sees.
-        wait_for_quiescence(&events)?;
+        wait_for_quiescence(&events, &quiescent)?;
 
         // Measured on the Clara BW: EVIOCGRAB succeeds and then this kernel
         // stops delivering events to the grabbing client entirely. The same
@@ -170,7 +212,15 @@ impl TouchSession {
             events: Some(events),
             released: false,
             grabbed,
+            quiet: quiescent,
         })
+    }
+
+    /// A live observation from the one input decoder, including dropped-report
+    /// resynchronization. Hosts must treat false as an outstanding contact.
+    #[must_use]
+    pub fn quiescence(&self) -> Quiescence {
+        Quiescence(Arc::clone(&self.quiet))
     }
 
     /// Waits up to `timeout` for the next touch.
@@ -217,15 +267,30 @@ impl TouchSession {
 }
 
 /// Blocks until no touch has been reported for [`QUIESCENT_WINDOW`].
-fn wait_for_quiescence(events: &Receiver<TouchEvent>) -> Result<(), InputError> {
-    let deadline = Instant::now() + QUIESCENT_TIMEOUT;
+fn wait_for_quiescence(
+    events: &Receiver<TouchEvent>,
+    quiescent: &AtomicBool,
+) -> Result<(), InputError> {
+    wait_for_quiescence_for(events, quiescent, QUIESCENT_WINDOW, QUIESCENT_TIMEOUT)
+}
+
+fn wait_for_quiescence_for(
+    events: &Receiver<TouchEvent>,
+    quiescent: &AtomicBool,
+    window: Duration,
+    timeout: Duration,
+) -> Result<(), InputError> {
+    let deadline = Instant::now() + timeout;
     loop {
-        match events.recv_timeout(QUIESCENT_WINDOW) {
-            // A whole window passed with no touch at all, so the panel is idle.
-            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => return Ok(()),
-            // Touches belonging to the stock reader are discarded rather than
-            // delivered to the application that is about to start.
-            Ok(_) => {
+        match events.recv_timeout(window) {
+            Err(RecvTimeoutError::Timeout) if quiescent.load(Ordering::Acquire) => return Ok(()),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(InputError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "touch reader stopped before quiescence was established",
+                )))
+            }
+            Err(RecvTimeoutError::Timeout) | Ok(_) => {
                 if Instant::now() >= deadline {
                     return Err(InputError::NeverQuiescent);
                 }
@@ -237,6 +302,17 @@ fn wait_for_quiescence(events: &Receiver<TouchEvent>) -> Result<(), InputError> 
 #[cfg(test)]
 mod tests {
     use super::{InputError, EVENT_BYTES, QUIESCENT_TIMEOUT, QUIESCENT_WINDOW};
+
+    #[test]
+    fn a_disconnected_decoder_never_reports_safe_input() {
+        let quiet = super::Quiescence::default();
+        assert!(!quiet.is_quiet());
+        quiet.0.store(true, std::sync::atomic::Ordering::Release);
+        let reader = super::DecoderLifetime(std::sync::Arc::clone(&quiet.0));
+        assert!(quiet.is_quiet());
+        drop(reader);
+        assert!(!quiet.is_quiet());
+    }
 
     #[test]
     fn an_evdev_event_is_sixteen_bytes_on_this_target() {
@@ -278,5 +354,28 @@ mod tests {
             InputError::AlreadyGrabbed.to_string(),
             "another process already owns the touch device"
         );
+    }
+    #[test]
+    fn silence_during_lost_input_does_not_count_as_quiescence() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let unknown = std::sync::atomic::AtomicBool::new(false);
+        let result = super::wait_for_quiescence_for(
+            &receiver,
+            &unknown,
+            std::time::Duration::from_millis(2),
+            std::time::Duration::from_millis(10),
+        );
+        assert!(matches!(result, Err(InputError::NeverQuiescent)));
+    }
+
+    #[test]
+    fn a_stopped_input_reader_is_not_a_quiet_panel() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        let quiet = std::sync::atomic::AtomicBool::new(true);
+        assert!(matches!(
+            super::wait_for_quiescence(&receiver, &quiet),
+            Err(InputError::Io(_))
+        ));
     }
 }

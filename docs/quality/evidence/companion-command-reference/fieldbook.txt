@@ -1,0 +1,5 @@
+usage: kobo fieldbook inspect PACK.json
+       kobo fieldbook push PACK.json (--sim | --device IP)
+       kobo fieldbook ls (--sim | --device IP)
+       kobo fieldbook export (--sim | --device IP) --out FILE.csv
+Pack manifests are limited to 512 KiB. Export receives the checklist prepared in Fieldbook.

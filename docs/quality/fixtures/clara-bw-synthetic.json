@@ -1,0 +1,75 @@
+{
+  "schema": "cobalt.hardware-observation",
+  "version": 1,
+  "origin": "synthetic-fixture",
+  "captured_at": "0",
+  "observed": {
+    "compatible": [
+      "mediatek,mt8110",
+      "mediatek,mt8512"
+    ],
+    "model": "MediaTek MT8110 board",
+    "framebuffer": {
+      "id": "hwtcon",
+      "width": 1072,
+      "height": 1448,
+      "virtual_width": 1072,
+      "virtual_height": 1448,
+      "x_offset": 0,
+      "y_offset": 0,
+      "bits_per_pixel": 32,
+      "grayscale": 0,
+      "stride": 4288,
+      "memory_length": 6243328,
+      "kind": 0,
+      "visual": 2,
+      "rotation": 3,
+      "red": {
+        "offset": 0,
+        "length": 8,
+        "msb_right": 0
+      },
+      "green": {
+        "offset": 8,
+        "length": 8,
+        "msb_right": 0
+      },
+      "blue": {
+        "offset": 16,
+        "length": 8,
+        "msb_right": 0
+      },
+      "alpha": {
+        "offset": 24,
+        "length": 8,
+        "msb_right": 0
+      }
+    },
+    "touch": {
+      "path": "/dev/input/event1",
+      "name": "cyttsp5_mt",
+      "x_min": 0,
+      "x_max": 1447,
+      "y_min": 0,
+      "y_max": 1071
+    },
+    "identity": {
+      "serial_prefix": null,
+      "firmware_version": null,
+      "kernel_release": null,
+      "device_code": 391
+    }
+  },
+  "available_backends": [
+    "network",
+    "battery-read",
+    "frontlight-control",
+    "wifi-control",
+    "cover-sensor",
+    "library"
+  ],
+  "inferred": null,
+  "unverified": [
+    "This is a synthetic fixture derived from Cobalt profile values, not a new hardware capture."
+  ]
+}

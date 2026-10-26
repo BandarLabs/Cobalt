@@ -49,6 +49,27 @@ const WRITE_PATIENCE: Duration = Duration::from_secs(30);
 /// Fails at startup for a missing identity or an unbindable port; after
 /// that, individual connections fail individually.
 pub fn run() -> Result<(), String> {
+    run_mode(false)
+}
+
+pub fn sample() -> Result<(), String> {
+    run_mode(true)
+}
+
+fn sample_question() -> Asking {
+    Asking::new(
+        "Sidekick sample",
+        "Connection check",
+        "Choose Received to confirm that this sample reached your reader.",
+    )
+    .offering(vec![Choice {
+        label: "Received".to_owned(),
+        description: "Send a confirmation to the computer.".to_owned(),
+    }])
+    .multiple_choice(false)
+}
+
+fn run_mode(sample: bool) -> Result<(), String> {
     let identity = state::load()?;
     let directory = state::state_directory()?;
     let home = std::env::var_os("HOME")
@@ -56,18 +77,38 @@ pub fn run() -> Result<(), String> {
         .ok_or("no HOME in the environment")?;
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
     let board = Arc::new(Board::new());
-    let deck = Deck::new(directory.join("deck.toml"), home);
-    let hooks = TcpListener::bind(("127.0.0.1", state::HOOK_PORT))
-        .map_err(|error| format!("bind 127.0.0.1:{}: {error}", state::HOOK_PORT))?;
+    let deck = (!sample).then(|| Deck::new(directory.join("deck.toml"), home));
+    let hooks = if sample {
+        None
+    } else {
+        Some(
+            TcpListener::bind(("127.0.0.1", state::HOOK_PORT))
+                .map_err(|error| format!("bind 127.0.0.1:{}: {error}", state::HOOK_PORT))?,
+        )
+    };
     let reader = TcpListener::bind(("0.0.0.0", state::READER_PORT))
         .map_err(|error| format!("bind 0.0.0.0:{}: {error}", state::READER_PORT))?;
-    println!(
-        "sidekick: hooks on 127.0.0.1:{}, reader on 0.0.0.0:{} (TLS)",
-        state::HOOK_PORT,
-        state::READER_PORT
-    );
+    if sample {
+        println!("Sidekick sample is ready. Open Sidekick on your reader and choose Received.\nNo agent integration is required. This sample cannot run commands.\nPress Ctrl-C to stop.");
+        let sample_board = Arc::clone(&board);
+        std::thread::spawn(move || {
+            let answer = sample_board.submit(sample_question(), state::ASK_PATIENCE);
+            if answer == Decision::Chose(vec!["Received".to_owned()]) {
+                println!("Received on your reader. The connection check is complete. Press Ctrl-C to stop.");
+            } else {
+                println!("No confirmation received. Run the sample again when your reader is ready. Press Ctrl-C to stop.");
+            }
+        });
+    } else {
+        println!(
+            "sidekick: hooks on 127.0.0.1:{}, reader on 0.0.0.0:{} (TLS)",
+            state::HOOK_PORT,
+            state::READER_PORT
+        );
+    }
     let hook_board = Arc::clone(&board);
     std::thread::spawn(move || {
+        let Some(hooks) = hooks else { return };
         let crowd = Crowd::new(MOST_HOOKS);
         for stream in hooks.incoming().flatten() {
             // Refusal is closing the connection: the hook errors out, prints
@@ -91,7 +132,7 @@ pub fn run() -> Result<(), String> {
     for stream in reader.incoming().flatten() {
         let Some(seat) = crowd.admit() else { continue };
         let board = Arc::clone(&board);
-        let deck = Arc::clone(&deck);
+        let deck = deck.clone();
         let pairing = Arc::clone(&pairing);
         let tls = Arc::clone(&tls);
         std::thread::spawn(move || {
@@ -100,7 +141,7 @@ pub fn run() -> Result<(), String> {
             let _ = stream.set_write_timeout(Some(WRITE_PATIENCE));
             if let Ok(mut stream) = tls.accept(stream) {
                 if let Ok(request) = read_request(&mut stream) {
-                    reader_route_with_deck(&board, &deck, &pairing, &request, &mut stream);
+                    reader_route_inner(&board, deck.as_ref(), &pairing, &request, &mut stream);
                 }
             }
         });
@@ -222,6 +263,7 @@ fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (i
     reader_route_inner(board, None, pairing, request, stream);
 }
 
+#[cfg(test)]
 fn reader_route_with_deck(
     board: &Board,
     deck: &Arc<Deck>,

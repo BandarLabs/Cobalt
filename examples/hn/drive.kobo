@@ -1,0 +1,11 @@
+# The live front page streams in behind a skeleton; the pager only appears
+# once stories land, so the route waits for it before touching the bar.
+wait-for 1 of
+expect Ask
+clean
+shot hn-top
+tap Saved
+wait-for Nothing here yet
+expect Nothing saved yet.
+clean
+shot hn-saved

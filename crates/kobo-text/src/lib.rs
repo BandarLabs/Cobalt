@@ -92,6 +92,30 @@ pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regul
 /// `fonts/LICENSE-AtkinsonHyperlegible.txt`.
 pub const DISPLAY_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
 
+/// The serif for titles, headings and books where the reader carries none.
+///
+/// Stock Kobo sets its section headings and book titles in a serif and its
+/// chrome in a sans, and that contrast is most of why its screens read as
+/// composed. Ours had a serif only where the firmware carried Bitter or
+/// Vollkorn; everywhere else, the simulator included, every heading and every
+/// poem fell back to Atkinson, so what was previewed was a flatter page than
+/// what shipped.
+///
+/// The reader's own serif still comes first. Applications measure text in
+/// their own process with these same faces, so the face a runtime draws with
+/// has to be the face an installed application measured with: a runtime that
+/// preferred this over the panel's Bitter would draw every heading of every
+/// application built before it in a face it was not measured in, and refuse
+/// the screens that no longer fit.
+///
+/// Literata was drawn for Google Play Books to be read on screens for hours,
+/// e-ink included. Subset to Latin to keep it small; the recipe is in
+/// `licenses/SOURCE-Literata.md` and the licence in `fonts/LICENSE-Literata.txt`.
+pub const SERIF_FONT: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
+
+/// The semibold cut of the same serif, for the size that heads a screen.
+pub const SERIF_HEADING_FONT: &[u8] = include_bytes!("../fonts/Literata-SemiBold.ttf");
+
 /// Bold is looked for on the device first, so a firmware that carries the cut
 /// is used rather than the compiled-in copy, exactly as the regular is.
 pub const DEVICE_DISPLAY_FONT_CANDIDATES: &[&str] =
@@ -294,10 +318,19 @@ impl Typeface {
                 }
             }
         }
-        // Not an error. A machine with no serif still reads perfectly well in
-        // the interface face, and refusing to start over typography would be
-        // absurd.
-        Self::discover(metrics)
+        // Not an error. A machine with no serif of its own reads in the
+        // bundled one, and if even that will not load, in the interface face.
+        Self::bundled_serif(metrics, false).map_or_else(|| Self::discover(metrics), Ok)
+    }
+
+    /// The compiled-in serif.
+    fn bundled_serif(metrics: DisplayMetrics, heading: bool) -> Option<Self> {
+        let (bytes, name) = if heading {
+            (SERIF_HEADING_FONT, "Literata-SemiBold.ttf")
+        } else {
+            (SERIF_FONT, "Literata-Regular.ttf")
+        };
+        Self::from_bytes(bytes, name, metrics).ok()
     }
 
     /// Loads one specific face.
@@ -707,18 +740,21 @@ impl SystemFonts {
             text,
             legacy_display: Typeface::discover_display(metrics)
                 .or_else(|_| Typeface::discover(metrics))?,
-            // Each display cut falls back independently. A simulator sees
-            // Atkinson Bold; a panel with Bitter/Vollkorn sees its own serif.
+            // The panel's own serif, then the bundled one, then Atkinson Bold.
             display_title: Typeface::discover_display_serif(
                 metrics,
                 DISPLAY_SERIF_REGULAR_CANDIDATES,
             )
-            .or_else(|_| Typeface::discover_display(metrics))?,
+            .ok()
+            .or_else(|| Typeface::bundled_serif(metrics, false))
+            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
             display_heading: Typeface::discover_display_serif(
                 metrics,
                 DISPLAY_SERIF_BOLD_CANDIDATES,
             )
-            .or_else(|_| Typeface::discover_display(metrics))?,
+            .ok()
+            .or_else(|| Typeface::bundled_serif(metrics, true))
+            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
             mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
             reading,
         })
@@ -951,10 +987,40 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
 pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
     let fonts = SystemFonts::discover(metrics)?;
     let source = fonts.text_source().to_path_buf();
-    // A second install means something already chose a face; that is not a
-    // failure worth reporting to a caller that only wanted text to look right.
-    let _ = kobo_ui::install_typesetter(Box::new(fonts));
+    let sources = [
+        ("interface", &fonts.text),
+        ("display-title", &fonts.display_title),
+        ("display-heading", &fonts.display_heading),
+        ("display-bold", &fonts.legacy_display),
+        ("reading", &fonts.reading),
+        ("mono", &fonts.mono),
+    ]
+    .into_iter()
+    .map(|(role, face)| {
+        (
+            role.to_owned(),
+            face.source()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+        )
+    })
+    .collect();
+    // Only the successfully installed font set may describe captures.
+    if kobo_ui::install_typesetter(Box::new(fonts)).is_ok() {
+        let _ = INSTALLED_SOURCES.set(sources);
+    }
     Ok(source)
+}
+
+static INSTALLED_SOURCES: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// Sources of the font set installed by this crate. Unknown for a custom
+/// externally installed typesetter, rather than guessing the bundled fonts.
+#[must_use]
+pub fn installed_sources() -> Option<&'static [(String, String)]> {
+    INSTALLED_SOURCES.get().map(Vec::as_slice)
 }
 
 #[cfg(test)]
@@ -1008,13 +1074,13 @@ mod tests {
         // With the status bar the device actually draws. Without it the
         // content starts high enough that the shelf fits and the test agrees
         // with the bug, which is how this shipped.
-        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status {
-            clock: "20:36".to_string(),
-            signal: kobo_ui::Signal::Strong,
-            battery: Some(kobo_ui::Percent::new(74)),
-            charging: false,
-            bluetooth: false,
-        });
+        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status::standard(
+            "20:36",
+            Some(kobo_ui::Percent::new(74)),
+            false,
+            kobo_ui::Signal::Strong,
+            false,
+        ));
         let layout = screen.layout_with(&kobo_ui::CLARA_BW_METRICS, &chrome);
         let position = layout
             .nodes
@@ -1903,13 +1969,13 @@ mod tests {
         let inked = |clock: &str| {
             let chrome = kobo_ui::Chrome {
                 back: false,
-                status: Some(kobo_ui::Status {
-                    clock: clock.to_owned(),
-                    signal: kobo_ui::Signal::Strong,
-                    battery: Some(kobo_ui::Percent::new(50)),
-                    charging: false,
-                    bluetooth: true,
-                }),
+                status: Some(kobo_ui::Status::standard(
+                    clock,
+                    Some(kobo_ui::Percent::new(50)),
+                    false,
+                    kobo_ui::Signal::Strong,
+                    true,
+                )),
             };
             let screen = kobo_ui::Screen::new(
                 1,

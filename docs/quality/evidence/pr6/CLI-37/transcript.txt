@@ -1,0 +1,30 @@
+=== the guided menu offers no arbitrary-command surface (real run of the whole menu) ===
+0
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+7. Send a file
+0. Exit
+
+=== shell is labeled advanced in kobo help ===
+shell --device IP [command ...]  Advanced: run one arbitrary command on the
+                              reader, or open a session when no command is
+                              given. Exits with whatever the reader exited
+                              with. Nothing typed here is checked first
+touch-probe --device IP [--seconds N] Watch touch read-only to check the
+
+=== shell's own usage warns before an arbitrary command ===
+kobo: usage: kobo shell --device <host> [command ...]
+       An advanced control: the command runs on the reader exactly as
+       typed, as root, with no validation. Prefer a named verb when one
+       exists - logs, shot, record and doctor cover the common reads.
+exit=1
+
+=== other raw-control verbs carry explicit read-only or confirm gates ===
+record --device IP [--seconds N] [--fps F] [--out DIR] Film the panel, read-only
+doctor [--device IP | --reader NAME] [--json]   Run read-only device diagnostics
+touch-probe --device IP [--seconds N] Watch touch read-only to check the
+guard-test --device IP --confirm ...   Prove the guardian restores the screen

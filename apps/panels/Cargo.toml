@@ -1,19 +1,23 @@
 [package]
 name = "kobo-panels"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
-kobo-doc = { path = "../../crates/kobo-doc" }
+kobo-net = { path = "../../crates/kobo-net" }
+kobo-bookview = { path = "../../crates/kobo-bookview" }
+kobo-state = { path = "../../crates/kobo-state" }
+kobo-comic = { path = "../../crates/kobo-comic" }
 kobo-image = { path = "../../crates/kobo-image" }
 kobo-json = { path = "../../crates/kobo-json" }
 kobo-opds = { path = "../../crates/kobo-opds" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]
+kobo-policy = { path = "../../crates/kobo-policy" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]

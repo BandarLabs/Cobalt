@@ -1,0 +1,19 @@
+{
+  "app_source": "pr5-apps-polish cd52312",
+  "cli_source": "pr6-companion-clis f2f26d5",
+  "actual_cli_flow": [
+    "kobo deck init --preset build",
+    "kobo deck set 1 --run (harmless check)",
+    "kobo deck set 8 --url https://www.rust-lang.org/learn",
+    "kobo deck set 9 --launch calculator",
+    "kobo deck show",
+    "kobo deck push --sim"
+  ],
+  "app_assertions": [
+    "running app displayed the CLI-driven Build preset",
+    "running app displayed the action, URL and app assignments in its 3x5 grid",
+    "screen diagnostics had no errors"
+  ],
+  "visual_review": "1072x1448 extra-large screenshot inspected. The grid is balanced and all nine assigned pads are reachable. Long default labels visibly truncate to Rust-lan and Calculat; no overlap or clipping outside the pad label bound.",
+  "not_claimed": ["physical reader", "successful action acknowledgement"]
+}

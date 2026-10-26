@@ -7,16 +7,18 @@ license.workspace = true
 publish = false
 
 [dependencies]
-kobo-bookview = { path = "../../crates/kobo-bookview" }
-kobo-doc = { path = "../../crates/kobo-doc", features = ["raster"] }
+kobo-bookview = { path = "../../crates/kobo-bookview", features = ["raster"] }
+kobo-doc = { path = "../../crates/kobo-doc" }
 kobo-image = { path = "../../crates/kobo-image" }
 kobo-opds = { path = "../../crates/kobo-opds" }
-kobo-read = { path = "../../crates/kobo-read", features = ["raster"] }
+kobo-read = { path = "../../crates/kobo-read" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
-[dev-dependencies]
-kobo-profile = { path = "../../crates/kobo-profile" }
 kobo-ui = { path = "../../crates/kobo-ui" }
+
+[dev-dependencies]
+kobo-text = { path = "../../crates/kobo-text" }
+kobo-profile = { path = "../../crates/kobo-profile" }
 
 [lints]
 workspace = true

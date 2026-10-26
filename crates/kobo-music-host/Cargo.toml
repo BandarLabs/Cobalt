@@ -1,0 +1,11 @@
+[package]
+name = "kobo-music-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+blake3 = "1.8.2"
+kobo-image = { path = "../kobo-image" }
+kobo-json = { path = "../kobo-json" }

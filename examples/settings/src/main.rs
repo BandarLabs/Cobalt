@@ -3,9 +3,9 @@
 use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceIdentity, DeviceRequest,
-    DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId,
-    TaskOutcome, UpdateChannel, WifiNetwork,
+    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DenyReason, DeviceIdentity,
+    DeviceRequest, DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task,
+    TaskId, TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -26,21 +26,31 @@ const CANCEL_CHANNEL: &str = "cancel-channel";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
-const PAGE_SIZE: usize = 4;
-const DEVICE_ACTIONS: [&str; 10] = [
-    "bt-0", "bt-1", "bt-2", "bt-3", "bt-4", "bt-5", "bt-6", "bt-7", "bt-8", "bt-9",
-];
-const NETWORK_ACTIONS: [&str; 10] = [
-    "wifi-0", "wifi-1", "wifi-2", "wifi-3", "wifi-4", "wifi-5", "wifi-6", "wifi-7", "wifi-8",
-    "wifi-9",
-];
 
 /// The version this binary was compiled as, which is the version installed:
 /// the binaries and the installer travel together.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
-const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
+/// Only the newest few releases, because a hundred of them is a megabyte and
+/// a half of assets a reader downloads over their own Wi-Fi to learn one
+/// version number, and because that is how the feed outgrew its window.
+/// Betas and stables alternate, so fifteen always holds several betas.
+const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=15";
+
+/// How much of a release feed this reader will take.
+///
+/// A fetch carries a byte range, and GitHub honours it: a feed longer than
+/// its window comes back as a 206 holding the first window of it, which is
+/// valid JSON up to the point it stops being any JSON at all. Nothing in the
+/// transport can tell that from a whole document, so the only defence is a
+/// window the feed cannot outgrow, and a sentence for the day it does.
+const fn release_window(channel: UpdateChannel) -> u32 {
+    match channel {
+        UpdateChannel::Stable => 256 * 1024,
+        UpdateChannel::Beta => 4 * 1024 * 1024,
+    }
+}
 
 const fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
@@ -69,10 +79,28 @@ enum View {
     UpdateChannelConfirm,
 }
 
+/// `Unavailable` is a confirmed hardware fact: it is only ever produced by
+/// `new`, from a successful device reply reporting `available: false`. It
+/// must never be assumed from the absence of an answer -- `Unknown`, the
+/// default, is what every radio starts as before its first read replies,
+/// precisely so a pending or backend-failed read can never be mistaken for a
+/// device that has no radio at all.
+///
+/// `Unsupported` is the second settled answer, and it is a fact about this
+/// runtime rather than about the hardware: the reading was refused with
+/// `DenyReason::Unsupported`, which the protocol defines as this runtime not
+/// being able to do it on this hardware *yet*. That is not the same claim as
+/// a missing radio, and the two must not be collapsed: a reader whose
+/// Bluetooth the runtime has not brought up has the hardware, and telling
+/// them it does not exist is a worse answer than the "Checking..." this
+/// replaced. Anything that is neither a reading nor a refusal still leaves
+/// the radio `Unknown`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum RadioState {
     #[default]
+    Unknown,
     Unavailable,
+    Unsupported,
     Off,
     On,
 }
@@ -191,6 +219,7 @@ fn update_screen_owns(request: &DeviceRequest) -> bool {
 #[derive(Default)]
 struct Settings {
     view: View,
+    home_page: usize,
     bluetooth_state: RadioState,
     devices: Vec<BluetoothDevice>,
     bluetooth_page: usize,
@@ -224,10 +253,11 @@ struct Settings {
 impl Settings {
     fn show(&mut self, context: &mut Context) {
         self.keep_scanning(context);
+        self.clamp_page(context);
         let screen = match self.view {
-            View::Home => self.home(),
-            View::Bluetooth => self.bluetooth(),
-            View::Wifi => self.wifi(),
+            View::Home => self.home_for(context),
+            View::Bluetooth => self.bluetooth_for(context),
+            View::Wifi => self.wifi_for(context),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
             View::About => self.about(),
@@ -235,6 +265,27 @@ impl Settings {
             View::UpdateChannelConfirm => self.update_channel_confirmation(),
         };
         context.set_screen(screen);
+    }
+
+    fn clamp_page(&mut self, context: &Context) {
+        match self.view {
+            View::Home => {
+                self.home_page = self
+                    .home_page
+                    .min(self.home_pages(context).len().saturating_sub(1));
+            }
+            View::Bluetooth => {
+                self.bluetooth_page = self
+                    .bluetooth_page
+                    .min(self.bluetooth_pages(context).len().saturating_sub(1));
+            }
+            View::Wifi => {
+                self.wifi_page = self
+                    .wifi_page
+                    .min(self.wifi_pages(context).len().saturating_sub(1));
+            }
+            _ => {}
+        }
     }
 
     /// Keeps the radio looking for as long as the Wi-Fi list is the thing on
@@ -257,9 +308,11 @@ impl Settings {
         }
     }
 
-    fn home(&self) -> Screen {
+    fn home_rows(&self) -> Vec<SettingsRow> {
         let bluetooth = match self.bluetooth_state {
-            RadioState::Unavailable => "Unavailable on this firmware".to_owned(),
+            RadioState::Unknown => "Checking…".to_owned(),
+            RadioState::Unavailable => "Not available on this device".to_owned(),
+            RadioState::Unsupported => "Not supported by this runtime".to_owned(),
             RadioState::Off => "Off".to_owned(),
             RadioState::On => {
                 let connected = self
@@ -271,53 +324,88 @@ impl Settings {
             }
         };
         let wifi = match (self.wifi_state, &self.connected_ssid) {
-            (RadioState::Unavailable, _) => "Unavailable on this firmware".to_owned(),
+            (RadioState::Unknown, _) => "Checking…".to_owned(),
+            (RadioState::Unavailable, _) => "Not available on this device".to_owned(),
+            (RadioState::Unsupported, _) => "Not supported by this runtime".to_owned(),
             (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
             (RadioState::On, None) => "On · Not connected".to_owned(),
             (RadioState::Off, _) => "Off".to_owned(),
         };
-        let screen = ScreenBuilder::new("settings")
+        vec![
+            SettingsRow::new(
+                Some("Connections"),
+                BLUETOOTH,
+                "Bluetooth",
+                bluetooth,
+                Glyph::Bluetooth,
+            ),
+            SettingsRow::new(None, WIFI, "Wi-Fi", wifi, Glyph::Wifi),
+            SettingsRow::new(
+                Some("Device"),
+                BATTERY,
+                "Battery",
+                self.battery_summary(),
+                Glyph::Battery,
+            ),
+            SettingsRow::new(
+                None,
+                UPDATE,
+                "Software update",
+                self.update_summary(),
+                Glyph::Download,
+            ),
+            SettingsRow::new(
+                None,
+                ABOUT,
+                "About",
+                "Device code, firmware, resolution",
+                Glyph::Reader,
+            ),
+        ]
+    }
+
+    fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.home_rows();
+        let measured: Vec<_> = rows
+            .iter()
+            .map(|row| (row.section, row.title.as_str(), row.summary.as_str()))
+            .collect();
+        let around = ScreenBuilder::new("settings")
             .top_bar("Settings")
-            // A section, like the "Device" group under it. As a heading it was
-            // set larger than the app's own name in the bar above, and one
-            // screen was labelling two groups of the same kind in two
-            // different ways.
-            .section("Connections")
-            .rows([
-                (
-                    BLUETOOTH,
-                    "Bluetooth",
-                    bluetooth,
-                    RowLead::from(Glyph::Bluetooth),
-                ),
-                (WIFI, "Wi-Fi", wifi, RowLead::from(Glyph::Wifi)),
-            ])
-            .section("Device")
-            .rows([
-                (
-                    BATTERY,
-                    "Battery",
-                    self.battery_summary(),
-                    RowLead::from(Glyph::Battery),
-                ),
-                (
-                    UPDATE,
-                    "Software update",
-                    self.update_summary(),
-                    RowLead::from(Glyph::Download),
-                ),
-                (
-                    ABOUT,
-                    "About",
-                    "Device code, firmware, resolution".to_owned(),
-                    RowLead::from(Glyph::Reader),
-                ),
-            ])
-            // The installed build's own version, baked in at compile time.
-            // The binaries and the installer travel together, so what this
-            // binary was compiled as is what is installed.
-            .section_with_value("Cobalt", VERSION);
-        screen.build()
+            .section_with_value("Cobalt", VERSION)
+            .build();
+        context.paginate_rows_in_sections_under(
+            &measured,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &around,
+        )
+    }
+
+    fn home_for(&self, context: &Context) -> Screen {
+        let rows = self.home_rows();
+        let pages = self.home_pages(context);
+        let page = self.home_page.min(pages.len().saturating_sub(1));
+        let mut screen = ScreenBuilder::new("settings").top_bar("Settings");
+        let mut remaining = pages[page].as_slice();
+        while let Some((&first, rest)) = remaining.split_first() {
+            if let Some(section) = rows[first].section {
+                screen = screen.section(section);
+            }
+            let count = rest
+                .iter()
+                .position(|&index| rows[index].section.is_some())
+                .map_or(remaining.len(), |position| position + 1);
+            screen = screen.rows(remaining[..count].iter().map(|&index| rows[index].as_row()));
+            remaining = &remaining[count..];
+        }
+        screen = screen.section_with_value("Cobalt", VERSION);
+        page_controls(screen, page, pages.len()).build()
+    }
+
+    #[cfg(test)]
+    fn home(&self) -> Screen {
+        self.home_for(&Context::default())
     }
 
     /// One line for the home row: where the update journey stands, or an
@@ -490,7 +578,7 @@ impl Settings {
             .build()
     }
 
-    fn bluetooth(&self) -> Screen {
+    fn bluetooth_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("settings-bluetooth")
             .top_bar("Bluetooth")
             .owns_back(true)
@@ -513,62 +601,85 @@ impl Settings {
         if let Some(trouble) = self.banner_for(Topic::Bluetooth) {
             screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         } else if self.restart_on_exit {
-            screen = screen.banner(
-                kobo_sdk::BannerLevel::Info,
-                "Bluetooth shares one radio with Wi-Fi on this reader, and it can only start once per boot. Your reader will restart itself when you leave this app. Nothing you have saved is lost.",
-            );
+            screen = screen.banner(kobo_sdk::BannerLevel::Info,
+                "Bluetooth shares Wi-Fi and starts once per boot. Leaving Settings restarts the reader. Saved content is kept.");
         }
+        screen
+    }
+
+    fn bluetooth_rows(&self, context: &Context) -> Vec<SettingsRow> {
+        self.devices
+            .iter()
+            .map(|device| {
+                SettingsRow::new(
+                    None,
+                    bluetooth_action(&device.address),
+                    context.clamped_row(&device.name, 2, true),
+                    if device.connected {
+                        "Connected"
+                    } else if device.paired {
+                        "Paired · Tap to connect"
+                    } else {
+                        "Available · Tap to pair"
+                    },
+                    if device.connected {
+                        Glyph::Check
+                    } else {
+                        Glyph::Circle
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn bluetooth_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        list_pages(
+            context,
+            &self.bluetooth_rows(context),
+            true,
+            self.bluetooth_prefix().section("Devices"),
+        )
+    }
+
+    fn bluetooth_for(&self, context: &Context) -> Screen {
+        if matches!(
+            self.bluetooth_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
+            return ScreenBuilder::new("settings-bluetooth")
+                .top_bar("Bluetooth")
+                .owns_back(true)
+                .text(if self.bluetooth_state == RadioState::Unavailable {
+                    "This device has no Bluetooth hardware."
+                } else {
+                    "This runtime cannot use Bluetooth on this hardware."
+                })
+                .build();
+        }
+        let mut screen = self.bluetooth_prefix();
         if self.bluetooth_state.enabled() {
             if self.devices.is_empty() {
-                screen = screen
-                    .text(
-                        "No devices found. Put headphones or a keyboard in pairing mode, then rescan.",
-                    )
-                    .button(RESCAN, "Rescan for devices");
+                screen = screen.text("No devices found. Put headphones or a keyboard in pairing mode, then rescan.")
+                    .bottom_action(RESCAN, "Rescan for devices");
             } else {
-                let pages = page_count(self.devices.len());
+                let rows = self.bluetooth_rows(context);
+                let pages = self.bluetooth_pages(context);
+                let page = self.bluetooth_page.min(pages.len().saturating_sub(1));
                 screen = screen
-                    .section_with_value("Devices", format!("{} / {pages}", self.bluetooth_page + 1))
-                    .rows(
-                        self.devices
-                            .iter()
-                            .skip(self.bluetooth_page * PAGE_SIZE)
-                            .take(PAGE_SIZE)
-                            .enumerate()
-                            .map(|(index, device)| {
-                                let state = if device.connected {
-                                    "Connected"
-                                } else if device.paired {
-                                    "Paired · Tap to connect"
-                                } else {
-                                    "Available · Tap to pair"
-                                };
-                                (
-                                    DEVICE_ACTIONS[index],
-                                    device.name.as_str(),
-                                    state,
-                                    RowLead::from(if device.connected {
-                                        Glyph::Check
-                                    } else {
-                                        Glyph::Circle
-                                    }),
-                                )
-                            }),
-                    );
-                screen = screen.controls(
-                    u8::try_from(paging(self.bluetooth_page, pages).len() + 1).unwrap_or(3),
-                    paging(self.bluetooth_page, pages).into_iter().chain([(
-                        RESCAN,
-                        "Rescan",
-                        Glyph::Refresh,
-                    )]),
-                );
+                    .section("Devices")
+                    .rows(pages[page].iter().map(|&index| rows[index].as_row()));
+                screen = page_controls(screen, page, pages.len()).bottom_action(RESCAN, "Rescan");
             }
         }
         screen.build()
     }
 
-    fn wifi(&self) -> Screen {
+    #[cfg(test)]
+    fn bluetooth(&self) -> Screen {
+        self.bluetooth_for(&Context::default())
+    }
+
+    fn wifi_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("settings-wifi")
             .top_bar("Wi-Fi")
             .owns_back(true)
@@ -592,65 +703,82 @@ impl Settings {
             screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         }
         if self.wifi_state.enabled() {
-            // Every verb on this screen is collected and drawn as one row.
-            // Stacked full-width outlines read as a form rather than as a
-            // choice, and this screen had three of them down the left margin.
             if let Some(ssid) = &self.connected_ssid {
-                // A fact rather than a section. A section is a heading over
-                // the rows that belong to it, and what is connected has no
-                // rows: it is one label and one value, which is the shape the
-                // battery screen uses for exactly this.
                 screen = screen.facts([("Connected", ssid.as_str())]);
             }
+        }
+        screen
+    }
+
+    fn wifi_rows(&self, context: &Context) -> Vec<SettingsRow> {
+        self.networks
+            .iter()
+            .map(|network| {
+                let security = if network.secured { "Secured" } else { "Open" };
+                let summary = if network.connected {
+                    format!("Connected · Tap to disconnect · {} dBm", network.signal_dbm)
+                } else {
+                    format!("{security} · {} dBm", network.signal_dbm)
+                };
+                SettingsRow::new(
+                    None,
+                    network_action(&network.ssid),
+                    context.clamped_row(&network.ssid, 2, false),
+                    summary,
+                    Glyph::Wifi,
+                )
+            })
+            .collect()
+    }
+
+    fn wifi_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        list_pages(
+            context,
+            &self.wifi_rows(context),
+            false,
+            self.wifi_prefix().section("Networks"),
+        )
+    }
+
+    fn wifi_for(&self, context: &Context) -> Screen {
+        if matches!(
+            self.wifi_state,
+            RadioState::Unavailable | RadioState::Unsupported
+        ) {
+            return ScreenBuilder::new("settings-wifi")
+                .top_bar("Wi-Fi")
+                .owns_back(true)
+                .text(if self.wifi_state == RadioState::Unavailable {
+                    "This device has no Wi-Fi hardware."
+                } else {
+                    "This runtime cannot use Wi-Fi on this hardware."
+                })
+                .build();
+        }
+        let mut screen = self.wifi_prefix();
+        if self.wifi_state.enabled() {
             if self.networks.is_empty() {
-                // This screen scans on its own, so "none found" is only true
-                // once a scan has come back with nothing. Before that it is a
-                // report on a question nobody has asked yet.
                 screen = screen.text(if self.scanning {
                     "Looking for networks…"
                 } else {
                     "No networks found."
                 });
             } else {
-                let pages = page_count(self.networks.len());
+                let rows = self.wifi_rows(context);
+                let pages = self.wifi_pages(context);
+                let page = self.wifi_page.min(pages.len().saturating_sub(1));
                 screen = screen
-                    .section_with_value("Networks", format!("{} / {pages}", self.wifi_page + 1))
-                    .rows(
-                        self.networks
-                            .iter()
-                            .skip(self.wifi_page * PAGE_SIZE)
-                            .take(PAGE_SIZE)
-                            .enumerate()
-                            .map(|(index, network)| {
-                                let security = if network.secured { "Secured" } else { "Open" };
-                                // Leaving a network is done where joining one
-                                // is done, which is what the Bluetooth screen
-                                // beside it already says on every row. A verb
-                                // at the foot of the page was a second place
-                                // to look for the same switch.
-                                let summary = if network.connected {
-                                    format!(
-                                        "Connected · Tap to disconnect · {} dBm",
-                                        network.signal_dbm
-                                    )
-                                } else {
-                                    format!("{security} · {} dBm", network.signal_dbm)
-                                };
-                                (
-                                    NETWORK_ACTIONS[index],
-                                    network.ssid.as_str(),
-                                    summary,
-                                    RowLead::from(Glyph::Wifi),
-                                )
-                            }),
-                    );
-                let turns = paging(self.wifi_page, pages);
-                if !turns.is_empty() {
-                    screen = screen.controls(u8::try_from(turns.len()).unwrap_or(2), turns);
-                }
+                    .section("Networks")
+                    .rows(pages[page].iter().map(|&index| rows[index].as_row()));
+                screen = page_controls(screen, page, pages.len());
             }
         }
         screen.build()
+    }
+
+    #[cfg(test)]
+    fn wifi(&self) -> Screen {
+        self.wifi_for(&Context::default())
     }
 
     fn wifi_password(&self) -> Screen {
@@ -821,10 +949,7 @@ impl Settings {
             }
             .to_owned(),
             offset: 0,
-            max_bytes: match channel {
-                UpdateChannel::Stable => 256 * 1024,
-                UpdateChannel::Beta => 1024 * 1024,
-            },
+            max_bytes: release_window(channel),
             credential: None,
             headers: Vec::new(),
         });
@@ -974,6 +1099,29 @@ impl Settings {
         self.trouble = Some((topic, error.into()));
     }
 
+    /// Answers a radio row that this runtime can never read.
+    ///
+    /// Only the success arm ever moved a radio off `Unknown`, and `Unknown`
+    /// is drawn as "Checking…". A reader whose Bluetooth the runtime cannot
+    /// drive therefore sat on "Checking…" for the rest of the session while
+    /// the banner directly under it already said the reading would never
+    /// come: one row promising a result, one banner saying there would not be
+    /// one. `Unsupported` is a settled answer, so the row gives it.
+    ///
+    /// Only `Unsupported` settles anything. Every other failure is a reading
+    /// that may yet succeed, and claiming the radio is absent because one
+    /// read failed would be a worse lie than the one this fixes.
+    fn settle_unreadable_radio(&mut self, topic: Topic, reason: DenyReason) {
+        if reason != DenyReason::Unsupported {
+            return;
+        }
+        match topic {
+            Topic::Bluetooth => self.bluetooth_state = RadioState::Unsupported,
+            Topic::Wifi => self.wifi_state = RadioState::Unsupported,
+            Topic::Battery | Topic::About => {}
+        }
+    }
+
     /// Clears a failure once the same row answers successfully. A Wi-Fi
     /// success must not silence a Bluetooth failure.
     fn settled(&mut self, topic: Topic) {
@@ -987,21 +1135,24 @@ impl Settings {
     }
 
     /// Moves the list on the panel one page, clamped at both ends.
-    fn turn_page(&mut self, forward: bool) {
-        let (page, pages) = match self.view {
-            View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
-            View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home
-            | View::WifiPassword
-            | View::Battery
-            | View::About
-            | View::Update
-            | View::UpdateChannelConfirm => return,
+    fn turn_page(&mut self, context: &Context, forward: bool) {
+        let pages = match self.view {
+            View::Home => self.home_pages(context).len(),
+            View::Bluetooth => self.bluetooth_pages(context).len(),
+            View::Wifi => self.wifi_pages(context).len(),
+            _ => return,
         };
+        let page = match self.view {
+            View::Home => &mut self.home_page,
+            View::Bluetooth => &mut self.bluetooth_page,
+            View::Wifi => &mut self.wifi_page,
+            _ => return,
+        };
+        let last = pages.saturating_sub(1);
         *page = if forward {
-            (*page + 1).min(pages - 1)
+            (page.saturating_add(1)).min(last)
         } else {
-            page.saturating_sub(1)
+            (*page).min(last).saturating_sub(1)
         };
     }
 
@@ -1085,6 +1236,17 @@ impl KoboApp for Settings {
         self.show(context);
     }
 
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if matches!(self.view, View::Home | View::Bluetooth | View::Wifi) {
+            self.turn_page(context, forward);
+            self.show(context);
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one explicit dispatch table for every screen"
+    )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.view == View::WifiPassword {
             self.password_action(context, action);
@@ -1162,21 +1324,27 @@ impl KoboApp for Settings {
             }
             self.show(context);
         } else if action == action_id(MORE) {
-            self.turn_page(true);
+            self.turn_page(context, true);
             self.show(context);
         } else if action == action_id(PREVIOUS) {
-            self.turn_page(false);
+            self.turn_page(context, false);
             self.show(context);
-        } else if let Some(index) = DEVICE_ACTIONS
-            .iter()
-            .position(|name| action == action_id(name))
-        {
-            self.choose_bluetooth(context, self.bluetooth_page * PAGE_SIZE + index);
-        } else if let Some(index) = NETWORK_ACTIONS
-            .iter()
-            .position(|name| action == action_id(name))
-        {
-            self.choose_network(context, self.wifi_page * PAGE_SIZE + index);
+        } else if self.view == View::Bluetooth {
+            if let Some(index) = self
+                .devices
+                .iter()
+                .position(|device| action == action_id(&bluetooth_action(&device.address)))
+            {
+                self.choose_bluetooth(context, index);
+            }
+        } else if self.view == View::Wifi {
+            if let Some(index) = self
+                .networks
+                .iter()
+                .position(|network| action == action_id(&network_action(&network.ssid)))
+            {
+                self.choose_network(context, index);
+            }
         }
     }
 
@@ -1195,7 +1363,6 @@ impl KoboApp for Settings {
             } => {
                 self.bluetooth_state = RadioState::new(available, enabled);
                 self.devices = devices;
-                self.bluetooth_page %= page_count(self.devices.len());
                 // Latched, so a later reading cannot withdraw a warning the
                 // reader has already been shown.
                 self.restart_on_exit |= restart_on_exit;
@@ -1216,7 +1383,6 @@ impl KoboApp for Settings {
                 self.connected_ssid = connected_ssid;
                 if !networks.is_empty() || matches!(request, DeviceRequest::ScanWifi) {
                     self.networks = networks;
-                    self.wifi_page %= page_count(self.networks.len());
                 }
                 if matches!(request, DeviceRequest::ScanWifi) {
                     self.scanning = false;
@@ -1253,6 +1419,7 @@ impl KoboApp for Settings {
                 if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(reason.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
+                    self.settle_unreadable_radio(topic, reason);
                     self.fail(topic, reason.to_string());
                 }
             }
@@ -1286,7 +1453,8 @@ impl KoboApp for Settings {
             | DeviceResult::AppLink(_)
             | DeviceResult::RemoteInstall(_)
             | DeviceResult::Library { .. }
-            | DeviceResult::LibraryDocument { .. } => {}
+            | DeviceResult::LibraryDocument { .. }
+            | DeviceResult::Secrets { .. } => {}
         }
         self.show(context);
     }
@@ -1334,25 +1502,71 @@ impl KoboApp for Settings {
     }
 }
 
-/// The page turns a paginated list should offer from where it is standing.
-///
-/// A list that wraps is a list that lies: on the last page "More" promised
-/// devices that were not there, and pressing it took the reader back to the
-/// first page as if that were forward. Each direction is offered only where
-/// there is a page on that side.
-fn paging(page: usize, pages: usize) -> Vec<(&'static str, &'static str, Glyph)> {
-    let mut turns = Vec::new();
-    if page > 0 {
-        turns.push((PREVIOUS, "Previous", Glyph::Previous));
-    }
-    if page + 1 < pages {
-        turns.push((MORE, "Next", Glyph::Next));
-    }
-    turns
+// A scanner can reorder rows between a drawn tap and its callback. Bind each
+// action to the identity the user saw, rather than its old list position.
+fn bluetooth_action(address: &str) -> String {
+    format!("bt-device-{address}")
+}
+fn network_action(ssid: &str) -> String {
+    format!("wifi-network-{ssid}")
 }
 
-fn page_count(items: usize) -> usize {
-    items.div_ceil(PAGE_SIZE).max(1)
+struct SettingsRow {
+    section: Option<&'static str>,
+    action: String,
+    title: String,
+    summary: String,
+    lead: RowLead,
+}
+
+impl SettingsRow {
+    fn new(
+        section: Option<&'static str>,
+        action: impl Into<String>,
+        title: impl Into<String>,
+        summary: impl Into<String>,
+        glyph: Glyph,
+    ) -> Self {
+        Self {
+            section,
+            action: action.into(),
+            title: title.into(),
+            summary: summary.into(),
+            lead: glyph.into(),
+        }
+    }
+    fn as_row(&self) -> (&str, &str, &str, RowLead) {
+        (&self.action, &self.title, &self.summary, self.lead)
+    }
+}
+
+fn list_pages(
+    context: &Context,
+    rows: &[SettingsRow],
+    nav_bar: bool,
+    prefix: ScreenBuilder,
+) -> Vec<Vec<usize>> {
+    let measured: Vec<_> = rows
+        .iter()
+        .map(|row| (row.title.as_str(), row.summary.as_str()))
+        .collect();
+    context.paginate_rows_under(
+        &measured,
+        nav_bar,
+        kobo_sdk::Position::AtTheFoot,
+        &prefix.build(),
+    )
+}
+
+fn page_controls(screen: ScreenBuilder, page: usize, pages: usize) -> ScreenBuilder {
+    if pages > 1 {
+        screen.page_turns(PREVIOUS, MORE).page_position(
+            u16::try_from(page + 1).unwrap_or(u16::MAX),
+            u16::try_from(pages).unwrap_or(u16::MAX),
+        )
+    } else {
+        screen
+    }
 }
 
 /// The newest published release, as its assets name this device's download.
@@ -1400,8 +1614,17 @@ fn archive_name(version: &str) -> String {
 /// Reads the selected GitHub release feed down to the two URLs this device
 /// needs. Beta selection is by numeric version rather than response order.
 fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String> {
-    let value = kobo_json::parse(body)
-        .map_err(|_| "GitHub sent something that is not a release.".to_owned())?;
+    // A reply that filled its window and then failed to parse is a window
+    // into a longer feed, not a broken one, and telling the reader their
+    // release list is unreadable rubbish sends them looking for a fault at
+    // GitHub that is not there.
+    let value = kobo_json::parse(body).map_err(|_| {
+        if body.len() >= release_window(channel) as usize {
+            "GitHub's release list is longer than this reader can read.".to_owned()
+        } else {
+            "GitHub sent something that is not a release.".to_owned()
+        }
+    })?;
     match channel {
         UpdateChannel::Stable => stable_release(&value),
         UpdateChannel::Beta => value
@@ -1557,13 +1780,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
-        CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, VERSION,
+        RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
+        CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel, WifiNetwork,
-        CLARA_BW_METRICS,
+        DenyReason, DeviceIdentity, DeviceRequest, DeviceResult, Emphasis, Glyph, Node,
+        UpdateChannel, WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1676,10 +1899,127 @@ mod tests {
     }
 
     #[test]
+    fn a_radio_the_runtime_cannot_read_stops_saying_it_is_being_checked() {
+        // The bug this pins: only a successful reading moved a radio off
+        // Unknown, and Unknown draws as "Checking...". On hardware whose
+        // Bluetooth this runtime cannot drive, the home row promised a
+        // reading for the rest of the session while the banner under it
+        // already said the reading would never come.
+        let mut settings = Settings::default();
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        let before = format!("{:?}", settings.home());
+        assert!(before.contains("Checking"), "{before}");
+
+        settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Unsupported);
+
+        assert_eq!(settings.bluetooth_state, RadioState::Unsupported);
+        let after = format!("{:?}", settings.home());
+        assert!(after.contains("Not supported by this runtime"), "{after}");
+    }
+
+    #[test]
+    fn a_refused_bluetooth_reading_settles_the_row_through_the_runtime() {
+        // Driven through on_device_result rather than the helper, because the
+        // helper passing proves only that the helper works: the defect was
+        // that the refusal never reached a state change at all, and a test
+        // that calls the transition directly would pass with the call site
+        // deleted.
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        assert_eq!(runner.app().bluetooth_state, RadioState::Unknown);
+
+        // read_bluetooth is the first reading refresh asks for, so the first
+        // answer delivered is the one it is matched to.
+        runner.device_result(DeviceResult::Denied(DenyReason::Unsupported));
+
+        assert_eq!(runner.app().bluetooth_state, RadioState::Unsupported);
+        let home = format!("{:?}", runner.app().home());
+        assert!(home.contains("Not supported by this runtime"), "{home}");
+        // The refusal is about the runtime, so the screen must not go on to
+        // claim the hardware is missing: this reader may well have a radio
+        // the runtime has simply not brought up.
+        let screen = text_of(&runner.app().bluetooth());
+        assert!(
+            screen.contains("This runtime cannot use Bluetooth on this hardware."),
+            "{screen}"
+        );
+        assert!(!screen.contains("no Bluetooth hardware"), "{screen}");
+    }
+
+    #[test]
+    fn a_radio_that_merely_failed_once_is_still_worth_reading_again() {
+        // The narrower half of the same fix: a refusal for any other reason
+        // may yet be followed by a reading that succeeds, so the row must not
+        // claim the hardware is absent on the strength of one refusal.
+        let mut settings = Settings::default();
+
+        settings.settle_unreadable_radio(Topic::Bluetooth, DenyReason::Busy);
+
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+    }
+
+    #[test]
+    fn a_reader_with_no_bluetooth_hardware_is_told_so_without_a_dead_end_toggle() {
+        // The bug this pins: a toggle drawn regardless of hardware invited
+        // the one action that could never succeed, and only failed once
+        // tapped, on a Libra H2O with no Bluetooth radio at all.
+        let settings = Settings {
+            bluetooth_state: RadioState::Unavailable,
+            ..Settings::default()
+        };
+        let screen = settings.bluetooth();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(text_of(&screen).contains("This device has no Bluetooth hardware."));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(TOGGLE)).is_none());
+    }
+
+    #[test]
+    fn a_reader_with_no_wifi_hardware_is_told_so_without_a_dead_end_toggle() {
+        let settings = Settings {
+            wifi_state: RadioState::Unavailable,
+            ..Settings::default()
+        };
+        let screen = settings.wifi();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(text_of(&screen).contains("This device has no Wi-Fi hardware."));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(TOGGLE)).is_none());
+    }
+
+    /// The bug this pins: `RadioState::Unavailable` is also the enum's
+    /// default before the first `read_bluetooth`/`read_wifi` reply, and what
+    /// a denied or failed read leaves it as. Before `Unknown` existed as a
+    /// separate state, both screens above claimed the reader's hardware
+    /// outright had no radio during that window -- true only once a
+    /// successful reply has actually said so.
+    #[test]
+    fn a_radio_with_no_answer_yet_is_not_claimed_absent() {
+        let settings = Settings::default();
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        assert_eq!(settings.wifi_state, RadioState::Unknown);
+        let bluetooth = settings.bluetooth();
+        assert!(!text_of(&bluetooth).contains("no Bluetooth hardware"));
+        let wifi = settings.wifi();
+        assert!(!text_of(&wifi).contains("no Wi-Fi hardware"));
+    }
+
+    #[test]
+    fn a_failed_bluetooth_read_leaves_hardware_state_unknown_not_absent() {
+        let mut settings = Settings::default();
+        settings.fail(super::Topic::Bluetooth, "backend unavailable");
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        assert!(!text_of(&settings.bluetooth()).contains("no Bluetooth hardware"));
+    }
+
+    #[test]
     fn a_full_bluetooth_scan_keeps_every_drawn_action_on_the_panel() {
         let settings = Settings {
             bluetooth_state: RadioState::On,
-            devices: (0..DEVICE_ACTIONS.len()).map(bluetooth_device).collect(),
+            devices: (0..10).map(bluetooth_device).collect(),
             ..Settings::default()
         };
         let screen = settings.bluetooth();
@@ -1695,10 +2035,8 @@ mod tests {
         let settings = Settings {
             wifi_state: RadioState::On,
             connected_ssid: Some("Network 0".to_owned()),
-            networks: NETWORK_ACTIONS
-                .iter()
-                .enumerate()
-                .map(|(index, _)| WifiNetwork {
+            networks: (0..10)
+                .map(|index| WifiNetwork {
                     ssid: format!("Network {index}"),
                     signal_dbm: -40 - i16::try_from(index).unwrap_or_default(),
                     secured: true,
@@ -1722,10 +2060,8 @@ mod tests {
     fn the_last_page_of_networks_offers_only_the_way_back() {
         let mut settings = Settings {
             wifi_state: RadioState::On,
-            networks: NETWORK_ACTIONS
-                .iter()
-                .enumerate()
-                .map(|(index, _)| WifiNetwork {
+            networks: (0..10)
+                .map(|index| WifiNetwork {
                     ssid: format!("Network {index}"),
                     signal_dbm: -40,
                     secured: true,
@@ -1734,7 +2070,7 @@ mod tests {
                 .collect(),
             ..Settings::default()
         };
-        settings.wifi_page = super::page_count(settings.networks.len()) - 1;
+        settings.wifi_page = settings.wifi_pages(&kobo_sdk::Context::default()).len() - 1;
         let layout = settings
             .wifi()
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
@@ -2034,6 +2370,39 @@ mod tests {
     }
 
     #[test]
+    fn a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense() {
+        let window = super::release_window(UpdateChannel::Beta) as usize;
+        let cut_off = r#"[{"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[{"#
+            .to_owned()
+            + &" ".repeat(window);
+        assert!(
+            super::latest_release(&cut_off, UpdateChannel::Beta)
+                .expect_err("a window into a feed is not a feed")
+                .contains("longer than this reader can read"),
+            "a reply that filled its window names the length as the fault"
+        );
+        assert!(
+            super::latest_release("<html>", UpdateChannel::Beta)
+                .expect_err("not a feed at all")
+                .contains("not a release"),
+            "a short reply that is not a feed keeps its own sentence"
+        );
+    }
+
+    #[test]
+    fn the_beta_feed_asks_for_few_enough_releases_to_stay_inside_its_window() {
+        assert!(
+            super::BETA_RELEASES.ends_with("per_page=15"),
+            "the whole list outgrew the window once and must not be asked for again"
+        );
+        assert!(
+            super::release_window(UpdateChannel::Beta)
+                > 8 * super::release_window(UpdateChannel::Stable),
+            "the beta feed is the long one and needs room to grow"
+        );
+    }
+
+    #[test]
     fn beta_release_selection_orders_versions_and_excludes_other_releases() {
         let body = r#"[
           {"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[
@@ -2143,6 +2512,9 @@ mod tests {
                 version: "9.9.9".to_owned(),
             },
             super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+            super::UpdateFlow::Failed(
+                "GitHub's release list is longer than this reader can read.".to_owned(),
+            ),
         ];
         for flow in flows {
             let settings = Settings {
@@ -2261,3 +2633,6 @@ mod tests {
         )));
     }
 }
+
+#[cfg(test)]
+mod list_tests;

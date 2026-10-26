@@ -1,0 +1,10 @@
+Kobo doctor 0.1.0
+mode: read-only (query ioctls only)
+profile: elipsa-2e-389 (Kobo Elipsa 2E)
+device-tree compatible: mediatek,mt8110, mediatek,mt8512
+device-tree model: MediaTek MT8110 board
+framebuffer: id=hwtcon 1404x1872 virtual=1404x1872 offset=0,0 bpp=32 grayscale=0 stride=5616 map=10543104 type=0 visual=2 rotation=1
+pixel fields: RBitfield { offset: 0, length: 0, msb_right: 0 } GBitfield { offset: 0, length: 0, msb_right: 0 } BBitfield { offset: 0, length: 0, msb_right: 0 } ABitfield { offset: 0, length: 0, msb_right: 0 }
+identity: model=N605 firmware=4.38.23697 kernel=4.9.77 device-code=389
+touch: Elan Touchscreen at /dev/input/event2 X=0..1872 Y=0..1404
+result: write ready

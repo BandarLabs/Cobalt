@@ -7,6 +7,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kobo-state = { path = "../../crates/kobo-state" }
+kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]

@@ -11,8 +11,8 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -270,11 +270,46 @@ impl Terminal {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionState {
+    Waiting,
+    Connected,
+    Reconnecting,
+    Stopped,
+}
+
+fn connection_state(last: Option<Instant>, now: Instant, ended: bool) -> ConnectionState {
+    if ended {
+        return ConnectionState::Stopped;
+    }
+    match last {
+        None => ConnectionState::Waiting,
+        Some(last) if now.saturating_duration_since(last) <= Duration::from_secs(45) => {
+            ConnectionState::Connected
+        }
+        Some(_) => ConnectionState::Reconnecting,
+    }
+}
+
+impl ConnectionState {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Waiting => "Paperterm: waiting for a reader to connect.",
+            Self::Connected => "Paperterm: reader connected.",
+            Self::Reconnecting => {
+                "Paperterm: waiting for the reader to reconnect (no requests for 45 seconds)."
+            }
+            Self::Stopped => "Paperterm: command stopped. Final screen available for one minute.",
+        }
+    }
+}
+
 /// Host-owned live screen. It is synchronised so a long poll never races a
 /// terminal reader or sees half an escape sequence.
 pub struct Session {
     terminal: Mutex<Terminal>,
     changed: Condvar,
+    last_reader_request: Mutex<Option<Instant>>,
 }
 
 impl Session {
@@ -283,7 +318,23 @@ impl Session {
         Self {
             terminal: Mutex::new(Terminal::new(grid)),
             changed: Condvar::new(),
+            last_reader_request: Mutex::new(None),
         }
+    }
+
+    fn reader_seen(&self) {
+        if let Ok(mut last) = self.last_reader_request.lock() {
+            *last = Some(Instant::now());
+        }
+    }
+
+    fn connection_state(&self, now: Instant, ended: bool) -> ConnectionState {
+        let last = self
+            .last_reader_request
+            .lock()
+            .ok()
+            .and_then(|value| *value);
+        connection_state(last, now, ended)
     }
 
     pub fn feed(&self, bytes: &[u8]) {
@@ -407,6 +458,13 @@ impl Options {
 /// The host and reader both attach to the one PTY, so full-screen programs
 /// receive a real controlling terminal, grid, job control, and input bytes.
 pub fn run(options: Options) -> Result<i32, String> {
+    let title = options.command.first().cloned().unwrap_or_default();
+    run_with_title(options, &title)
+}
+
+/// Runs a known companion flow with a reader-facing title.
+/// The title changes presentation only; the command still runs in the same PTY.
+pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     if options.command.is_empty() {
         return Err("kobo stream needs a command after --".to_owned());
     }
@@ -434,14 +492,28 @@ pub fn run(options: Options) -> Result<i32, String> {
     let input = Arc::new(Mutex::new(pty));
     let session = Arc::new(Session::new(options.grid));
     let mut raw_stdin = RawStdin::enable();
-    forward_stdin(Arc::clone(&input));
+    let stop = Arc::new(AtomicBool::new(false));
+    forward_stdin(Arc::clone(&input), Arc::clone(&stop));
+    eprintln!("Paperterm is sharing this session. Keep the computer awake.\r\nPress Ctrl+] on this computer to stop sharing and end the command.\r");
     let session_id = random_session()?;
-    let title = options.command[0].clone();
+    let title = title.to_owned();
     let mode = options.input_mode();
     let mut exit_code = None;
     let mut ended_at = None;
     let readers = Arc::new(AtomicUsize::new(0));
+    let mut reported_state = None;
     loop {
+        if stop.load(Ordering::Acquire) {
+            input
+                .lock()
+                .map_err(|_| "terminal lock failed")?
+                .close()
+                .map_err(|error| format!("stop shared command: {error}"))?;
+            session.finish(0);
+            drop(raw_stdin.take());
+            eprintln!("\r\nPaperterm stopped. The shared command has ended.");
+            return Ok(0);
+        }
         if ended_at.is_none() {
             let output_eof = drain_pty(&input, &session);
             if exit_code.is_none() {
@@ -458,6 +530,11 @@ pub fn run(options: Options) -> Result<i32, String> {
                 session.finish(code);
                 ended_at = Some(Instant::now());
             }
+        }
+        let state = session.connection_state(Instant::now(), ended_at.is_some());
+        if reported_state != Some(state) {
+            eprintln!("\r\n{}\r", state.message());
+            reported_state = Some(state);
         }
         if ended_at.is_some_and(|when| when.elapsed() >= FINAL_SCREEN_FOR) {
             break;
@@ -556,7 +633,12 @@ struct RawStdin(String);
 
 impl RawStdin {
     fn enable() -> Option<Self> {
-        let saved = Command::new("stty").arg("-g").output().ok()?;
+        // output() otherwise supplies a null stdin, even when the owner has a TTY.
+        let saved = Command::new("stty")
+            .arg("-g")
+            .stdin(Stdio::inherit())
+            .output()
+            .ok()?;
         if !saved.status.success() {
             return None;
         }
@@ -576,12 +658,16 @@ impl Drop for RawStdin {
     }
 }
 
-fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
+fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
         let mut bytes = [0_u8; 1024];
         while let Ok(read) = stdin.read(&mut bytes) {
             if read == 0 {
+                break;
+            }
+            if bytes[..read].contains(&0x1d) {
+                stop.store(true, Ordering::Release);
                 break;
             }
             if pty
@@ -599,23 +685,32 @@ fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
 /// input lock while waiting. Device key writes therefore never wait behind
 /// output from a noisy full-screen application.
 fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) -> bool {
+    const MAX_CHUNKS_PER_TURN: usize = 32;
     let mut drained = Vec::new();
-    let disconnected = {
+    let mut disconnected = false;
+    {
         let Ok(terminal) = pty.lock() else {
             return false;
         };
-        loop {
+        // A continuously-writing child must yield to input and connection work.
+        for _ in 0..MAX_CHUNKS_PER_TURN {
             match terminal.output().try_recv() {
                 Ok(bytes) => drained.push(bytes),
-                Err(std::sync::mpsc::TryRecvError::Empty) => break false,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
             }
         }
-    };
+    }
+    let mut stdout = std::io::stdout().lock();
     for bytes in drained {
-        let _ = std::io::stdout().write_all(&bytes);
+        let _ = stdout.write_all(&bytes);
         session.feed(&bytes);
     }
+    // Prompts and cursor updates often have no newline.
+    let _ = stdout.flush();
     disconnected
 }
 
@@ -772,15 +867,72 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
         .map_err(|error| format!("create {}: {error}", trust.display()))?;
     std::fs::copy(&ca, trust.join("stream.pem"))
         .map_err(|error| format!("install stream trust root: {error}"))?;
-    let address = requested_hosts
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "your-computer".to_owned());
-    println!("Paperterm is initialised.\n\n  address       {address}:{DEFAULT_PORT}\n  pairing code  {}\n\nNext: kobo trust set stream --device READER_IP", std::fs::read_to_string(pairing_path).unwrap_or_default().trim());
+    if !requested_hosts.is_empty() {
+        std::fs::write(directory.join("hosts"), requested_hosts.join("\n"))
+            .map_err(|error| format!("save computer addresses: {error}"))?;
+    }
+    // Minting is not pairing. This used to announce "Paperterm is ready to
+    // pair" from here, which is a claim only the caller is in a position to
+    // make: it is the caller that knows whether a reader was found and the
+    // trust root installed. Announcing it here said pairing was ready in the
+    // one case where it was furthest from it -- no reader found at all.
     Ok(())
 }
 
+/// Shows saved connection details without replacing the identity or pairing code.
+pub fn pairing_instructions(port: u16) -> Result<String, String> {
+    Ok(format!("{}\n\n{FIRST_TIME_HELP}", pairing_details(port)?))
+}
+
+/// What to do with a freshly minted identity, for a caller that has not
+/// already done it. Named so a test can hold it to saying so without a
+/// filesystem identity to load.
+const FIRST_TIME_HELP: &str = "First time: run kobo trust set stream --device READER_IP.\nThen open Paperterm and enter the computer address and pairing code.\nKeep both devices on the same network and the computer awake.";
+
+/// The address and code alone, with no advice about what to do with them.
+///
+/// Separate from [`pairing_instructions`] because what to do next is not a
+/// property of the identity: after a successful pairing the trust root is
+/// already installed, and telling the owner to install it is one instruction
+/// too many, while after a failed one they need different advice entirely.
+/// Only the caller knows which happened.
+///
+/// # Errors
+/// Fails when the identity cannot be read.
+pub fn pairing_details(port: u16) -> Result<String, String> {
+    let identity = Identity::load()?;
+    let hosts = std::fs::read_to_string(identity_dir()?.join("hosts")).unwrap_or_default();
+    Ok(format_pairing(&hosts, &identity.pairing, port))
+}
+
+fn format_pairing(hosts: &str, code: &str, port: u16) -> String {
+    let addresses = hosts
+        .lines()
+        .filter(|host| !host.trim().is_empty())
+        .map(|host| {
+            if host.parse::<std::net::Ipv6Addr>().is_ok() {
+                format!("  [{host}]:{port}")
+            } else {
+                format!("  {host}:{port}")
+            }
+        })
+        .collect::<Vec<_>>();
+    let address_help = if addresses.is_empty() {
+        "No network address saved. Run kobo stream init --host COMPUTER_IP first.".to_owned()
+    } else {
+        format!("Computer address:\n{}", addresses.join("\n"))
+    };
+    format!("{address_help}\nPairing code: {code}")
+}
+
 fn config_dir() -> Result<PathBuf, String> {
+    if let Some(root) = std::env::var_os("KOBO_STREAM_CONFIG_DIR") {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err("KOBO_STREAM_CONFIG_DIR must be an absolute path".into());
+        }
+        return Ok(root);
+    }
     let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
     Ok(PathBuf::from(home).join(".config").join("kobo"))
 }
@@ -837,6 +989,7 @@ fn route(
             if !accepted {
                 return respond(stream, 409, r#"{"stale":true}"#);
             }
+            session.reader_seen();
             respond(
                 stream,
                 200,
@@ -866,6 +1019,7 @@ fn route(
             let Some(mut screen) = session.screen_for(since, lease, generation) else {
                 return respond(stream, 409, r#"{"stale":true}"#);
             };
+            session.reader_seen();
             while screen.rows.is_empty() && !screen.ended && started.elapsed() < LONGEST_POLL {
                 std::thread::sleep(Duration::from_millis(100));
                 let Some(current) = session.screen_for(since, lease, generation) else {
@@ -902,6 +1056,7 @@ fn route(
             if !accepted {
                 return respond(stream, 409, r#"{"stale":true}"#);
             }
+            session.reader_seen();
             respond(stream, 200, r#"{"accepted":true}"#)
         }
         _ => respond(stream, 404, "{}"),
@@ -1086,6 +1241,57 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn connection_states_follow_accepted_requests_and_command_exit() {
+        let now = std::time::Instant::now();
+        assert_eq!(
+            super::connection_state(None, now, false),
+            super::ConnectionState::Waiting
+        );
+        assert_eq!(
+            super::connection_state(Some(now), now, false),
+            super::ConnectionState::Connected
+        );
+        assert_eq!(
+            super::connection_state(Some(now), now + std::time::Duration::from_secs(46), false),
+            super::ConnectionState::Reconnecting
+        );
+        assert_eq!(
+            super::connection_state(Some(now), now, true),
+            super::ConnectionState::Stopped
+        );
+        let session = super::Session::new(super::Grid::fallback());
+        assert_eq!(
+            session.connection_state(now, false),
+            super::ConnectionState::Waiting
+        );
+        session.reader_seen();
+        assert_eq!(
+            session.connection_state(std::time::Instant::now(), false),
+            super::ConnectionState::Connected
+        );
+    }
+
+    #[test]
+    fn pairing_details_use_the_selected_port_and_saved_addresses() {
+        let details = super::format_pairing("192.0.2.10\n2001:db8::1\n", "ABC123", 9123);
+        assert!(details.contains("192.0.2.10:9123"));
+        assert!(details.contains("[2001:db8::1]:9123"));
+        assert!(details.contains("Pairing code: ABC123"));
+        assert!(!details.contains("your-computer"));
+    }
+
+    #[test]
+    fn missing_saved_address_explains_how_to_finish_setup() {
+        let details = super::format_pairing("", "ABC123", 9123);
+        assert!(details.contains("kobo stream init --host COMPUTER_IP"));
+        // Installing the trust root moved out of the details and into the
+        // first-time advice, because a caller that has just installed it must
+        // not repeat the instruction back to the owner.
+        assert!(!details.contains("kobo trust set stream --device READER_IP"));
+        assert!(super::FIRST_TIME_HELP.contains("kobo trust set stream --device READER_IP"));
+    }
     use super::*;
 
     #[test]

@@ -1,0 +1,611 @@
+# One clue per answer, written once and reused by every grid that needs the
+# word. A puzzle is the grid; the clues are this table. Answers are the only
+# vocabulary the generator may use, so every generated puzzle is clued by
+# construction and nothing ships with a blank clue.
+#
+# ANSWER<tab>clue
+ACE	Card above a king
+ACT	Part of a play
+ADD	Put numbers together
+AGE	Years behind you
+AGO	In the past
+AID	Help given
+AIM	Point at a target
+AIR	What you breathe
+ANT	Small hill builder
+APE	Tailless climber
+ARC	Curved path
+ARM	Shoulder to hand
+ART	What a gallery hangs
+ASH	What a fire leaves
+ASK	Put a question
+AXE	Tool for splitting logs
+BAG	Carried by its handles
+BAR	Where drinks are poured
+BAT	Swung at a ball
+BAY	Curve of coast
+BED	Where you sleep
+BEE	Hive worker
+BET	Wager
+BIN	Rubbish goes in it
+BOW	Bend at the waist
+BOX	Cardboard container
+BOY	Young lad
+BUD	Flower before it opens
+BUS	Public road vehicle
+CAB	Taxi
+CAP	Peaked hat
+CAR	Four wheels and a driver
+CAT	Purring pet
+COW	Gives milk
+CRY	Shed tears
+CUP	Tea is drunk from it
+CUT	Slice through
+DAM	Holds back a river
+DAY	Sunrise to sunset
+DEN	Animal's home
+DIG	Turn over soil
+DOG	Faithful barker
+DOT	Small round mark
+DRY	Without water
+DUE	Expected to arrive
+EAR	Hears with it
+EAT	Have a meal
+EEL	Long slippery fish
+EGG	Laid in a nest
+ELM	Broad shade tree
+END	Final part
+ERA	Stretch of history
+EYE	Organ of sight
+FAN	Keeps a room cool
+FAR	A long way off
+FEE	Charge for a service
+FIG	Sweet soft fruit
+FIN	Fish's steering flap
+FIR	Evergreen tree
+FIT	The right size
+FIX	Put right
+FLY	Travel by air
+FOG	Thick low cloud
+FOX	Red-coated raider
+FUN	Good time
+FUR	Animal's coat
+GAP	Space between
+GAS	Fuel for a hob
+GEM	Cut stone
+GUM	Chewed, not swallowed
+HAT	Worn on the head
+HAY	Dried grass
+HEN	Lays the eggs
+HIP	Joint above the leg
+HIT	Strike
+HOE	Weeding tool
+HOT	Straight from the oven
+HUB	Centre of a wheel
+HUT	Small rough shelter
+ICE	Frozen water
+ILL	Not well
+INK	A pen runs out of it
+INN	Old roadside lodging
+ION	Charged particle
+IVY	Wall climber
+JAM	Spread on toast
+JAR	Screw-top pot
+JAW	Holds the teeth
+JET	Fast aircraft
+JOB	Paid work
+JOY	Great delight
+JUG	Pours the milk
+KEY	Opens a lock
+KID	Young goat
+KIT	Everything you need
+LAB	Where experiments run
+LAP	Once round the track
+LAW	Passed by parliament
+LEG	You stand on two
+LID	Covers a pot
+LIE	Untruth
+LIP	Edge of the mouth
+LOG	Sawn piece of trunk
+LOT	A great deal
+MAN	Grown male
+MAP	Shows the way
+MAT	Wipe your feet on it
+MIX	Stir together
+MUD	Wet earth
+MUG	Holds the tea
+NET	Catches the fish
+NEW	Just made
+NOD	Agree without speaking
+NOT	Word of denial
+NOW	At this moment
+NUT	Cracked for its kernel
+OAK	Acorn tree
+OAR	Rows the boat
+OAT	Porridge grain
+ODD	Not even
+ODE	Poem of praise
+OIL	Lubricates the chain
+OLD	Far from new
+ONE	First number
+OUR	Belonging to us
+OUT	Not at home
+OWL	Night hunter
+OWN	Belong to you
+PAD	Block of writing paper
+PAN	Fried in it
+PAW	Cat's foot
+PAY	Hand over money
+PEA	Green pod seed
+PEG	Holds the washing
+PEN	Writes in ink
+PET	Kept for company
+PIE	Filling under pastry
+PIG	Farmyard grunter
+PIN	Holds the cloth
+PIT	Deep hole
+POT	Plant sits in it
+PUT	Place down
+RAG	Torn cloth
+RAT	Long-tailed rodent
+RAW	Not cooked
+RAY	Line of light
+RED	Colour of a stop light
+RIB	Curved chest bone
+RIM	Edge of a cup
+ROD	Long thin bar
+ROW	Line of seats
+RUB	Polish by hand
+RUG	Small carpet
+RUN	Move at speed
+SAW	Cuts the timber
+SEA	Salt water
+SEE	Take in with the eyes
+SET	Put in place
+SHY	Slow to speak up
+SIP	Drink a little
+SIT	Take a seat
+SIX	Half a dozen
+SKY	Above the clouds
+SON	Boy of the family
+SPA	Where you take the waters
+SUM	Answer to an addition
+SUN	Star we orbit
+TAG	Label on a coat
+TAN	Colour of light leather
+TAP	Water comes from it
+TAR	Black road dressing
+TAX	Paid to the state
+TEA	Brewed in a pot
+TEN	Fingers on two hands
+TIE	Worn at the collar
+TIN	Food keeps in it
+TIP	Point of a pen
+TOE	End of the foot
+TON	Heavy weight
+TOP	Highest part
+TOY	Played with
+TRY	Make an attempt
+TUB	Bath
+TWO	A pair
+URN	Holds the ashes
+USE	Put to work
+VAN	Delivers the parcels
+VAT	Large brewing tub
+VET	Treats the animals
+VOW	Solemn promise
+WAR	Opposite of peace
+WAX	Candle stuff
+WAY	Route taken
+WEB	Spider's work
+WET	Soaked
+WIG	False hair
+WIN	Come first
+WIT	Quick humour
+YES	Word of agreement
+YEW	Churchyard evergreen
+ZOO	Animals on show
+ABOVE	Over the top of
+ACTOR	Takes a part
+AGAIN	One more time
+AGENT	Acts for another
+ALARM	Wakes you up
+ALBUM	Holds the photographs
+ALIKE	Much the same
+ALIVE	Not dead
+ALLOW	Give leave to
+ALONE	With nobody else
+ALTER	Change
+ANGER	Hot temper
+ANGLE	Two lines meeting
+ANGRY	Cross
+APPLE	Falls from the tree
+APRON	Worn while cooking
+ARENA	Ring for a contest
+ARGUE	Take opposite sides
+ARISE	Get up
+ASIDE	Out of the way
+AWARD	Prize handed over
+AWARE	Knowing about it
+BACON	Fried with eggs
+BADLY	Not at all well
+BAKER	Makes the bread
+BASIC	Simple and plain
+BEACH	Sand by the sea
+BEGIN	Make a start
+BELOW	Under
+BENCH	Long seat
+BIRTH	Coming into the world
+BLACK	Colour of coal
+BLAME	Lay the fault on
+BLANK	Nothing written on it
+BLIND	Unable to see
+BLOCK	Get in the way of
+BLOOD	Runs in the veins
+BOARD	Flat plank
+BONUS	Extra payment
+BRAIN	Thinks with it
+BRAND	Maker's name
+BRASS	Yellow metal mix
+BRAVE	Facing danger
+BREAD	Cut into slices
+BREAK	Snap in two
+BRICK	Baked building block
+BRIEF	Not lasting long
+BRING	Fetch here
+BROAD	Wide
+BROWN	Colour of soil
+BRUSH	Sweeps the floor
+BUILD	Put up
+BUNCH	Grapes come in one
+CABIN	Small wooden house
+CABLE	Thick wire
+CANAL	Cut waterway
+CANDY	Sweet
+CARGO	What a ship carries
+CARRY	Take with you
+CATCH	Take in the hand
+CAUSE	Reason for it
+CHAIN	Links joined
+CHAIR	You sit on it
+CHALK	Writes on a board
+CHARM	Winning manner
+CHART	Table of figures
+CHASE	Run after
+CHEAP	Costs little
+CHECK	Look it over
+CHEST	Trunk of the body
+CHIEF	Head of the tribe
+CHILD	Young person
+CLAIM	Say it is yours
+CLASS	Taught together
+CLEAN	Free of dirt
+CLEAR	Easy to see through
+CLIFF	Steep rock face
+CLIMB	Go up
+CLOCK	Tells the time
+CLOSE	Shut
+CLOTH	Woven material
+CLOUD	Rain comes from it
+COACH	Trains the team
+COAST	Where land meets sea
+COUNT	Number them off
+COURT	Where a case is heard
+COVER	Put a lid on
+CRAFT	Skilled making
+CRASH	Sudden loud smash
+CREAM	Rises on the milk
+CRIME	Breaking the law
+CROSS	Two lines over each other
+CROWD	Many people together
+CROWN	Worn by a king
+CURVE	Bend in the road
+CYCLE	Ride on two wheels
+DAILY	Every day
+DANCE	Move to music
+DEPTH	How far down
+DOZEN	Twelve
+DRAFT	First rough try
+DRAMA	Play for the stage
+DREAM	Comes while asleep
+DRESS	Worn by a woman
+DRIFT	Float along
+DRINK	Swallow a liquid
+DRIVE	Take the wheel
+EAGER	Keen to start
+EARLY	Before the time
+EARTH	Our planet
+EIGHT	Twice four
+EMPTY	Nothing in it
+ENEMY	Not a friend
+ENJOY	Take pleasure in
+ENTER	Go in
+EQUAL	Just the same
+ERROR	Mistake
+EVENT	Something that happens
+EVERY	Each one
+EXACT	Right to the letter
+EXTRA	More than needed
+FAITH	Firm belief
+FIELD	Grazing ground
+FIGHT	Come to blows
+FINAL	Last of all
+FIRST	Before the rest
+FLAME	Tip of a fire
+FLASH	Sudden light
+FLOAT	Stay on the surface
+FLOOR	You walk on it
+FLOUR	Ground wheat
+FOCUS	Sharpen the picture
+FORCE	Push or pull
+FRAME	Holds the picture
+FRESH	Newly picked
+FRONT	Facing forward
+FROST	White on the grass
+FRUIT	Grows on the tree
+GIANT	Very large
+GLASS	Window is made of it
+GLOBE	Model of the world
+GRAIN	Single seed
+GRAND	On a great scale
+GRASS	Mown in summer
+GREAT	Very fine indeed
+GREEN	Colour of leaves
+GROUP	Set of people
+GUARD	Keeps watch
+GUESS	Answer without knowing
+GUEST	Invited to stay
+GUIDE	Shows the way
+HABIT	What you always do
+HAPPY	Full of cheer
+HEART	Pumps the blood
+HEAVY	Hard to lift
+HORSE	Ridden with a saddle
+HOTEL	Rooms for the night
+HOUSE	Home with a roof
+HUMAN	One of us
+IMAGE	Picture of a thing
+INDEX	List at the back
+INNER	Further in
+ISSUE	Number of a magazine
+JUDGE	Sits in the court
+JUICE	Squeezed from fruit
+KNIFE	Cuts the bread
+KNOCK	Rap at the door
+LABEL	Names the jar
+LARGE	Big
+LATER	After this
+LAUGH	Break into mirth
+LAYER	One thickness
+LEARN	Take in a lesson
+LEAST	Smallest amount
+LEAVE	Go away from
+LEGAL	Allowed by law
+LEMON	Sour yellow fruit
+LEVEL	Perfectly flat
+LIGHT	Not heavy
+LIMIT	As far as allowed
+LOCAL	From nearby
+LOGIC	Sound reasoning
+LOOSE	Not tied down
+LOWER	Let down
+LOYAL	True to a friend
+LUCKY	Fortune favours them
+LUNCH	Midday meal
+MAGIC	Tricks and spells
+MAJOR	Greater of two
+MARCH	Walk in step
+MATCH	Strikes a flame
+MAYBE	Possibly
+MEDAL	Hung on a ribbon
+METAL	Iron or copper
+MINOR	Lesser of two
+MIXED	Stirred together
+MODEL	Small copy
+MONEY	Coins and notes
+MONTH	Thirty days or so
+MORAL	Lesson of the tale
+MOTOR	Drives the wheels
+MOUSE	Small grey nibbler
+MOUTH	Speaks with it
+MUSIC	Played or sung
+NERVE	Carries the feeling
+NEVER	Not at any time
+NIGHT	Dark hours
+NOBLE	High born
+NOISE	Unwanted sound
+NORTH	Opposite of south
+NOTED	Well known
+NOVEL	Long story
+NURSE	Cares for the sick
+OCEAN	Vast sea
+OFFER	Hold out for taking
+ORDER	Put in sequence
+ORGAN	Pipes in a church
+OTHER	The remaining one
+OUTER	Further out
+OWNER	Has the deeds
+PAINT	Brushed on a wall
+PANEL	Flat board
+PAPER	Written on
+PARTY	Gathering for fun
+PATCH	Sewn over a hole
+PEACE	No more war
+PEARL	Grown in an oyster
+PHONE	Ring on it
+PHOTO	Taken with a camera
+PIANO	Eighty-eight keys
+PIECE	Part of the whole
+PILOT	Flies the plane
+PITCH	Where the match is played
+PLACE	Spot on the map
+PLAIN	Simple and clear
+PLANE	Flies overhead
+PLANT	Grows in soil
+PLATE	Dinner is served on it
+POINT	Sharp end
+POUND	Weight of sixteen ounces
+POWER	Strength to act
+PRESS	Push down on
+PRICE	What it costs
+PRIDE	Proper self regard
+PRIME	First in rank
+PRINT	Put on paper
+PRIZE	Won in a contest
+PROOF	Settles the argument
+PROUD	Pleased with it
+PROVE	Show beyond doubt
+QUEEN	Wears the crown
+QUICK	Done in a moment
+QUIET	Making no sound
+QUITE	Rather
+RADIO	Brings the news
+RAISE	Lift up
+RANGE	Mountains in a row
+RAPID	Very fast
+RATIO	One number to another
+REACH	Stretch out to
+READY	Set to begin
+RIGHT	Not left
+RIVER	Runs to the sea
+ROUGH	Not smooth
+ROUND	Shaped like a ball
+ROUTE	Way to go
+ROYAL	Of the king
+RURAL	Of the countryside
+SALAD	Bowl of leaves
+SCALE	Weighs it
+SCENE	Part of an act
+SCORE	Twenty
+SENSE	Good judgement
+SERVE	Wait at table
+SEVEN	Days in a week
+SHADE	Out of the sun
+SHAKE	Move to and fro
+SHAPE	Form of a thing
+SHARE	Divide between you
+SHARP	Keen edged
+SHEEP	Grown for wool
+SHEET	Covers the bed
+SHELF	Books rest on it
+SHIFT	Move over
+SHINE	Give off light
+SHIRT	Buttoned at the front
+SHOCK	Sudden jolt
+SHORE	Edge of the sea
+SHORT	Not long
+SIGHT	What you can see
+SINCE	From then on
+SIXTY	Minutes in an hour
+SKILL	Learned ability
+SLEEP	Rest with eyes shut
+SMALL	Little
+SMART	Quick to learn
+SMELL	Take in through the nose
+SMILE	Turn up the mouth
+SMOKE	Rises from a fire
+SNAKE	Legless slitherer
+SOLAR	Of the sun
+SOLID	Not liquid
+SOLVE	Work it out
+SOUND	Reaches the ear
+SOUTH	Opposite of north
+SPACE	Room to move
+SPARE	Kept in reserve
+SPEAK	Say something
+SPEED	Rate of going
+SPELL	Write the letters
+SPEND	Part with money
+SPINE	Backbone
+SPLIT	Divide in two
+SPORT	Game with rules
+STAGE	Actors stand on it
+STAIR	One step of a flight
+STAND	Be on your feet
+START	Begin
+STATE	Say plainly
+STEAM	Rises from the kettle
+STEEL	Hardened iron
+STEEP	Hard to climb
+STICK	Fallen branch
+STILL	Not moving
+STONE	Rock in the hand
+STORE	Keep for later
+STORM	Wind and rain
+STORY	Tale told
+STUDY	Read to learn
+STYLE	Way of doing it
+SUGAR	Stirred into tea
+SWEET	Not sour
+SWIFT	Very quick
+TABLE	Four legs and a top
+TASTE	Tell by the tongue
+TEACH	Give a lesson
+TEETH	Bite with them
+THANK	Say you are grateful
+THEME	Idea running through
+THICK	Not thin
+THIEF	Takes what is not theirs
+THING	Any object
+THINK	Turn over in the mind
+THIRD	After second
+THREE	One more than two
+THROW	Send through the air
+TIGHT	Hard to loosen
+TITLE	Name of the book
+TODAY	This very day
+TOKEN	Small sign of it
+TOPIC	What is being discussed
+TOTAL	The whole sum
+TOUCH	Feel with the hand
+TOUGH	Hard to chew
+TOWER	Tall and narrow
+TRACK	Path worn by feet
+TRADE	Buy and sell
+TRAIL	Rough path
+TRAIN	Runs on rails
+TREAT	Something special
+TREND	Way things are going
+TRIAL	Test of it
+TRIBE	People of one kin
+TRICK	Clever deceit
+TRUCK	Carries the load
+TRUNK	Stem of a tree
+TRUST	Take on faith
+TRUTH	What is so
+TWICE	Two times
+UNCLE	Mother's brother
+UNDER	Below
+UNION	Joined together
+UNITE	Bring together
+UNTIL	Up to the time
+UPPER	Higher one
+URBAN	Of the town
+USAGE	How it is used
+USUAL	As a rule
+VALUE	What it is worth
+VIDEO	Moving picture
+VISIT	Call on
+VITAL	Cannot do without
+VOICE	Speaks with it
+WASTE	Throw away
+WATCH	Worn on the wrist
+WATER	Fills the glass
+WHEEL	Turns on an axle
+WHERE	In what place
+WHICH	What one
+WHILE	During the time
+WHITE	Colour of snow
+WHOLE	All of it
+WOMAN	Grown female
+WORLD	All of the earth
+WORRY	Turn it over anxiously
+WORSE	Less good
+WORTH	Deserving of it
+WOULD	Might, given the chance
+WRITE	Put down in words
+WRONG	Not right
+WROTE	Put it down
+YIELD	Give way
+YOUNG	Early in life
+YOUTH	Young person

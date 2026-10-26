@@ -1,49 +1,74 @@
 # Nonograms
 
-Sixty original bundled picture grids, from 5×5 through 25×25, are checked at
-build time by the same row-and-column solver the app uses for guided play.
-Each has a no-guess solution: if line deductions cannot finish a generated
-candidate, it is not shipped. The browser records solved puzzles without
-showing their pictures first.
+Eighteen original picture puzzles, from 5×5 to 25×25, plus puzzles made from
+your own photos.
 
-Tap a square to cycle fill, X, blank. Turn on **Run entry** to tap both ends
-of a horizontal or vertical filled run when a drag is not available. Guided
-mode names the first row or column made impossible; free mode keeps mistakes
-private until completion. Every move is autosaved under its puzzle id.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/play.png" alt="Marking a run on the board"><br>Marking a run on the board</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/large-board.png" alt="A 25×25 board, zoomed"><br>A 25×25 board, zoomed</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/picture-completed.png" alt="A finished picture"><br>A finished picture</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/imported-puzzles.png" alt="Photo puzzles listed by name"><br>Photo puzzles listed by name</td>
+</tr>
+</table>
 
-The solve replaces the grid in one large GL16 transition: bundled art is
-rendered as a 16-grey source drawing, and a photo puzzle uses its processed
-photograph. The platform's refresh planner schedules its normal GC16 cleaning
-refresh from the cumulative dirty-pixel budget.
-The Clara BW's current 81-cell grid limit means 15×15 and 25×25 pack entries
-are browseable but gated for play; 5×5, 7×7, and 9×9 are touch-tested there.
+## Features
+
+- Tap a square to cycle through blank, filled and crossed out. The puzzle is
+  finished when every square is filled or crossed correctly.
+- The selected square's row and column clues are highlighted. Tap a clue to
+  read all of it. **…** means there are more numbers than fit.
+- Large boards show a movable window instead of shrinking the squares. Use the
+  arrow controls to move it and **−** and **+** to change the square size.
+- **Run on** fills a straight run between two taps.
+- **Guided** mode names a row or column whose marks contradict its clues. It
+  never changes your marks. **Free** mode gives no warnings.
+- **Undo** reverses one square, a run or a restart. The last 64 steps survive
+  reopening. **Restart** asks first.
+- **Earlier** opens the previous 60-puzzle pack, with existing progress kept.
+
+Each puzzle saves separately. If a save fails, your moves stay in memory and
+**More → Retry save** tries again. Finish saving before switching puzzles or
+closing the app.
 
 ## Photo puzzles
 
-`kobo nonograms push photo.jpg --size 9 --device READER` decodes an owner
-image on the host, applies its EXIF orientation, centre-crops and reduces it
-to a deterministic greyscale thresholded PNG, then atomically transfers the
-bounded `photo.png` to the reader. Use `--out photo.png` instead of
-`--device` to inspect the exact file first. Choose the same grid size in the
-app before opening it; the Clara BW command accepts 5, 7, or 9.
-Photo import requires Cobalt 0.3.2 or newer, which reads transferred files
-from each app's private data directory.
-
-The app samples the transferred PNG and accepts it only when line solving
-proves the result fair; otherwise it says, “This one does not make a fair
-puzzle.” Its photo puzzle id derives from the transferred content and grid
-size, so replacing a photo cannot inherit old progress or solved state.
-
-## Attribution
-
-The line solver is independently implemented. Tatham's Puzzle Collection
-**Pattern** solver is an MIT-licensed algorithm reference; it is not linked
-or used at runtime. `Picross` is Nintendo's trademark and is not used by
-this app.
-
-## Validation
+Turn a photo into a puzzle from your computer:
 
 ```sh
-CARGO_TARGET_DIR='/Volumes/Untitled 1/cobalt-targets/batch-08' cargo test -p kobo-nonograms
-CARGO_TARGET_DIR='/Volumes/Untitled 1/cobalt-targets/batch-08' cargo clippy -p kobo-nonograms -- -D warnings
+kobo nonograms preview IMAGE --out DIRECTORY
+kobo nonograms push IMAGE --name NAME --size N --device IP
+kobo nonograms push first.jpg --name Harbour --size 15 \
+  --add second.jpg --name Garden --size 20 --device IP
 ```
+
+`preview` shows the puzzle a photo would make before you send it. Sizes run
+from 5 to 25. Each push replaces the set of imported puzzles with the photos
+it names, so include every photo you want to keep. Re-importing an unchanged
+photo keeps its progress. On the reader, open **Photos**, then **Import**.
+
+A photo is accepted only if it makes a puzzle with exactly one solution. The
+difficulty shown (Easy, Medium or Hard) reflects how many solving passes it
+needs, not measured human solving time.
+
+## The drawings
+
+The eighteen pictures are original. `scripts/quality/make-nonogram-pictures.py`
+builds them, confirms each has a single solution and writes
+[assets/pictures.txt](assets/pictures.txt).
+
+## Permissions
+
+None. Nonograms runs offline.
+
+## Development
+
+```sh
+cargo test -p kobo-nonograms
+python3 scripts/check-apps-sim.py nonograms
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-nonograms-sim.py --output /tmp/nonograms-check --scale extra-large` runs a longer check, including the last square of a 25×25 board and failed saves. See [screenshots/README.md](screenshots/README.md) for how the screenshots were made.

@@ -71,6 +71,9 @@ pub struct TouchObservation {
 impl fmt::Display for TouchObservation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (kind, x, y) = match self.event {
+            TouchEvent::Cancel => {
+                return formatter.write_str("cancel: input stream lost synchronization")
+            }
             TouchEvent::Down { x, y } => ("down", x, y),
             TouchEvent::Move { x, y } => ("move", x, y),
             TouchEvent::Up { x, y } => ("up", x, y),
@@ -111,6 +114,9 @@ pub fn observe_touch(
     let file = File::open(path)
         .map_err(|error| ObserveError::new("open touch input read-only", &error))?;
 
+    let query = file
+        .try_clone()
+        .map_err(|error| ObserveError::new("duplicate touch query handle", &error))?;
     let (sender, receiver) = mpsc::channel();
     thread::Builder::new()
         .name("kobo-touch-observe".to_owned())
@@ -141,6 +147,9 @@ pub fn observe_touch(
                         raw_x,
                         raw_y,
                     });
+                }
+                if decoder.needs_resynchronization() {
+                    decoder.resynchronize(input::touch_snapshot(&query).ok());
                 }
             }
             Ok(Err(error)) => return Err(ObserveError::message("read touch events", error)),

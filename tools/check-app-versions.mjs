@@ -4,6 +4,8 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compatibilityPolicy, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
+  isFilmingScript,
+  isDocumentation,
   storeCatalogChanges,
   storeWatchDirectories,
   unpublishedStoreChangeReport
@@ -18,6 +20,7 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_RELEASE_PATHS = new Set([
+  "apps/flashcards/src/main.rs",
   "Cargo.lock",
   "crates/kobo-abi/src/lib.rs",
   "crates/kobo-image/src/lib.rs",
@@ -42,7 +45,8 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
   "crates/kobo-ui/src/vector.rs",
   "crates/kobo-ui/src/vector/tabler.rs",
   "examples/gutenbird/Cargo.toml",
-  "examples/gutenbird/src/main.rs"
+  "examples/gutenbird/src/main.rs",
+  "rust-toolchain.toml"
 ]);
 
 // Cargo metadata grows with every workspace package. Bound it well above the
@@ -337,43 +341,7 @@ function isInside(path, directory) {
 export function isContributionManifest(path, directory) {
   return path === `${directory}/cobalt-app.json`;
 }
-// A drive script is the host-side route used to film an application. It is
-// never compiled into the signed bundle, so adding or editing one must not
-// look like a Store package change. That mistake is what turned a simulator
-// recording script into a forced version bump of every example that grew one.
-//
-// Matching only drive.txt and drive.kobo let it happen again as soon as an
-// application needed more than one route: a shelf of thirty-six applications
-// grew drive.sh, drive-states.kobo, drive-empty.kobo, and a drive/ directory
-// of scenes, and every one of those counted as a release input. So the whole
-// family beside the package is named here, and only beside the package —
-// src/drive.txt is source and a sibling directory is another package.
-export function isFilmingScript(path, packageDirectory) {
-  if (!path.startsWith(`${packageDirectory}/`)) return false;
-  const beside = path.slice(packageDirectory.length + 1);
-  return beside === "drive" || beside.startsWith("drive/") || /^drive[-.][^/]*$/.test(beside);
-}
-
-// Prose beside a package is not in the package. A published entry is built
-// from cobalt-app.json and the compiled binary, and neither the registry nor
-// the app-page generator reads a README, so no byte anybody downloads can
-// change because a paragraph did.
-//
-// Counting it is the same mistake the drive scripts above were rescued from.
-// Correcting a sentence in apps/syncthing/README.md that had gone stale --
-// it still told readers to export an environment variable for a packaging
-// step that no longer exists -- was refused as an unreleased change to the
-// Syncthing application, and the remedy on offer was to publish a new version
-// of it to every reader who has it in order to fix a paragraph none of them
-// download.
-//
-// Only prose directly beside the package: a nested path may be a screenshot
-// the app page does publish, and src/notes.md is source.
-export function isDocumentation(path, packageDirectory) {
-  if (!path.startsWith(`${packageDirectory}/`)) return false;
-  const beside = path.slice(packageDirectory.length + 1);
-  return !beside.includes("/") && beside.endsWith(".md");
-}
+export { isFilmingScript, isDocumentation } from "./store-catalog-changes.mjs";
 
 // Returns the dependency edges capable of changing a release artifact.
 //
@@ -453,6 +421,40 @@ export function manifestOnlyChangesWorkspaceMembershipOrVersion(
     previousRemainder !== null &&
     currentRemainder !== null &&
     previousRemainder === currentRemainder
+  );
+}
+
+// The `version` entry of `[package]`, in any of its spellings, replaced by a
+// placeholder so two manifests can be compared with it out of the way. Only
+// `[package]` is touched: a `version` inside a dependency table is a different
+// thing.
+function normalizePackageVersion(source) {
+  const lines = source.split("\n");
+  const start = lines.findIndex(line => line.trim() === "[package]");
+  if (start < 0) return source;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line.startsWith("[")) break;
+    if (
+      /^version(\.workspace\s*=\s*true|\s*=\s*"[^"]*"|\s*=\s*\{\s*workspace\s*=\s*true\s*\})$/.test(
+        line
+      )
+    ) {
+      lines[index] = 'version = "<package-version>"';
+      return lines.join("\n");
+    }
+  }
+  return source;
+}
+
+// A package manifest that changed only in its version lines: its own under
+// `[package]`, in whichever spelling, and the versions written beside path
+// dependencies. Neither changes what the package compiles to, so the gate
+// treats such an edit as it already treats the workspace version moving.
+export function manifestOnlyChangesVersions(previousSource, currentSource) {
+  return manifestOnlyChangesPathDependencyVersions(
+    normalizePackageVersion(previousSource),
+    normalizePackageVersion(currentSource)
   );
 }
 
@@ -698,10 +700,7 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
 // reached only when a Store catalog input actually changed.
 export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
-  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
-    const directory = path.split("/").slice(0, -1).join("/");
-    return !isFilmingScript(path, directory) && !isDocumentation(path, directory);
-  });
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
   const registered = new Set(registeredPackages);
   const sharedPackageChanged = [...packageDirectories].some(
     ([packageName, directory]) =>
@@ -728,6 +727,25 @@ export function storeImpactOfChangedPaths(changedPaths, packageDirectories, regi
     catalogQuiet,
     affected: catalogQuiet ? new Set() : null
   };
+}
+
+// The inputs that decide how every Store binary is built. A change to one
+// rebuilds every app, with two exceptions that change no shipped byte: a root
+// manifest edit that only moves the workspace version or membership, and a
+// toolchain pin whose reviewed content names the compiler the workflows were
+// already using. That review is recorded in the compatible-change manifest
+// against the exact blob, so any later edit to the pin is a global input again.
+export function globalBuildInputsChanged(
+  changedPaths,
+  compatiblePaths,
+  rootManifestOnlyMovesVersionOrMembership
+) {
+  const toolchainPins = new Set(["rust-toolchain", "rust-toolchain.toml"]);
+  if (changedPaths.some(path => path.startsWith(".cargo/"))) return true;
+  if (changedPaths.some(path => toolchainPins.has(path) && !compatiblePaths.has(path))) {
+    return true;
+  }
+  return changedPaths.includes("Cargo.toml") && !rootManifestOnlyMovesVersionOrMembership();
 }
 
 export function analyzeAppReleaseInputs(baseRevision, registry) {
@@ -773,19 +791,20 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
     path => command("git", ["hash-object", path])
   );
 
-  const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
-  const changesGlobalInputs =
-    changedPaths.some(path => unconditionalGlobalInputs.has(path) || path.startsWith(".cargo/")) ||
-    (changedPaths.includes("Cargo.toml") &&
-      !manifestOnlyChangesWorkspaceMembershipOrVersion(
-        command("git", ["show", `${baseRevision}:Cargo.toml`]),
-        readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
-      ));
+  const changesGlobalInputs = globalBuildInputsChanged(changedPaths, compatiblePaths, () =>
+    manifestOnlyChangesWorkspaceMembershipOrVersion(
+      command("git", ["show", `${baseRevision}:Cargo.toml`]),
+      readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
+    )
+  );
   if (changesGlobalInputs) {
     return { affected: new Set(registeredPackages), storeChanges };
   }
 
   const changedIdentities = new Set();
+  // Package manifests whose only change is a version line. They are not Store
+  // changes, so a push that carries nothing else is not an unpublished one.
+  const quietManifests = new Set();
   const previousRegistry = JSON.parse(
     command("git", ["show", `${baseRevision}:apps/catalog.json`])
   );
@@ -821,11 +840,9 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
     if (
       previousManifest !== null &&
       packageChanges.every(path => path === relativeManifest) &&
-      manifestOnlyChangesPathDependencyVersions(
-        previousManifest,
-        readFileSync(package_.manifest_path, "utf8")
-      )
+      manifestOnlyChangesVersions(previousManifest, readFileSync(package_.manifest_path, "utf8"))
     ) {
+      quietManifests.add(relativeManifest);
       continue;
     }
     changedIdentities.add(
@@ -848,7 +865,7 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
 
   return {
     affected: registeredConsumers(metadata, registeredPackages, changedIdentities),
-    storeChanges
+    storeChanges: storeChanges.filter(path => !quietManifests.has(path))
   };
 }
 

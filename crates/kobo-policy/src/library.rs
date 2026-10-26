@@ -608,6 +608,44 @@ mod tests {
         assert_eq!(Kind::Kepub.badge(), "KEPUB");
     }
 
+    /// The wire is the seam this crate answers across, and a listing is
+    /// encoded as one value. An entry the encoder refuses is not a missing
+    /// tile: it fails the whole reply, and the host ends the session rather
+    /// than deliver a half-written one. So every kind this module can produce
+    /// is checked against the encoder, not just the one the shelf shows most.
+    #[test]
+    fn every_kind_a_listing_can_produce_survives_the_wire() {
+        let root = scratch("wire");
+        for name in [
+            "Bleak House.epub",
+            "Piranesi.kepub.epub",
+            "notes.md",
+            "page.html",
+            "plain.txt",
+            "scan.pdf",
+        ] {
+            fs::write(root.join(name), b"body").expect("the file");
+        }
+        let entries: Vec<_> = list_in(&[root])
+            .entries
+            .into_iter()
+            .map(super::to_wire)
+            .collect();
+        assert_eq!(entries.len(), 6, "the walk did not find every kind");
+        let frame = kobo_protocol::Frame {
+            version: kobo_protocol::VERSION,
+            request_id: 1,
+            message: kobo_protocol::Message::DeviceResult(kobo_protocol::DeviceResult::Library {
+                entries,
+                truncated: false,
+            }),
+        };
+        assert!(
+            kobo_protocol::encode(&frame).is_ok(),
+            "a kind this module lists cannot be sent, which ends the session showing the shelf"
+        );
+    }
+
     #[test]
     fn a_listing_names_documents_and_ignores_everything_else() {
         let root = scratch("kinds");
