@@ -286,5 +286,10 @@ provided without warranty. Report security issues as described in
 GNU Affero General Public License v3.0. See [LICENSE](LICENSE) and
 [THIRD-PARTY.md](THIRD-PARTY.md).
 
+An application links `kobo-sdk`, which is AGPL-3.0-only with no linking
+exception, so an application built with it is AGPL-3.0 as well. The SDK crates
+are not published to crates.io: Store applications live in this repository and
+are built from a checkout of it.
+
 Bluetooth, Wi-Fi and Kobo are trademarks of their owners. See
 [TRADEMARKS.md](TRADEMARKS.md).

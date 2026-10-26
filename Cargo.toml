@@ -11,6 +11,7 @@ members = [
     "crates/kobo-dict",
     "crates/kobo-flashcards-format",
     "crates/kobo-frame-host",
+    "crates/kobo-frame-plan",
     "crates/kobo-music-host",
     "crates/kobo-vault-host",
     "crates/kobo-hal",
@@ -98,7 +99,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.25"
+version = "0.3.29"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"

@@ -2,7 +2,7 @@
 """Aggregate census matrix cells into docs/quality/census.md + census.json.
 
 Reads OUT_ROOT/<profile>-<scale>/out/results.json for the 27 cells
-(9 supported profiles x 3 text scales) and writes a per-cell pass/fail
+(10 supported profiles x 3 text scales) and writes a per-cell pass/fail
 table plus a per-app failure index. Commit the output; the matrix itself
 is reproducible via scripts/quality/census-matrix.sh.
 """
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-PROFILES = ["clara-bw-391", "clara-bw-395", "clara-hd-376", "clara-colour-393",
+PROFILES = ["clara-bw-391", "tolino-shine-5-t302", "clara-bw-395", "clara-hd-376", "clara-colour-393",
             "elipsa-2e-389", "libra-2-388", "libra-colour-390",
             "libra-colour-390-4.46.23836", "libra-h2o-384"]
 SCALES = ["default", "large", "extra-large"]
@@ -43,7 +43,7 @@ def main(out_root):
     census = {"profiles": PROFILES, "scales": SCALES, "cells": cells,
               "missing_cells": missing}
     lines = ["# Device census: all apps x supported profiles x text scales", ""]
-    lines.append("27 cells = 9 supported profiles (kobo-profile SUPPORTED_PROFILES) "
+    lines.append("30 cells = 10 supported profiles (kobo-profile SUPPORTED_PROFILES) "
                  "x 3 text scales. Reproduce: `scripts/quality/census-matrix.sh`. "
                  "Portrait cells; landscape is app-owned via SetOrientation. "
                  "758x1024 is not a supported profile.")

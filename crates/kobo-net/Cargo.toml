@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Every crates.io dependency in this workspace lives here and nowhere else.
+# The crates the runtime's transport is built from live here, in one place.
 # The device has no dependable TLS of its own: its newest OpenSSL is 1.0.1j
 # from 2014, it carries no CA bundle, and it fails the handshake against a
 # large share of modern hosts. So the runtime brings its own, statically

@@ -43,17 +43,25 @@ offline.
 1. Create a Lichess
    [personal access token](https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt)
    with only the `board:play` scope.
-2. Save it to a file and install it under the secret name `lichess`:
+   A phone works.
+2. On the reader, open Lichess, tap **Account/Games**, then
+   **Connect Lichess**, and type the token.
 
-   ```sh
-   kobo secret set lichess --from <token-file> --device <address>
-   ```
+Or install it from a computer with the
+[`kobo` command](../../docs/INSTALL.md#1-install-the-kobo-command), under the
+secret name `lichess`:
+
+```sh
+kobo secret set lichess --from <token-file> --device <address>
+```
 
 The runtime keeps the token and attaches it only to the official Lichess Board
-API over HTTPS. The app never sees it, and it is never shown, saved by the app
-or logged.
+API over HTTPS. A token typed on the reader passes through the app once, on its
+way to the runtime. After that the app cannot read it, and it is never shown or
+logged.
 
-Cobalt 0.3.18 or newer is required.
+Cobalt 0.3.18 or newer is required. Typing the token on the reader needs a
+newer Cobalt, and the app says so if yours is too old.
 
 ## Limits
 

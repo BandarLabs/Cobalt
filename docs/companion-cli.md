@@ -60,7 +60,7 @@ Commands every app can use:
 
 - `kobo secret set NAME --from FILE --device IP` installs an API key or
   token. The runtime attaches it to the app's requests, and the app never sees
-  it.
+  it. It replaces any value of that name typed into an app on the reader.
 - `kobo trust set NAME --from ROOT.pem --device IP` installs a private
   certificate authority. For Sidekick and Paperterm, `--from` can be left out
   because their `init` commands save the certificate where `trust set` looks.

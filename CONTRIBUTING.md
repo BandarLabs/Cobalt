@@ -62,7 +62,9 @@ guess.
 ## Code changes
 
 Keep pull requests focused and explain any behavior or safety boundary they
-change. Add tests for changed behavior and run the relevant workspace checks:
+change. `rust-toolchain.toml` names the compiler CI uses, and rustup installs
+and selects it on its own, so the checks below see the same lints CI does. Add
+tests for changed behavior and run the relevant workspace checks:
 
 ```sh
 cargo fmt --all --check

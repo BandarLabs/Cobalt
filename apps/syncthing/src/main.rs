@@ -134,7 +134,7 @@ impl Sync {
         let mut facts = vec![
             ("State".to_owned(), transfer_state(&self.status)),
             (
-                "Bytes left".to_owned(),
+                "Left to sync".to_owned(),
                 if self.status.state == "running" {
                     format_bytes(self.status.bytes)
                 } else {
@@ -145,7 +145,7 @@ impl Sync {
                 "Peers".to_owned(),
                 self.status
                     .peers
-                    .map_or_else(|| "-".to_owned(), |peers| peers.to_string()),
+                    .map_or_else(|| "None yet".to_owned(), |peers| peers.to_string()),
             ),
             (
                 "Last success".to_owned(),
@@ -242,7 +242,7 @@ impl Sync {
                 (
                     "refresh",
                     "Refresh status".to_owned(),
-                    "Read the runtime-owned Sync status.".to_owned(),
+                    "Check how the last sync went.".to_owned(),
                     Glyph::Refresh,
                 ),
             ])
@@ -368,7 +368,7 @@ fn guide_screen() -> Screen {
         .section("Pair one computer folder")
         .secondary("1. Install Syncthing on the computer with its package manager.")
         .secondary("2. Wake the reader on Wi-Fi, then on the computer run:")
-        .text("kobo sync setup ~/Documents/notes --folder vault --device <address>")
+        .text("kobo sync setup ~/Documents/notes --folder vault")
         .secondary("3. Resume Sync here. The first window runs within the cadence you choose; vault, frame and books arrive receive-only, so originals on the reader stay protected.")
         .secondary("Folders are fixed: sync/vault, sync/frame and sync/books arrive; sync/out leaves. Transferred packages import into Vault and Frame after each window.")
         .build()

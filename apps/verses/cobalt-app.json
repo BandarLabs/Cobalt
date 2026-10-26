@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.8",
-  "release_notes": "Long online poems, search results, and favorites now turn pages instead of stopping at the screen edge. Author search opens safely, Back cancels pending searches, and returning from a poem or quote card restores its source view.",
+  "version": "0.1.10",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "note",
   "capabilities": [
     "network"

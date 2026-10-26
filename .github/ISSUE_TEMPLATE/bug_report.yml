@@ -1,0 +1,50 @@
+name: Something is wrong
+description: Cobalt, an app, the installer or the kobo command did not do what it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste credentials, full serial numbers, SSH keys or personal
+        network details. A security problem goes through private vulnerability
+        reporting instead; see SECURITY.md.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Kobo model and firmware
+      description: As Settings ▸ About shows them in Cobalt, or Settings ▸ Device information in the stock reader.
+      placeholder: Clara BW, firmware 4.41.23145
+    validations:
+      required: true
+  - type: input
+    id: cobalt
+    attributes:
+      label: Cobalt version and channel
+      description: Settings ▸ About names the runtime version and whether Beta updates are on.
+      placeholder: 0.3.28, Beta
+  - type: input
+    id: host
+    attributes:
+      label: Host system, if the installer or the kobo command is involved
+      placeholder: macOS 15.5 on Apple silicon
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Store
+        2. Install Sudoku
+        3. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      description: The complete error, or what `kobo logs` printed. Rendered as code.
+      render: text

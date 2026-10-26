@@ -275,7 +275,15 @@ impl Habits {
                 } else {
                     let (start, end, page, pages) = Self::page_bounds(self.today_page, due.len());
                     let visible = &due[start..end];
+                    // Nothing on the list said that tapping a habit is what
+                    // marks it done, and the skip buttons under it floated
+                    // without a word to say what they were for.
+                    let open = visible
+                        .iter()
+                        .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
+                        .count();
                     s = s
+                        .secondary("Tap a habit when it is done.")
                         .checklist(visible.iter().map(|(i, h)| {
                             let done = h.done.contains(&day);
                             let skipped = h.skipped.contains(&day);
@@ -291,21 +299,22 @@ impl Habits {
                                 },
                                 done,
                             )
-                        }))
-                        .buttons(
-                            visible
-                                .iter()
-                                .filter(|(_, h)| {
-                                    !h.done.contains(&day) && !h.skipped.contains(&day)
-                                })
-                                .map(|(i, h)| {
-                                    (
-                                        format!("skip-{i}"),
-                                        format!("Skip {}", Self::action_name(&h.name)),
-                                    )
-                                })
-                                .take(3),
-                        );
+                        }));
+                    if open > 0 {
+                        s = s.section("Not today?");
+                    }
+                    s = s.buttons(
+                        visible
+                            .iter()
+                            .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
+                            .map(|(i, h)| {
+                                (
+                                    format!("skip-{i}"),
+                                    format!("Skip {}", Self::action_name(&h.name)),
+                                )
+                            })
+                            .take(3),
+                    );
                     if pages > 1 {
                         s = Self::paged(s, page, pages, "due-prev", "due-next");
                     }

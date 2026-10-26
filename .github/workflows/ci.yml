@@ -25,6 +25,9 @@ jobs:
         with:
           toolchain: 1.85.1
           components: clippy, rustfmt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
@@ -84,6 +87,10 @@ jobs:
   flashcards-importer:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # rust-toolchain.toml at the root names the device compiler; the importer
+    # needs the newer one, and rustup reads this variable before the file.
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -104,6 +111,9 @@ jobs:
         with:
           toolchain: 1.85.1
           targets: armv7-unknown-linux-musleabihf
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
       - name: Install the ring C cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       # The device target is musl, but the C in the dependency tree was being
@@ -301,6 +311,10 @@ jobs:
 
   advisories:
     runs-on: ubuntu-latest
+    # cargo-audit is built with the newer compiler; rustup reads this variable
+    # before the root rust-toolchain.toml.
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -319,13 +333,54 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit dependencies
         run: |
+          # zip before 9.0.0 has three advisories, RUSTSEC-2026-0367, -0368 and
+          # -0369, all in ZipArchive::extract and ZipStreamReader::extract, which
+          # write an archive to disk keeping SUID and SGID bits and following
+          # symlinks out of the destination. Nothing audited here calls either.
+          # kobo-comic and the flashcards importer read entries into memory by
+          # index or name, and so does anki's rslib; only anki's own build
+          # runner extracts, and the importer does not depend on it. zip 9 needs
+          # rustc 1.88, newer than the device toolchain, and anki at the pinned
+          # revision requires zip 4. The ignores live here, not in
+          # .cargo/audit.toml, because check-app-versions counts every path
+          # under .cargo/ as a build input and would rebuild every Store app.
+          # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
+          #
+          # crypto-bigint before 0.7.6 has RUSTSEC-2026-0387: subtraction,
+          # division and Montgomery multiplication may branch on secret values.
+          # kobod reaches 0.5.5 through p256 0.13 for the app-link device key.
+          # The relay can time a poll, and by replaying an envelope a paired
+          # browser once signed it can make the device load that key and run
+          # ECDH as often as it likes, since the request id that refuses a
+          # replay is sealed inside. Of that work, crypto-bigint only checks
+          # the key against two constants, zero and the group order, so every
+          # replay runs it on the same values and the relay has nothing to
+          # vary. The multiplication reads the key as bytes in fixed four-bit
+          # windows and does its field arithmetic in p256's own limb code.
+          # ECDSA there verifies public values. The fix needs p256 0.14 and
+          # rustc 1.87, newer than the device toolchain.
+          # Re-check when the device toolchain reaches 1.87.
+          #
+          # slice-ring-buffer has RUSTSEC-2025-0044, with no fixed release: four
+          # methods can drop an element twice. minimp3 in kobo-hal holds a
+          # SliceRingBuffer<u8>, and a u8 has no destructor to run twice. It
+          # calls none of the four methods either. Re-check if kobo-hal stops
+          # using minimp3 or minimp3 changes its buffer.
+          ignore=(
+            --ignore RUSTSEC-2026-0367
+            --ignore RUSTSEC-2026-0368
+            --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0387
+            --ignore RUSTSEC-2025-0044
+          )
           set +e
-          output="$(cargo audit --db advisory-db --no-fetch 2>&1)"
+          output="$(cargo audit "${ignore[@]}" --db advisory-db --no-fetch 2>&1)"
           status=$?
           set -e
           if [ "$status" -eq 0 ]; then
             printf '%s\n' "$output"
-            cargo audit --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db --no-fetch --file fuzz/Cargo.lock
           elif printf '%s\n' "$output" | grep -Eq \
             'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
             printf '%s\n' "$output" >&2
@@ -346,8 +401,9 @@ jobs:
               --record tools/advisory-db-fallback.json \
               --snapshot "$snapshot" \
               --today "$(date -u +%F)"
-            cargo audit --db advisory-db-fallback --no-fetch
-            cargo audit --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch --file fuzz/Cargo.lock
           else
             printf '%s\n' "$output" >&2
             exit "$status"

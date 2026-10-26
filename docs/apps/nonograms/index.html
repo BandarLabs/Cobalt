@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Pan larger grids, inspect full clues and keep your marks and undo history when reopening. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/nonograms.png">
 <meta name="twitter:image:alt" content="A Nonograms puzzle with the selected square and its row and column clues highlighted.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-WqDHZyUC+CiT/JSmjE9T1dhJhlPEHjBuZNA80qcaDmU='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-l/P5yhsmVwwQXEwBnl2CIlJDjRrpehsPgcBBaITKh9o='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "GameApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.9",
+      "softwareVersion": "0.1.11",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Nonograms</h1>
       <p class="summary">Pan larger grids, inspect full clues and keep your marks and undo history when reopening.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.9</dd></div>
+        <div><dt>Version</dt><dd>0.1.11</dd></div>
         <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -119,8 +119,21 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.9</h2>
-    <p>The play header drops cursor coordinates - the outlined square shows your place - and keeps the marks counter; zoomed windows still name their rows and columns when the focus leaves the view.</p>
+    <h2>New in 0.1.11</h2>
+    <p>Rebuilt with the current Cobalt SDK.</p>
+  </section>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>The bundled puzzles play straight away. To make one from a photo:</li>
+      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
+        <code class="setup-command">kobo pair</code></li>
+      <li>Turn a photo into a puzzle and send it.
+        <code class="setup-command">kobo nonograms push photo.jpg --name Garden --size 9</code></li>
+    </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/parser.png">
 <meta name="twitter:image:alt" content="Parser opening Lamplight, with tappable words in the story and command buttons for LOOK, TAKE and the compass directions.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-6pGX8nclWj9VVB5kW4tQJHqo0L6wOzO9Gr0Xjhx8gCw='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-9L2aXWJpWCTlH+R2bZzjgAgaLBxQFH77DLMcRQjBTLY='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "GameApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.12",
+      "softwareVersion": "0.1.14",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Parser</h1>
       <p class="summary">Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.12</dd></div>
+        <div><dt>Version</dt><dd>0.1.14</dd></div>
         <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -111,8 +111,21 @@
     </figure>
   </div>
   <section class="whats-new">
-    <h2>New in 0.1.12</h2>
-    <p>Every library story is reachable on measured pages. Back closes keys, resumes stories and cancels restore. Save and restore slots fit guidance and messages at large text sizes.</p>
+    <h2>New in 0.1.14</h2>
+    <p>The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } &lt; &gt; \ | ~ and the backtick.</p>
+  </section>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>First Light is bundled and plays offline. To add a story of your own:</li>
+      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
+        <code class="setup-command">kobo pair</code></li>
+      <li>Check the story, then send it.
+        <code class="setup-command">kobo parser push story.z5</code></li>
+    </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

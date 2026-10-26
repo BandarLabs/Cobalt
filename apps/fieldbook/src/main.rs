@@ -570,7 +570,7 @@ impl Fieldbook {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
         screen = if self.packs.is_empty() {
-            screen.secondary("No field pack yet. Push one with `kobo fieldbook` from a computer; logging works without one.")
+            screen.secondary("No field pack yet. Send one from a computer with kobo fieldbook push; logging works without one.")
         } else {
             screen.secondary(format!(
                 "{} pack{}, {} species.",
@@ -614,7 +614,7 @@ impl Fieldbook {
     fn packs_screen(&self, context: &Context) -> (Screen, usize) {
         let mut screen = self.top("Field packs");
         if self.packs.is_empty() {
-            screen=screen.splash(Some(Glyph::Search),"No field pack yet","Push a pack with `kobo fieldbook` from a computer. Sightings logged now stay on this reader and join any pack you import later.");
+            screen=screen.splash(Some(Glyph::Search),"No field pack yet","Send a pack from a computer with kobo fieldbook push. Sightings logged now stay on this reader and join any pack you import later.");
             if let Some(notice) = &self.pack_notice {
                 screen = screen.banner(BannerLevel::Attention, notice);
             }
@@ -652,7 +652,7 @@ impl Fieldbook {
                 .splash(
                     Some(Glyph::Search),
                     "Nothing to search yet",
-                    "Push a field pack with `kobo fieldbook` from a computer, then search it here.",
+                    "Send a field pack from a computer with kobo fieldbook push, then search it here.",
                 )
                 .build();
         }
@@ -960,12 +960,12 @@ impl Fieldbook {
                 .splash(
                     None,
                     "Nothing to export",
-                    "Finished outings become an eBird Checklist Format CSV on this reader, ready for `kobo fieldbook` to fetch.",
+                    "Finished outings become an eBird Checklist Format CSV on this reader, ready for kobo fieldbook export to fetch.",
                 )
                 .build();
         }
         s.secondary(format!(
-            "{} outing{}, {} sighting{}. The file is written as {} and fetched with `kobo fieldbook`.",
+            "{} outing{}, {} sighting{}. The file is written as {} and fetched with kobo fieldbook export.",
             self.outings.len(),
             if self.outings.len() == 1 { "" } else { "s" },
             self.sightings.len(),

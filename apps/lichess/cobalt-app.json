@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.14",
-  "release_notes": "Setup steps now name the Cobalt version this app needs. No change to play.",
+  "version": "1.0.17",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [
@@ -22,8 +22,15 @@
         }
       },
       {
+        "text": "On the reader, open Lichess, tap Account/Games, then Connect Lichess, and type the token."
+      },
+      {
+        "text": "Or use a computer, which also works if Lichess asks for a newer Cobalt. Once per reader, plug it in over USB and run kobo setup --enable-ssh. Then pair it:",
+        "command": "kobo pair"
+      },
+      {
         "text": "Save the token in a private local file, then install it under the exact secret name lichess.",
-        "command": "kobo secret set lichess --from <token-file> --device <address>"
+        "command": "kobo secret set lichess --from token.txt"
       },
       {
         "text": "Use Cobalt 0.3.18 or newer."

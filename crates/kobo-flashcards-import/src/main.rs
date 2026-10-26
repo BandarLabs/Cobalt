@@ -3,7 +3,8 @@
 mod preview;
 
 use kobo_flashcards_format::{
-    ATKINSON_LICENSE, DEJAVU_LICENSE, JAPANESE_FONT_LICENSE, JAPANESE_FONT_SOURCE, RESVG_LICENSE,
+    ATKINSON_LICENSE, DEJAVU_LICENSE, JAPANESE_FONT_LICENSE, JAPANESE_FONT_SOURCE,
+    LITERATA_LICENSE, RESVG_LICENSE,
 };
 use kobo_flashcards_import::{
     export_local_review_log, import, stage_for_kobo, verify_bundle, ImportMode, ImportOptions,
@@ -32,7 +33,7 @@ const COBALT_SOURCE_COMMIT: &str = match option_env!("COBALT_SOURCE_COMMIT") {
     Some(commit) => commit,
     None => "unrecorded-development-build",
 };
-const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 10] = [
+const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 11] = [
     ("Host converter notice", ANKI_NOTICE),
     ("Anki licence", ANKI_LICENSE),
     ("Anki corresponding source", ANKI_SOURCE),
@@ -40,6 +41,7 @@ const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 10] = [
     ("resvg licence", RESVG_LICENSE),
     ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
     ("DejaVu licence", DEJAVU_LICENSE),
+    ("Literata licence", LITERATA_LICENSE),
     ("Cobalt Japanese font licence", JAPANESE_FONT_LICENSE),
     ("Cobalt Japanese font source", JAPANESE_FONT_SOURCE),
     (

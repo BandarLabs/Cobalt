@@ -1,0 +1,46 @@
+name: Fuzz
+
+# The parsers under fuzz/ read what strangers' servers send to a root process,
+# and a panic in any of them ends the runtime. Each target runs for a bounded
+# time every night and on request; a crashing input is kept as an artifact.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # The root rust-toolchain.toml pins stable for the device workspace; the
+      # sanitizer the targets link needs nightly, and rustup reads this
+      # variable before the file.
+      RUSTUP_TOOLCHAIN: nightly-2026-04-11
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: nightly-2026-04-11
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Run every target for a bounded time
+        working-directory: fuzz
+        run: |
+          set -eu
+          for target in $(cargo fuzz list); do
+            echo "::group::$target"
+            cargo fuzz run "$target" -- -max_total_time=120 -timeout=30 -rss_limit_mb=2048
+            echo "::endgroup::"
+          done
+      - name: Keep any crashing input
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts-${{ github.run_id }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+          retention-days: 30

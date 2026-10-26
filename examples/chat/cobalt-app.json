@@ -3,11 +3,11 @@
   "display_name": "AI Command Center",
   "short_label": "AI Chat",
   "summary": "Ask a question, then read and navigate the answer with touch controls.",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "minimum_cobalt_version": "0.3.4",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Service selection keeps complete provider and model names readable, with a clear current-service mark. Transcript pages measure notices, offers and navigation on the current panel."
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
 }

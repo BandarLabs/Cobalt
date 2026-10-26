@@ -340,11 +340,20 @@ impl Stand {
             );
         }
         if self.scores.is_empty() {
-            return (screen.splash(
-                Some(Glyph::Note),
-                "Your stand is empty",
-                "On your computer, run `kobo musicstand init --device IP`, then `kobo musicstand push SCORE.pdf --device IP`.",
-            ).build(), 1);
+            return (
+                screen
+                    .splash(
+                        Some(Glyph::Note),
+                        "Your stand is empty",
+                        "Send a score from a computer. PDFs are set page by page.",
+                    )
+                    .section("On your computer")
+                    .command("kobo pair")
+                    .command("kobo musicstand init")
+                    .command("kobo musicstand push score.pdf")
+                    .build(),
+                1,
+            );
         }
         let rows = self
             .scores
@@ -533,7 +542,7 @@ impl Stand {
         ScreenBuilder::new("music-about")
             .top_bar("Music Stand")
             .heading("Transfer")
-            .text("Add scores from your computer with `kobo musicstand push`. PDF scores are rendered page by page; folders of images transfer as they are. Pages are prepared for clear E Ink reading before they leave the computer.")
+            .text("Add scores from your computer with kobo musicstand push. PDF scores are rendered page by page; folders of images transfer as they are. Pages are prepared for clear E Ink reading before they leave the computer.")
             .text("Only transfer scores you have the right to use.")
             .button(LIBRARY, "Library")
             .build()

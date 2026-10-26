@@ -1,19 +1,19 @@
-expect Pub Quiz
+wait-for Play with friends
 tap How to play
-expect player
+expect round the table
 wait 800
 clean
 shot pubquiz-help
 tap Play
-tap Start pass-around
-expect setup
+tap Play with friends
+expect Difficulty
 clean
 shot setup
-tap Continue
-expect Players
+tap Choose players
+expect How many
 clean
 shot players
 tap Start round
-expect Ada answers
+expect Ada's turn
 clean
 shot question

@@ -52,8 +52,10 @@ Cobalt is tested on the Clara BW, Clara Colour, Elipsa 2E, Clara HD, Libra 2,
 Libra Colour and Libra H2O at the firmware in the
 [device support matrix](docs/DEVICES.md#device-support-matrix). Other models
 run after the owner accepts a notice listing what is untested, and developer
-write tools require an exact match. Cobalt is AGPL-3.0 licensed and comes with
-no warranty. To help support another model, start with
+write tools require an exact match. Cobalt, including the SDK an application
+links, is AGPL-3.0-only with no linking exception, so an application built with
+it carries the same licence; it comes with no warranty. To help support another
+model, start with
 [Porting to another Kobo](docs/PORTING.md).
 
 Six steps from nothing to a tile on the reader's launcher.
@@ -991,6 +993,9 @@ private namespace first. A file installed by `kobo secret set` remains a
 global owner credential at `secrets/<name>` and is used only when the calling
 app has no private value. Thus Chat and Audiobook may hold different `openai`
 credentials, while existing CLI-installed credentials continue to work.
+Setting or removing a secret with `kobo secret` also deletes the values apps
+saved under that name, so the owner's latest choice from a computer is the one
+used, and a rejected token typed on the reader can be replaced from a computer.
 Applications cannot name or write another app's namespace, and secret paths
 and symbolic links are refused rather than followed.
 
@@ -1089,6 +1094,13 @@ Keys are addressed **positionally**: `kb.r1c2` is the third key of the middle
 row, whatever it currently says. Shift and the symbol layer change every label
 without moving a single cell, so a finger already resting on a key does not
 have to be lifted and re-aimed.
+
+Shift works on the symbol layer as it does on a computer: shift then 5 types
+`%`. The shifted page also holds `$ ^ * [ ] { } < > \ | ~` and the backtick, so
+every printable ASCII character can be typed, which a Wi-Fi password or a shell
+command may need. An app that arranges its own keys reads the current rows
+from `Keyboard::rows` instead of copying them. `TextEntry::open` always starts
+on the letters, unshifted.
 
 ---
 
