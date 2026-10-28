@@ -3869,30 +3869,40 @@ pub fn simulated_library_root() -> std::path::PathBuf {
 /// The offset from UTC an application under the simulator should be told.
 ///
 /// The runtime hands every application the reader's offset in
-/// `KOBO_UTC_OFFSET_MINUTES`, so the simulator does the same, taking the
-/// developer's own zone so "today" in an app matches the calendar on their
-/// wall. A value already in the environment wins, which is how a test pins
-/// a zone far from the developer's to catch a day counted in UTC. `None`
-/// means the variable is already set and the child inherits it.
+/// `KOBO_UTC_OFFSET_MINUTES`, so the simulator does the same with the offset
+/// its own clock runs at, so an app's "today" and the status bar agree. A value
+/// already in the environment wins, which is how a test pins a zone far from
+/// the developer's to catch a day counted in UTC. `None` means the variable is
+/// already set and the child inherits it.
 #[must_use]
 pub fn reader_offset_for_app() -> Option<i16> {
     if std::env::var_os(kobo_policy::clock::READER_OFFSET_VARIABLE).is_some() {
         return None;
     }
-    Some(host_offset_minutes())
+    Some(session_offset_minutes())
 }
 
-/// The offset this session's status bar shows: the one its apps are told.
+/// The offset this session's clock runs at, and so the one its apps are told.
 ///
-/// The band showed UTC while apps were handed the computer's zone, so a
-/// 21:04 band sat over "Last sync 02:34" and neither looked right.
+/// The band showed UTC while apps were handed the computer's zone, so a 21:04
+/// band sat over "Last sync 02:34", and with the simulator's own override set
+/// the band moved while the apps stayed on the computer's zone. With either
+/// variable set on its own, the band and the apps now agree; only a test that
+/// sets both on purpose can give them different zones.
 #[must_use]
 pub fn session_offset_minutes() -> i16 {
     if std::env::var_os(kobo_policy::clock::READER_OFFSET_VARIABLE).is_some() {
         return kobo_policy::clock::reader_offset_minutes();
     }
-    host_offset_minutes()
+    std::env::var(SIM_OFFSET_VARIABLE)
+        .ok()
+        .and_then(|value| value.trim().parse::<i16>().ok())
+        .filter(|minutes| (-840..=840).contains(minutes))
+        .unwrap_or_else(host_offset_minutes)
 }
+
+/// The simulator's own override for the offset its clock runs at.
+pub const SIM_OFFSET_VARIABLE: &str = "KOBO_SIM_UTC_OFFSET_MINUTES";
 
 fn host_offset_minutes() -> i16 {
     std::process::Command::new("date")
