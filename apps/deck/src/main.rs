@@ -1265,10 +1265,10 @@ mod tests {
                 text_scale,
                 ..CLARA_BW_METRICS
             };
-            // Built through a runner, as on a reader: the screen is laid out at
-            // the size being checked. A default context built it at the
-            // default size, and whether it then fit at a larger one depended on
-            // what the thread's previous test had left set.
+            // Built through a runner, as on a reader. The runner installs the
+            // face the runtime measures with; without one, a run that reached
+            // this test first measured in the bitmap fallback and passed a
+            // screen that ran off the panel in the real face.
             let runner = kobo_sdk::AppRunner::with_metrics(App::default(), metrics);
             let context = runner.context();
             for (view, error) in [

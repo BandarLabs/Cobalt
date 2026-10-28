@@ -2535,11 +2535,12 @@ mod help_layout_tests {
                         pixels_per_inch,
                         text_scale,
                     };
-                    // A runner installs the face and the size the runtime
-                    // measures with, and the screen is built after it. Built
-                    // before, it was laid out at whatever the thread's previous
-                    // test left set, and a real overflow on the six-inch panel
-                    // passed or failed by test order.
+                    // A runner installs the face the runtime measures with, so
+                    // the screen is built after one. The face is installed once
+                    // per process, at the density of whichever panel installs it
+                    // first, so the 212 ppi panel here is measured with 300 ppi
+                    // type and is stricter than a reader: the copy is short
+                    // enough to fit even so.
                     let _runner = kobo_sdk::AppRunner::with_metrics(Quiz::default(), metrics);
                     let screen = screen(quiz);
                     let chrome = kobo_ui::Chrome::measuring(true);
