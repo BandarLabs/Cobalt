@@ -761,14 +761,9 @@ pub fn install_using_fault(
     ) {
         return Err(DeviceError::InvalidInput);
     }
-    if let Some(current) = installed_with_key(root, key, Check::Full)?
-        .iter()
-        .find(|candidate| candidate.id == id)
-    {
-        let candidate = manifest_info(entry.manifest(), current.installed_version.as_deref())?;
-        if current.installed_version.as_deref() != Some(entry.manifest().version())
-            && !candidate.has_update()
-        {
+    if let Some(installed) = installed_version(root, id, key)? {
+        let candidate = manifest_info(entry.manifest(), Some(&installed))?;
+        if installed != entry.manifest().version() && !candidate.has_update() {
             return Ok(());
         }
     }
@@ -1015,6 +1010,28 @@ fn installed_manifest(
     key: &Ed25519PublicKey,
 ) -> Result<Manifest, DeviceError> {
     installed_manifest_checked(root, id, key, Check::Full)
+}
+
+/// The version an install of `id` would replace, verified as fully as launch
+/// verifies it, or nothing when `id` is not installed.
+///
+/// Only `id` is read. Listing every installed application here read and
+/// hashed each one's binary to find one version, about 108 MB with the whole
+/// catalog installed, and a batch of background updates did it again for
+/// every package while the reader waited for the panel to answer.
+fn installed_version(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+) -> Result<Option<String>, DeviceError> {
+    match installed_manifest_checked(root, id, key, Check::Full) {
+        Ok(manifest) => Ok(Some(manifest.version().to_owned())),
+        Err(DeviceError::NotFound) => match managed_builtin(id) {
+            Some(app) if builtin_is_installed(root, id)? => Ok(Some(app.version.to_owned())),
+            _ => Ok(None),
+        },
+        Err(error) => Err(error),
+    }
 }
 
 fn installed_manifest_checked(
@@ -2048,6 +2065,49 @@ mod tests {
         binary.pop();
         fs::write(&binary_path, &binary).expect("truncate");
         assert_eq!(installed_using(&root, &key), Err(DeviceError::Integrity));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_install_reads_only_the_application_it_replaces() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let refresh_from = |json: &[u8], signature: &[u8]| {
+            refresh_with(&root, &key, |url, _| {
+                if url == CATALOG_URL {
+                    Ok(json.to_vec())
+                } else {
+                    Ok(signature.to_vec())
+                }
+            })
+            .expect("refresh");
+        };
+        let (json, signature, package) = release_for(&seed, "other", "1.0.0");
+        refresh_from(&json, &signature);
+        install_with(&root, "other", &key, |_, _| Ok(package.clone())).expect("install other");
+
+        // A binary the install has no business reading, broken in a way only
+        // hashing it would find.
+        let binary_path = app_binary(&root, "other");
+        let mut binary = fs::read(&binary_path).expect("binary");
+        binary[0] ^= 1;
+        fs::write(&binary_path, &binary).expect("flip one byte");
+        assert_eq!(
+            installed_with_key(&root, &key, Check::Full),
+            Err(DeviceError::Integrity)
+        );
+
+        let (json, signature, package) = release(&seed);
+        refresh_from(&json, &signature);
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone()))
+            .expect("installing one app never reads another");
+        assert_eq!(
+            installed_manifest(&root, "word-count", &key)
+                .expect("installed")
+                .version(),
+            "1.0.0"
+        );
         let _ignored = fs::remove_dir_all(root);
     }
 
