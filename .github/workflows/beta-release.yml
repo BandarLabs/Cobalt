@@ -120,7 +120,7 @@ jobs:
             "cobalt-host-manifest.txt",
             "cobalt-host-manifest.txt.sig",
             "cobalt-host-manifest.txt.sshsig",
-            ...["macos-x86_64", "macos-arm64", "linux-x86_64", "linux-arm64"]
+            ...["macos-x86_64", "macos-arm64", "linux-x86_64", "linux-arm64", "windows-x86_64"]
               .map(platform => `kobo-${version}-${platform}.tar.gz`),
           ].sort();
           const assets = release.assets.map(asset => asset.name).sort();
@@ -379,8 +379,11 @@ jobs:
       # One release built its four host binaries with two different compilers,
       # and neither was chosen. The version here is the one the importer's own
       # CI job already builds and tests with, so what is tested and what is
-      # shipped now agree, and neither moves unless this line moves.
+      # shipped now agree, and neither moves unless this line moves. The
+      # Windows leg ships no importer, has no pinned protoc, and runs this
+      # step's shell in PowerShell, so it skips the step rather than fail it.
       - name: Install the protoc the importer schema needs
+        if: matrix.importer == 'yes'
         run: |
           set -eu
           case "${{ runner.os }}-$(uname -m)" in
