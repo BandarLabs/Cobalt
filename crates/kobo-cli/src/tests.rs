@@ -609,6 +609,8 @@ fn typed_copies_fixture(label: &str) -> std::path::PathBuf {
     directory
 }
 
+// The secret scripts are the reader's own /bin/sh scripts.
+#[cfg(unix)]
 #[test]
 fn setting_a_secret_from_a_computer_replaces_the_copy_typed_on_the_reader() {
     let directory = typed_copies_fixture("set");
@@ -633,6 +635,7 @@ fn setting_a_secret_from_a_computer_replaces_the_copy_typed_on_the_reader() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn removing_a_secret_from_a_computer_also_removes_the_copy_typed_on_the_reader() {
     let directory = typed_copies_fixture("remove");

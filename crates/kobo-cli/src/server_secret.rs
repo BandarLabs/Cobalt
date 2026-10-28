@@ -180,7 +180,9 @@ printf 'SERVER_ACCOUNT_SAVED\n'
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::io::Write;
+    #[cfg(unix)]
     use std::process::{Command, Stdio};
 
     fn args() -> Vec<String> {
@@ -248,6 +250,9 @@ mod tests {
         }
         assert!(read_value(&vec![b'x'; kobo_protocol::MAX_APP_SECRET_BYTES + 1][..]).is_err());
     }
+    // The record is installed by the reader's /bin/sh script, and the fixture
+    // stubs pidof and mv as shell scripts and checks Unix mode bits.
+    #[cfg(unix)]
     #[test]
     fn shell_record_matches_runtime_and_refuses_busy_or_unsafe_paths() {
         use std::os::unix::fs::{symlink, PermissionsExt};
