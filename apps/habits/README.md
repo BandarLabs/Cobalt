@@ -19,6 +19,9 @@ An offline habit tracker with daily and weekday schedules and streaks.
 ## Features
 
 - Daily and weekday habits, with streaks and weekly statistics.
+- Days turn over at the reader's own midnight. **Yesterday** on the Today
+  tab marks or skips a habit for the day before, so one done late at night
+  or forgotten until morning still counts.
 - Habits and completions stay on the reader. There is no account and nothing
   is uploaded.
 - **Backup** exports a verified text copy for a paired computer.

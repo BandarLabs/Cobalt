@@ -1,6 +1,6 @@
-expect Pass-and-play classics
+expect Classic board games
 tap Reversi
-expect Set the table
+expect Computer strength
 tap Start game
 expect Tap a hollow destination
 shot reversi

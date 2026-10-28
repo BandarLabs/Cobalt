@@ -8,3 +8,16 @@ expect Tea
 expect daily
 clean
 shot today
+# A habit forgotten yesterday can still be marked for yesterday, and the
+# streak counts it.
+tap Yesterday
+expect Tap a habit you did yesterday.
+expect Not yesterday?
+tap-id done-0
+expect Done
+clean
+shot yesterday
+tap Streaks
+expect 1 current, 1 best
+tap Today
+expect Tap a habit when it is done.

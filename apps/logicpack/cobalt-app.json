@@ -3,7 +3,7 @@
   "display_name": "Logic Pack",
   "short_label": "Logic Pack",
   "summary": "Play four familiar logic games offline.",
-  "page_description": "Twenty original offline puzzles across four logic games, with difficulty guides, separate progress and undo.",
+  "page_description": "Four hundred and twenty offline puzzles across four logic games, graded from Starter to Hard, with the same controls in every game, separate progress and undo.",
   "minimum_cobalt_version": "0.3.14",
   "version": "0.1.8",
   "release_notes": "Rebuilt with the current Cobalt SDK.",

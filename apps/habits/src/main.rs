@@ -1,4 +1,5 @@
 mod model;
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::ShelfDownload;
@@ -17,6 +18,8 @@ const HABITS: &str = "habits-v1";
 /// a few kilobytes, so this is room to spare rather than a limit anybody meets.
 const MAX_BACKUP_BYTES: usize = 64 * 1024;
 const ROWS_PER_PAGE: usize = 3;
+const SHOW_TODAY: &str = "show-today";
+const SHOW_YESTERDAY: &str = "show-yesterday";
 const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EntryMode {
@@ -61,6 +64,10 @@ struct Habits {
     items: Vec<Habit>,
     loaded: bool,
     page: Page,
+    /// How many days back the Today list is marking: none, or one for
+    /// yesterday. A habit done late at night, or forgotten until the
+    /// morning, used to be a broken streak with no way to say otherwise.
+    days_back: u8,
     today_page: usize,
     manage_page: usize,
     import_page: usize,
@@ -83,6 +90,7 @@ impl Default for Habits {
             items: vec![],
             loaded: false,
             page: Page::Today,
+            days_back: 0,
             today_page: 0,
             manage_page: 0,
             import_page: 0,
@@ -102,15 +110,19 @@ impl Default for Habits {
     }
 }
 impl Habits {
+    /// Today on the reader's own calendar. Counted in UTC, a habit ticked
+    /// off at nine in the evening in California landed on tomorrow.
     fn day() -> u32 {
-        u32::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                / 86_400,
-        )
-        .unwrap_or(u32::MAX)
+        SystemClock::reader()
+            .now()
+            .ok()
+            .and_then(Snapshot::local_day)
+            .and_then(|day| u32::try_from(day).ok())
+            .unwrap_or(0)
+    }
+    /// The day the Today list is marking: today, or yesterday when asked.
+    fn marking_day(&self) -> u32 {
+        Self::day().saturating_sub(u32::from(self.days_back))
     }
     fn save(&mut self, cx: &mut Context) {
         self.queued_save = Some(encode(&self.items));
@@ -139,7 +151,7 @@ impl Habits {
         }
     }
     fn normalize_pages(&mut self) {
-        let day = Self::day();
+        let day = self.marking_day();
         let due = self
             .items
             .iter()
@@ -257,14 +269,26 @@ impl Habits {
         }
         match self.page {
             Page::Today => {
-                let day = Self::day();
+                let day = self.marking_day();
                 let due: Vec<_> = self
                     .items
                     .iter()
                     .enumerate()
                     .filter(|(_, h)| !h.archived && h.due(day))
                     .collect();
-                if due.is_empty() {
+                if !self.items.is_empty() {
+                    s = s.segmented(
+                        usize::from(self.days_back),
+                        [(SHOW_TODAY, "Today"), (SHOW_YESTERDAY, "Yesterday")],
+                    );
+                }
+                if due.is_empty() && self.days_back == 1 {
+                    s = s.splash(
+                        Some(Glyph::Check),
+                        "Nothing was due yesterday",
+                        "Tap Today to mark today's habits.",
+                    );
+                } else if due.is_empty() {
                     s = s
                         .splash(
                             Some(Glyph::Check),
@@ -283,7 +307,11 @@ impl Habits {
                         .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
                         .count();
                     s = s
-                        .secondary("Tap a habit when it is done.")
+                        .secondary(if self.days_back == 1 {
+                            "Tap a habit you did yesterday."
+                        } else {
+                            "Tap a habit when it is done."
+                        })
                         .checklist(visible.iter().map(|(i, h)| {
                             let done = h.done.contains(&day);
                             let skipped = h.skipped.contains(&day);
@@ -301,7 +329,11 @@ impl Habits {
                             )
                         }));
                     if open > 0 {
-                        s = s.section("Not today?");
+                        s = s.section(if self.days_back == 1 {
+                            "Not yesterday?"
+                        } else {
+                            "Not today?"
+                        });
                     }
                     s = s.buttons(
                         visible
@@ -772,7 +804,14 @@ impl KoboApp for Habits {
             self.page = page;
             if page == Page::Today {
                 self.today_page = 0;
+                self.days_back = 0;
             }
+            self.show(cx);
+            return;
+        }
+        if a == action_id(SHOW_TODAY) || a == action_id(SHOW_YESTERDAY) {
+            self.days_back = u8::from(a == action_id(SHOW_YESTERDAY));
+            self.today_page = 0;
             self.show(cx);
             return;
         }
@@ -814,9 +853,9 @@ impl KoboApp for Habits {
             return;
         }
         let mut changed = false;
+        let day = self.marking_day();
         for (i, h) in self.items.iter_mut().enumerate() {
             if a == action_id(&format!("done-{i}")) {
-                let day = Self::day();
                 if h.skipped.contains(&day) {
                     changed |= h.unskip(day);
                 } else {
@@ -824,7 +863,7 @@ impl KoboApp for Habits {
                 }
             }
             if a == action_id(&format!("skip-{i}")) {
-                changed |= h.skip(Self::day());
+                changed |= h.skip(day);
             }
             if a == action_id(&format!("edit-{i}")) {
                 self.editing = Some(i);
@@ -949,6 +988,44 @@ mod tests {
             "the import screen kept the message to itself: {:?}",
             screen.nodes
         );
+    }
+
+    #[test]
+    fn a_habit_forgotten_yesterday_can_still_be_marked_done_for_yesterday() {
+        use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+        let mut runner = AppRunner::new(Habits::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HABITS.to_owned(),
+            value: Some(encode(&[Habit::new("Read".into())])),
+        });
+        runner.action(action_id(SHOW_YESTERDAY));
+        let screen = runner.app().screen();
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        runner.action(action_id("done-0"));
+        let today = Habits::day();
+        assert_eq!(runner.app().items[0].done, vec![today - 1]);
+        assert_eq!(runner.app().items[0].current_streak(today), 1);
+
+        runner.action(action_id(SHOW_TODAY));
+        runner.action(action_id("done-0"));
+        assert_eq!(runner.app().items[0].done, vec![today - 1, today]);
+    }
+
+    #[test]
+    fn a_runtime_that_passes_no_offset_leaves_the_day_on_utc_as_before() {
+        let utc = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after 1970")
+            .as_secs()
+            / 86_400;
+        if std::env::var(kobo_sdk::clock::READER_OFFSET_VARIABLE).is_err() {
+            assert_eq!(u64::from(Habits::day()), utc);
+        }
     }
 
     #[test]

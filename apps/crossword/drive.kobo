@@ -1,11 +1,43 @@
 expect Crossword
+expect Rules
+expect-missing Help
 tap-id puzzle-3
+expect Clues
+expect Undo
+expect Down
+expect-missing How to play
+tap-id game-undo
+expect Nothing to undo yet.
 tap-id cell-1
 type put
 tap Enter
 expect Clues
 clean
 shot crossword-play
+tap-id game-undo
+expect 1 Across
+tap-id cell-1
+type put
+tap Enter
+tap-id direction
+expect Down:
+expect Across
+tap-id direction
+tap-id game-more
+expect New game
+expect Restart puzzle
+expect-missing Puzzle options
+clean
+shot crossword-more
+tap-id check
+expect This word is correct.
+tap-id board
+tap-id game-rules
+expect Fill the white squares
+clean
+shot crossword-rules
+tap Back
+expect Clues
 tap-id clues
 expect Across
 clean
