@@ -615,10 +615,48 @@ fn host_environment_with(mut read: impl FnMut(&str) -> Option<String>) -> Vec<(S
     environment.extend(
         INHERITED
             .iter()
+            .chain(PLATFORM_INHERITED)
             .filter_map(|name| read(name).map(|value| ((*name).to_owned(), value))),
     );
     environment
 }
+
+/// What a Windows program needs on top of that list. A replaced environment
+/// without `SystemRoot` leaves cmd unable to start and anything that loads
+/// Winsock unable to run, `PATHEXT` is how a bare name such as `claude` finds
+/// its `.exe` or `.cmd`, and the profile, application data and temp folders
+/// are where every Windows program keeps its own files. None of them carries
+/// a credential.
+#[cfg(windows)]
+const PLATFORM_INHERITED: &[&str] = &[
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "ComSpec",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+];
+
+/// Unix programs find everything they need in the shared list above.
+#[cfg(not(windows))]
+const PLATFORM_INHERITED: &[&str] = &[];
 
 struct ReaderSlot(Arc<AtomicUsize>);
 
@@ -1325,6 +1363,20 @@ mod tests {
         assert!(environment
             .iter()
             .all(|(name, _)| name != "ANTHROPIC_API_KEY"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_host_terminal_keeps_what_cmd_needs_to_start() {
+        let environment = host_environment_with(|name| match name {
+            "SystemRoot" => Some(r"C:\Windows".to_owned()),
+            "PATHEXT" => Some(".COM;.EXE;.BAT;.CMD".to_owned()),
+            "GITHUB_TOKEN" => Some("must-not-leak".to_owned()),
+            _ => None,
+        });
+        assert!(environment.contains(&("SystemRoot".to_owned(), r"C:\Windows".to_owned())));
+        assert!(environment.contains(&("PATHEXT".to_owned(), ".COM;.EXE;.BAT;.CMD".to_owned())));
+        assert!(environment.iter().all(|(name, _)| name != "GITHUB_TOKEN"));
     }
 
     #[test]
