@@ -23,7 +23,10 @@ Verified in CI (native `cargo test --workspace --all-targets`, plus a
 built `kobo.exe` artifact that is executed for `--version`):
 
 - The `kobo` CLI build, package, and deploy flows, and every workspace unit
-  test that is not Unix-specific.
+  test that is not Unix-specific. Windows ships no `gzip`, so the package is
+  compressed and given the device's integrity check in-process there; macOS
+  and Linux still use the system `gzip`. The runner itself carries Git for
+  Windows' `gzip`, which is why CI alone could not show the difference.
 - The simulator app channel between `kobo-sim`, `kobo-sdk` and `kobod` runs
   over loopback TCP on Windows (see "Known boundary" below) and its session
   tests execute in CI.

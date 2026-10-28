@@ -39,6 +39,10 @@ ring = "0.17"
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
 serde_json = "1.0"
 
+# Windows has no system gzip to pipe through; see `gzip` in main.rs.
+[target.'cfg(windows)'.dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+
 [features]
 default = []
 # Enables the owner-attended `smoke-display` command. Never enabled by default,

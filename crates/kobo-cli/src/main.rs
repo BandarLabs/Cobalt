@@ -6091,21 +6091,60 @@ fn parse_package(arguments: &[String]) -> Result<(PathBuf, Option<PathBuf>), Str
 ///
 /// `-n` keeps the name and timestamp out of the header, so the same input
 /// produces the same file and the checksum an owner compares is stable.
+#[cfg(unix)]
 fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     pipe_through(Command::new("gzip").args(["-n", "-9", "-c"]), bytes)
 }
 
+#[cfg(unix)]
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     pipe_through(Command::new("gzip").args(["-d", "-c"]), bytes)
 }
 
 /// The integrity check `rcS` runs before it extracts anything.
+#[cfg(unix)]
 fn gzip_test(bytes: &[u8]) -> Result<(), String> {
     pipe_through(Command::new("gzip").arg("-t"), bytes)
         .map(|_| ())
         .map_err(|error| format!("the package fails the check the device runs first: {error}"))
 }
 
+/// Windows ships no `gzip`. The GitHub runner only looked as if it did
+/// because Git for Windows puts one on that image's path, and an owner's
+/// machine has none, so setup failed there before it wrote anything. The
+/// Windows arm compresses in-process instead, with no name and a zero
+/// timestamp in the header, which is what `-n` asks for: the same input
+/// still produces the same file.
+#[cfg(windows)]
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder
+        .write_all(bytes)
+        .and_then(|()| encoder.finish())
+        .map_err(|error| format!("gzip: {error}"))
+}
+
+/// Every member, as `gzip -d` reads them, with each member's CRC and length
+/// checked against its trailer.
+#[cfg(windows)]
+fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut decompressed = Vec::new();
+    flate2::read::MultiGzDecoder::new(bytes)
+        .read_to_end(&mut decompressed)
+        .map_err(|error| format!("gzip: {error}"))?;
+    Ok(decompressed)
+}
+
+/// The integrity check `rcS` runs before it extracts anything: a full
+/// decompression whose trailers all verify, which is what `gzip -t` does.
+#[cfg(windows)]
+fn gzip_test(bytes: &[u8]) -> Result<(), String> {
+    gunzip(bytes)
+        .map(|_| ())
+        .map_err(|error| format!("the package fails the check the device runs first: {error}"))
+}
+
+#[cfg(unix)]
 fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> {
     let mut child = command
         .stdin(Stdio::piped())
