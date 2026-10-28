@@ -96,11 +96,14 @@ It writes the verified summary and hashes itself to
 
 ## Exact supported package boundary
 
-The host accepts a bounded ZIP `.apkg` in merge mode or legacy `.colpkg` in
+The host accepts a bounded ZIP `.apkg` in merge mode or `.colpkg` in
 replacement mode when all of the following are true:
 
-- there is exactly one SQLite `collection.anki2` or `collection.anki21`;
-- `media` is the legacy JSON filename map and media members have numeric names;
+- the collection is one SQLite `collection.anki2` or `collection.anki21`, or,
+  in the layout Anki 2.1.50 and later export by default, a zstd-compressed
+  `collection.anki21b` described by a `meta` member;
+- `media` is the JSON filename map of the older layout or the zstd-compressed
+  protobuf list of the current one, and media members have numeric names;
 - collection schema is **11 or 14 through 18**; and
 - every used card template can be completed by pinned Anki rslib without
   JavaScript or an external/add-on filter.
@@ -114,10 +117,12 @@ template-filter substitute.
 
 Schemas 12 and 13 are explicitly refused because this pinned rslib requires
 those transient schemas to be cleanly downgraded first. Schemas below 11 and
-above 18 are refused. Modern `meta`/`collection.anki21b` packages use the
-protobuf media map and zstd collection path and are refused rather than
-silently treated as legacy SQLite packages. Encrypted ZIP entries and
-compression methods other than stored/deflate are also refused.
+above 18 are refused. A package whose `meta` names a layout newer than the
+pinned rslib knows is refused with the export option that avoids it: tick
+Support older Anki versions in Anki's export window. Every zstd member is
+decompressed against a fixed limit, and the placeholder `collection.anki2`
+that current Anki writes for older readers is ignored. Encrypted ZIP entries
+and compression methods other than stored/deflate are also refused.
 
 ## Scheduling and rendering
 
@@ -150,8 +155,24 @@ The review interface is portrait-first for the 1072×1448 Clara BW panel. It
 opens on a paged deck picker, keeps deck/progress context compact, gives card
 content the dominant region, pins a single **Reveal answer** action on the
 question, and uses stable two-by-two **Again / Hard / Good / Easy** targets on
-the answer. Good is the one filled default; no interval is displayed because
-the Kobo intentionally does not run Anki's scheduler after a local grade.
+the answer. Good is the one filled default.
+
+The reader starts from the imported queue and schedules each card it grades
+with FSRS at Anki's default 90% retention. A card's first local grade
+continues from the memory Anki left: the FSRS state in the card's data, or
+its SM-2 ease and interval converted by FSRS. Again puts the card back at the
+end of the same day's queue; Hard, Good and Easy set a due day at least one
+day out. Cards Anki had scheduled after import day come due on their own day,
+counted from the collection's creation date (a merged bundle can only place
+them for decks that had cards due on import day). Each grade is a
+review-log record with the reader's calendar day (format 3; format 2 records
+from earlier versions are still read). A grade counts for a card while the
+card still carries the due date and repetition count it was graded against,
+so pushing an unchanged collection again keeps the reader's progress, and a
+card studied in Anki since then starts from Anki's schedule. Nothing is
+written back to Anki. New cards beyond those in the imported queue arrive
+with the next push.
+
 Long card text is split against the actual panel metrics and text scale, with
 visible page controls and the review actions retained on every page.
 
