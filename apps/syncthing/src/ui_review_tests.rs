@@ -98,6 +98,10 @@ fn setup_instructions_fit_at_every_portrait_text_size() {
             text_scale,
             ..CLARA_BW_METRICS
         };
+        // A runner installs the face the runtime measures with. Without one,
+        // this test measured in the built-in fallback type whenever it ran
+        // before any other test had made one.
+        let _runner = AppRunner::with_metrics(Sync::default(), metrics);
         let screen = guide_screen().with_own_back(true);
         let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
         let diagnostics = screen.diagnostics(&metrics, &chrome);
@@ -120,18 +124,32 @@ fn the_busiest_status_screen_fits_at_every_portrait_text_size() {
         files: 12,
         epoch: 1_790_841_600,
     });
-    for text_scale in kobo_ui::TextScale::STEPS {
-        let metrics = kobo_ui::DisplayMetrics {
-            text_scale,
-            ..CLARA_BW_METRICS
-        };
-        let screen = busiest.status_screen();
-        let chrome = Chrome::for_screen(&screen, true, Chrome::measuring(true).status);
-        let diagnostics = screen.diagnostics(&metrics, &chrome);
-        assert!(
-            !diagnostics.has_errors(),
-            "{text_scale:?}: {:?}",
-            diagnostics.issues
-        );
+    // Every schedule, because each one words the schedule row differently and
+    // a row that wraps takes the room the status facts need.
+    for cadence in [
+        Cadence::Manual,
+        Cadence::Hourly,
+        Cadence::FourHourly,
+        Cadence::Daily,
+    ] {
+        busiest.config.cadence = cadence;
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            // A runner installs the face the runtime measures with. Without
+            // one, this test measured in the built-in fallback type whenever
+            // it ran before any other test had made one.
+            let _runner = AppRunner::with_metrics(Sync::default(), metrics);
+            let screen = busiest.status_screen();
+            let chrome = Chrome::for_screen(&screen, true, Chrome::measuring(true).status);
+            let diagnostics = screen.diagnostics(&metrics, &chrome);
+            assert!(
+                !diagnostics.has_errors(),
+                "{cadence:?} {text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
     }
 }
