@@ -316,11 +316,13 @@ jobs:
           set -o pipefail
           release_tag="$(node tools/app-catalog-channel.mjs)"
           echo "Checking app versions against the $release_tag channel."
-          # Forks publish no app-catalog channel, so the gate's base release
-          # does not exist there; nothing can be compared and the gate skips.
-          # Upstream always has the release and stays enforced.
-          if ! gh release view "$release_tag" >/dev/null 2>&1; then
-            echo "No $release_tag release on this repository; skipping the app-version gate."
+          # Forks publish no app-catalog channel, so a push to a fork has no
+          # base release to compare against and the gate skips there. The
+          # skip is keyed on the repository, not on the lookup failing: a
+          # rate limit or an outage upstream must stop the build, not wave
+          # an unversioned app change through.
+          if [ "$GITHUB_REPOSITORY" != "BandarLabs/Cobalt" ]; then
+            echo "$GITHUB_REPOSITORY publishes no $release_tag channel; skipping the app-version gate on this fork."
             exit 0
           fi
           mkdir -p published-state
