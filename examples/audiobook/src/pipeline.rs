@@ -99,6 +99,77 @@ impl Language {
 
 const MAX_RESEARCH_BYTES: usize = 180 * 1024;
 
+/// How long the finished book is asked to run, in minutes.
+///
+/// One pair of numbers for the instructions the writer is given and for the
+/// estimate the owner reads before paying, so the two cannot drift apart.
+pub const BOOK_MINUTES: (u32, u32) = (8, 12);
+
+/// The most the writer may produce, which is most of what writing costs.
+pub const SCRIPT_TOKENS: u32 = 8_000;
+
+/// An unhurried narrator's pace, and the characters a spoken word takes once
+/// its space is counted. Narration is billed by the character, so this is
+/// how a running time becomes a bill.
+const WORDS_PER_MINUTE: u32 = 150;
+const CHARACTERS_PER_WORD: u32 = 6;
+
+/// What one thousand narrated characters costs, in US cents, from the
+/// largest `ElevenLabs` plan to pay-as-you-go overage. Narration is most of
+/// the bill, so it is the range worth stating.
+const NARRATION_CENTS_PER_THOUSAND: (u32, u32) = (12, 30);
+
+/// What the research run and the script cost together, in US cents. Both
+/// are billed by the work the service chose to do, so this is a range taken
+/// from typical runs rather than anything the reader can compute.
+const RESEARCH_AND_WRITING_CENTS: (u32, u32) = (25, 115);
+
+/// How long a book takes to make, start to saved, in minutes. Research runs
+/// for one to three, the script for one or two, and narration for one to
+/// three more.
+const MAKING_MINUTES: (u32, u32) = (3, 8);
+
+/// What a book will cost and how long it will take, before any of it is
+/// spent. Every figure is a range, because the script's length is the
+/// writer's choice and every account is on its own plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Estimate {
+    pub minutes: (u32, u32),
+    pub narration_characters: (u32, u32),
+    pub dollars: (u32, u32),
+}
+
+impl Estimate {
+    #[must_use]
+    pub const fn for_a_book() -> Self {
+        let characters = (
+            BOOK_MINUTES.0 * WORDS_PER_MINUTE * CHARACTERS_PER_WORD,
+            BOOK_MINUTES.1 * WORDS_PER_MINUTE * CHARACTERS_PER_WORD,
+        );
+        let cents = (
+            characters.0 * NARRATION_CENTS_PER_THOUSAND.0 / 1_000 + RESEARCH_AND_WRITING_CENTS.0,
+            characters.1 * NARRATION_CENTS_PER_THOUSAND.1 / 1_000 + RESEARCH_AND_WRITING_CENTS.1,
+        );
+        Self {
+            minutes: MAKING_MINUTES,
+            narration_characters: characters,
+            // Rounded outwards, so the range never claims less than it is.
+            dollars: (cents.0 / 100, cents.1.div_ceil(100)),
+        }
+    }
+
+    /// The narration range in thousands of characters, as a person says it.
+    /// Written as words rather than as "7,000", whose zeros the panel's
+    /// figure style draws slashed.
+    #[must_use]
+    pub const fn narration_thousands(&self) -> (u32, u32) {
+        (
+            (self.narration_characters.0 + 500) / 1_000,
+            (self.narration_characters.1 + 500) / 1_000,
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Book {
     pub title: String,
@@ -208,14 +279,14 @@ pub fn write_book(
         .set("required", vec!["title", "summary", "chapters"])
         .set("additionalProperties", false)
         .build();
-    let instructions = format!("You are an audiobook editor. Turn the supplied Exa research into an original, accurate 8–12 minute audiobook for a curious general audience. Use 3–5 chapters, a strong spoken opening, smooth transitions, and a brief conclusion. Write for the ear: no markdown, URLs, footnote markers, lists, or visual references. Paraphrase sources; do not reproduce passages. Clearly qualify disputed or uncertain claims. Write the chapter titles and the narration in {}, whatever language the research is in. Write the book title and the summary in that language too, but strictly in Latin script (romanized if the language is not written in it): they are shown on a screen whose fonts have no other glyphs.", language.english_name());
+    let instructions = format!("You are an audiobook editor. Turn the supplied Exa research into an original, accurate {} to {} minute audiobook for a curious general audience. Use 3–5 chapters, a strong spoken opening, smooth transitions, and a brief conclusion. Write for the ear: no markdown, URLs, footnote markers, lists, or visual references. Paraphrase sources; do not reproduce passages. Clearly qualify disputed or uncertain claims. Write the chapter titles and the narration in {}, whatever language the research is in. Write the book title and the summary in that language too, but strictly in Latin script (romanized if the language is not written in it): they are shown on a screen whose fonts have no other glyphs.", BOOK_MINUTES.0, BOOK_MINUTES.1, language.english_name());
     let user = format!("Topic requested by the listener: {topic}\n\nExa research:\n{research}");
     let body = ObjectBuilder::new()
         .set("model", "gpt-5.6-sol")
         .set("instructions", instructions)
         .set("input", user)
         .set("reasoning", ObjectBuilder::new().set("effort", "medium"))
-        .set("max_output_tokens", 8_000_u32)
+        .set("max_output_tokens", SCRIPT_TOKENS)
         .set(
             "text",
             ObjectBuilder::new().set(
@@ -640,6 +711,36 @@ mod tests {
         assert!(parts.len() > 1);
         assert!(parts.iter().all(|part| part.len() <= 1_000));
         assert!(parts.iter().all(|part| part.ends_with('.')));
+    }
+
+    #[test]
+    fn the_estimate_follows_the_length_the_writer_is_asked_for() {
+        let estimate = super::Estimate::for_a_book();
+        let (short, long) = estimate.narration_characters;
+        assert!(short < long);
+        // The writer is told the same running time the estimate is built
+        // from, so changing one changes the other.
+        let (_, body, _) = post(
+            write_book("volcanoes", Language::English, sse_transcript().as_bytes())
+                .expect("research"),
+        );
+        let asked = format!(
+            "{} to {} minute audiobook",
+            super::BOOK_MINUTES.0,
+            super::BOOK_MINUTES.1
+        );
+        assert!(body.contains(&asked), "{body}");
+        assert!(
+            estimate.dollars.0 >= 1 && estimate.dollars.1 <= 6,
+            "{estimate:?}"
+        );
+        assert!(estimate.dollars.0 < estimate.dollars.1);
+        assert!(estimate.minutes.0 < estimate.minutes.1);
+    }
+
+    #[test]
+    fn the_narration_range_is_said_in_whole_thousands() {
+        assert_eq!(super::Estimate::for_a_book().narration_thousands(), (7, 11));
     }
 
     #[test]

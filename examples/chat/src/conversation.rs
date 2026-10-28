@@ -63,7 +63,7 @@ impl Provider {
     pub const fn model(self) -> &'static str {
         match self {
             Self::OpenAi => "gpt-4o-mini",
-            Self::Anthropic => "claude-3-5-haiku-latest",
+            Self::Anthropic => "claude-haiku-5-5",
             Self::Gemini => "gemini-3.6-flash",
         }
     }
@@ -132,8 +132,15 @@ pub const MAX_REPLY_BYTES: u32 = 64 * 1024;
 ///
 /// Asked for rather than assumed, because a reply is not free here in the way
 /// it is on a phone: it costs radio time, panel refreshes, and space in every
-/// subsequent request. Roughly four hundred tokens is two screens of prose.
-const MAX_REPLY_TOKENS: u32 = 400;
+/// subsequent request. Twelve hundred tokens is five or six screens of prose,
+/// far past the hundred and twenty words the system prompt asks for, so the
+/// ceiling only bites on an answer the reader asked to be long. Four hundred
+/// was too tight for that: a recipe or a list of steps stopped half way, and
+/// there was nothing to tap to hear the rest. When a reply does reach this,
+/// [`Completion::cut_short`] says so and the reader is offered a way to go
+/// on. It also leaves room for the thinking a current model does before it
+/// writes, which counts against the same ceiling.
+const MAX_REPLY_TOKENS: u32 = 1_200;
 
 /// How many turns are kept and sent.
 ///
@@ -239,6 +246,11 @@ pub struct Turn {
 #[derive(Clone, Debug, Default)]
 pub struct Conversation {
     turns: Vec<Turn>,
+    /// Whether the newest reply stopped at [`MAX_REPLY_TOKENS`] rather than
+    /// where the model meant to stop. Kept beside the turns rather than in
+    /// them, because it only ever describes the last one and any new turn
+    /// makes it false.
+    cut_short: bool,
 }
 
 impl Conversation {
@@ -258,6 +270,7 @@ impl Conversation {
     /// neither party is still looking at, and a history that only grows is a
     /// request body that eventually cannot be sent at all.
     pub fn push(&mut self, role: Role, text: impl AsRef<str>) {
+        self.cut_short = false;
         self.turns.push(Turn {
             role,
             text: clip(text.as_ref(), MAX_TURN_BYTES),
@@ -267,6 +280,19 @@ impl Conversation {
         {
             self.turns.remove(0);
         }
+    }
+
+    /// Adds the model's answer, remembering whether it ran out of room.
+    pub fn push_reply(&mut self, reply: Completion) {
+        self.push(Role::Assistant, reply.text);
+        self.cut_short = reply.cut_short;
+    }
+
+    /// Whether the newest turn is a reply that stopped at the length limit,
+    /// which is the one moment "Continue" means something.
+    #[must_use]
+    pub fn reply_cut_short(&self) -> bool {
+        self.cut_short && self.last().is_some_and(|turn| turn.role == Role::Assistant)
     }
 
     fn bytes(&self) -> usize {
@@ -288,12 +314,15 @@ impl Conversation {
                     .build()
             })
             .collect::<Vec<_>>();
-        ObjectBuilder::new()
+        let mut saved = ObjectBuilder::new()
             .set("v", SAVE_VERSION)
-            .set("turns", turns)
-            .build()
-            .to_json()
-            .into_bytes()
+            .set("turns", turns);
+        // Written only when true, so a transcript saved here reads back the
+        // same in a build that has never heard of the field.
+        if self.cut_short {
+            saved = saved.set("cut", true);
+        }
+        saved.build().to_json().into_bytes()
     }
 
     /// Reads a saved transcript back. Anything unreadable, newer or
@@ -317,6 +346,7 @@ impl Conversation {
             let text = turn.get("text").and_then(Value::as_str)?;
             conversation.push(role, text);
         }
+        conversation.cut_short = value.get("cut").and_then(Value::as_bool) == Some(true);
         Some(conversation)
     }
 
@@ -389,11 +419,17 @@ impl Conversation {
             .iter()
             .map(|turn| message(turn.role.wire(), &turn.text))
             .collect::<Vec<_>>();
+        // Low effort because this is conversation, not a hard problem: the
+        // current model thinks before it writes unless told otherwise, and
+        // every token of that is a second the reader waits in front of a
+        // panel that cannot show anything happening, and a token taken from
+        // the same ceiling as the answer.
         ObjectBuilder::new()
             .set("model", provider.model())
             .set("system", SYSTEM_PROMPT)
             .set("messages", messages)
             .set("max_tokens", MAX_REPLY_TOKENS)
+            .set("output_config", ObjectBuilder::new().set("effort", "low"))
             .build()
             .to_json()
     }
@@ -532,6 +568,17 @@ fn options_in(control: &str) -> Vec<String> {
     }
 }
 
+/// One answer from the service, and whether it was allowed to finish.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Completion {
+    pub text: String,
+    /// The reply stopped because it reached [`MAX_REPLY_TOKENS`], not because
+    /// the model was done. Each service says this in its own words, and all
+    /// three are read, because a reply that ends mid-sentence with nothing to
+    /// say why reads as the model having lost its train of thought.
+    pub cut_short: bool,
+}
+
 /// Reads the assistant's message out of a completions response.
 ///
 /// # Errors
@@ -539,7 +586,7 @@ fn options_in(control: &str) -> Vec<String> {
 /// Returns what to put in front of the reader when the response is not a
 /// reply: the server's own explanation where there is one, and a plain
 /// sentence where the body is not JSON or is JSON of some other shape.
-pub fn read_completion(bytes: &[u8], provider: Provider) -> Result<String, String> {
+pub fn read_completion(bytes: &[u8], provider: Provider) -> Result<Completion, String> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Err("The reply was not text.".to_owned());
     };
@@ -554,31 +601,75 @@ pub fn read_completion(bytes: &[u8], provider: Provider) -> Result<String, Strin
     if let Some(message) = error_message(&value) {
         return Err(redact(message));
     }
-    let reply = match provider {
-        Provider::OpenAi => value
-            .get("choices")
-            .and_then(|choices| choices.index(0))
-            .and_then(|choice| choice.get("message"))
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_str),
-        Provider::Anthropic => value
-            .get("content")
-            .and_then(|content| content.index(0))
-            .and_then(|block| block.get("text"))
-            .and_then(Value::as_str),
-        Provider::Gemini => value
-            .get("candidates")
-            .and_then(|candidates| candidates.index(0))
-            .and_then(|candidate| candidate.get("content"))
-            .and_then(|content| content.get("parts"))
-            .and_then(|parts| parts.index(0))
-            .and_then(|part| part.get("text"))
-            .and_then(Value::as_str),
+    let (reply, cut_short) = match provider {
+        Provider::OpenAi => {
+            let choice = value.get("choices").and_then(|choices| choices.index(0));
+            (
+                choice
+                    .and_then(|choice| choice.get("message"))
+                    .and_then(|message| message.get("content"))
+                    .and_then(Value::as_str),
+                choice
+                    .and_then(|choice| choice.get("finish_reason"))
+                    .and_then(Value::as_str)
+                    == Some("length"),
+            )
+        }
+        // Read by kind rather than by position. A current model thinks before
+        // it answers and puts that first, as a block with no text in it, so
+        // the answer is the first block that is text, wherever it falls.
+        Provider::Anthropic => (
+            value
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|blocks| {
+                    blocks.iter().find_map(|block| {
+                        match block.get("type").and_then(Value::as_str) {
+                            Some("text") | None => block.get("text").and_then(Value::as_str),
+                            Some(_) => None,
+                        }
+                    })
+                }),
+            value.get("stop_reason").and_then(Value::as_str) == Some("max_tokens"),
+        ),
+        Provider::Gemini => {
+            let candidate = value
+                .get("candidates")
+                .and_then(|candidates| candidates.index(0));
+            (
+                candidate
+                    .and_then(|candidate| candidate.get("content"))
+                    .and_then(|content| content.get("parts"))
+                    .and_then(Value::as_array)
+                    .and_then(|parts| {
+                        parts
+                            .iter()
+                            .filter(|part| {
+                                part.get("thought").and_then(Value::as_bool) != Some(true)
+                            })
+                            .find_map(|part| part.get("text").and_then(Value::as_str))
+                    }),
+                candidate
+                    .and_then(|candidate| candidate.get("finishReason"))
+                    .and_then(Value::as_str)
+                    == Some("MAX_TOKENS"),
+            )
+        }
     };
-    reply
-        .filter(|content| !content.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| "The service answered with no message in it.".to_owned())
+    match reply.filter(|content| !content.trim().is_empty()) {
+        Some(text) => Ok(Completion {
+            text: text.to_owned(),
+            cut_short,
+        }),
+        // The whole allowance went on thinking. Saying "no message" would
+        // send the reader looking for a fault; the honest answer is that
+        // the question needs asking again, ideally for something shorter.
+        None if cut_short => Err(
+            "The reply reached its length limit before it began. Ask again, or ask for a shorter answer."
+                .to_owned(),
+        ),
+        None => Err("The service answered with no message in it.".to_owned()),
+    }
 }
 
 /// The service's own explanation, in whichever of the three envelopes it came.
@@ -620,8 +711,8 @@ fn redact(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_completion, Conversation, Provider, Reply, Role, MAX_HISTORY_BYTES, MAX_OPTIONS,
-        MAX_TURNS, PROVIDERS, SYSTEM_PROMPT,
+        read_completion, Completion, Conversation, Provider, Reply, Role, MAX_HISTORY_BYTES,
+        MAX_OPTIONS, MAX_REPLY_TOKENS, MAX_TURNS, PROVIDERS, SYSTEM_PROMPT,
     };
     use kobo_json::{parse, Value};
     use kobo_sdk::MAX_TASK_BYTES;
@@ -857,7 +948,7 @@ mod tests {
         ];
         for (provider, body) in bodies {
             assert_eq!(
-                read_completion(body, provider),
+                read_completion(body, provider).map(|reply| reply.text),
                 Ok("Good morning.".to_owned()),
                 "{provider:?}"
             );
@@ -979,7 +1070,7 @@ mod tests {
     fn the_reply_is_read_out_of_the_completions_envelope() {
         let body = br#"{"choices":[{"message":{"role":"assistant","content":"Good morning."}}]}"#;
         assert_eq!(
-            read_completion(body, Provider::OpenAi),
+            read_completion(body, Provider::OpenAi).map(|reply| reply.text),
             Ok("Good morning.".to_owned())
         );
     }
@@ -1089,6 +1180,114 @@ mod tests {
             read_completion(gemini, Provider::Gemini),
             Err("Quota exceeded for metric: generate_requests.".to_owned())
         );
+    }
+
+    #[test]
+    fn anthropic_is_asked_for_a_model_it_still_serves() {
+        // The retired alias answered every question with a 404, which the
+        // reader was told meant a bad key.
+        assert_eq!(Provider::Anthropic.model(), "claude-haiku-5-5");
+        let mut conversation = Conversation::default();
+        conversation.push(Role::You, "hello");
+        let body = parse(&conversation.request_body(Provider::Anthropic)).expect("JSON");
+        assert_eq!(
+            body.get("model").and_then(Value::as_str),
+            Some("claude-haiku-5-5")
+        );
+    }
+
+    #[test]
+    fn every_service_is_allowed_a_reply_long_enough_for_a_recipe() {
+        let mut conversation = Conversation::default();
+        conversation.push(Role::You, "how do I make bread");
+        let openai = parse(&conversation.request_body(Provider::OpenAi)).expect("JSON");
+        let anthropic = parse(&conversation.request_body(Provider::Anthropic)).expect("JSON");
+        let gemini = parse(&conversation.request_body(Provider::Gemini)).expect("JSON");
+        let ceilings = [
+            openai.get("max_tokens"),
+            anthropic.get("max_tokens"),
+            gemini
+                .get("generationConfig")
+                .and_then(|config| config.get("maxOutputTokens")),
+        ];
+        for ceiling in ceilings {
+            assert_eq!(
+                ceiling.map(Value::to_json),
+                Some(MAX_REPLY_TOKENS.to_string())
+            );
+        }
+        // Four hundred stopped a recipe half way through its steps.
+        assert_eq!(MAX_REPLY_TOKENS, 1_200);
+    }
+
+    #[test]
+    fn an_answer_after_a_thinking_block_is_still_read_as_the_answer() {
+        // A current model puts a thinking block with no text first. Reading
+        // the first block as the answer reported every reply as empty.
+        let body = br#"{"content":[{"type":"thinking","thinking":"","signature":"abc"},{"type":"text","text":"Good morning."}],"stop_reason":"end_turn"}"#;
+        assert_eq!(
+            read_completion(body, Provider::Anthropic),
+            Ok(Completion {
+                text: "Good morning.".to_owned(),
+                cut_short: false,
+            })
+        );
+    }
+
+    #[test]
+    fn each_service_s_way_of_saying_it_ran_out_of_room_is_understood() {
+        let bodies = [
+            (
+                Provider::OpenAi,
+                br#"{"choices":[{"message":{"content":"First you mix"},"finish_reason":"length"}]}"#
+                    .as_slice(),
+            ),
+            (
+                Provider::Anthropic,
+                br#"{"content":[{"type":"text","text":"First you mix"}],"stop_reason":"max_tokens"}"#
+                    .as_slice(),
+            ),
+            (
+                Provider::Gemini,
+                br#"{"candidates":[{"content":{"parts":[{"text":"First you mix"}]},"finishReason":"MAX_TOKENS"}]}"#
+                    .as_slice(),
+            ),
+        ];
+        for (provider, body) in bodies {
+            let reply = read_completion(body, provider).expect("a reply");
+            assert!(reply.cut_short, "{provider:?}");
+            assert_eq!(reply.text, "First you mix", "{provider:?}");
+        }
+        let finished = br#"{"choices":[{"message":{"content":"Done."},"finish_reason":"stop"}]}"#;
+        assert!(
+            !read_completion(finished, Provider::OpenAi)
+                .expect("a reply")
+                .cut_short
+        );
+    }
+
+    #[test]
+    fn a_reply_that_spent_its_whole_allowance_thinking_asks_for_a_shorter_question() {
+        let body = br#"{"content":[{"type":"thinking","thinking":"","signature":"abc"}],"stop_reason":"max_tokens"}"#;
+        let reported = read_completion(body, Provider::Anthropic).expect_err("no answer");
+        assert!(reported.contains("length limit"), "{reported}");
+    }
+
+    #[test]
+    fn a_reply_that_was_cut_short_is_remembered_until_anything_else_is_said() {
+        let mut conversation = Conversation::default();
+        conversation.push(Role::You, "how do I make bread");
+        conversation.push_reply(Completion {
+            text: "First you mix".to_owned(),
+            cut_short: true,
+        });
+        assert!(conversation.reply_cut_short());
+        let restored = Conversation::restore(&conversation.encode()).expect("restores");
+        assert!(restored.reply_cut_short(), "a restart forgot the way on");
+        conversation.push(Role::You, "Continue where you stopped.");
+        assert!(!conversation.reply_cut_short());
+        let restored = Conversation::restore(&conversation.encode()).expect("restores");
+        assert!(!restored.reply_cut_short());
     }
 
     #[test]

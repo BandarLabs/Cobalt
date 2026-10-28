@@ -41,25 +41,39 @@ reader and does not save terminal output.
 
 ## Setup
 
-**Connect a computer** in the app walks through these steps one at a time.
+Paperterm needs your computer. **Connect a computer** in the app shows the
+same steps. On the computer:
 
-1. On the computer, create its identity and install its certificate on the
-   reader. `kobo devices` finds the reader's address.
+1. Set up the reader once over USB, if you have not already:
+
+   ```sh
+   kobo setup
+   ```
+
+2. Pair this computer with the reader. There is nothing to type on the
+   reader. The first time, close Cobalt and open it again afterwards so it
+   trusts the computer. If you also use Sidekick or Deck, `kobo sidekick init`
+   pairs all three at once.
 
    ```sh
    kobo stream init
-   kobo trust set stream --device READER_IP
    ```
 
-2. Check the connection. Type on either screen and the text appears on both.
-   Type `exit` to finish.
+3. Share a terminal and leave it open, then open Paperterm on the reader.
 
    ```sh
-   kobo stream demo
+   kobo stream terminal
    ```
 
-3. On the reader, enter the computer's address and six-character code. The
-   default port is 9332. `kobo stream pairing` shows them again.
+If `init` cannot reach the reader, it prints an address and a six-character
+code to enter in Paperterm. The default port is 9332, and `kobo stream
+pairing` shows them again. When the computer's address changes, the next
+session renews its certificate for the new address; run `kobo stream init`
+again to update the reader. `kobo stream demo` is a connection check that
+runs no commands.
+
+Until the computer has answered once, Paperterm says **Not connected yet**
+and what to run, rather than that a connection was lost.
 
 ## Sharing a session
 

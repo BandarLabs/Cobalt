@@ -15,7 +15,7 @@
   "setup": {
     "steps": [
       {
-        "text": "Create a Lichess Personal Access Token granting only board:play.",
+        "text": "Computer games and puzzles need no account. To play people, create a Lichess Personal Access Token granting only board:play.",
         "link": {
           "label": "Create a Lichess API token",
           "url": "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt"
@@ -25,8 +25,8 @@
         "text": "On the reader, open Lichess, tap Account/Games, then Connect Lichess, and type the token."
       },
       {
-        "text": "Or use a computer, which also works if Lichess asks for a newer Cobalt. Once per reader, plug it in over USB and run kobo setup --enable-ssh. Then pair it:",
-        "command": "kobo pair"
+        "text": "Or install the token from a computer. Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
         "text": "Save the token in a private local file, then install it under the exact secret name lichess.",
@@ -37,5 +37,5 @@
       }
     ]
   },
-  "page_description": "An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline."
+  "page_description": "An unofficial Lichess client for Kobo. Play rated or casual games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline, with or without a clock."
 }

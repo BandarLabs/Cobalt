@@ -21,7 +21,7 @@
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, ControlState, Failure, Glyph, KoboApp, Position,
-    Screen, ScreenBuilder, Space, StoreResult, Task, TaskId, TaskOutcome,
+    Screen, ScreenBuilder, Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -154,6 +154,11 @@ struct Sidekick {
     last: Option<String>,
     trouble: Option<String>,
     page: usize,
+    /// Whether the computer answered the last poll: `None` before the first
+    /// answer of this pairing. The splash used to say "Watching" whatever
+    /// happened, so a reader whose computer was off looked ready for
+    /// questions that were going straight to the terminal instead.
+    connected: Option<bool>,
 }
 
 impl Sidekick {
@@ -194,7 +199,7 @@ impl Sidekick {
             // is true and useless: the thing that has to happen is that a
             // daemon is running on the computer, and this is what starts it
             // and prints the two things this screen is about to ask for.
-            .text("On your computer, run kobo sidekick init. It prints an address and a code.");
+            .text("Run kobo sidekick init on your computer. It pairs this reader for you.");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -241,15 +246,30 @@ impl Sidekick {
         // of subtitle at 170% left the rest of the panel with less room than
         // its own words needed, and the renderer refused the screen: a reader
         // who had just answered a question saw nothing at all.
+        let (glyph, title, sentence) = match self.connected {
+            Some(true) => (
+                Glyph::Circle,
+                "Watching",
+                "Questions from your coding agents appear here the moment they ask.",
+            ),
+            Some(false) => (
+                Glyph::Close,
+                "Not connected",
+                "Until this reconnects, your agents ask at their terminals as usual.",
+            ),
+            None => (Glyph::Refresh, "Connecting", "Reaching your computer."),
+        };
         let mut screen = ScreenBuilder::new("sidekick-watching")
             .top_bar(TITLE)
             .splash(
-                Some(Glyph::Circle),
-                "Watching",
-                if self.last.is_some() {
+                Some(glyph),
+                title,
+                // The banner says why when there is trouble, and the splash
+                // repeating it pushed the rest off the panel at 170%.
+                if self.last.is_some() || self.trouble.is_some() {
                     String::new()
                 } else {
-                    "Questions from your coding agents appear here the moment they ask.".to_owned()
+                    sentence.to_owned()
                 },
             );
         if let Some(trouble) = &self.trouble {
@@ -536,11 +556,14 @@ impl Sidekick {
             return;
         };
         let sentence = if labels.is_empty() {
+            // Who asked comes before what they asked, because the detail is
+            // often a sentence of its own and "Allowed This is a test" read
+            // as one run-on line.
             format!(
-                "{} {} for {}.",
+                "{} for {}: {}",
                 decided(choice),
-                trimmed_to(&ask.detail, 60),
-                agent_name(&ask.source)
+                agent_name(&ask.source),
+                trimmed_to(&ask.detail, 60)
             )
         } else {
             format!(
@@ -594,7 +617,8 @@ impl Sidekick {
         }
         match outcome {
             TaskOutcome::Completed(bytes) => {
-                let repaint = self.trouble.take().is_some();
+                let repaint =
+                    self.trouble.take().is_some() | (self.connected.replace(true) != Some(true));
                 let asks = read_asks(&bytes);
                 if asks.len() == 1 {
                     let ask = asks.into_iter().next().expect("one ask");
@@ -632,8 +656,15 @@ impl Sidekick {
                 });
             }
             TaskOutcome::Failed(error) => {
-                self.trouble = Some(Failure::of(error).advice.to_owned());
-                self.show(context);
+                let trouble = Some(poll_trouble(error, &self.address));
+                // Repainted when something changed, not every ten seconds
+                // while the computer stays away.
+                let changed =
+                    (self.trouble != trouble) | (self.connected.replace(false) != Some(false));
+                self.trouble = trouble;
+                if changed {
+                    self.show(context);
+                }
                 self.nap = context.spawn(Task::Sleep {
                     seconds: NAP_SECONDS,
                 });
@@ -744,6 +775,7 @@ impl Sidekick {
                     context.store().save(PAIRED, record.into_bytes());
                     self.view = View::Watching;
                     self.trouble = None;
+                    self.connected = None;
                     // A poll still in flight belongs to the old pairing.
                     // Forgetting its id makes whatever it brings back land on
                     // nothing, and clears the way for this pairing's poll.
@@ -790,6 +822,21 @@ fn fitting_prefix(text: &str, mut fits: impl FnMut(&str) -> bool) -> usize {
     end
 }
 
+/// What a failed poll means, in words that name the fix.
+///
+/// The generic advice said "The service did not answer. Try again." for a
+/// helper that was not started, a code that was wrong and a reader that had
+/// lost its network alike, and only one of those is fixed by trying again.
+fn poll_trouble(error: TaskError, address: &str) -> String {
+    match error {
+        TaskError::Unauthorized => "Your computer did not accept this pairing code. Run kobo sidekick init on it, or choose Change pairing.".to_owned(),
+        TaskError::Unreachable => "Your computer is not answering. Start kobo sidekick run on it. After a first pairing, reopen Cobalt once.".to_owned(),
+        TaskError::TimedOut => "Your computer took too long to answer. It may be asleep.".to_owned(),
+        TaskError::NotFound => format!("Something other than Sidekick answered at {address}. Check the address kobo sidekick init printed."),
+        other => Failure::of(other).advice.to_owned(),
+    }
+}
+
 /// The agent's name as a person says it, not as its process does.
 fn agent_name(source: &str) -> &str {
     match source {
@@ -804,7 +851,7 @@ fn decided(choice: &str) -> &'static str {
     match choice {
         ALLOW => "Allowed",
         DENY => "Denied",
-        _ => "Left at the terminal:",
+        _ => "Left at the terminal",
     }
 }
 
@@ -932,7 +979,11 @@ impl KoboApp for Sidekick {
         let StoreResult::Loaded { key, value } = result else {
             return;
         };
-        if key != PAIRED || self.view != View::Opening {
+        // A first-run pairing screen with nothing typed yet also takes a
+        // pairing, because `kobo sidekick init` writes one while it is up.
+        let waiting_for_one =
+            self.view == View::Address && self.code.is_empty() && self.keyboard.text().is_empty();
+        if key != PAIRED || !(self.view == View::Opening || waiting_for_one) {
             return;
         }
         let remembered = value
@@ -953,9 +1004,10 @@ impl KoboApp for Sidekick {
             self.address = address;
             self.code = code;
             self.view = View::Watching;
+            self.connected = None;
             self.show(context);
             self.poll(context);
-        } else {
+        } else if self.view == View::Opening {
             self.view = View::Address;
             self.show(context);
         }
@@ -1078,6 +1130,9 @@ impl KoboApp for Sidekick {
         if self.view == View::Watching && self.poll.is_none() && self.nap.is_none() {
             self.poll(context);
         }
+        if self.view == View::Address && self.code.is_empty() && self.keyboard.text().is_empty() {
+            context.store().load(PAIRED);
+        }
     }
 }
 
@@ -1104,7 +1159,16 @@ mod tests {
     /// Every screen this application draws, with something on each of them.
     fn every_screen(context: &Context) -> Vec<(String, Screen)> {
         let (mut app, _) = paired();
-        let mut screens = vec![("watching".to_owned(), app.screen(context))];
+        let mut screens = vec![("connecting".to_owned(), app.screen(context))];
+        app.connected = Some(false);
+        app.trouble = Some(super::poll_trouble(
+            kobo_sdk::TaskError::Unreachable,
+            &app.address,
+        ));
+        screens.push(("not-connected".to_owned(), app.screen(context)));
+        app.trouble = None;
+        app.connected = Some(true);
+        screens.push(("watching".to_owned(), app.screen(context)));
         // And the same screen after an answer, which is the one that has
         // something under the splash as well as beside it.
         app.last = Some("Allowed rm -rf target && cargo build --release for Claude Code.".into());
@@ -1639,6 +1703,9 @@ mod tests {
     #[test]
     fn an_empty_poll_asks_again_without_repainting() {
         let (mut app, poll) = paired();
+        // The first answer turns "Connecting" into "Watching", which is a
+        // change worth one repaint; the empty polls after it are not.
+        app.connected = Some(true);
         let mut context = Context::default();
         app.on_task(&mut context, poll, TaskOutcome::Completed(b"{}".to_vec()));
         let commands = context.take_commands();
@@ -1707,8 +1774,12 @@ mod tests {
             TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
         );
         let commands = context.take_commands();
-        let advice = kobo_sdk::Failure::of(kobo_sdk::TaskError::Unreachable).advice;
+        let advice = "Your computer is not answering.";
         let lines = shown(&painted(&commands).expect("the trouble was stated"));
+        assert!(
+            lines.iter().any(|line| line.contains("Not connected")),
+            "the splash still claims to be watching: {lines:?}"
+        );
         assert!(
             lines.iter().any(|line| line.contains(advice)),
             "no advice on the panel: {lines:?}"
@@ -1728,6 +1799,85 @@ mod tests {
         assert!(
             !lines.iter().any(|line| line.contains(advice)),
             "the trouble outlived it: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn the_splash_says_connecting_then_watching_only_once_the_computer_answers() {
+        let (mut app, poll) = paired();
+        let lines = shown(&app.screen(&Context::default()));
+        assert!(lines.iter().any(|line| line == "Connecting"), "{lines:?}");
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, TaskOutcome::Completed(b"{}".to_vec()));
+        let lines = shown(&painted(&context.take_commands()).expect("a repaint"));
+        assert!(lines.iter().any(|line| line == "Watching"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_refused_code_is_not_blamed_on_the_network() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized),
+        );
+        let trouble = app.trouble.clone().unwrap_or_default();
+        assert!(trouble.contains("pairing code"), "{trouble}");
+        assert!(!trouble.contains("Wi-Fi") && !trouble.contains("not answering"));
+    }
+
+    #[test]
+    fn the_same_failure_again_does_not_repaint_the_panel() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        let nap = slept(&context.take_commands()).expect("a nap");
+        let mut context = Context::default();
+        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        let poll = fetched(&context.take_commands()).expect("polled again").0;
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert!(
+            painted(&context.take_commands()).is_none(),
+            "an unchanged failure repainted"
+        );
+    }
+
+    #[test]
+    fn a_pairing_written_by_the_computer_is_picked_up_on_the_first_run_screen() {
+        let mut app = Sidekick::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRED.to_owned(),
+                value: None,
+            },
+        );
+        assert_eq!(app.view, View::Address);
+        let mut context = Context::default();
+        app.on_foreground(&mut context);
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRED.to_owned(),
+                value: Some(b"192.168.1.10:9331\nabc234".to_vec()),
+            },
+        );
+        assert_eq!(app.view, View::Watching);
+        assert!(
+            fetched(&context.take_commands()).is_some(),
+            "it did not poll"
         );
     }
 
