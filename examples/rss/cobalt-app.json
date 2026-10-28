@@ -8,5 +8,24 @@
   "capabilities": [
     "network"
   ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Nothing is needed on a computer to follow feeds: add them on the reader. These steps bring a subscription list over from another feed reader."
+      },
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Export your subscriptions from the other feed reader as an OPML file, and check it.",
+        "command": "kobo feeds check subscriptions.opml"
+      },
+      {
+        "text": "Send the file to the reader. Then open Feeds and choose Import OPML.",
+        "command": "kobo feeds push subscriptions.opml"
+      }
+    ]
+  },
   "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
 }

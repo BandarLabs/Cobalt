@@ -14,8 +14,15 @@ Browse free book libraries and read their books on your Kobo.
 - Works with Project Gutenberg, Standard Ebooks, Open Library and any other
   OPDS catalog you add by its address.
 - Search and browse catalogs, with covers.
-- Downloads EPUB when available, with progress on screen, and falls back to
-  plain text. **Choose download** picks the format when a book offers several.
+- **On this device** lists every book you have downloaded, with its author and
+  size, and opens it without a connection. The first screen says how many
+  books are ready offline. Remove a book from its menu.
+- Come back to Gutenbird and it opens the book you were reading, at your
+  place.
+- One tap on **Read** downloads a book. EPUB is used when available, with
+  progress on screen, and plain text otherwise. When Project Gutenberg offers
+  a book with and without its pictures, the illustrated edition is used if it
+  fits on the reader; **Choose download** still offers the other.
 - Books open in the shared reader, with text size, front light, bookmarks and
   highlights.
 - OPDS 1.2 and 2.0 catalogs look and behave the same.

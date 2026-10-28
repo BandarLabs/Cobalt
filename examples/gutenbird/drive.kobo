@@ -1,17 +1,65 @@
-# The bundled catalogs stream live from Project Gutenberg; Popular opens a
-# real book grid, and a book names its editions.
-wait-for Project Gutenberg
-wait-for Popular
+# First run, the same with or without a connection: the first screen behind
+# the catalog leads with the books on this device, says what each catalog
+# holds, and names no test catalog and no raw address.
+tap Back
+wait-for On this device
+expect Nothing is ready offline yet.
+expect Over 70,000 free books whose copyright has run out.
+expect-missing OPDS 2.0 Test Catalog
+expect-missing https://
 clean
-shot gutenbird-catalogs
+shot gutenbird-home
+tap On this device
+wait-for Open a book in a catalog and tap Read.
+clean
+shot gutenbird-device-empty
+tap Back
+wait-for Catalogs
+# The daily loop, live from Project Gutenberg. A book opens straight onto its
+# own page with no choice of edition to make first. Pride and Prejudice's
+# illustrated edition is too large for a reader, so the one without pictures
+# is taken and one tap on Read downloads and opens it.
+tap Project Gutenberg
+wait-for Popular
 tap Popular
 wait-for All Books
 clean
 shot gutenbird-popular
 tap Pride and Prejudice
-wait-for-id book-0
-wait-for-id book-1
-expect With
-expect No
+wait-for-id read
+expect-missing With images
+expect-missing No images
+expect English
 clean
-shot gutenbird-editions
+shot gutenbird-book
+tap-id read
+# The download is live, and its speed is the server's.
+wait-idle 60000
+wait-for-id reader-forward
+wait-idle 30000
+tap-id reader-forward
+wait 1500
+clean
+shot gutenbird-reading
+# Back on its page the book is on the device, partway through.
+tap Back
+wait-for-id read
+expect Already on this device.
+expect Continue reading
+# The first screen counts it, and the list of books on the device opens it
+# without a catalog.
+tap Back
+wait-for All Books
+tap-id catalogs
+wait-for Ready offline: 1 book
+tap On this device
+wait-for Pride and Prejudice
+expect Austen, Jane
+clean
+shot gutenbird-device
+tap-id device-menu-0
+wait-for Remove from this device
+tap Remove from this device
+wait-for Remove Pride and Prejudice from this device?
+tap Keep it
+wait-for-id device-0

@@ -5,14 +5,16 @@ expect The Clockwork Garden
 expect Лунная библиотека
 expect updates unchecked
 expect reading
+expect Ready offline: 2 works
 clean
 shot shelf
 
 tap The Clockwork Garden
+expect A synthetic demonstration work.
 expect Rating: Teen And Up Audiences
 expect Archive warnings: No Archive Warnings Apply
 expect New chapters found
-expect Re-download
+expect Download new chapters
 clean
 shot work
 
@@ -24,8 +26,9 @@ shot work-unchecked
 
 tap Shelf
 tap Updates
-expect Unread update
+expect Update waiting to download
 expect Never checked
+expect Update all
 clean
 shot updates
 
@@ -47,9 +50,8 @@ tap All
 expect A Field Guide to Small Hours
 
 tap Manage
-expect Download all updates
-expect 1 waiting
-expect 2 on the shelf
+expect Remove downloaded copies
+expect 2 on the reader
 clean
 shot manage
 
@@ -60,7 +62,7 @@ clean
 shot manage-confirm
 
 tap Go back
-expect Download all updates
+expect Remove downloaded copies
 tap Shelf
 
 tap Followed tags
@@ -70,7 +72,21 @@ clean
 shot followed-tags
 
 tap Public Domain Fairy Tales
-expect AO3 Atom feed
+expect Newest works in this tag on AO3
 expect A Map Made of Starlight
 clean
 shot tag-feed
+
+# A mistyped work stays on screen with the reason, and Back leaves.
+tap Shelf
+tap Add
+wait-for Add an AO3 work
+type nonsense
+tap Open work
+expect That is not an AO3 work address or number.
+expect nonsense
+clean
+shot add-mistyped
+tap Back
+wait-for Followed tags
+expect Ready offline: 2 works

@@ -2,7 +2,7 @@
   "id": "gutenbird",
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
-  "summary": "Browse OPDS libraries and read their books on your Kobo.",
+  "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
   "version": "1.0.23",
   "glyph": "book",
   "capabilities": [

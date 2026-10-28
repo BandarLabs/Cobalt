@@ -20,16 +20,18 @@ read them offline.
 
 ## Features
 
-- Add a work by pasting its link. Rating and archive warnings are shown before
-  you download.
+- Add a work by pasting its link. The author's summary, rating and archive
+  warnings are shown before you download.
 - Download works as EPUB and read them offline. Your place, highlights and
   notes survive a re-download.
-- Up to 96 works. The shelf marks works you have started.
+- Up to 96 works. The shelf marks works you have started and says how many are
+  ready offline and how much room they take.
 - **Filter** narrows the shelf by fandom.
-- **Manage** downloads every waiting update, or removes downloaded copies
-  while keeping the works and your place.
-- **Check updates** and **Check all** look for new chapters on works in
-  progress, and mark them unread.
+- **Check for new chapters** on a work, or **Update all** on the Updates
+  screen, looks for new chapters and downloads them straight away for works
+  you have downloaded. Works with new chapters you have not opened yet are
+  marked on the shelf.
+- **Manage** removes downloaded copies while keeping the works and your place.
 - Follow up to 24 AO3 tags through their public feeds.
 - Adult content needs an explicit confirmation. Works restricted to logged-in
   users cannot be downloaded, and the app says so.
@@ -39,7 +41,8 @@ read them offline.
 Fanshelf is a personal reading tool, not a crawler.
 
 - Every request follows something you did: opening a work, downloading it,
-  opening a tag or checking for updates. There is no background checking,
+  opening a tag or checking for updates. Update all checks your works in
+  progress one at a time and downloads only the ones that changed. There is no background checking,
   prefetching, search scraping or mirroring.
 - One request at a time, at least one second apart, identified as
   `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)`.

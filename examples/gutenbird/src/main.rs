@@ -54,24 +54,32 @@ use std::process::ExitCode;
 /// The catalogs built in, and the only place any of them is named.
 ///
 /// Everything past this table treats a catalog as an address and a display
-/// name; nothing downstream branches on which of these four it is, which is
-/// what lets a reader's own addition behave exactly like one of these. Added
+/// name; nothing downstream branches on which of these it is, which is what
+/// lets a reader's own addition behave exactly like one of these. Added
 /// catalogs are stored on the device; these are rebuilt from this table on
 /// every launch, so that changing the table changes what a reader sees
 /// without a migration.
-const CATALOGS: &[(&str, &str)] = &[
+///
+/// The third column is what the list says under each name. It used to be the
+/// catalog's address, which told an owner nothing they could act on and read
+/// as a fault. The OPDS conformance catalog that used to sit here as well is
+/// gone for the same reason: it is a test of the protocol, full of placeholder
+/// books, and an owner who wants it can still add it by its address.
+const CATALOGS: &[(&str, &str, &str)] = &[
     (
         "Project Gutenberg",
         "https://www.gutenberg.org/ebooks.opds/",
+        "Over 70,000 free books whose copyright has run out.",
     ),
     (
         "Standard Ebooks",
         "https://standardebooks.org/feeds/atom/new-releases",
+        "Free classics, carefully typeset and proofread.",
     ),
-    ("Open Library", "https://openlibrary.org/opds"),
     (
-        "OPDS 2.0 Test Catalog",
-        "https://test.opds.io/2.0/home.json",
+        "Open Library",
+        "https://openlibrary.org/opds",
+        "Free books from the Internet Archive.",
     ),
 ];
 
@@ -203,6 +211,11 @@ const MAX_TRAIL: usize = 8;
 const REGISTRY_KEY: &str = "catalogs";
 /// The store key naming which catalog was open when the reader last left.
 const LAST_OPEN_KEY: &str = "catalog-open";
+/// The store key the records of kept books are written under.
+const LIBRARY_KEY: &str = "on-device";
+/// The store key naming the kept book that was open when the reader last
+/// left, and absent when they left from anywhere but a book.
+const READING_KEY: &str = "reading";
 
 /// One catalog the reader can browse.
 ///
@@ -224,6 +237,9 @@ struct Catalog {
     /// first. A search of Gutenberg is not a search of anything else, so this
     /// travels with the catalog rather than living in one shared list.
     recent: Vec<String>,
+    /// What the list says under the name: a line from [`CATALOGS`] for a
+    /// built-in, nothing for a catalog the reader added.
+    about: &'static str,
 }
 
 impl Catalog {
@@ -234,6 +250,20 @@ impl Catalog {
             added,
             search: SearchState::Unknown,
             recent: Vec::new(),
+            about: "",
+        }
+    }
+
+    /// The line under the name in the list of catalogs.
+    ///
+    /// A catalog the reader added has no description of its own until its
+    /// feed is read, and its name is already the host it lives on, so the
+    /// line says where it came from instead of repeating its address.
+    fn summary(&self) -> &str {
+        if self.about.is_empty() {
+            "Added by you."
+        } else {
+            self.about
         }
     }
 }
@@ -365,6 +395,11 @@ enum View {
     Reading,
     Lookup,
     Note,
+    /// The books already downloaded, which open without a catalog or a
+    /// connection.
+    Device,
+    /// Asking before a book is taken off the device.
+    RemoveBook,
 }
 
 /// What a feed answer, once parsed, should become.
@@ -564,6 +599,74 @@ fn download_kind(media_type: Option<&str>) -> DownloadKind {
     }
 }
 
+/// What the device remembers about a book it is keeping.
+///
+/// A kept book is a blob named after its download address, and a name like
+/// `book-1f2e3d4c` is all the shelf can say about it. This is the rest: what
+/// the owner would call it, and enough of where it came from to open it as
+/// the same book again, so the list of books on the device needs no catalog
+/// and no connection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OnDevice {
+    blob: String,
+    title: String,
+    authors: String,
+    /// The download it was kept from, empty for a book kept before this
+    /// record existed. Opening needs only the blob; this is what lets the
+    /// book's page in a catalog say it is already here.
+    href: String,
+    media_type: String,
+}
+
+impl OnDevice {
+    /// The publication this book is opened as.
+    ///
+    /// Only what reading needs. The catalog's description, cover and
+    /// categories are not kept, because none of them is needed to read the
+    /// book and every one of them can be had again from the catalog.
+    fn publication(&self) -> Publication {
+        let acquisition = (!self.href.is_empty())
+            .then(|| kobo_opds::Acquisition {
+                kind: AcquisitionKind::OpenAccess,
+                href: self.href.clone(),
+                media_type: (!self.media_type.is_empty()).then(|| self.media_type.clone()),
+                title: None,
+                length: None,
+                price: None,
+                indirect: Vec::new(),
+                available: true,
+            })
+            .into_iter()
+            .collect();
+        Publication {
+            title: self.title.clone(),
+            identifier: None,
+            authors: if self.authors.is_empty() {
+                Vec::new()
+            } else {
+                vec![self.authors.clone()]
+            },
+            summary: None,
+            language: None,
+            issued: None,
+            published: None,
+            updated: None,
+            publisher: None,
+            rights: None,
+            extent: None,
+            categories: Vec::new(),
+            series: None,
+            images: Vec::new(),
+            acquisition,
+            links: Vec::new(),
+        }
+    }
+}
+
+/// The kept books, each one's title and line as drawn, and which rows fall
+/// on each page of the list.
+type DeviceRows = (Vec<OnDevice>, Vec<(String, String)>, Vec<Vec<usize>>);
+
 /// A book on its way in, whichever format it turned out to be.
 struct Download {
     url: String,
@@ -670,8 +773,40 @@ struct Gutenbird {
     book_font: Option<FontHandle>,
     place: Option<Memory>,
     keeping: Option<ShelfUpload>,
+    /// The record and size of the book `keeping` is writing, taken when the
+    /// write starts. By the time it finishes the owner may be on another
+    /// book's page, and the download it came from has already been handed to
+    /// the shelf.
+    keeping_book: Option<(OnDevice, u32)>,
     loading: Option<ShelfDownload>,
     stored: BTreeMap<String, u32>,
+    /// Whether the shelf has said what it holds yet.
+    stored_known: bool,
+    /// Every kept book the device has a record of, oldest first.
+    library: Vec<OnDevice>,
+    /// Whether the records have been read back. Nothing is written before
+    /// they have, or a book kept in the first second after starting would be
+    /// written over every record already on the device.
+    library_known: bool,
+    /// The kept book the reader is open on, when it was opened from the list
+    /// of books on this device rather than from a catalog.
+    open_blob: Option<String>,
+    /// The book that was open when the application was last left, waiting
+    /// for the shelf and the records to arrive so it can be opened again.
+    resume: Option<String>,
+    /// Whether the owner has done anything yet. A book is reopened at start
+    /// only on a screen nobody has touched: an owner who has already tapped
+    /// a catalog has chosen somewhere else to be.
+    touched: bool,
+    /// Which book on the device list has its menu open, as an index into
+    /// [`Gutenbird::device_books`].
+    device_menu: Option<usize>,
+    device_page: usize,
+    /// The book waiting for the owner to confirm it should be removed.
+    removing: Option<String>,
+    /// Whether a catalog's first page was dropped half-fetched because the
+    /// owner walked away from it, so returning to its shelf asks again.
+    abandoned_root: bool,
     failed: Option<String>,
     retryable: bool,
 
@@ -695,7 +830,10 @@ impl Default for Gutenbird {
             lookup_page: 0,
             catalogs: CATALOGS
                 .iter()
-                .map(|(name, root)| Catalog::new(*name, *root, false))
+                .map(|(name, root, about)| Catalog {
+                    about,
+                    ..Catalog::new(*name, *root, false)
+                })
                 .collect(),
             current: 0,
             catalog_page: 0,
@@ -726,8 +864,19 @@ impl Default for Gutenbird {
             book_font: None,
             place: None,
             keeping: None,
+            keeping_book: None,
             loading: None,
             stored: BTreeMap::new(),
+            stored_known: false,
+            library: Vec::new(),
+            library_known: false,
+            open_blob: None,
+            resume: None,
+            touched: false,
+            device_menu: None,
+            device_page: 0,
+            removing: None,
+            abandoned_root: false,
             failed: None,
             retryable: false,
             catalog_setup: ProviderSetup::public("catalog").expect("static catalog setup"),
@@ -767,6 +916,8 @@ impl Gutenbird {
             View::Reading => self.reading_screen(context),
             View::Lookup => self.lookup_screen(),
             View::Note => self.note_screen(),
+            View::Device => self.device_screen(context),
+            View::RemoveBook => self.remove_screen(),
         };
         // The application draws its own Back wherever it has somewhere to go,
         // which is every screen except the catalog list with nothing open over
@@ -816,7 +967,9 @@ impl Gutenbird {
 
     /// Whether Back is the application's to answer rather than the runtime's.
     fn can_go_back(&self) -> bool {
-        self.way_back().is_some() || (self.view == View::Shelf && self.stack.len() > 1)
+        self.way_back().is_some()
+            || (self.view == View::Shelf && self.stack.len() > 1)
+            || (self.view == View::Device && self.device_menu.is_some())
     }
 
     /// Takes the step [`Self::way_back`] describes.
@@ -839,14 +992,40 @@ impl Gutenbird {
     // Catalogs
     // ---------------------------------------------------------------
 
+    /// The top of the first screen: the books already here, then the
+    /// catalogs to find more in.
+    ///
+    /// The books on the device come first because they are the one thing on
+    /// this screen that works on a train. They used to have no screen at
+    /// all: a book downloaded yesterday could only be reached by finding it
+    /// in its catalog again, which needs the connection the owner may not
+    /// have.
     fn catalogs_prefix(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("gutenbird-catalogs")
-            .top_bar("Catalogs")
+            .top_bar("Gutenbird")
             .top_bar_glyph("add-catalog", "Add a catalog", Glyph::Plus);
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
         screen
+            .rows([(
+                "device",
+                "On this device",
+                self.offline_summary(),
+                Glyph::Book,
+            )])
+            .section("Catalogs")
+    }
+
+    /// How many books are kept here and what they weigh, said the way every
+    /// application that keeps things for offline reading says it.
+    fn offline_summary(&self) -> String {
+        let books = self.device_books();
+        let bytes = books
+            .iter()
+            .map(|book| u64::from(self.stored.get(&book.blob).copied().unwrap_or(0)))
+            .sum();
+        kobo_bookview::offline::ready_offline(books.len(), bytes, "book", "books")
     }
 
     fn catalog_rows(&self, context: &Context) -> Vec<(String, String, &'static str)> {
@@ -857,7 +1036,7 @@ impl Gutenbird {
                 let state = if index == self.current { "Open" } else { "" };
                 (
                     context.clamped_row_beside(&catalog.name, state, 2, false),
-                    context.clamped_row(&catalog.root, 2, false),
+                    context.clamped_row(catalog.summary(), 2, false),
                     state,
                 )
             })
@@ -921,6 +1100,424 @@ impl Gutenbird {
 
     fn add_catalog_screen(&self) -> kobo_sdk::Screen {
         self.catalog_setup.screen()
+    }
+
+    // ---------------------------------------------------------------
+    // On this device
+    // ---------------------------------------------------------------
+
+    /// Every book kept on the device, newest first.
+    ///
+    /// The shelf is the authority on what is here and the records only on
+    /// what each book is called. A record whose book has gone is not listed,
+    /// and a book with no record is, because it is still a book the owner
+    /// downloaded and it still opens.
+    fn device_books(&self) -> Vec<OnDevice> {
+        let mut books: Vec<OnDevice> = self
+            .library
+            .iter()
+            .rev()
+            .filter(|book| self.stored.contains_key(&book.blob))
+            .cloned()
+            .collect();
+        for blob in self.stored.keys().filter(|name| name.starts_with("book-")) {
+            if !books.iter().any(|book| book.blob == *blob) {
+                books.push(OnDevice {
+                    blob: blob.clone(),
+                    title: String::new(),
+                    authors: String::new(),
+                    href: String::new(),
+                    media_type: String::new(),
+                });
+            }
+        }
+        books
+    }
+
+    /// The line under a kept book's title: who wrote it and what it weighs.
+    fn device_line(&self, book: &OnDevice) -> String {
+        let size = kobo_bookview::offline::size(u64::from(
+            self.stored.get(&book.blob).copied().unwrap_or(0),
+        ));
+        if book.authors.is_empty() {
+            size
+        } else {
+            format!("{} \u{b7} {size}", book.authors)
+        }
+    }
+
+    /// The kept books, their rows as drawn, and how the rows fall into pages.
+    ///
+    /// One place for all three, so the screen and the page turns cannot come
+    /// to disagree about how many pages there are.
+    fn device_rows(&self, context: &Context) -> DeviceRows {
+        let books = self.device_books();
+        let rows: Vec<(String, String)> = books
+            .iter()
+            .map(|book| {
+                (
+                    context.clamped_row_with_menu(device_title(book), 2, false),
+                    context.one_line_row_with_menu(&self.device_line(book), false),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, line)| (title.as_str(), line.as_str()))
+            .collect();
+        let pages =
+            context.paginate_rows_with_menu_below_notice(&borrowed, false, self.problem.as_deref());
+        (books, rows, pages)
+    }
+
+    /// Drops a catalog answer the owner has walked away from.
+    ///
+    /// A page that landed after its owner had gone elsewhere used to put
+    /// itself on the panel over wherever they had gone: back on the list of
+    /// catalogs, inside the books on this device, or on the shelf a search
+    /// was abandoned from.
+    fn abandon_feed(&mut self, context: &mut Context) {
+        if !self.awaiting_feed() {
+            return;
+        }
+        if let Some((task, awaiting)) = self.task.take() {
+            context.cancel(task);
+            self.abandoned_root = matches!(awaiting, Awaiting::Feed(FeedPurpose::Root { .. }, _));
+        }
+        self.cached_feed = None;
+        self.stop_federating();
+    }
+
+    /// Asks for the open catalog again when Back arrives at a shelf whose
+    /// first page was abandoned on the way out, so the shelf fills in rather
+    /// than saying there is nothing in it.
+    ///
+    /// Only then. A catalog whose first page is a single book opens straight
+    /// onto that book and leaves the shelf empty behind it, and asking again
+    /// on the way back would open the book again: a Back that could never
+    /// leave.
+    fn refill_shelf(&mut self, context: &mut Context) {
+        if self.view == View::Shelf
+            && self.stack.is_empty()
+            && self.task.is_none()
+            && std::mem::take(&mut self.abandoned_root)
+        {
+            let root = self.current_catalog().root.clone();
+            self.spawn_feed(
+                context,
+                root,
+                FeedPurpose::Root {
+                    catalog: self.current,
+                },
+            );
+        }
+    }
+
+    /// Answers the actions of the list of kept books and of the question
+    /// before one is removed. Returns whether the action was one of those.
+    fn device_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if !matches!(self.view, View::Device | View::RemoveBook) && action == action_id("device") {
+            self.abandon_feed(context);
+            self.problem = None;
+            self.device_page = 0;
+            self.device_menu = None;
+            self.go(View::Device);
+            self.show(context);
+            return true;
+        }
+        if self.view == View::RemoveBook {
+            if action == action_id("remove-confirm") {
+                if let Some(blob) = self.removing.take() {
+                    self.remove_from_device(context, &blob);
+                }
+            } else if action == action_id("remove-keep") || action == ActionId::BACK {
+                self.removing = None;
+            } else {
+                return false;
+            }
+            self.back_to(View::Device);
+            self.show(context);
+            return true;
+        }
+        if self.view != View::Device {
+            return false;
+        }
+        // An open menu takes Back before the list does: the scrim beside a
+        // popover sends Back, and the list would otherwise be left with it.
+        if action == ActionId::BACK {
+            if self.device_menu.take().is_some() {
+                self.show(context);
+                return true;
+            }
+            // A book still being read off the shelf would otherwise open over
+            // whatever screen the owner has gone back to.
+            if self.loading.take().is_some() {
+                self.open_blob = None;
+                self.open = None;
+            }
+            return false;
+        }
+        let (books, _, pages) = self.device_rows(context);
+        let last = pages.len().saturating_sub(1);
+        if action == action_id("device-next") {
+            self.device_menu = None;
+            self.device_page = self.device_page.min(last).saturating_add(1).min(last);
+        } else if action == action_id("device-back") {
+            self.device_menu = None;
+            self.device_page = self.device_page.min(last).saturating_sub(1);
+        } else if action == action_id("device-remove") {
+            let Some(book) = self.device_menu.take().and_then(|index| books.get(index)) else {
+                return false;
+            };
+            self.removing = Some(book.blob.clone());
+            self.go(View::RemoveBook);
+        } else if let Some(index) =
+            (0..books.len()).find(|index| action == action_id(&format!("device-menu-{index}")))
+        {
+            self.device_menu = Some(index);
+        } else if let Some(book) = (0..books.len())
+            .find(|index| action == action_id(&format!("device-{index}")))
+            .and_then(|index| books.get(index))
+        {
+            if self.loading.is_some() {
+                return true;
+            }
+            let blob = book.blob.clone();
+            self.open_from_device(context, &blob);
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
+    }
+
+    fn device_screen(&self, context: &Context) -> kobo_sdk::Screen {
+        let mut screen = ScreenBuilder::new("gutenbird-device").top_bar("On this device");
+        let notice = self.problem.as_deref();
+        if let Some(problem) = notice {
+            screen = screen.banner(BannerLevel::Attention, problem);
+        }
+        if self.loading.is_some() {
+            return screen.activity("Opening the book", None).build();
+        }
+        if !self.stored_known {
+            return screen
+                .activity("Looking for books on this device", None)
+                .build();
+        }
+        let (books, rows, pages) = self.device_rows(context);
+        if books.is_empty() {
+            return screen
+                .empty_state(
+                    "Open a book in a catalog and tap Read. It stays here, ready to read \
+                     without a connection.",
+                )
+                .build();
+        }
+        let page = self.device_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).cloned().unwrap_or_default();
+        screen = screen.rows_with_menu(shown.iter().map(|&index| {
+            (
+                format!("device-{index}"),
+                rows[index].0.clone(),
+                rows[index].1.clone(),
+                Glyph::Book,
+                format!("device-menu-{index}"),
+            )
+        }));
+        // Anchored only while its row is on the panel, for the reason the
+        // feeds list gives: a popover hung off a control that a page turn took
+        // away has nothing to hang from.
+        if let Some(open) = self.device_menu.filter(|open| shown.contains(open)) {
+            screen = screen.row_overflow(
+                format!("device-menu-{open}"),
+                true,
+                [("device-remove", "Remove from this device", Glyph::Trash)],
+            );
+        }
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("device-back", "device-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
+    }
+
+    /// Asks before a book is taken off the device.
+    ///
+    /// Removing is the one thing on that list that cannot be undone without a
+    /// connection, so it is a question with its answer spelled out rather
+    /// than a tap that happens.
+    fn remove_screen(&self) -> kobo_sdk::Screen {
+        let title = self
+            .removing
+            .as_ref()
+            .and_then(|blob| {
+                self.device_books()
+                    .into_iter()
+                    .find(|book| book.blob == *blob)
+            })
+            .map_or_else(
+                || "this book".to_owned(),
+                |book| device_title(&book).to_owned(),
+            );
+        ScreenBuilder::new("gutenbird-remove")
+            .top_bar("Remove book")
+            .text(format!(
+                "Remove {title} from this device? Reading it again means downloading it \
+                 again. Your place in it is kept."
+            ))
+            .primary_button("remove-confirm", "Remove")
+            .button("remove-keep", "Keep it")
+            .build()
+    }
+
+    /// Opens a kept book straight from the device, with no catalog involved.
+    ///
+    /// Everything [`Self::open_publication`] forgets about the last book is
+    /// forgotten here too, and the book is read from the shelf at once rather
+    /// than shown on a page with a Read button: the owner chose this book
+    /// from a list of books they already have.
+    fn open_from_device(&mut self, context: &mut Context, blob: &str) {
+        let publication = self
+            .library
+            .iter()
+            .rev()
+            .find(|book| book.blob == blob)
+            .map_or_else(
+                || {
+                    OnDevice {
+                        blob: blob.to_owned(),
+                        title: String::new(),
+                        authors: String::new(),
+                        href: String::new(),
+                        media_type: String::new(),
+                    }
+                    .publication()
+                },
+                OnDevice::publication,
+            );
+        if let Some((task, _)) = self.open_cover_task.take() {
+            context.cancel(task);
+        }
+        context.drop_picture(OPEN_COVER_HANDLE);
+        self.open_cover = None;
+        self.formats.clear();
+        self.format_page = 0;
+        self.detail_page = 0;
+        self.download = None;
+        self.fetched = 0;
+        self.complete = false;
+        self.book.close(context);
+        self.place = None;
+        self.failed = None;
+        self.problem = None;
+        self.trouble = None;
+        self.device_menu = None;
+        self.open = Some(publication);
+        self.open_blob = Some(blob.to_owned());
+        if let Some((_, place)) = self.open_keys() {
+            context.store().load(place);
+        }
+        let mut download = ShelfDownload::new(blob.to_owned());
+        download.start(context);
+        self.loading = Some(download);
+    }
+
+    /// Goes back into the book that was open when the application was last
+    /// left, once the device has said it is still here.
+    ///
+    /// Starting used to open the last catalog whatever the owner had been
+    /// doing, so somebody halfway through a chapter came back to a page of
+    /// covers, with their book three screens and a connection away.
+    fn resume_reading(&mut self, context: &mut Context) {
+        if self.touched {
+            self.resume = None;
+            return;
+        }
+        if !self.stored_known || !self.library_known {
+            return;
+        }
+        let Some(blob) = self.resume.take() else {
+            return;
+        };
+        if !self.stored.contains_key(&blob) {
+            context.store().forget(READING_KEY);
+            return;
+        }
+        // The catalog opened at start is not what anybody is waiting for now,
+        // and an answer landing behind the book would put the shelf over it.
+        if let Some((task, Awaiting::Feed(..))) = &self.task {
+            context.cancel(*task);
+            self.task = None;
+        }
+        self.cached_feed = None;
+        self.abandon_hydration(context);
+        self.stop_federating();
+        self.trail = vec![View::Catalogs];
+        self.view = View::Device;
+        self.open_from_device(context, &blob);
+    }
+
+    /// Records a book the device is keeping, replacing any older record of it.
+    fn remember_on_device(&mut self, context: &mut Context, book: OnDevice) {
+        self.library.retain(|kept| kept.blob != book.blob);
+        self.library.push(book);
+        self.save_library(context);
+    }
+
+    /// Writes the records of kept books back, once the device's own copy has
+    /// been read. Skipped past [`MAX_STORE_VALUE`], which is thousands of
+    /// books, for the reason the catalog registry gives.
+    fn save_library(&mut self, context: &mut Context) {
+        if !self.library_known {
+            return;
+        }
+        let bytes = encode_library(&self.library);
+        if bytes.len() <= MAX_STORE_VALUE {
+            context.store().save(LIBRARY_KEY, bytes);
+        }
+    }
+
+    /// Takes a book off the device, with its record.
+    fn remove_from_device(&mut self, context: &mut Context, blob: &str) {
+        context.shelf().remove(blob.to_owned());
+        self.stored.remove(blob);
+        self.library.retain(|kept| kept.blob != blob);
+        self.save_library(context);
+        if self.open_blob.as_deref() == Some(blob) {
+            self.close_book(context);
+            self.open_blob = None;
+            self.open = None;
+        }
+    }
+
+    /// Enters the reader, and remembers which kept book it is open on so that
+    /// coming back to the application comes back to the book.
+    fn enter_reading(&mut self, context: &mut Context) {
+        if self.view == View::Reading {
+            return;
+        }
+        self.go(View::Reading);
+        if let Some((blob, _)) = self.open_keys() {
+            context.store().save(READING_KEY, blob.into_bytes());
+        }
+    }
+
+    /// Leaves the reader for the screen it was opened from, and forgets that
+    /// a book was open.
+    fn leave_book(&mut self, context: &mut Context) {
+        if self.open.is_some() {
+            self.close_book(context);
+        }
+        context.store().forget(READING_KEY);
+        if let Some(previous) = self.step_back() {
+            self.stop_federating();
+            self.view = previous;
+        }
     }
 
     fn finish_catalog_setup(&mut self, context: &mut Context, bytes: &[u8]) {
@@ -1090,14 +1687,19 @@ impl Gutenbird {
         self.spawn_feed(context, next, FeedPurpose::More);
     }
 
-    /// Only a single-publication document opens directly. A title is not an
-    /// edition identity: catalogs can offer different images, translations or
-    /// downloads under the same title, and the reader must retain that choice.
+    /// Which document opens straight onto a book's page rather than a shelf.
+    ///
+    /// One publication, or one book in a pair of editions that differ only in
+    /// their pictures. A title alone is not an edition identity: catalogs
+    /// offer different translations, publishers and printings under the same
+    /// title, and those stay a choice on the shelf.
     fn resolve_entry(feed: &Feed) -> Option<Publication> {
-        if feed.navigation.is_empty() && feed.publications.len() == 1 {
-            feed.publications.first().cloned()
-        } else {
-            None
+        if !feed.navigation.is_empty() {
+            return None;
+        }
+        match feed.publications.as_slice() {
+            [only] => Some(only.clone()),
+            editions => picture_editions(editions),
         }
     }
 
@@ -1214,6 +1816,7 @@ impl Gutenbird {
             .collect();
         self.format_page = 0;
         self.open = Some(publication);
+        self.open_blob = None;
         // Given back, not merely forgotten. Every book's cover is held against
         // the same handle, and the frame this page reserves names that handle
         // before any bytes have arrived for it -- so the runtime, still
@@ -1456,12 +2059,20 @@ impl Gutenbird {
             .top_bar(title)
             .top_bar_glyph("search", "Search", Glyph::Search)
             .top_bar_glyph("catalogs", "Catalogs", Glyph::Globe);
+        let bare = screen.clone();
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         } else if self.stack.last().is_some_and(|entry| entry.saved) {
+            // Without a connection the books already downloaded are the only
+            // ones that open, and they are one Back away from here.
             screen = screen.banner(
                 BannerLevel::Info,
-                "Showing a saved catalog page. Reconnect to refresh.",
+                if self.device_books().is_empty() {
+                    "Showing a saved catalog page. Reconnect to refresh."
+                } else {
+                    "Showing a saved catalog page. Reconnect to refresh, or go back to \
+                     the books on this device."
+                },
             );
         }
         if self.awaiting_feed() {
@@ -1484,7 +2095,7 @@ impl Gutenbird {
         }
         let Some(entry) = self.stack.last() else {
             if let Some(failure) = self.trouble {
-                return screen.failure_state(failure, "catalogs").build();
+                return self.failed_shelf(bare, failure);
             }
             return screen
                 .text("Nothing here yet.")
@@ -1493,7 +2104,7 @@ impl Gutenbird {
         };
         if entry.feed.publications.is_empty() && entry.feed.navigation.is_empty() {
             if let Some(failure) = self.trouble {
-                return screen.failure_state(failure, "catalogs").build();
+                return self.failed_shelf(bare, failure);
             }
             return screen.text("Nothing here.").build();
         }
@@ -1507,6 +2118,22 @@ impl Gutenbird {
             self.publication_grid(context, entry, screen)
         };
         Self::paginated(entry, shown_screen)
+    }
+
+    /// A catalog that could not be read, said once, with the way to the books
+    /// that need no catalog at all.
+    ///
+    /// The failure used to be said twice, as a banner and again as the page
+    /// under it, and the page ended there: an owner on a train with three
+    /// books downloaded was told the catalog was out of reach and nothing
+    /// about the books that were not.
+    fn failed_shelf(&self, screen: ScreenBuilder, failure: Failure) -> kobo_sdk::Screen {
+        let screen = screen.failure_state(failure, "catalogs");
+        if self.device_books().is_empty() {
+            screen.build()
+        } else {
+            screen.button("device", "Books on this device").build()
+        }
     }
 
     /// Draws a catalog's navigation as tiles, so a catalog that serves no
@@ -2049,7 +2676,12 @@ impl Gutenbird {
         } else {
             screen
         };
+        // A book already here with a place in it is one the owner is partway
+        // through, and the button says what it will do for them.
+        let partway =
+            self.is_kept(publication) && self.place.as_ref().is_some_and(|place| place.at > 0);
         match read_offer(publication) {
+            ReadOffer::Read if partway => screen.primary_button("read", "Continue reading"),
             ReadOffer::Read => screen.primary_button("read", "Read"),
             ReadOffer::Sample => screen.primary_button("read", "Read sample"),
             ReadOffer::Unavailable(price) => {
@@ -2072,10 +2704,20 @@ impl Gutenbird {
     // ---------------------------------------------------------------
 
     fn reading_screen(&self, context: &Context) -> kobo_sdk::Screen {
-        let title = self.open.as_ref().map_or_else(
-            || "Reading".to_owned(),
-            |publication| publication.title.clone(),
-        );
+        // A book kept before titles were recorded, which names itself nowhere
+        // inside, is called what the list of books on the device calls it.
+        let title = self
+            .open
+            .as_ref()
+            .map(|publication| publication.title.clone())
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| {
+                if self.open_blob.is_some() {
+                    "Book downloaded earlier".to_owned()
+                } else {
+                    "Reading".to_owned()
+                }
+            });
         let Some(screen) = self.book.screen(&title) else {
             return self.details_screen(context);
         };
@@ -2662,6 +3304,9 @@ impl Gutenbird {
     }
 
     fn open_keys(&self) -> Option<(String, String)> {
+        if let Some(blob) = &self.open_blob {
+            return place_for(blob).map(|place| (blob.clone(), place));
+        }
         self.open.as_ref().and_then(book_keys)
     }
 
@@ -2675,7 +3320,10 @@ impl Gutenbird {
         };
         match outcome {
             Outcome::Elsewhere | Outcome::Repaint => {}
-            Outcome::Close => self.back_to(View::Details),
+            // The reader's own way out goes where Back goes: to the page the
+            // book was opened from, which is the device list for a book that
+            // came from there rather than a catalog page it never had.
+            Outcome::Close => self.leave_book(context),
             Outcome::Light(level) => {
                 context.device().set_frontlight(level);
                 self.save_place(context);
@@ -2718,6 +3366,20 @@ impl Gutenbird {
         let Some(download) = self.download.take() else {
             return;
         };
+        let size = u32::try_from(download.bytes.len()).unwrap_or(u32::MAX);
+        if let Some(publication) = &self.open {
+            let record = OnDevice {
+                blob: blob.clone(),
+                title: publication.title.clone(),
+                authors: publication.authors.join(", "),
+                href: download.url.clone(),
+                media_type: publication
+                    .best_acquisition()
+                    .and_then(|acquisition| acquisition.media_type.clone())
+                    .unwrap_or_default(),
+            };
+            self.keeping_book = Some((record, size));
+        }
         let mut upload = ShelfUpload::new(blob, download.bytes);
         upload.start(context);
         self.keeping = Some(upload);
@@ -2766,6 +3428,7 @@ impl Gutenbird {
         let _ = name;
         if let Ok(document) = result {
             let blocks = document.blocks.len();
+            let named = (document.title.clone(), document.author.clone());
             let started = std::time::Instant::now();
             // Whatever the last reopen handed over is about to be replaced, so
             // it goes back first. A book read from the shelf reaches here a
@@ -2798,6 +3461,7 @@ impl Gutenbird {
                 }
             }
             let open_ms = started.elapsed().as_millis();
+            self.name_kept_book(context, named.0, named.1);
             context.log(
                 LogLevel::Info,
                 format!(
@@ -2813,6 +3477,66 @@ impl Gutenbird {
                 self.discard_broken_book(context);
             }
         }
+    }
+
+    /// Writes down what a kept book is called, when the device has a copy of
+    /// it and no record of its name.
+    ///
+    /// Books kept before the device remembered titles are listed under a
+    /// placeholder until they are opened once. The catalog's own title is
+    /// preferred when the book came through a catalog page; otherwise the
+    /// title the book gives itself is the best there is.
+    fn name_kept_book(
+        &mut self,
+        context: &mut Context,
+        title: Option<String>,
+        author: Option<String>,
+    ) {
+        let Some((blob, _)) = self.open_keys() else {
+            return;
+        };
+        if !self.stored.contains_key(&blob)
+            || self
+                .library
+                .iter()
+                .any(|book| book.blob == blob && !book.title.is_empty())
+        {
+            return;
+        }
+        let catalog = self.open.as_ref().filter(|book| !book.title.is_empty());
+        let record = OnDevice {
+            blob,
+            title: catalog.map_or_else(
+                || title.unwrap_or_default().trim().to_owned(),
+                |book| book.title.clone(),
+            ),
+            authors: catalog.map_or_else(
+                || author.unwrap_or_default().trim().to_owned(),
+                |book| book.authors.join(", "),
+            ),
+            href: self
+                .open
+                .as_ref()
+                .and_then(Publication::best_acquisition)
+                .map(|acquisition| acquisition.href.clone())
+                .unwrap_or_default(),
+            media_type: self
+                .open
+                .as_ref()
+                .and_then(Publication::best_acquisition)
+                .and_then(|acquisition| acquisition.media_type.clone())
+                .unwrap_or_default(),
+        };
+        if record.title.is_empty() {
+            return;
+        }
+        if let Some(open) = self.open.as_mut().filter(|book| book.title.is_empty()) {
+            open.title.clone_from(&record.title);
+            if open.authors.is_empty() && !record.authors.is_empty() {
+                open.authors = vec![record.authors.clone()];
+            }
+        }
+        self.remember_on_device(context, record);
     }
 
     /// Gives back everything the open book was costing.
@@ -2904,7 +3628,7 @@ impl Gutenbird {
             self.keep_book(context);
         }
         if self.book.is_open() {
-            self.go(View::Reading);
+            self.enter_reading(context);
         }
         // A chunk that lands is what asks for the one after it. Nothing else
         // can: the reader drives the plain text path by turning pages, and an
@@ -2985,6 +3709,76 @@ fn book_keys(publication: &Publication) -> Option<(String, String)> {
     let acquisition = publication.best_acquisition()?;
     let stamp = stamp(&acquisition.href);
     Some((format!("book-{stamp:08x}"), format!("place-{stamp:08x}")))
+}
+
+/// The key a kept book's reading place is stored under, from the book's blob.
+///
+/// Both carry the same stamp, so a book opened from the device finds the
+/// place it was left at when it was read through its catalog, and the other
+/// way round.
+fn place_for(blob: &str) -> Option<String> {
+    blob.strip_prefix("book-")
+        .map(|stamp| format!("place-{stamp}"))
+}
+
+/// What a kept book is called in the list, including one kept before the
+/// device remembered titles.
+fn device_title(book: &OnDevice) -> &str {
+    if book.title.is_empty() {
+        "Book downloaded earlier"
+    } else {
+        &book.title
+    }
+}
+
+/// The records of kept books, as bytes: one per line, tab-separated, in the
+/// order they were kept. The same plain shape as the catalog registry, for
+/// the same reason.
+fn encode_library(books: &[OnDevice]) -> Vec<u8> {
+    let mut out = String::new();
+    for book in books {
+        for (index, field) in [
+            &book.blob,
+            &book.title,
+            &book.authors,
+            &book.href,
+            &book.media_type,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if index > 0 {
+                out.push('\t');
+            }
+            out.push_str(&clean_field(field));
+        }
+        out.push('\n');
+    }
+    out.into_bytes()
+}
+
+/// Reads the records back. A line that is not a whole record is dropped
+/// rather than guessed at: the book it named is still listed from the shelf,
+/// under the name every unrecorded book gets.
+fn decode_library(bytes: &[u8]) -> Vec<OnDevice> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [blob, title, authors, href, media_type] = fields.as_slice() else {
+                return None;
+            };
+            (blob.starts_with("book-") && (href.is_empty() || href.starts_with("https://"))).then(
+                || OnDevice {
+                    blob: (*blob).to_owned(),
+                    title: (*title).to_owned(),
+                    authors: (*authors).to_owned(),
+                    href: (*href).to_owned(),
+                    media_type: (*media_type).to_owned(),
+                },
+            )
+        })
+        .collect()
 }
 
 fn cover_key(url: &str) -> String {
@@ -3175,6 +3969,87 @@ fn publication_caption(
         parts.push(source.to_owned());
     }
     parts.join(" · ")
+}
+
+/// Picks one of a book's two editions when all that separates them is
+/// whether the pictures were kept.
+///
+/// Project Gutenberg answers every book's own page with the book twice, once
+/// with its illustrations and once without, and drawing the pair as a shelf
+/// asked every owner a question about file formats before they could read a
+/// word. The illustrated edition is the book as it was printed, so it is the
+/// one taken, unless it is too large for this device to open; then the
+/// edition without pictures is. The other edition's downloads are carried
+/// along behind the chosen one's, so Choose download still offers it.
+fn picture_editions(editions: &[Publication]) -> Option<Publication> {
+    let first = editions.first()?;
+    let same_book = editions.iter().all(|edition| {
+        edition.title == first.title
+            && edition.authors == first.authors
+            && edition.language == first.language
+            && edition.publisher == first.publisher
+            && edition.issued == first.issued
+    });
+    if editions.len() != 2 || !same_book {
+        return None;
+    }
+    let (mut illustrated, mut plain) = (None, None);
+    for edition in editions {
+        let slot = if has_pictures(edition)? {
+            &mut illustrated
+        } else {
+            &mut plain
+        };
+        if slot.replace(edition).is_some() {
+            return None;
+        }
+    }
+    let (illustrated, plain) = (illustrated?, plain?);
+    let (chosen, other) = if illustrated.best_acquisition().is_some_and(affordable) {
+        (illustrated, plain)
+    } else {
+        (plain, illustrated)
+    };
+    let mut book = chosen.clone();
+    book.acquisition.extend(
+        other
+            .acquisition
+            .iter()
+            .filter(|acquisition| affordable(acquisition))
+            .cloned(),
+    );
+    // Carrying the other edition along must not change which download is
+    // read. When it would, the chosen edition is offered on its own.
+    let same_download = book.best_acquisition().map(|acquisition| &acquisition.href)
+        == chosen
+            .best_acquisition()
+            .map(|acquisition| &acquisition.href);
+    Some(if same_download { book } else { chosen.clone() })
+}
+
+/// Whether an edition kept its pictures, when it says.
+///
+/// Gutenberg says so in the edition notice it writes into the description,
+/// and again in the download's own address. Anything that says neither is
+/// not known to be one of a pair, and is left for the owner to choose.
+fn has_pictures(edition: &Publication) -> Option<bool> {
+    match edition
+        .summary
+        .as_deref()
+        .and_then(|summary| description_parts(summary).1)
+    {
+        Some("This edition had all images removed.") => return Some(false),
+        Some("This edition has images.") => return Some(true),
+        _ => {}
+    }
+    let href = edition.best_acquisition()?.href.to_ascii_lowercase();
+    if href.contains("noimages") {
+        Some(false)
+    } else if href.contains("images") {
+        Some(true)
+    } else {
+        None
+    }
 }
 
 fn language_name(code: &str) -> String {
@@ -3386,6 +4261,10 @@ impl KoboApp for Gutenbird {
         context.shelf().list();
         context.store().load(REGISTRY_KEY);
         context.store().load(LAST_OPEN_KEY);
+        // The records before the book that was open, so that by the time the
+        // device says which book that was, it has also said what the book is.
+        context.store().load(LIBRARY_KEY);
+        context.store().load(READING_KEY);
         self.open_catalog(context);
     }
 
@@ -3404,15 +4283,25 @@ impl KoboApp for Gutenbird {
             match upload.advance(context, &result) {
                 ShelfProgress::Done => {
                     let name = upload.name().to_owned();
-                    let size = self.download.as_ref().map_or(0, |download| {
-                        u32::try_from(download.bytes.len()).unwrap_or(u32::MAX)
-                    });
-                    self.stored.insert(name, size);
                     self.keeping = None;
+                    // The size is the one taken when the write started. It was
+                    // read from the download afterwards, which by then had been
+                    // handed to the shelf, so every kept book was listed as
+                    // weighing nothing.
+                    match self.keeping_book.take() {
+                        Some((record, size)) if record.blob == name => {
+                            self.stored.insert(name, size);
+                            self.remember_on_device(context, record);
+                        }
+                        _ => {
+                            self.stored.insert(name, 0);
+                        }
+                    }
                     return;
                 }
                 ShelfProgress::Failed(_) => {
                     self.keeping = None;
+                    self.keeping_book = None;
                     return;
                 }
                 ShelfProgress::Moving { .. } => return,
@@ -3423,13 +4312,14 @@ impl KoboApp for Gutenbird {
             match download.advance(context, &result) {
                 ShelfProgress::Done => {
                     let bytes = self.loading.take().expect("a download in progress").take();
-                    let kind = self
-                        .open
-                        .as_ref()
-                        .and_then(Publication::best_acquisition)
-                        .map_or(DownloadKind::Text, |acquisition| {
-                            download_kind(acquisition.media_type.as_deref())
-                        });
+                    // Read from the bytes rather than from the catalog's word
+                    // for them, because a book opened from the device may have
+                    // been kept before its format was written down.
+                    let kind = if bytes.starts_with(b"PK\x03\x04") {
+                        DownloadKind::Epub
+                    } else {
+                        DownloadKind::Text
+                    };
                     let total = self
                         .open
                         .as_ref()
@@ -3449,17 +4339,32 @@ impl KoboApp for Gutenbird {
                     });
                     self.reopen(context);
                     if self.book.is_open() {
-                        self.go(View::Reading);
+                        self.enter_reading(context);
                     }
                     self.show(context);
                     return;
                 }
                 ShelfProgress::Failed(_) => {
+                    self.loading = None;
+                    if self.open_blob.is_some() {
+                        // Opened from the device list, where there is no
+                        // catalog page to fetch it again from. The owner is
+                        // told what happened and where to get it back.
+                        if let Some(blob) = self.open_blob.take() {
+                            self.remove_from_device(context, &blob);
+                        }
+                        self.problem = Some(
+                            "This book could not be read from the device, so it was removed. \
+                             Download it again from its catalog."
+                                .to_owned(),
+                        );
+                        self.show(context);
+                        return;
+                    }
                     if let Some((blob, _)) = self.open_keys() {
                         self.stored.remove(&blob);
                         context.shelf().remove(blob);
                     }
-                    self.loading = None;
                     self.ask_book(context);
                     self.show(context);
                     return;
@@ -3471,6 +4376,34 @@ impl KoboApp for Gutenbird {
         match result {
             StoreResult::Shelf(blobs) => {
                 self.stored = blobs.into_iter().collect();
+                self.stored_known = true;
+                self.resume_reading(context);
+                self.show(context);
+            }
+            StoreResult::Loaded { key, value } if key == LIBRARY_KEY => {
+                // Anything recorded before the device's own copy arrived is
+                // kept on top of it rather than lost under it.
+                let earlier = std::mem::take(&mut self.library);
+                self.library = value
+                    .map(|bytes| decode_library(&bytes))
+                    .unwrap_or_default();
+                self.library_known = true;
+                if !earlier.is_empty() {
+                    for book in earlier {
+                        self.library.retain(|kept| kept.blob != book.blob);
+                        self.library.push(book);
+                    }
+                    self.save_library(context);
+                }
+                self.resume_reading(context);
+                self.show(context);
+            }
+            StoreResult::Loaded { key, value } if key == READING_KEY => {
+                self.resume = value
+                    .filter(|_| !self.touched)
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                    .filter(|blob| blob.starts_with("book-"));
+                self.resume_reading(context);
                 self.show(context);
             }
             StoreResult::Loaded { key, value } if key == REGISTRY_KEY => {
@@ -3490,7 +4423,11 @@ impl KoboApp for Gutenbird {
                     .position(|catalog| catalog.root == root)
                 {
                     self.current = index;
-                    self.open_catalog(context);
+                    // Not over a book already reopened, and not over a screen
+                    // the owner has already moved on from.
+                    if self.view == View::Shelf && !self.touched {
+                        self.open_catalog(context);
+                    }
                 }
             }
             StoreResult::Loaded { key, value }
@@ -3571,6 +4508,10 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        self.touched = true;
+        if self.device_action(context, action) {
+            return;
+        }
         if self.view == View::AddCatalog {
             if let Some(event) = self.catalog_setup.on_action(context, action) {
                 if event == ProviderEvent::Closed {
@@ -3593,6 +4534,9 @@ impl KoboApp for Gutenbird {
                     }
                 }
             }
+            if matches!(self.view, View::Shelf | View::Search) {
+                self.abandon_feed(context);
+            }
             // A shelf deeper than its own root unwinds itself first. The pages
             // followed inside one catalog belong to that catalog rather than
             // to the application, and leaving the catalog while standing three
@@ -3602,19 +4546,17 @@ impl KoboApp for Gutenbird {
                 self.stack.pop();
                 self.want_covers(context);
                 self.hydrate_visible(context);
-            } else {
-                if self.view == View::Reading && self.open.is_some() {
-                    self.close_book(context);
-                }
-                if let Some(previous) = self.step_back() {
-                    self.stop_federating();
-                    self.view = previous;
-                }
+            } else if self.view == View::Reading {
+                self.leave_book(context);
+            } else if let Some(previous) = self.step_back() {
                 // Nothing to step back to means the runtime was told this
-                // screen has no Back of its own, so this call did not happen.
+                // screen has no Back of its own, so that call did not happen.
+                self.stop_federating();
+                self.view = previous;
             }
             self.problem = None;
             self.trouble = None;
+            self.refill_shelf(context);
             self.show(context);
             return;
         }
@@ -3717,6 +4659,7 @@ impl KoboApp for Gutenbird {
             return;
         }
         if action == action_id("catalogs") {
+            self.abandon_feed(context);
             self.stop_federating();
             self.go(View::Catalogs);
             self.show(context);
@@ -4569,25 +5512,15 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn gutenbergs_images_and_noimages_editions_remain_available() {
-        // Gutenberg's per-book entry document answers with two publications
-        // sharing a title. Both must stay available to the reader.
+    fn three_editions_of_one_book_are_left_for_the_owner_to_choose() {
+        // Only a pair that differs in its pictures is decided here. A third
+        // edition is something this application cannot know the meaning of.
+        let edition = |href: &str| publication("Emma", vec![sized_epub(href, 500_000)]);
         let feed = Feed {
             publications: vec![
-                publication(
-                    "Emma",
-                    vec![sized_epub(
-                        "https://gutenberg.example/1.noimages.epub",
-                        558_547,
-                    )],
-                ),
-                publication(
-                    "Emma",
-                    vec![sized_epub(
-                        "https://gutenberg.example/1.images.epub",
-                        24_846_294,
-                    )],
-                ),
+                edition("https://gutenberg.example/1.noimages.epub"),
+                edition("https://gutenberg.example/1.images.epub"),
+                edition("https://gutenberg.example/1.images.epub3"),
             ],
             ..Feed::default()
         };
@@ -5233,7 +6166,7 @@ Please read this before you distribute or use this work.\n";
             include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
         let mut feed =
             kobo_opds::parse(bytes, "https://www.gutenberg.org/ebooks/564.opds").unwrap();
-        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        assert!(Gutenbird::resolve_entry(&feed).is_some());
         assert!(Gutenbird::entry_cover(&feed).is_some());
         let mut app = Gutenbird::default();
         app.took_hydration(
@@ -6765,7 +7698,7 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
 
     #[test]
-    fn gutenberg_entry_offers_both_editions_and_reads_the_chosen_url() {
+    fn a_gutenberg_book_opens_on_its_own_page_and_one_tap_reads_the_illustrated_edition() {
         let bytes =
             include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
         let mut app = Gutenbird::default();
@@ -6776,58 +7709,37 @@ Please read this before you distribute or use this work.\n";
             FeedPurpose::Push { catalog: 0 },
             "https://www.gutenberg.org/ebooks/564.opds".into(),
         );
-        assert_eq!(app.view, View::Shelf);
-        assert_eq!(app.stack.last().unwrap().feed.publications.len(), 2);
-        let books = &app.stack.last().unwrap().feed.publications;
-        let captions: Vec<_> = books
+        assert_eq!(
+            app.view,
+            View::Details,
+            "the two editions were drawn as a shelf"
+        );
+        let book = app.open.clone().expect("the book is open");
+        assert_eq!(book.title, "The Mystery of Edwin Drood");
+        let illustrated = "https://www.gutenberg.org/ebooks/564.epub3.images";
+        let plain = "https://www.gutenberg.org/ebooks/564.epub.noimages";
+        assert_eq!(
+            book.best_acquisition().map(|link| link.href.as_str()),
+            Some(illustrated)
+        );
+        // The edition without pictures is still there, one level down.
+        let plain_choice = app
+            .formats
             .iter()
-            .map(|book| super::publication_caption(book, books, None))
-            .collect();
-        assert!(captions[0].starts_with("No images"));
-        assert!(captions[1].starts_with("With images"));
-        assert_ne!(captions[0], captions[1]);
-        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
-            kobo_text::install(CLARA_BW_METRICS).unwrap();
-            let screen = app.shelf_screen(&context);
-            let metrics = context.metrics();
-            assert!(!screen
-                .diagnostics(&metrics, &Chrome::with_back(true))
-                .issues
-                .iter()
-                .any(|issue| issue.severity == DiagnosticSeverity::Error));
-            let mut surface = kobo_ui::Surface::new(
-                usize::try_from(metrics.width).unwrap(),
-                usize::try_from(metrics.height).unwrap(),
-            );
-            kobo_ui::render(&screen, &mut surface, None);
-            let png = kobo_image::encode_png_grey(
-                u32::try_from(metrics.width).unwrap(),
-                u32::try_from(metrics.height).unwrap(),
-                &surface.pixels,
-            )
-            .unwrap();
-            std::fs::create_dir_all(&directory).unwrap();
-            std::fs::write(
-                std::path::Path::new(&directory).join("edition-choices.png"),
-                png,
-            )
-            .unwrap();
-        }
+            .position(|link| link.href == plain)
+            .expect("the plain edition is offered under Choose download");
         let mut runner = AppRunner::new(app);
-        for index in 0..2 {
-            runner.app_mut().view = View::Shelf;
-            runner.app_mut().task = None;
-            let expected = runner.app().stack.last().unwrap().feed.publications[index]
-                .best_acquisition()
-                .unwrap()
-                .href
-                .clone();
-            runner.action(action_id(&format!("book-{index}")));
-            assert_eq!(runner.app().view, View::Details);
-            let commands = runner.action(action_id("read"));
-            assert!(commands.iter().any(|command| matches!(command,
-                Command::Spawn { work: Task::Fetch { url, .. }, .. } if url == &expected)));
-        }
+        let commands = runner.action(action_id("read"));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url == illustrated)));
+        runner.app_mut().task = None;
+        runner.app_mut().view = View::Details;
+        runner.action(action_id("formats"));
+        assert_eq!(runner.app().view, View::Formats);
+        runner.action(action_id(&format!("format-{plain_choice}")));
+        let commands = runner.action(action_id("read"));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url == plain)));
     }
 
     #[test]
@@ -7091,7 +8003,13 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        // The pair opens as the edition that fits, and the one that does not
+        // is not offered at all.
+        let chosen = Gutenbird::resolve_entry(&feed).expect("one book, not a shelf of two");
+        assert!(chosen
+            .acquisition
+            .iter()
+            .all(|link| link.href.ends_with(".noimages")));
         let mut runner = AppRunner::new(Gutenbird {
             open: Some(feed.publications[0].clone()),
             view: View::Details,
@@ -7107,15 +8025,14 @@ Please read this before you distribute or use this work.\n";
             .as_deref()
             .unwrap()
             .contains("too large"));
-        runner.app_mut().open = Some(feed.publications[1].clone());
+        runner.app_mut().open = Some(chosen);
         let commands = runner.action(action_id("read"));
         assert!(commands.iter().any(|command| matches!(command,
             Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.ends_with(".noimages"))));
     }
 
     #[test]
-    fn an_illustrated_edition_is_not_silently_chosen() {
-        // Both editions fit; the choice belongs to the reader.
+    fn the_illustrated_edition_is_taken_when_it_fits_and_the_other_stays_a_download_choice() {
         let feed = Feed {
             publications: vec![
                 publication(
@@ -7135,7 +8052,15 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        let book = Gutenbird::resolve_entry(&feed).expect("one book, not a shelf of two");
+        assert_eq!(
+            book.best_acquisition().map(|link| link.href.as_str()),
+            Some("https://gutenberg.example/1.images.epub")
+        );
+        assert!(book
+            .acquisition
+            .iter()
+            .any(|link| link.href == "https://gutenberg.example/1.noimages.epub"));
     }
 
     #[test]
@@ -7322,7 +8247,7 @@ Please read this before you distribute or use this work.\n";
 mod large_text_tests {
     use super::*;
     #[test]
-    fn both_edition_choices_remain_distinct_at_largest_text() {
+    fn a_gutenberg_book_page_keeps_read_reachable_at_largest_text() {
         let metrics = kobo_sdk::DisplayMetrics {
             text_scale: kobo_ui::TextScale::Largest,
             ..kobo_sdk::CLARA_BW_METRICS
@@ -7336,28 +8261,14 @@ mod large_text_tests {
             FeedPurpose::Push { catalog: 0 },
             "https://www.gutenberg.org/ebooks/564.opds".into(),
         );
-        let screen = app.shelf_screen(&context);
-        assert!(!screen
-            .diagnostics(&metrics, &Chrome::measuring(true))
-            .has_errors());
-        let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
-        let text: String = layout
-            .nodes
-            .iter()
-            .flat_map(|node| &node.text_lines)
-            .flat_map(|line| line.chars())
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        // Tile captions are intentionally ellipsised; the full edition name
-        // remains in the publication, while the distinguishing prefix is visible.
-        let books = &app.stack.last().unwrap().feed.publications;
-        assert!(publication_caption(&books[0], books, None).starts_with("No images"));
-        assert!(publication_caption(&books[1], books, None).starts_with("With images"));
-        assert!(text.contains("Withimage"), "{text}");
-        assert!(text.contains("Noimages"), "{text}");
-        for name in ["book-0", "book-1"] {
-            assert!(layout.rect_of_action(action_id(name)).is_some());
-        }
+        assert_eq!(app.view, View::Details);
+        let screen = app.details_screen(&context);
+        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+        assert!(diagnostics
+            .layout
+            .rect_of_action(action_id("read"))
+            .is_some());
     }
     #[test]
     fn loading_placeholder_fits_the_small_panel_at_largest_text() {
@@ -7370,5 +8281,400 @@ mod large_text_tests {
         let screen = runner.app().shelf_screen(&runner.context());
         let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.issues);
+    }
+}
+
+#[cfg(test)]
+mod device_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Command, StoreRequest};
+    use kobo_ui::CLARA_BW_METRICS;
+
+    const BLOB: &str = "book-0000abcd";
+    const BOOK: &[u8] = b"A short kept book.\n\nWith a second paragraph of it.";
+
+    fn record(blob: &str, title: &str) -> OnDevice {
+        OnDevice {
+            blob: blob.to_owned(),
+            title: title.to_owned(),
+            authors: "Jane Austen".to_owned(),
+            href: format!("https://www.gutenberg.org/ebooks/{blob}.epub"),
+            media_type: "application/epub+zip".to_owned(),
+        }
+    }
+
+    fn text(screen: &kobo_sdk::Screen) -> String {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn saved(commands: &[Command], wanted: &str) -> Option<Vec<u8>> {
+        commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == wanted => {
+                Some(value.clone())
+            }
+            _ => None,
+        })
+    }
+
+    fn forgot(commands: &[Command], wanted: &str) -> bool {
+        commands.iter().any(|command| {
+            matches!(command, Command::Store(StoreRequest::Forget { key }) if key == wanted)
+        })
+    }
+
+    fn read_from_shelf(commands: &[Command], wanted: &str) -> bool {
+        commands.iter().any(|command| {
+            matches!(command, Command::Store(StoreRequest::ShelfRead { name, .. }) if name == wanted)
+        })
+    }
+
+    fn the_shelf_answers(runner: &mut AppRunner<Gutenbird>, blob: &str) -> Vec<Command> {
+        runner.store_result(StoreResult::ShelfRead {
+            name: blob.to_owned(),
+            offset: 0,
+            bytes: BOOK.to_vec(),
+            size: u32::try_from(BOOK.len()).unwrap(),
+        })
+    }
+
+    /// An application with two books kept: one it has a record of and one
+    /// kept before records existed.
+    fn keeping_two() -> Gutenbird {
+        Gutenbird {
+            stored: [
+                (BLOB.to_owned(), 2 * 1024 * 1024),
+                ("book-0000ffff".to_owned(), 300 * 1024),
+            ]
+            .into_iter()
+            .collect(),
+            stored_known: true,
+            library: vec![record(BLOB, "Pride and Prejudice")],
+            library_known: true,
+            ..Gutenbird::default()
+        }
+    }
+
+    #[test]
+    fn the_first_screen_says_what_is_ready_offline_and_leads_to_it() {
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Catalogs,
+            ..keeping_two()
+        });
+        let home = text(&runner.app().catalogs_screen(&runner.context()));
+        assert!(home.contains("On this device"), "{home}");
+        assert!(home.contains("Ready offline: 2 books, 2.3 MB"), "{home}");
+        runner.action(action_id("device"));
+        assert_eq!(runner.app().view, View::Device);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Catalogs);
+    }
+
+    #[test]
+    fn the_catalog_list_offers_no_test_catalog_and_shows_no_addresses() {
+        let app = Gutenbird {
+            view: View::Catalogs,
+            ..Gutenbird::default()
+        };
+        assert!(app
+            .catalogs
+            .iter()
+            .all(|catalog| !catalog.root.contains("test.opds.io")));
+        let home = text(&app.catalogs_screen(&AppRunner::new(Gutenbird::default()).context()));
+        assert!(!home.contains("https://"), "{home}");
+        assert!(home.contains("Project Gutenberg"), "{home}");
+    }
+
+    #[test]
+    fn kept_books_are_listed_by_name_author_and_size_newest_first() {
+        let mut app = keeping_two();
+        app.stored.insert("book-00001111".to_owned(), 600 * 1024);
+        app.library.push(record("book-00001111", "Emma"));
+        let books = app.device_books();
+        let titles: Vec<&str> = books.iter().map(device_title).collect();
+        assert_eq!(
+            titles,
+            ["Emma", "Pride and Prejudice", "Book downloaded earlier"]
+        );
+        let list = text(&app.device_screen(&AppRunner::new(Gutenbird::default()).context()));
+        assert!(list.contains("Jane Austen \u{b7} 2.0 MB"), "{list}");
+        assert!(list.contains("300 KB"), "{list}");
+    }
+
+    #[test]
+    fn a_device_with_no_books_says_how_one_gets_there() {
+        let app = Gutenbird {
+            stored_known: true,
+            ..Gutenbird::default()
+        };
+        let list = text(&app.device_screen(&AppRunner::new(Gutenbird::default()).context()));
+        assert!(
+            list.contains("Open a book in a catalog and tap Read."),
+            "{list}"
+        );
+    }
+
+    #[test]
+    fn a_kept_book_opens_from_the_device_list_without_asking_the_network() {
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Catalogs,
+            ..keeping_two()
+        });
+        runner.action(action_id("device"));
+        let commands = runner.action(action_id("device-0"));
+        assert!(read_from_shelf(&commands, BLOB));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        let commands = the_shelf_answers(&mut runner, BLOB);
+        assert_eq!(runner.app().view, View::Reading);
+        assert_eq!(
+            saved(&commands, READING_KEY),
+            Some(BLOB.as_bytes().to_vec())
+        );
+        // The reader's own way out goes back to the list it was opened from.
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Device);
+        assert!(forgot(&commands, READING_KEY));
+    }
+
+    #[test]
+    fn coming_back_to_the_application_reopens_the_book_that_was_open() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let started = runner.start();
+        let catalog = started
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            })
+            .expect("the last catalog is asked for while the device answers");
+        runner.store_result(StoreResult::Shelf(vec![(BLOB.to_owned(), 4096)]));
+        runner.store_result(StoreResult::Loaded {
+            key: LIBRARY_KEY.to_owned(),
+            value: Some(encode_library(&[record(BLOB, "Pride and Prejudice")])),
+        });
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: READING_KEY.to_owned(),
+            value: Some(BLOB.as_bytes().to_vec()),
+        });
+        assert!(commands.contains(&Command::Cancel(catalog)));
+        assert!(read_from_shelf(&commands, BLOB));
+        the_shelf_answers(&mut runner, BLOB);
+        assert_eq!(runner.app().view, View::Reading);
+        assert_eq!(
+            runner.app().open.as_ref().map(|book| book.title.as_str()),
+            Some("Pride and Prejudice")
+        );
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Device);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Catalogs);
+    }
+
+    #[test]
+    fn a_book_is_not_reopened_over_a_screen_the_owner_has_already_left() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        runner.start();
+        runner.action(action_id("catalogs"));
+        runner.store_result(StoreResult::Shelf(vec![(BLOB.to_owned(), 4096)]));
+        runner.store_result(StoreResult::Loaded {
+            key: LIBRARY_KEY.to_owned(),
+            value: None,
+        });
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: READING_KEY.to_owned(),
+            value: Some(BLOB.as_bytes().to_vec()),
+        });
+        assert!(!read_from_shelf(&commands, BLOB));
+        assert_eq!(runner.app().view, View::Catalogs);
+    }
+
+    #[test]
+    fn a_book_that_has_left_the_device_is_not_reopened_and_is_forgotten() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        runner.start();
+        runner.store_result(StoreResult::Shelf(Vec::new()));
+        runner.store_result(StoreResult::Loaded {
+            key: LIBRARY_KEY.to_owned(),
+            value: None,
+        });
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: READING_KEY.to_owned(),
+            value: Some(BLOB.as_bytes().to_vec()),
+        });
+        assert!(forgot(&commands, READING_KEY));
+        assert_eq!(runner.app().view, View::Shelf);
+    }
+
+    #[test]
+    fn a_book_leaves_the_device_only_after_the_owner_confirms() {
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Catalogs,
+            ..keeping_two()
+        });
+        runner.action(action_id("device"));
+        runner.action(action_id("device-menu-0"));
+        runner.action(action_id("device-remove"));
+        assert_eq!(runner.app().view, View::RemoveBook);
+        let question = text(&runner.app().remove_screen());
+        assert!(question.contains("Pride and Prejudice"), "{question}");
+        let commands = runner.action(action_id("remove-keep"));
+        assert_eq!(runner.app().view, View::Device);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Store(StoreRequest::ShelfRemove { .. }))));
+        runner.action(action_id("device-menu-0"));
+        runner.action(action_id("device-remove"));
+        let commands = runner.action(action_id("remove-confirm"));
+        assert_eq!(runner.app().view, View::Device);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::ShelfRemove { name }) if name == BLOB
+        )));
+        let records = saved(&commands, LIBRARY_KEY).expect("the records were written back");
+        assert!(decode_library(&records).is_empty());
+        assert!(!runner.app().stored.contains_key(BLOB));
+    }
+
+    #[test]
+    fn a_finished_download_is_recorded_with_its_title_and_its_real_size() {
+        let book = Publication {
+            authors: vec!["Jane Austen".to_owned()],
+            ..OnDevice {
+                title: "Emma".to_owned(),
+                ..record("book-00000000", "Emma")
+            }
+            .publication()
+        };
+        let href = book.best_acquisition().unwrap().href.clone();
+        let (blob, _) = book_keys(&book).unwrap();
+        let mut runner = AppRunner::new(Gutenbird {
+            open: Some(book),
+            library_known: true,
+            download: Some(Download {
+                url: href.clone(),
+                kind: DownloadKind::Text,
+                bytes: BOOK.to_vec(),
+                total: None,
+            }),
+            complete: true,
+            ..Gutenbird::default()
+        });
+        let mut context = runner.context();
+        runner.app_mut().keep_book(&mut context);
+        let commands = runner.store_result(StoreResult::ShelfWritten {
+            name: blob.clone(),
+            size: u32::try_from(BOOK.len()).unwrap(),
+        });
+        assert_eq!(
+            runner.app().stored.get(&blob).copied(),
+            Some(u32::try_from(BOOK.len()).unwrap())
+        );
+        let records = decode_library(&saved(&commands, LIBRARY_KEY).expect("recorded"));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].title, "Emma");
+        assert_eq!(records[0].authors, "Jane Austen");
+        assert_eq!(records[0].href, href);
+    }
+
+    #[test]
+    fn a_book_kept_before_titles_were_recorded_is_named_the_next_time_it_is_opened() {
+        let book = record("book-00000000", "Emma").publication();
+        let (blob, _) = book_keys(&book).unwrap();
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Details,
+            open: Some(book),
+            stored: [(blob.clone(), 4096)].into_iter().collect(),
+            stored_known: true,
+            library_known: true,
+            ..Gutenbird::default()
+        });
+        assert_eq!(
+            runner.app().device_books().first().map(device_title),
+            Some("Book downloaded earlier")
+        );
+        let commands = runner.action(action_id("read"));
+        assert!(read_from_shelf(&commands, &blob));
+        let commands = the_shelf_answers(&mut runner, &blob);
+        let records = decode_library(&saved(&commands, LIBRARY_KEY).expect("named"));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].blob, blob);
+        assert_eq!(
+            runner.app().device_books().first().map(device_title),
+            Some("Emma")
+        );
+    }
+
+    #[test]
+    fn a_catalog_page_that_lands_after_the_owner_left_does_not_pull_them_back() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let started = runner.start();
+        let first = started
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            })
+            .expect("the catalog is asked for at start");
+        let commands = runner.action(action_id("catalogs"));
+        assert!(commands.contains(&Command::Cancel(first)));
+        runner.action(action_id("device"));
+        assert_eq!(runner.app().view, View::Device);
+        runner.task_outcome(
+            first,
+            TaskOutcome::Completed(
+                br#"{"metadata": {"title": "Late"}, "navigation": []}"#.to_vec(),
+            ),
+        );
+        assert_eq!(runner.app().view, View::Device);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Catalogs);
+        // Back on the shelf that was left empty, the catalog is asked for
+        // again rather than the shelf saying there is nothing in it.
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Shelf);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+    }
+
+    #[test]
+    fn back_from_a_catalog_that_is_one_book_does_not_open_the_book_again() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let started = runner.start();
+        let root = started
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            })
+            .expect("the catalog is asked for at start");
+        let one_book = r#"{"metadata": {"title": "One"}, "publications": [{"metadata": {"title": "Only"}, "links": [{"rel": "http://opds-spec.org/acquisition/open-access", "href": "https://www.gutenberg.org/only.epub", "type": "application/epub+zip"}]}]}"#;
+        runner.task_outcome(root, TaskOutcome::Completed(one_book.as_bytes().to_vec()));
+        assert_eq!(runner.app().view, View::Details);
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Shelf);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Catalogs);
+    }
+
+    #[test]
+    fn records_of_kept_books_survive_being_written_and_read_back() {
+        let mut tabbed = record(BLOB, "A title\twith a tab");
+        let books = vec![tabbed.clone(), record("book-00000001", "Emma")];
+        let decoded = decode_library(&encode_library(&books));
+        tabbed.title = "A title with a tab".to_owned();
+        assert_eq!(decoded, vec![tabbed, record("book-00000001", "Emma")]);
+        assert!(decode_library(b"book-1\tonly two fields\n").is_empty());
+        assert!(decode_library(b"not-a-book\tT\tA\t\t\n").is_empty());
     }
 }
