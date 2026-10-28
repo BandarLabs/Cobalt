@@ -262,7 +262,7 @@ impl Audiobook {
                         .button(AGAIN, "Create another")
                         .build()
                 },
-                AudioPlayer::screen,
+                |player| player.screen_for(context),
             ),
             Stage::Failed => self.failed_screen(),
             Stage::Keys => self.keys_screen(),

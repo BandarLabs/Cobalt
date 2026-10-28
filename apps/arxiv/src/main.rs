@@ -1354,7 +1354,7 @@ impl Arxiv {
             screen = screen.banner(level, trouble.clone());
         }
         if self.waiting_for(Awaiting::Listing) {
-            return screen.skeleton(6).build();
+            return placeholder(context, &screen);
         }
         if failed {
             // The one thing that can change a listing that never arrived goes
@@ -2006,6 +2006,24 @@ fn fact_lines(paper: &Paper) -> Vec<String> {
 /// a real path separator in arXiv's URLs rather than something to encode.
 fn escape_path(id: &str) -> String {
     id.split('/').map(escape).collect::<Vec<_>>().join("/")
+}
+
+/// A listing on its way: the lines that stand in for its rows.
+///
+/// As many as the panel has room for under what is already there, up to six.
+/// A fixed six ran under the foot of the panel at the largest text sizes, and
+/// the renderer refused the whole screen.
+fn placeholder(context: &Context, screen: &ScreenBuilder) -> Screen {
+    let metrics = context.metrics();
+    (1..=6)
+        .rev()
+        .map(|lines| screen.clone().skeleton(lines).build())
+        .find(|candidate| {
+            !candidate
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| screen.clone().build())
 }
 
 /// Page numbers on the panel are counted from one, and a list with nothing in
@@ -3229,6 +3247,45 @@ mod tests {
                 .is_none_or(|bar| bar.actions.iter().all(|a| a.action != retry)),
             "the retry is still in the top bar as well"
         );
+    }
+
+    /// While a listing is on its way its placeholder fits the panel at every
+    /// text size held either way, with or without a notice above it.
+    #[test]
+    fn a_listing_on_its_way_fits_its_placeholder_at_every_text_size_held_either_way() {
+        for metrics in text_size_metrics() {
+            for orientation in [
+                kobo_sdk::Orientation::Portrait,
+                kobo_sdk::Orientation::Landscape,
+            ] {
+                let metrics = metrics.oriented(orientation);
+                let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+                for trouble in [None, Some("The archive is slow to answer. Still asking.")] {
+                    let app = Arxiv {
+                        view: View::Listing,
+                        query: Some(Query::Words("neural fields".into())),
+                        trouble: trouble.map(str::to_owned),
+                        task: Some((TaskId(1), super::Awaiting::Listing)),
+                        ..Arxiv::default()
+                    };
+                    let screen = app.listing(&context);
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?} {trouble:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(
+                        screen
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(node, kobo_sdk::Node::Skeleton { .. })),
+                        "{metrics:?}: no placeholder"
+                    );
+                }
+            }
+        }
     }
 
     /// A listing that never arrived says so with its retry on the banner,

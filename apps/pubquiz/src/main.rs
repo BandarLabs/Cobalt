@@ -935,10 +935,12 @@ fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
     };
     // Measured without the leave prompt or an open menu: a dialogue over the
     // question is not the question failing to fit, and treating it as one
-    // swapped the page behind it for the paginated layout.
+    // swapped the page behind it for the paginated layout. Measured with the
+    // status band the reader draws above every screen, because a page that
+    // fits only without it loses its last line on the panel.
     if compact(Menu::default())
         .build()
-        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
         .issues
         .is_empty()
     {
@@ -1312,7 +1314,7 @@ fn reveal_pages(quiz: &Quiz, question: &Question, context: &Context) -> Vec<Vec<
     let fits = |parts: &[Revealed]| {
         reveal_page(quiz, question, parts, Some((0, 2)), Menu::default())
             .build()
-            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
             .issues
             .is_empty()
     };
@@ -1342,7 +1344,7 @@ fn reveal_paged(quiz: &Quiz, question: &Question, context: &Context) -> Option<V
     let whole = reveal_all(question, vec![question.text.clone()]);
     let fits = reveal_page(quiz, question, &whole, None, Menu::default())
         .build()
-        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
         .issues
         .is_empty();
     (!fits).then(|| reveal_pages(quiz, question, context))
@@ -2057,7 +2059,7 @@ mod tests {
 mod regression_tests {
     use super::*;
     use kobo_sdk::{AppRunner, Chrome, DisplayMetrics};
-    use kobo_ui::TextScale;
+    use kobo_ui::{Orientation, TextScale};
 
     fn pack() -> Vec<u8> {
         let item = r#"{"category":"New pack","question":"Changed question?","correct_answer":"Right","incorrect_answers":["Wrong 1","Wrong 2","Wrong 3"]}"#;
@@ -2408,13 +2410,13 @@ mod regression_tests {
         for page in 0..pages.len() {
             assert_eq!(runner.app().page, page, "{metrics:?}");
             let screen = reveal_screen(runner.app(), &question, &context);
-            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
             assert!(
                 diagnostics.issues.is_empty(),
                 "{metrics:?} page {page}: {:?}",
                 diagnostics.issues
             );
-            let layout = screen.layout_with(&metrics, &Chrome::default());
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
             assert!(
                 layout.rect_of_action(action_id("continue")).is_some(),
                 "{metrics:?} page {page} has no way on"
@@ -2444,6 +2446,52 @@ mod regression_tests {
         assert_eq!(words(&asked), words(&question.text), "{metrics:?}");
     }
 
+    /// The round an owner meets first: a short question that two players both
+    /// got right. Its verdict, question and the row naming both of them were
+    /// measured without the status band, so at the largest size the page
+    /// fitted in the app and the reader refused it.
+    #[test]
+    fn a_short_question_everyone_got_fits_every_text_size_on_a_clara_held_either_way() {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..kobo_ui::CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let table = || {
+                    let mut table = Quiz {
+                        players: 2,
+                        ..Quiz::default()
+                    };
+                    table.begin(true);
+                    table.round_questions[0] = bank::bundled()[0].clone();
+                    table.answers = [Some(table.round_questions[0].correct); 4];
+                    table
+                };
+                assert_the_reveal_pages_reach_everything(table(), metrics);
+                let mut solo = Quiz::default();
+                solo.begin(false);
+                solo.round_questions[0] = bank::bundled()[0].clone();
+                solo.answers[0] = Some(solo.round_questions[0].correct + 1);
+                assert_the_reveal_pages_reach_everything(solo, metrics);
+                let context = AppRunner::with_metrics(Quiz::default(), metrics).context();
+                let table = table();
+                for screen in [
+                    question_screen(&table, &context),
+                    choices_screen(&table, &context),
+                ] {
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
         let mut quiz = long_question_round(false);
@@ -2462,7 +2510,7 @@ mod regression_tests {
                 for page in 0..pages.len() {
                     quiz.page = page;
                     let screen = question_screen(&quiz, &context);
-                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                     assert!(
                         diagnostics.issues.is_empty(),
                         "{metrics:?}: {:?}",
@@ -2473,13 +2521,13 @@ mod regression_tests {
                 for page in 0..4 {
                     quiz.page = page;
                     let screen = choices_screen(&quiz, &context);
-                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                     assert!(
                         diagnostics.issues.is_empty(),
                         "{metrics:?}: {:?}",
                         diagnostics.issues
                     );
-                    let layout = screen.layout_with(&metrics, &Chrome::default());
+                    let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
                     for (index, found) in seen.iter_mut().enumerate() {
                         *found |= layout.rect_of_action(action_id(&choice(index))).is_some();
                     }

@@ -30,7 +30,7 @@ fn account(adding: bool) -> CredentialSetup {
         account
     }
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum View {
     Libraries,
     Url,
@@ -455,28 +455,57 @@ impl Calibre {
                 }
                 s.bottom_action("catalog-back", "Catalog").build()
             }
-            View::Failure => {
-                let s = ScreenBuilder::new("calibre-failure")
-                    .top_bar("Library")
-                    .owns_back(true);
-                let s = match &self.failure {
-                    Some(failure) => {
-                        let s = s.problem_state(failure, "retry");
-                        if failure.needs_account() {
-                            s.primary_button("sign-in-again", "Sign in again")
-                        } else if failure.retryable {
-                            s
-                        } else {
-                            s.button("retry", "Try again")
-                        }
-                    }
-                    None => s
-                        .heading("Cannot open library")
-                        .text(&self.notice)
-                        .button("retry", "Try again"),
+            View::Failure => self.failure_screen(c),
+        }
+    }
+    /// A catalog that could not be opened, why, and what to do about it.
+    ///
+    /// The fix sits under the reason and Libraries in the bar. Held sideways
+    /// at the largest text size the reason takes the panel down to the bar,
+    /// so there the fix joins Libraries in the bar instead of falling off
+    /// the foot; the words and both controls stay.
+    fn failure_screen(&self, c: &Context) -> Screen {
+        let build = |in_bar: bool| {
+            let s = ScreenBuilder::new("calibre-failure")
+                .top_bar("Library")
+                .owns_back(true);
+            let Some(failure) = &self.failure else {
+                return s
+                    .heading("Cannot open library")
+                    .text(&self.notice)
+                    .button("retry", "Try again")
+                    .bottom_action("libraries", "Libraries")
+                    .build();
+            };
+            if in_bar {
+                let fix = if failure.needs_account() {
+                    ("sign-in-again", "Sign in again")
+                } else {
+                    ("retry", "Try again")
                 };
-                s.bottom_action("libraries", "Libraries").build()
+                return s
+                    .standard_state(failure.state, &failure.message)
+                    .action_bar([fix, ("libraries", "Libraries")])
+                    .build();
             }
+            let s = s.problem_state(failure, "retry");
+            let s = if failure.needs_account() {
+                s.primary_button("sign-in-again", "Sign in again")
+            } else if failure.retryable {
+                s
+            } else {
+                s.button("retry", "Try again")
+            };
+            s.bottom_action("libraries", "Libraries").build()
+        };
+        let preferred = build(false);
+        if preferred
+            .diagnostics(&c.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            build(true)
+        } else {
+            preferred
         }
     }
 }
@@ -843,39 +872,64 @@ mod tests {
     }
     #[test]
     fn catalog_and_setup_fit_actual_fonts_at_all_text_scales() {
-        for text_scale in kobo_ui::TextScale::STEPS {
+        for (text_scale, orientation) in kobo_ui::TextScale::STEPS.into_iter().flat_map(|scale| {
+            [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ]
+            .map(|orientation| (scale, orientation))
+        }) {
             let metrics = kobo_sdk::DisplayMetrics {
                 text_scale,
                 ..CLARA_BW_METRICS
-            };
+            }
+            .oriented(orientation);
             // The catalog is paged by the context it is built with. A default
             // context paged it at the default size, so a page measured here at
             // a larger one could hold rows only the default size has room for.
             let runner = kobo_sdk::AppRunner::with_metrics(Calibre::default(), metrics);
             let context = runner.context();
             let mut app = loaded_catalog();
-            for view in [
-                View::Libraries,
-                View::Url,
-                View::Credential,
-                View::Library,
-                View::Failure,
-                View::Book,
+            // A refused account, a server that does not answer and an
+            // address with nothing at it are the three longest reasons, and
+            // each comes with a different fix.
+            for (error, fix) in [
+                (kobo_sdk::TaskError::Unauthorized, "sign-in-again"),
+                (kobo_sdk::TaskError::Unreachable, "retry"),
+                (kobo_sdk::TaskError::NotFound, "retry"),
+                (kobo_sdk::TaskError::Offline, kobo_sdk::JOIN_WIFI),
             ] {
-                app.view = view;
-                app.selected = 2;
-                app.failure = Some(catalog::problem(
-                    "https://library.test/opds",
-                    kobo_sdk::TaskError::Unauthorized,
-                ));
-                let diagnostics = app
-                    .screen(&context)
-                    .diagnostics(&metrics, &Chrome::measuring(true));
-                assert!(
-                    diagnostics.issues.is_empty(),
-                    "{text_scale:?}: {:?}",
-                    diagnostics.issues
-                );
+                for view in [
+                    View::Libraries,
+                    View::Url,
+                    View::Credential,
+                    View::Library,
+                    View::Failure,
+                    View::Book,
+                ] {
+                    app.view = view;
+                    app.selected = 2;
+                    app.failure = Some(catalog::problem("https://library.test/opds", error));
+                    let diagnostics = app
+                        .screen(&context)
+                        .diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?} {orientation:?} {view:?} {error:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    if view == View::Failure {
+                        for action in [fix, "libraries"] {
+                            assert!(
+                                diagnostics
+                                    .layout
+                                    .rect_of_action(action_id(action))
+                                    .is_some(),
+                                "{text_scale:?} {orientation:?} {error:?}: {action}"
+                            );
+                        }
+                    }
+                }
             }
         }
     }

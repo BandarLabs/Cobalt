@@ -16,6 +16,32 @@ use std::{process::ExitCode, time::Duration};
 const CONFIG: &str = "config";
 const TONIGHT: &str = "tonight";
 const CACHE_ERROR: &str = "Recipes could not be saved or opened. Retry saving before closing.";
+/// What Check again says when the computer has sent nothing. The banner that
+/// says it carries Check again itself, so the sentence need not tell the
+/// owner to check again.
+const NO_ACCOUNT_YET: &str = "No account has arrived yet.";
+
+/// The most a recipe can be scaled to, and the least is one.
+const MAX_SERVINGS: u32 = 12;
+
+/// How tonight's recipe is laid out, the roomiest first.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TonightShape {
+    /// Start cooking and Pick recipe as buttons under the recipe.
+    Stacked,
+    /// The two in the bar at the foot.
+    Barred,
+    /// The two in the bar, and the counts and description on a second page.
+    Paged,
+}
+
+/// How much of the first-run screen the panel has room for, most first.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Shape {
+    Marked,
+    Plain,
+    Compact,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -55,6 +81,8 @@ struct Kitchen {
     step: usize,
     browse_page: usize,
     ingredients_page: usize,
+    /// Which half of tonight's recipe is shown where it takes two pages.
+    tonight_page: usize,
     checked: Vec<usize>,
     timer: Option<(usize, u32)>,
     view: Option<View>,
@@ -218,6 +246,7 @@ impl Kitchen {
         self.servings = servings;
         self.step = 0;
         self.ingredients_page = 0;
+        self.tonight_page = 0;
         self.checked.clear();
         self.view = Some(View::Tonight);
         self.info("Tonight's card is saved for offline cooking.");
@@ -518,6 +547,141 @@ impl Kitchen {
         .build()
     }
 
+    /// The first-run screen: the one computer command, Check again, and
+    /// typing the address on the reader instead.
+    ///
+    /// Once a check has found nothing, Check again is the action of the
+    /// banner that says so, and the button under the command goes, so it is
+    /// offered once. Where the panel still has no room, held sideways at the
+    /// larger text sizes, the book mark goes first and then the heading is
+    /// set as a section over the full width; the words and both controls
+    /// stay at every size.
+    fn connect_screen(&self, context: &Context) -> Screen {
+        const TEXT: &str =
+            "Run this on your computer. It asks for your Mealie address and API token.";
+        let checked = self
+            .note
+            .as_ref()
+            .is_some_and(|(_, note)| note == NO_ACCOUNT_YET);
+        let build = |shape: Shape| {
+            let mut screen = Self::banner(
+                ScreenBuilder::new("kitchencard").top_bar("Kitchen Card"),
+                self.note.as_ref(),
+            );
+            if checked {
+                screen = screen.banner_action("check-again", "Check again");
+            }
+            screen = match shape {
+                Shape::Marked => screen.splash(Some(Glyph::Book), "Connect Mealie", TEXT),
+                Shape::Plain => screen.splash(None, "Connect Mealie", TEXT),
+                Shape::Compact => screen.section("Connect Mealie").secondary(TEXT),
+            }
+            .command("kobo connect kitchencard");
+            if !checked {
+                screen = screen.primary_button("check-again", "Check again");
+            }
+            screen.button("settings", "Type the address here").build()
+        };
+        let metrics = context.metrics();
+        [Shape::Marked, Shape::Plain]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| build(Shape::Compact))
+    }
+
+    /// Tonight's recipe: what it is, how many it serves, and the way into
+    /// cooking it.
+    ///
+    /// The servings are a stepper, one number with a minus and a plus,
+    /// because two buttons spelling "− serving" and "+ serving" beside the
+    /// number said it three times and wrapped onto two lines each at the
+    /// larger text sizes. Where the panel still cannot hold the page, at the
+    /// larger sizes, Start cooking and Pick recipe move into the bar at the
+    /// foot, and held sideways the recipe's counts and description then move
+    /// to a second page the owner turns to; nothing is dropped.
+    fn tonight_screen(&self, context: &Context, recipe: &Recipe) -> Screen {
+        let build = |shape: TonightShape, page: usize| {
+            let first = shape != TonightShape::Paged || page == 0;
+            let second = shape != TonightShape::Paged || page == 1;
+            let screen = ScreenBuilder::new("kitchencard")
+                .top_bar("Kitchen Card")
+                .top_bar_action("sync", "Sync")
+                .top_bar_glyph("settings", "Settings", Glyph::Settings);
+            // The second page carries the recipe's name as a running head, as
+            // a book's later pages do, so the counts and the description keep
+            // the room the title took on the first; the note was read there.
+            let mut screen = if first {
+                Self::banner(
+                    screen.heading(&recipe.name).secondary(&recipe.category),
+                    self.note.as_ref(),
+                )
+            } else {
+                screen.section(&recipe.name)
+            };
+            if first {
+                screen = screen
+                    .stepper(
+                        format!("Serves {}", self.servings),
+                        "less",
+                        Glyph::Minus,
+                        "more",
+                        Glyph::Plus,
+                    )
+                    .stepper_ends(self.servings > 1, self.servings < MAX_SERVINGS);
+            }
+            if second {
+                screen = screen.facts([
+                    ("Steps", recipe.steps.len().to_string()),
+                    ("Ingredients", recipe.ingredients.len().to_string()),
+                ]);
+                if !recipe.description.is_empty() {
+                    screen = screen.text(&recipe.description);
+                }
+            }
+            if recipe.steps.is_empty() && first {
+                screen = screen.secondary("No steps came with this recipe.");
+            }
+            if shape == TonightShape::Paged {
+                screen = screen
+                    .page_turns("tonight-previous", "tonight-next")
+                    .page_position(u16::try_from(page + 1).unwrap_or(u16::MAX), 2);
+            }
+            if shape == TonightShape::Stacked {
+                screen = if recipe.steps.is_empty() {
+                    screen.disabled_button("cook", "Start cooking")
+                } else {
+                    screen.primary_button("cook", "Start cooking")
+                };
+                return screen.button("browse", "Pick recipe").build();
+            }
+            // In the bar a recipe without steps has nothing to start, and the
+            // line above already says so.
+            if recipe.steps.is_empty() {
+                screen.bottom_action("browse", "Pick recipe").build()
+            } else {
+                screen
+                    .action_bar([("cook", "Start cooking"), ("browse", "Pick recipe")])
+                    .build()
+            }
+        };
+        let metrics = context.metrics();
+        let fits = |screen: &Screen| {
+            !screen
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        };
+        [TonightShape::Stacked, TonightShape::Barred]
+            .into_iter()
+            .map(|shape| build(shape, 0))
+            .find(fits)
+            .unwrap_or_else(|| build(TonightShape::Paged, self.tonight_page.min(1)))
+    }
+
     #[allow(clippy::too_many_lines)] // Each arm is a distinct, small screen.
     fn screen(&self, context: &Context) -> Screen {
         if let Some(setting) = self.editing {
@@ -532,19 +696,7 @@ impl Kitchen {
         }
         let view = self.view.unwrap_or(View::Tonight);
         match view {
-            View::Tonight if !self.ready() => Self::banner(
-                ScreenBuilder::new("kitchencard").top_bar("Kitchen Card"),
-                self.note.as_ref(),
-            )
-            .splash(
-                Some(Glyph::Book),
-                "Connect Mealie",
-                "Run this on your computer. It asks for your Mealie address and API token, checks them, and sets Kitchen Card up.",
-            )
-            .command("kobo connect kitchencard")
-            .primary_button("check-again", "Check again")
-            .button("settings", "Type the address here")
-            .build(),
+            View::Tonight if !self.ready() => self.connect_screen(context),
             View::Tonight if self.recipes.is_empty() => {
                 let mut screen = Self::banner(
                     ScreenBuilder::new("kitchencard")
@@ -585,37 +737,7 @@ impl Kitchen {
                     .primary_button("browse", "Pick a recipe")
                     .build();
                 };
-                let mut screen = Self::banner(
-                    ScreenBuilder::new("kitchencard")
-                        .top_bar("Kitchen Card")
-                        .top_bar_action("sync", "Sync")
-                        .top_bar_glyph("settings", "Settings", Glyph::Settings)
-                        .heading(&recipe.name)
-                        .secondary(&recipe.category),
-                    self.note.as_ref(),
-                );
-                screen = screen.facts([
-                    ("Serves", self.servings.to_string()),
-                    ("Steps", recipe.steps.len().to_string()),
-                    ("Ingredients", recipe.ingredients.len().to_string()),
-                ]);
-                if !recipe.description.is_empty() {
-                    screen = screen.text(&recipe.description);
-                }
-                if recipe.steps.is_empty() {
-                    screen = screen
-                        .disabled_button("cook", "Start cooking")
-                        .secondary("No steps came with this recipe.");
-                } else {
-                    screen = screen.primary_button("cook", "Start cooking");
-                }
-                screen
-                    .buttons([
-                        ("browse", "Pick recipe"),
-                        ("less", "− serving"),
-                        ("more", "+ serving"),
-                    ])
-                    .build()
+                self.tonight_screen(context, recipe)
             }
             View::Browse => self.browse_screen(context),
             View::Cook => {
@@ -832,9 +954,7 @@ impl KoboApp for Kitchen {
                     self.open_cache(context);
                 }
                 if std::mem::take(&mut self.checking) && !self.ready() {
-                    self.problem(
-                        "No account has arrived from the computer yet. Run the command, then check again.",
-                    );
+                    self.problem(NO_ACCOUNT_YET);
                 }
             }
             if key == TONIGHT {
@@ -977,7 +1097,11 @@ impl KoboApp for Kitchen {
             } else {
                 self.ingredients_page = next;
             }
-        } else if action == action_id("more") && self.servings < 12 {
+        } else if action == action_id("tonight-next") {
+            self.tonight_page = 1;
+        } else if action == action_id("tonight-previous") {
+            self.tonight_page = 0;
+        } else if action == action_id("more") && self.servings < MAX_SERVINGS {
             self.servings += 1;
             self.persist_tonight(context);
         } else if action == action_id("less") && self.servings > 1 {

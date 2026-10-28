@@ -31,6 +31,19 @@ enum Setting {
 const ACCOUNT_FIX: &str =
     "Run kobo connect rss-miniflux on your computer to tie the key to your server.";
 
+/// How much of the first-run screen the panel has room for, most first.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Marked,
+    Plain,
+    Compact,
+}
+
+/// What Check again says when the computer has sent nothing. The banner that
+/// says it carries Check again itself, so the sentence need not tell the
+/// owner to check again.
+const NO_ACCOUNT_YET: &str = "No account has arrived yet.";
+
 /// Which articles the shelf is showing.
 ///
 /// Three views of one downloaded batch rather than three requests. A reader on
@@ -497,22 +510,7 @@ impl Reader {
             return;
         }
         let screen = match view {
-            View::Shelf if !self.configured() => {
-                let mut screen = ScreenBuilder::new("rss-miniflux").top_bar("Digest");
-                if let Some(notice) = &self.notice {
-                    screen = screen.banner(BannerLevel::Attention, notice.clone());
-                }
-                screen.splash(
-                    Some(Glyph::Rss),
-                    "Connect Miniflux",
-                    "Run this on your computer. It asks for your server and API token, checks them, and sets Digest up.",
-                )
-                .command("kobo connect rss-miniflux")
-                .primary_button("check-again", "Check again")
-                .button("settings", "Type the address here")
-                .button("directory", "Suggested feeds")
-                .build()
-            }
+            View::Shelf if !self.configured() => self.connect(context),
             View::Shelf => self.shelf(context),
             View::Reading => self.reading(),
             View::Settings => self.settings(),
@@ -521,6 +519,62 @@ impl Reader {
         // Every view except the shelf was reached from another one, so Back
         // unwinds this application first and leaves it only from the shelf.
         context.set_screen(screen.with_own_back(view != View::Shelf || self.menu_open.is_some()));
+    }
+
+    /// The first-run screen: the one computer command, and the two things an
+    /// owner can do without it.
+    ///
+    /// Once a check has found nothing, Check again is the action of the
+    /// banner that says so, and the button under the command goes, so the
+    /// control is offered once and the banner costs little more room than
+    /// the button it replaces. Where even that does not fit, held sideways at
+    /// the larger text sizes, the feed mark goes first, since it says nothing
+    /// the heading does not, and then the heading is set as a section over
+    /// the full width with the two other ways in side by side. Every word and
+    /// every control is kept at every size.
+    fn connect(&self, context: &Context) -> Screen {
+        const TEXT: &str = "Run this on your computer. It asks for your server and API token.";
+        let checked = self.notice.as_deref() == Some(NO_ACCOUNT_YET);
+        let build = |shape: Shape| {
+            let mut screen = ScreenBuilder::new("rss-miniflux").top_bar("Digest");
+            if let Some(notice) = &self.notice {
+                screen = screen.banner(BannerLevel::Attention, notice.clone());
+                if checked {
+                    screen = screen.banner_action("check-again", "Check again");
+                }
+            }
+            screen = match shape {
+                Shape::Marked => screen.splash(Some(Glyph::Rss), "Connect Miniflux", TEXT),
+                Shape::Plain => screen.splash(None, "Connect Miniflux", TEXT),
+                Shape::Compact => screen.section("Connect Miniflux").secondary(TEXT),
+            }
+            .command("kobo connect rss-miniflux");
+            if !checked {
+                screen = screen.primary_button("check-again", "Check again");
+            }
+            let others = [
+                ("settings", "Type the address here"),
+                ("directory", "Suggested feeds"),
+            ];
+            if shape == Shape::Compact {
+                screen.buttons(others).build()
+            } else {
+                others
+                    .into_iter()
+                    .fold(screen, |screen, (name, label)| screen.button(name, label))
+                    .build()
+            }
+        };
+        let metrics = context.metrics();
+        [Shape::Marked, Shape::Plain]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| build(Shape::Compact))
     }
 
     fn spawn(&mut self, context: &mut Context, task: kobo_sdk::Task, awaiting: Awaiting) -> bool {
@@ -796,10 +850,7 @@ impl KoboApp for Reader {
                     self.open_snapshot(context);
                 }
                 if std::mem::take(&mut self.checking) && !self.configured() {
-                    self.notice = Some(
-                        "No account has arrived from the computer yet. Run the command, then check again."
-                            .into(),
-                    );
+                    self.notice = Some(NO_ACCOUNT_YET.into());
                 }
             }
             self.show(context);
@@ -1300,7 +1351,7 @@ mod tests {
 
     use super::*;
     use kobo_sdk::{AppRunner, Command, StoreRequest, Task};
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, Orientation, TextScale, CLARA_BW_METRICS};
 
     const SAVED_ARTICLE: &[u8] = br#"{"entries":[{"id":7,"title":"A saved article","content":"<h2>A heading</h2><p>The complete article body.</p>","starred":true,"status":"unread","url":"https://example.com/story","feed":{"title":"Journal"}}]}"#;
     const NOTHING: &[u8] = br#"{"entries":[]}"#;
@@ -1652,6 +1703,71 @@ mod tests {
         assert!(!drawn.contains("Credential name"), "{drawn}");
         assert!(!drawn.contains('`'), "{drawn}");
         assert!(drawn.contains("kobo connect rss-miniflux"), "{drawn}");
+    }
+
+    /// The first-run screen is the only way in, so every part of it has to
+    /// be on the panel at every size: the command, Check again, typing the
+    /// address and the suggested feeds. Checked before and after a check
+    /// that found nothing, because the banner that check adds is the tallest
+    /// thing on the screen.
+    #[test]
+    fn the_connect_screen_keeps_every_control_on_a_clara_at_every_size_held_either_way() {
+        for text_scale in TextScale::STEPS {
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Reader::default(), metrics);
+                for checked in [false, true] {
+                    let app = Reader {
+                        notice: checked.then(|| NO_ACCOUNT_YET.to_owned()),
+                        ..Reader::default()
+                    };
+                    let screen = app.connect(&runner.context());
+                    let at = format!("{text_scale:?} {orientation:?} checked {checked}");
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{at}: {:?}",
+                        diagnostics.issues
+                    );
+                    let drawn = format!("{screen:?}");
+                    assert!(drawn.contains("kobo connect rss"), "{at}");
+                    assert!(
+                        drawn.contains("It asks for your server and API token."),
+                        "{at}"
+                    );
+                    for action in ["check-again", "settings", "directory"] {
+                        assert!(
+                            diagnostics
+                                .layout
+                                .rect_of_action(action_id(action))
+                                .is_some(),
+                            "{at}: {action}"
+                        );
+                    }
+                    // Check again is offered once: on the banner after a
+                    // check, as the button under the command before one.
+                    let offered = diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .filter(|node| node.kind.acts_on() == Some(action_id("check-again")))
+                        .count();
+                    assert_eq!(offered, 1, "{at}");
+                    let on_banner = screen.nodes.iter().any(|node| {
+                        matches!(
+                            node,
+                            kobo_ui::Node::Banner { action: Some(action), .. }
+                                if action.action == action_id("check-again")
+                        )
+                    });
+                    assert_eq!(on_banner, checked, "{at}");
+                }
+            }
+        }
     }
 
     #[test]

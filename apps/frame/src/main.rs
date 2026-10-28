@@ -146,22 +146,22 @@ struct Frame {
 
 impl Frame {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Opening => ScreenBuilder::new("frame-opening")
                 .top_bar("Frame")
                 .activity("Opening your photo shelf", None)
                 .build(),
-            View::Home => self.home(),
+            View::Home => self.home(context),
             View::Show => self.photo_screen(),
             View::Settings => self.settings_screen(),
         }
     }
 
-    fn home(&self) -> Screen {
+    fn home(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("frame-home").top_bar("Frame");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
@@ -174,16 +174,7 @@ impl Frame {
         // screen ever mentioned.
         screen = screen.top_bar_action(SETTINGS, "Settings");
         if self.photos.is_empty() {
-            return screen
-                .splash(
-                    Some(Glyph::App),
-                    "Your frame is empty",
-                    "Send photos from a computer. A folder becomes a slideshow, and new photos appear here on their own.",
-                )
-                .section("On your computer")
-                .command("kobo frame push ~/Pictures/family")
-                .button(CHECK, "Check for photos")
-                .build();
+            return Self::empty_home(context, &screen);
         }
         let index = self.settings.position % self.photos.len().max(1) + 1;
         screen =
@@ -225,6 +216,43 @@ impl Frame {
             );
         }
         screen.build()
+    }
+
+    /// The first screen a new owner sees: what to run on the computer.
+    ///
+    /// Check for photos is pinned to the foot of the panel: under the command
+    /// it was the first thing the largest text sizes pushed off, and new
+    /// photos turn up on their own anyway. Where a notice over the screen
+    /// leaves no room for the sentence under the heading, the sentence goes,
+    /// because the notice and the command between them say what to do.
+    fn empty_home(context: &Context, screen: &ScreenBuilder) -> Screen {
+        let with = |mark: Option<Glyph>, sentence: &str| {
+            screen
+                .clone()
+                .splash(mark, "Your frame is empty", sentence)
+                .section("On your computer")
+                .command("kobo frame push ~/Pictures/family")
+                .bottom_action(CHECK, "Check for photos")
+                .build()
+        };
+        let sentence =
+            "Send a folder of photos from a computer. New photos appear here on their own.";
+        // Then the mark above the heading, at the largest sizes held sideways.
+        let shapes = [
+            (Some(Glyph::App), sentence),
+            (Some(Glyph::App), ""),
+            (None, ""),
+        ];
+        let metrics = context.metrics();
+        shapes
+            .iter()
+            .map(|(mark, sentence)| with(*mark, sentence))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| with(None, ""))
     }
 
     /// Every setting on one screen, each choice its own segment, so what is
@@ -1392,7 +1420,7 @@ mod tests {
         assert!(frame.picture.is_none());
         assert!(frame.photos_all_unreadable());
         assert_eq!(frame.view, View::Home);
-        let home = frame.home();
+        let home = frame.home(&Context::default());
         let labels = home
             .nodes
             .iter()
@@ -1669,7 +1697,7 @@ mod tests {
     #[test]
     fn settings_are_reachable_from_the_bar_and_name_the_current_choice() {
         let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa"]);
-        let home = runner.app().home();
+        let home = runner.app().home(&runner.context());
         let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout.rect_of_action(action_id(SETTINGS)).is_some());
         runner.action(action_id(SETTINGS));
@@ -1738,10 +1766,52 @@ mod tests {
         }
     }
 
+    /// The first screen a new owner sees, with and without a notice over
+    /// it, at every text size on a Clara held either way.
+    #[test]
+    fn the_empty_frame_fits_every_text_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = kobo_sdk::AppRunner::with_metrics(Frame::default(), metrics);
+                let mut frame = Frame::default();
+                frame.startup.manifest_loaded = true;
+                for notice in [
+                    None,
+                    Some(
+                        "Frame's photo list could not be read (the file is damaged). Push the \
+                         album again from your computer.",
+                    ),
+                ] {
+                    frame.notice = notice.map(str::to_owned);
+                    let screen = frame.home(&runner.context());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        !diagnostics.has_errors(),
+                        "{text_scale:?} {orientation:?} notice {notice:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(diagnostics
+                        .layout
+                        .rect_of_action(action_id(CHECK))
+                        .is_some());
+                }
+                drop(runner);
+            }
+        }
+    }
+
     #[test]
     fn an_empty_frame_names_only_the_push_and_can_look_again() {
         let mut runner = opened_on(&[]);
-        let text = format!("{:?}", runner.app().home());
+        let text = format!("{:?}", runner.app().home(&runner.context()));
         assert!(text.contains("kobo frame push"));
         assert!(!text.contains("kobo frame init"));
         assert!(!text.contains("kobo pair"));
@@ -1776,7 +1846,7 @@ mod tests {
             )),
             ..Frame::default()
         };
-        for screen in [frame.home(), frame.photo_screen()] {
+        for screen in [frame.home(&Context::default()), frame.photo_screen()] {
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues

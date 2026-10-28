@@ -1,7 +1,7 @@
 //! In-process callback and renderer regression coverage, not a simulator session.
 use super::*;
 use kobo_sdk::{AppRunner, Command, DiagnosticSeverity};
-use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
+use kobo_ui::{Chrome, DisplayMetrics, Orientation, TextScale, CLARA_BW_METRICS};
 
 fn kitchen() -> Kitchen {
     Kitchen {
@@ -246,6 +246,65 @@ fn the_cooking_step_is_set_large_and_still_fits_at_every_text_size() {
     }
 }
 
+/// The first-run screen is the only way in, so the command, Check again and
+/// typing the address have to be on the panel at every size, held either way,
+/// before a check and after one that found nothing, whose banner is the
+/// tallest thing on the screen.
+#[test]
+fn the_connect_screen_keeps_every_control_on_a_clara_at_every_size_held_either_way() {
+    for text_scale in TextScale::STEPS {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let runner = AppRunner::with_metrics(Kitchen::default(), metrics);
+            for checked in [false, true] {
+                let app = Kitchen {
+                    note: checked.then(|| (true, NO_ACCOUNT_YET.to_owned())),
+                    ..Kitchen::default()
+                };
+                let at = format!("{text_scale:?} {orientation:?} checked {checked}");
+                let screen = app.connect_screen(&runner.context());
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{at}: {:?}",
+                    diagnostics.issues
+                );
+                let drawn = format!("{screen:?}");
+                assert!(drawn.contains("kobo connect kitchen"), "{at}");
+                assert!(drawn.contains("Mealie address and API token"), "{at}");
+                for action in ["check-again", "settings"] {
+                    assert!(
+                        diagnostics
+                            .layout
+                            .rect_of_action(action_id(action))
+                            .is_some(),
+                        "{at}: {action}"
+                    );
+                }
+                let offered = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind.acts_on() == Some(action_id("check-again")))
+                    .count();
+                assert_eq!(offered, 1, "{at}");
+                let on_banner = screen.nodes.iter().any(|node| {
+                    matches!(
+                        node,
+                        kobo_ui::Node::Banner { action: Some(action), .. }
+                            if action.action == action_id("check-again")
+                    )
+                });
+                assert_eq!(on_banner, checked, "{at}");
+            }
+        }
+    }
+}
+
 #[test]
 fn a_connection_made_on_the_computer_is_found_by_check_again() {
     let mut runner = AppRunner::new(Kitchen::default());
@@ -277,4 +336,77 @@ fn a_connection_made_on_the_computer_is_found_by_check_again() {
         value: Some(b"https://mealie.example\nmealie".to_vec()),
     });
     assert!(runner.app().ready());
+}
+
+/// Tonight's recipe is the screen the app opens on, so its controls and
+/// everything it says about the recipe must be on the panel at every size,
+/// held either way, under the note a sync leaves. A description of a few
+/// sentences is used because Mealie's own are about that long.
+#[test]
+fn tonights_recipe_keeps_every_control_and_fact_at_every_size_held_either_way() {
+    const DESCRIPTION: &str = "A weeknight roast chicken with lemon, garlic, and thyme. Roast it on a bed of onions so the juices make a sauce while it rests.";
+    for text_scale in TextScale::STEPS {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let mut runner = AppRunner::with_metrics(kitchen(), metrics);
+            let app = runner.app_mut();
+            app.recipes[0].name = "Lemon Herb Roasted Chicken".into();
+            app.recipes[0].description = DESCRIPTION.into();
+            app.note = Some((false, "Tonight's card is saved for offline cooking.".into()));
+            app.view = Some(View::Tonight);
+            let at = format!("{text_scale:?} {orientation:?}");
+            let mut reached = std::collections::BTreeSet::new();
+            let mut said = String::new();
+            for page in 0..2 {
+                runner.app_mut().tonight_page = page;
+                let screen = runner.app().screen(&runner.context());
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{at} page {page}: {:?}",
+                    diagnostics.issues
+                );
+                for action in ["cook", "browse", "less", "more", "sync", "settings"] {
+                    if diagnostics
+                        .layout
+                        .rect_of_action(action_id(action))
+                        .is_some()
+                    {
+                        reached.insert(action);
+                    }
+                }
+                said.push_str(&format!("{screen:?}"));
+            }
+            assert_eq!(reached.len(), 6, "{at}: only {reached:?}");
+            for fact in ["Serves 2", "Steps", "Ingredients", DESCRIPTION] {
+                assert!(said.contains(fact), "{at}: {fact}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_servings_step_one_at_a_time_between_one_and_twelve() {
+    let mut runner = AppRunner::new(Kitchen {
+        view: Some(View::Tonight),
+        ..kitchen()
+    });
+    runner.action(action_id("less"));
+    assert_eq!(runner.app().servings, 1);
+    runner.action(action_id("less"));
+    assert_eq!(runner.app().servings, 1);
+    let screen = runner.app().screen(&runner.context());
+    assert!(screen.nodes.iter().any(|node| matches!(
+        node,
+        kobo_sdk::Node::Stepper { label, less_state: kobo_sdk::ControlState::Disabled, more_state: kobo_sdk::ControlState::Enabled, .. }
+            if label == "Serves 1"
+    )), "{screen:?}");
+    for _ in 0..20 {
+        runner.action(action_id("more"));
+    }
+    assert_eq!(runner.app().servings, MAX_SERVINGS);
 }

@@ -228,7 +228,7 @@ def main():
                 # A chapter is posted. Checking finds it and downloads it in
                 # the same tap; nothing waits on a second screen.
                 archive.chapters = 13
-                drive("tap The Lantern Library", "wait-for Check for new chapters",
+                drive("tap The Lantern Library", "wait-for-id more", "tap-id more",
                       "tap Check for new chapters", "clock advance 1500", "wait-idle",
                       "clock advance 1500", "wait-idle", "clock advance 1500",
                       "wait-for New chapters downloaded.", "wait-idle",

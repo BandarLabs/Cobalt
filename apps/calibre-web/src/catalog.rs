@@ -96,11 +96,15 @@ impl Page {
 /// What went wrong with a request to the library at `url`, in the owner's
 /// terms. The library's origin is what decides the home-network hint, so a
 /// reader away from home is told that rather than to check the address.
+///
+/// No fix is appended for a refused account: the banner and the failure
+/// screen that show it carry Sign in again as their own control, and a
+/// sentence telling the owner to tap it cost a fourth line that pushed the
+/// catalog's only row off a sideways panel at the largest text size.
 pub fn problem(url: &str, error: TaskError) -> kobo_sdk::failure::Problem {
     let origin = url.split('/').take(3).collect::<Vec<_>>().join("/");
     kobo_sdk::failure::Service::new("Your library")
         .at(&origin)
-        .fixed_by("Tap Sign in again.")
         .explain(error)
 }
 

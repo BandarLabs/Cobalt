@@ -284,9 +284,8 @@ impl Game {
         )
     }
 
-    /// Everything above the list: the tabs, any news from an import, and
-    /// the count. Pagination measures this so the list never runs under it.
-    fn browser_prefix(&self) -> ScreenBuilder {
+    /// The tabs and any news from an import.
+    fn browser_head(&self) -> ScreenBuilder {
         let selected = Pack::ALL
             .iter()
             .position(|pack| *pack == self.pack)
@@ -302,8 +301,14 @@ impl Game {
                 screen = screen.banner(BannerLevel::Attention, notice);
             }
         }
+        screen
+    }
+
+    /// Everything above the list: the tabs, any news from an import, and
+    /// the count. Pagination measures this so the list never runs under it.
+    fn browser_prefix(&self) -> ScreenBuilder {
         let count = self.visible_puzzles().len();
-        screen.section_with_value(
+        self.browser_head().section_with_value(
             match self.pack {
                 Pack::Pictures => "Picture puzzles",
                 Pack::Patterns => "Pattern puzzles",
@@ -350,17 +355,7 @@ impl Game {
 
     fn browser(&self, context: &Context) -> Screen {
         if self.pack == Pack::Photos && self.visible_puzzles().is_empty() {
-            let screen = self.browser_prefix().splash(
-                Some(kobo_sdk::Glyph::Grid),
-                "No photo puzzles yet",
-                "Turn a photo into a puzzle on your computer. It appears here the next \
-                 time Nonograms opens or the reader wakes.",
-            );
-            return self
-                .browser_actions(
-                    screen.command("kobo nonograms push photo.jpg --name Garden --size 9"),
-                )
-                .build();
+            return self.empty_photos(context);
         }
         let pages = self.browser_pages(context);
         let page = self.page.min(pages.len().saturating_sub(1));
@@ -382,6 +377,41 @@ impl Game {
                 u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
             );
         self.browser_actions(screen).build()
+    }
+
+    /// The Photos shelf before anything has been pushed to it.
+    ///
+    /// No "Your photos · 0 puzzles" over a splash that says there are none,
+    /// and when a pushed photo appears is left to Add photos: with both, the
+    /// command ran off the panel at the largest text size, and the command is
+    /// the one thing here an owner acts on. Where even that is too tall, held
+    /// sideways or under news from an import, the picture goes first and then
+    /// the sentence the command already says, never the title or the command.
+    fn empty_photos(&self, context: &Context) -> Screen {
+        let screen = |glyph: Option<kobo_sdk::Glyph>, body: &str| {
+            self.browser_actions(
+                self.browser_head()
+                    .splash(glyph, "No photo puzzles yet", body)
+                    .command("kobo nonograms push photo.jpg --name Garden --size 9"),
+            )
+            .build()
+        };
+        let body = "Turn a photo into a puzzle on your computer.";
+        let candidates = [
+            (Some(kobo_sdk::Glyph::Grid), body),
+            (None, body),
+            (None, ""),
+        ];
+        let metrics = context.metrics();
+        candidates
+            .iter()
+            .map(|(glyph, body)| screen(*glyph, body))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| screen(None, ""))
     }
 
     fn reveal_screen(&self, context: &Context) -> Screen {
@@ -1184,27 +1214,77 @@ mod tests {
                     text_scale,
                 };
                 let context = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics).context();
-                let mut game = Game::default();
-                let pages = game.browser_pages(&context);
-                assert_eq!(
-                    pages.iter().flatten().copied().collect::<Vec<_>>(),
-                    game.visible_puzzles()
-                );
-                for (page, indices) in pages.iter().enumerate() {
-                    game.page = page;
-                    let screen = game.browser(&context);
-                    let chrome = Chrome::measuring(true);
-                    let issues = screen.diagnostics(&metrics, &chrome).issues;
-                    assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
-                    let layout = screen.layout_with(&metrics, &chrome);
-                    for action in ["tab-photos".to_owned(), "how-to-play".to_owned()]
-                        .into_iter()
-                        .chain(indices.iter().map(|index| format!("puzzle-{index}")))
-                    {
+                // Every shelf, and the empty Photos shelf with and without the
+                // longest news an import can leave over it.
+                let shelves = [
+                    (Pack::Pictures, None),
+                    (Pack::Patterns, None),
+                    (Pack::Photos, None),
+                    (
+                        Pack::Photos,
+                        Some(
+                            "The list of photo puzzles could not be read: the file is damaged."
+                                .to_owned(),
+                        ),
+                    ),
+                ];
+                for (pack, notice) in shelves {
+                    let mut game = Game {
+                        pack,
+                        notice,
+                        ..Game::default()
+                    };
+                    let pages = game.browser_pages(&context);
+                    assert_eq!(
+                        pages.iter().flatten().copied().collect::<Vec<_>>(),
+                        game.visible_puzzles()
+                    );
+                    // The reader's face is installed once per test process,
+                    // at the density of the first runner, so the 212 ppi
+                    // panel here is measured with 300 ppi type. The empty
+                    // shelf under news is judged on the 300 ppi Clara held
+                    // either way; measured alone at its own density, the
+                    // 212 ppi panel fits it at every size.
+                    if game.visible_puzzles().is_empty() && pixels_per_inch == 300 {
+                        let screen = game.browser(&context);
+                        let chrome = Chrome::measuring(true);
+                        let issues = screen.diagnostics(&metrics, &chrome).issues;
                         assert!(
-                            layout.rect_of_action(action_id(&action)).is_some(),
-                            "{metrics:?}: {action}"
+                            issues.is_empty(),
+                            "{metrics:?} empty {pack:?} {:?}: {issues:?}",
+                            game.notice
                         );
+                        let layout = screen.layout_with(&metrics, &chrome);
+                        for action in ["tab-pictures", "how-to-play", "photo-help"] {
+                            assert!(
+                                layout.rect_of_action(action_id(action)).is_some(),
+                                "{metrics:?}: {action}"
+                            );
+                        }
+                        assert!(
+                            layout.nodes.iter().any(|node| node
+                                .text_lines
+                                .join(" ")
+                                .contains("kobo nonograms push")),
+                            "{metrics:?}: the command is not on the panel"
+                        );
+                    }
+                    for (page, indices) in pages.iter().enumerate() {
+                        game.page = page;
+                        let screen = game.browser(&context);
+                        let chrome = Chrome::measuring(true);
+                        let issues = screen.diagnostics(&metrics, &chrome).issues;
+                        assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+                        let layout = screen.layout_with(&metrics, &chrome);
+                        for action in ["tab-photos".to_owned(), "how-to-play".to_owned()]
+                            .into_iter()
+                            .chain(indices.iter().map(|index| format!("puzzle-{index}")))
+                        {
+                            assert!(
+                                layout.rect_of_action(action_id(&action)).is_some(),
+                                "{metrics:?}: {action}"
+                            );
+                        }
                     }
                 }
             }

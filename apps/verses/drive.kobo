@@ -11,8 +11,10 @@ expect Ready for your computer.
 clean
 shot verses-card
 
-# The offline shelf, filed by poet, and a sonnet whole on one page: it used to
-# split eleven lines and then three.
+# The offline shelf, filed by poet, and a sonnet. At the default size the
+# sonnet is whole on one page, and at the largest it pages without losing a
+# line; unit tests hold both. The browse list takes more pages at the larger
+# sizes, so the route turns to the sonnet.
 tap Back
 wait-for Today's poem
 tap Browse
@@ -20,11 +22,11 @@ wait-for Poems
 expect The Lamb
 clean
 shot browse
-tap How Do I Love Thee?
-wait-for I shall but love thee better after death.
-expect How do I love thee? Let me count the ways.
-expect-missing 1 of 2
+tap-paged How Do I Love Thee?
+wait-for How do I love thee?
 clean
 shot sonnet
+# Back returns to the page of the list the sonnet was chosen from.
 tap Back
-wait-for Poems
+wait-for Browse
+expect How Do I Love Thee?

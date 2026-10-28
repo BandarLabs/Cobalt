@@ -3,10 +3,10 @@
 use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, BatteryDetail, BluetoothDevice, Context, DenyReason,
-    DeviceError, DeviceIdentity, DeviceRequest, DeviceResult, FieldKind, Glyph, Heartbeat, KoboApp,
-    RowLead, Screen, ScreenBuilder, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
-    WifiNetwork,
+    action_id, ActionId, BandAlign, BannerLevel, BatteryDetail, BluetoothDevice, Context,
+    DenyReason, DeviceError, DeviceIdentity, DeviceRequest, DeviceResult, FieldKind, Glyph,
+    Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, SlotWidth, Task, TaskError, TaskId,
+    TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -269,6 +269,12 @@ fn is_standing_choice(request: &DeviceRequest) -> bool {
     )
 }
 
+/// One part of the About page, kept whole on whichever page it lands.
+enum AboutPart {
+    Facts(&'static str, Vec<(String, String)>),
+    Text(&'static str, &'static str),
+}
+
 #[derive(Default)]
 struct Settings {
     view: View,
@@ -291,6 +297,7 @@ struct Settings {
     password: Keyboard,
     battery: Option<BatteryDetail>,
     identity: Option<DeviceIdentity>,
+    about_page: usize,
     /// This reader's address on the local network, when the runtime said.
     address: Option<String>,
     update: UpdateFlow,
@@ -319,10 +326,10 @@ impl Settings {
             View::Wifi => self.wifi_for(context),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
-            View::About => self.about(),
+            View::About => self.about_for(context),
             View::Update => self.update(),
             View::UpdateOptions => self.update_options_for(context),
-            View::UpdateChannelConfirm => self.update_channel_confirmation(),
+            View::UpdateChannelConfirm => self.update_channel_confirmation_for(context),
         };
         context.set_screen(screen);
     }
@@ -338,6 +345,11 @@ impl Settings {
                 self.bluetooth_page = self
                     .bluetooth_page
                     .min(self.bluetooth_pages(context).len().saturating_sub(1));
+            }
+            View::About => {
+                self.about_page = self
+                    .about_page
+                    .min(self.about_pages(context).len().saturating_sub(1));
             }
             View::Wifi => {
                 self.wifi_page = self
@@ -612,10 +624,18 @@ impl Settings {
     /// than a switch going under the foot of the panel.
     fn update_options_for(&self, context: &Context) -> Screen {
         let metrics = context.metrics();
-        let shapes = [(true, true), (false, true), (false, false)];
-        let mut screen = self.update_options_shaped(true, true);
-        for (explain, summaries) in shapes {
-            screen = self.update_options_shaped(explain, summaries);
+        // The last shape gives up the list's prompt, which only repeats what
+        // the two choices under it say, and only where a refusal over the
+        // choices would otherwise push a switch off a panel held sideways.
+        let shapes = [
+            (true, true, true),
+            (false, true, true),
+            (false, false, true),
+            (false, false, false),
+        ];
+        let mut screen = self.update_options_shaped(true, true, true);
+        for (explain, summaries, prompt) in shapes {
+            screen = self.update_options_shaped(explain, summaries, prompt);
             if !screen
                 .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
                 .has_errors()
@@ -631,7 +651,7 @@ impl Settings {
         self.update_options_for(&Context::default())
     }
 
-    fn update_options_shaped(&self, explain: bool, summaries: bool) -> Screen {
+    fn update_options_shaped(&self, explain: bool, summaries: bool, prompt: bool) -> Screen {
         let mut screen = ScreenBuilder::new("settings-update-options")
             .top_bar("Update options")
             .owns_back(true);
@@ -644,7 +664,7 @@ impl Settings {
         let summary = |words: &'static str| if summaries { words } else { "" };
         screen = screen
             .option_list(
-                "Update channel",
+                if prompt { "Update channel" } else { "" },
                 0,
                 CHANNEL_PREVIOUS,
                 CHANNEL_NEXT,
@@ -666,7 +686,27 @@ impl Settings {
             .build()
     }
 
+    #[cfg(test)]
     fn update_channel_confirmation(&self) -> Screen {
+        self.update_channel_confirmation_for(&Context::default())
+    }
+
+    /// The confirmation, with its two answers stacked where the panel has
+    /// the height for them and side by side where it does not, which is a
+    /// panel held sideways at the largest sizes.
+    fn update_channel_confirmation_for(&self, context: &Context) -> Screen {
+        let stacked = self.update_channel_confirmation_shaped(false);
+        if stacked
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            self.update_channel_confirmation_shaped(true)
+        } else {
+            stacked
+        }
+    }
+
+    fn update_channel_confirmation_shaped(&self, side_by_side: bool) -> Screen {
         let current = self.update_channel.unwrap_or_default();
         let chosen = opposite_channel(current);
         let explanation = match chosen {
@@ -677,7 +717,8 @@ impl Settings {
                 "Cobalt and the App Store will offer Stable versions from now on. Nothing is downgraded, and your apps, their data and your saved keys are kept."
             }
         };
-        ScreenBuilder::new("settings-update-channel-confirm")
+        let confirm = format!("Use {} updates", channel_name(chosen));
+        let screen = ScreenBuilder::new("settings-update-channel-confirm")
             .top_bar("Confirm update channel")
             .owns_back(true)
             .facts([
@@ -685,11 +726,29 @@ impl Settings {
                 ("Current channel", channel_name(current).to_owned()),
                 ("New channel", channel_name(chosen).to_owned()),
             ])
-            .text(explanation)
-            .primary_button(
-                CONFIRM_CHANNEL,
-                format!("Use {} updates", channel_name(chosen)),
-            )
+            .text(explanation);
+        if side_by_side {
+            return screen
+                .band(
+                    BandAlign::Top,
+                    [
+                        (
+                            SlotWidth::Fill,
+                            Box::new(move |slot: ScreenBuilder| {
+                                slot.primary_button(CONFIRM_CHANNEL, confirm)
+                            })
+                                as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                        ),
+                        (
+                            SlotWidth::Fill,
+                            Box::new(|slot: ScreenBuilder| slot.button(CANCEL_CHANNEL, "Cancel")),
+                        ),
+                    ],
+                )
+                .build();
+        }
+        screen
+            .primary_button(CONFIRM_CHANNEL, confirm)
             .button(CANCEL_CHANNEL, "Cancel")
             .build()
     }
@@ -1003,24 +1062,18 @@ impl Settings {
         screen.build()
     }
 
-    /// Everything on this page names the reader it is drawn on: the matched
-    /// profile, the firmware and kernel read from the hardware when the page
-    /// asks, and the version this runtime was compiled as. A photograph of
-    /// this page doubles as evidence that a build ran on real hardware, but
-    /// the page itself stays a plain product page: the reader who opens it
-    /// is a customer looking at their device, not a contributor.
+    #[cfg(test)]
     fn about(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("settings-about")
-            .top_bar("About")
-            .owns_back(true);
-        let trouble = self.banner_for(Topic::About);
-        if let Some(trouble) = &trouble {
-            screen = screen
-                .banner(BannerLevel::Error, trouble.clone())
-                .banner_action(RESCAN, "Read again");
-        }
+        self.about_for(&Context::default())
+    }
+
+    /// The parts of the About page, in reading order, each kept whole on
+    /// whichever page it lands: the reader itself, how a computer finds it,
+    /// and the details support asks for. Empty until the runtime has said
+    /// who this reader is.
+    fn about_parts(&self) -> Vec<AboutPart> {
         let Some(identity) = &self.identity else {
-            return screen.text("Reading this reader's details.").build();
+            return Vec::new();
         };
         let mut facts: Vec<(String, String)> = vec![
             ("Model".to_owned(), identity.model.clone()),
@@ -1029,8 +1082,7 @@ impl Settings {
         if !identity.firmware.is_empty() {
             facts.push(("Kobo software".to_owned(), identity.firmware.clone()));
         }
-        let address = self.address.clone();
-        if let Some(address) = &address {
+        if let Some(address) = &self.address {
             facts.push(("Wi-Fi address".to_owned(), address.clone()));
         }
         let mut support: Vec<(String, String)> = vec![
@@ -1049,22 +1101,85 @@ impl Settings {
         if !identity.kernel.is_empty() {
             support.push(("Kernel".to_owned(), identity.kernel.clone()));
         }
-        let screen = screen
-            .section("This reader")
-            .facts(facts)
-            .section("From your computer")
-            .text(if address.is_some() {
-                "kobo commands find this reader on Wi-Fi once kobo setup has saved it. If one asks which reader, give it the Wi-Fi address above with --device."
-            } else {
-                "kobo commands find this reader on Wi-Fi once kobo setup has saved it. Run kobo setup once with the reader plugged in over USB."
-            })
-            .section("For support")
-            .facts(support);
-        if trouble.is_some() {
-            screen.build()
+        let computer = if self.address.is_some() {
+            "Once kobo setup has saved this reader, kobo commands find it on Wi-Fi. If one asks which reader, give it --device and the Wi-Fi address."
         } else {
-            screen.button(RESCAN, "Read again").build()
+            "Run kobo setup once with the reader plugged in over USB. Then kobo commands find it on Wi-Fi."
+        };
+        vec![
+            AboutPart::Facts("This reader", facts),
+            AboutPart::Text("From your computer", computer),
+            AboutPart::Facts("For support", support),
+        ]
+    }
+
+    /// Which parts go on which page. One page wherever the whole of About
+    /// fits, which is every size but the largest few; there, each part moves
+    /// to the next page rather than running off the foot of this one, so the
+    /// owner who needs big type turns a page instead of losing a fact.
+    fn about_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let count = self.about_parts().len();
+        let all = (0..count).collect::<Vec<_>>();
+        let metrics = context.metrics();
+        // Measured as the last page, the one that also carries Read again,
+        // so a page that fits here fits wherever it lands.
+        let fits = |parts: &[usize], pages: usize| {
+            !self
+                .about_page_screen(parts, pages - 1, pages)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        };
+        if count == 0 || fits(&all, 1) {
+            return vec![all];
         }
+        let mut pages: Vec<Vec<usize>> = Vec::new();
+        for part in all {
+            match pages.last_mut() {
+                Some(page) if fits(&[page.as_slice(), &[part]].concat(), 2) => page.push(part),
+                _ => pages.push(vec![part]),
+            }
+        }
+        pages
+    }
+
+    /// Everything on this page names the reader it is drawn on: the matched
+    /// profile, the firmware and kernel read from the hardware when the page
+    /// asks, and the version this runtime was compiled as. A photograph of
+    /// this page doubles as evidence that a build ran on real hardware, but
+    /// the page itself stays a plain product page: the reader who opens it
+    /// is a customer looking at their device, not a contributor.
+    fn about_for(&self, context: &Context) -> Screen {
+        let pages = self.about_pages(context);
+        let page = self.about_page.min(pages.len().saturating_sub(1));
+        self.about_page_screen(&pages[page], page, pages.len())
+    }
+
+    fn about_page_screen(&self, parts: &[usize], page: usize, pages: usize) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-about")
+            .top_bar("About")
+            .owns_back(true);
+        let trouble = self.banner_for(Topic::About);
+        if let Some(trouble) = &trouble {
+            screen = screen
+                .banner(BannerLevel::Error, trouble.clone())
+                .banner_action(RESCAN, "Read again");
+        }
+        if self.identity.is_none() {
+            return screen.text("Reading this reader's details.").build();
+        }
+        let all = self.about_parts();
+        for part in parts.iter().filter_map(|&index| all.get(index)) {
+            screen = match part {
+                AboutPart::Facts(title, facts) => screen.section(*title).facts(facts.clone()),
+                AboutPart::Text(title, text) => screen.section(*title).text(*text),
+            };
+        }
+        // Read again sits at the foot of the last page, after everything it
+        // reads, and only when a banner is not already offering it.
+        if trouble.is_none() && page + 1 >= pages {
+            screen = screen.button(RESCAN, "Read again");
+        }
+        page_controls(screen, page, pages).build()
     }
 
     fn refresh(context: &mut Context) {
@@ -1302,12 +1417,14 @@ impl Settings {
             View::Home => self.home_pages(context).len(),
             View::Bluetooth => self.bluetooth_pages(context).len(),
             View::Wifi => self.wifi_pages(context).len(),
+            View::About => self.about_pages(context).len(),
             _ => return,
         };
         let page = match self.view {
             View::Home => &mut self.home_page,
             View::Bluetooth => &mut self.bluetooth_page,
             View::Wifi => &mut self.wifi_page,
+            View::About => &mut self.about_page,
             _ => return,
         };
         let last = pages.saturating_sub(1);
@@ -1460,6 +1577,7 @@ impl KoboApp for Settings {
             self.show(context);
         } else if action == action_id(ABOUT) {
             self.view = View::About;
+            self.about_page = 0;
             context.device().read_identity();
             self.show(context);
         } else if action == action_id(UPDATE) {
@@ -3025,6 +3143,61 @@ mod tests {
         assert!(text_of(&screen).contains("--device"));
     }
 
+    #[test]
+    fn the_about_page_turns_rather_than_running_off_the_panel_and_keeps_every_fact() {
+        for metrics in every_size_and_pose() {
+            let mut runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            runner.start();
+            runner.app_mut().identity = Some(DeviceIdentity {
+                profile_id: "CLARA_BW_391".to_owned(),
+                model: "Kobo Clara BW".to_owned(),
+                device_code: 391,
+                firmware: "4.41.23145".to_owned(),
+                kernel: "5.10.117".to_owned(),
+                runtime_version: "0.3.0".to_owned(),
+                panel_width: 1072,
+                panel_height: 1448,
+            });
+            runner.app_mut().address = Some("192.168.1.23".to_owned());
+            runner.action(action_id(super::ABOUT));
+            let pages = runner.app().about_pages(&runner.context()).len();
+            if metrics.text_scale.larger().is_some() && metrics.height > metrics.width {
+                assert_eq!(pages, 1, "About is one page where it fits");
+            }
+            let mut seen = String::new();
+            let mut rescans = 0;
+            for page in 0..pages {
+                let screen = runner.app().about_for(&runner.context());
+                fits(&screen, metrics, &format!("About page {page}"));
+                let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                rescans += usize::from(layout.rect_of_action(action_id(RESCAN)).is_some());
+                seen.push_str(&facts_of(&screen));
+                seen.push_str(&text_of(&screen));
+                if page + 1 < pages {
+                    assert!(layout.rect_of_action(action_id(MORE)).is_some());
+                    runner.action(action_id(MORE));
+                }
+            }
+            assert_eq!(rescans, 1, "{metrics:?}: Read again once, at the end");
+            for fact in [
+                "Kobo Clara BW",
+                "0.3.0",
+                "4.41.23145",
+                "192.168.1.23",
+                "CLARA_BW_391",
+                "1072 × 1448 pixels",
+                "391",
+                "5.10.117",
+                "--device",
+            ] {
+                assert!(seen.contains(fact), "{metrics:?}: {fact} is on no page");
+            }
+            runner.action(kobo_sdk::ActionId::BACK);
+            runner.action(action_id(super::ABOUT));
+            assert_eq!(runner.app().about_page, 0, "About opens on its first page");
+        }
+    }
+
     /// Every screen this file changes, at the default and the largest text
     /// size, held either way, measured through a runner so the faces are the
     /// ones the runtime measures with.
@@ -3094,20 +3267,26 @@ mod tests {
                     ..Settings::default()
                 };
                 fits(&settings.update_options_for(&context), metrics, "options");
-                // Held sideways at the largest size, the confirmation (which
-                // this change does not touch) has never fitted, and the
-                // choices fit only without a refusal over them.
-                if metrics.width > metrics.height && metrics.text_scale.larger().is_none() {
-                    continue;
+                let confirm = settings.update_channel_confirmation_for(&context);
+                fits(&confirm, metrics, "confirm");
+                let layout = confirm.layout_with(&metrics, &Chrome::measuring(true));
+                for answer in [CONFIRM_CHANNEL, CANCEL_CHANNEL] {
+                    assert!(
+                        layout.rect_of_action(action_id(answer)).is_some(),
+                        "{answer}"
+                    );
                 }
-                fits(&settings.update_channel_confirmation(), metrics, "confirm");
                 settings.choice_trouble =
                     Some("Something else is using that right now. Try again in a moment.".into());
-                fits(
-                    &settings.update_options_for(&context),
-                    metrics,
-                    "options with trouble",
-                );
+                let options = settings.update_options_for(&context);
+                fits(&options, metrics, "options with trouble");
+                let layout = options.layout_with(&metrics, &Chrome::measuring(true));
+                for choice in [CHANNEL_STABLE, CHANNEL_BETA, AUTO_COBALT, AUTO_APPS] {
+                    assert!(
+                        layout.rect_of_action(action_id(choice)).is_some(),
+                        "{choice}"
+                    );
+                }
             }
         }
     }
@@ -3334,7 +3513,7 @@ mod tests {
     #[test]
     fn a_failed_reading_offers_to_read_again_from_its_banner_at_every_size() {
         for metrics in every_size_and_pose() {
-            let _runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
             let mut settings = Settings {
                 battery: Some(BatteryDetail {
                     percent: Some(28),
@@ -3365,27 +3544,30 @@ mod tests {
                     topic,
                     "Something else is using that right now. Try again in a moment.".to_owned(),
                 ));
-                let screen = if topic == Topic::Battery {
-                    settings.battery()
+                let screens = if topic == Topic::Battery {
+                    vec![settings.battery()]
                 } else {
-                    settings.about()
+                    (0..settings.about_pages(&context).len())
+                        .map(|page| {
+                            settings.about_page = page;
+                            settings.about_for(&context)
+                        })
+                        .collect()
                 };
-                let rescans = screen
-                    .nodes
-                    .iter()
-                    .filter(|node| match node {
-                        Node::Banner {
-                            action: Some(action),
-                            ..
-                        } => action.action == action_id(RESCAN),
-                        Node::Button { action, .. } => *action == action_id(RESCAN),
-                        _ => false,
-                    })
-                    .count();
-                assert_eq!(rescans, 1, "{topic:?}: one way to read again");
-                // About runs off the panel at the largest size with or
-                // without a banner, as it did before this change.
-                if topic == Topic::Battery || metrics.text_scale.larger().is_some() {
+                for screen in screens {
+                    let rescans = screen
+                        .nodes
+                        .iter()
+                        .filter(|node| match node {
+                            Node::Banner {
+                                action: Some(action),
+                                ..
+                            } => action.action == action_id(RESCAN),
+                            Node::Button { action, .. } => *action == action_id(RESCAN),
+                            _ => false,
+                        })
+                        .count();
+                    assert_eq!(rescans, 1, "{topic:?}: one way to read again");
                     fits(&screen, metrics, &format!("{topic:?}"));
                 }
             }

@@ -8,9 +8,13 @@ clean
 shot inkling-help
 tap Play
 # The board stays in view while typing, and a refused word stays typed.
+# Where the keys and the board do not fit together, as at the largest text
+# size, Type a guess opens the keys on a screen of their own.
+maybe-tap-id enter
 type zzzzz
 tap Guess
 expect Not in the word list
+maybe-tap-id enter
 tap-id kb.backspace
 tap-id kb.backspace
 tap-id kb.backspace
@@ -28,6 +32,7 @@ expect Hard mode: off
 tap Statistics
 expect Played 0. Won 0.
 tap Play
+maybe-tap-id enter
 type gravy
 tap Guess
 expect Solved

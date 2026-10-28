@@ -153,11 +153,15 @@ struct Flashcards {
     pending_card_id: Option<i64>,
     pending_review: Option<String>,
     show_details: bool,
+    /// Which page of Review settings is showing.
+    settings_page: usize,
     deck_page: usize,
     deck_pages: Vec<Vec<usize>>,
     card_page: usize,
     card_pages: Vec<StyledPage>,
     notice_page: usize,
+    /// Which page of the licences list is showing.
+    notice_index_page: usize,
     notice_documents: Vec<NoticeDocument>,
     notice_document: Option<usize>,
     loading_received: u64,
@@ -196,11 +200,13 @@ impl Default for Flashcards {
             pending_card_id: None,
             pending_review: None,
             show_details: false,
+            settings_page: 0,
             deck_page: 0,
             deck_pages: Vec::new(),
             card_page: 0,
             card_pages: Vec::new(),
             notice_page: 0,
+            notice_index_page: 0,
             notice_documents: Vec::new(),
             notice_document: None,
             loading_received: 0,
@@ -216,9 +222,10 @@ impl Default for Flashcards {
 }
 
 impl Flashcards {
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Loading => loading_screen(
+                context,
                 self.loading_received,
                 self.loading_total,
                 self.sample_saving,
@@ -226,8 +233,12 @@ impl Flashcards {
             View::FirstUse => first_use_screen(self.menu_open),
             View::Decks => self.deck_picker(),
             View::Review => self.review(),
-            View::Settings => settings_screen(self.show_details),
-            View::Notices => self.notice_index(),
+            View::Settings => {
+                let pages = settings_pages(context, self.show_details);
+                let page = self.settings_page.min(pages.len().saturating_sub(1));
+                settings_screen(self.show_details, &pages[page], (page, pages.len()))
+            }
+            View::Notices => self.notice_index(context),
             View::NoticeDocument => self.notice(),
             View::Problem => {
                 let (kind, message) = self.problem.as_ref().map_or(
@@ -520,31 +531,66 @@ impl Flashcards {
         )
     }
 
-    fn notice_index(&self) -> Screen {
+    /// Which documents go on which page of the licences list.
+    ///
+    /// One page wherever they all fit. At the largest text sizes, where a
+    /// long title takes two lines, the list pages instead of running under
+    /// Done.
+    fn notice_index_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let counts = self
+            .notice_documents
+            .iter()
+            .map(|document| notice_page_count(document.pages.len()))
+            .collect::<Vec<_>>();
         let rows = self
             .notice_documents
             .iter()
-            .enumerate()
-            .map(|(index, document)| {
-                (
-                    format!("notice-document-{index}"),
-                    document.title,
-                    "Included with this device application",
-                    Glyph::Note,
-                    format!(
-                        "{} page{}",
-                        document.pages.len(),
-                        if document.pages.len() == 1 { "" } else { "s" }
-                    ),
-                )
-            });
-        ScreenBuilder::new("flashcards-notice-index")
+            .zip(&counts)
+            .map(|(document, count)| (document.title, NOTICE_SUMMARY, count.as_str()))
+            .collect::<Vec<_>>();
+        let whole = context.paginate_rows_with_trailing_after_section_at(
+            &rows,
+            true,
+            kobo_sdk::Position::Elsewhere,
+        );
+        if whole.len() <= 1 {
+            return whole;
+        }
+        context.paginate_rows_with_trailing_after_section_at(
+            &rows,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+        )
+    }
+
+    fn notice_index(&self, context: &Context) -> Screen {
+        let pages = self.notice_index_pages(context);
+        let page = self.notice_index_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).cloned().unwrap_or_default();
+        let rows = shown.into_iter().filter_map(|index| {
+            let document = self.notice_documents.get(index)?;
+            Some((
+                format!("notice-document-{index}"),
+                document.title,
+                NOTICE_SUMMARY,
+                Glyph::Note,
+                notice_page_count(document.pages.len()),
+            ))
+        });
+        let mut screen = ScreenBuilder::new("flashcards-notice-index")
             .top_bar("Licences & about")
             .owns_back(true)
             .section("On this device")
-            .rows_with_trailing(rows)
-            .bottom_action("screen-back", "Done")
-            .build()
+            .rows_with_trailing(rows);
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("notice-index-prev", "notice-index-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.bottom_action("screen-back", "Done").build()
     }
 
     fn notice(&self) -> Screen {
@@ -591,7 +637,7 @@ impl Flashcards {
         self.loading_received = 0;
         self.loading_total = None;
         self.loading_bucket = None;
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn finish_download(&mut self, context: &mut Context) {
@@ -671,7 +717,7 @@ impl Flashcards {
                 self.loading_total = None;
                 self.loading_bucket = None;
                 self.view = View::Loading;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen(context));
             }
             Err(error) => {
                 self.set_problem(
@@ -687,7 +733,7 @@ impl Flashcards {
         self.view = View::Problem;
         self.problem = Some((kind, message.to_owned()));
         self.menu_open = false;
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn prepare_deck_pages(&mut self, _context: &Context) {
@@ -710,7 +756,7 @@ impl Flashcards {
         self.pending_review = None;
         self.menu_open = false;
         self.prepare_current_card(context);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn prepare_current_card(&mut self, context: &mut Context) {
@@ -816,7 +862,7 @@ impl Flashcards {
         }
         self.answer = true;
         self.prepare_current_card(context);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn record_review(&mut self, context: &mut Context, grade: Grade) {
@@ -845,7 +891,7 @@ impl Flashcards {
         let mut download = ShelfDownload::new(REVIEW_LOG_NAME).at_most(MAX_REVIEW_LOG_BYTES);
         download.start(context);
         self.review_download = Some(download);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     /// Every grade in the log for this collection's cards, replayed so the
@@ -872,7 +918,7 @@ impl Flashcards {
         self.replay_log(log);
         self.view = View::Decks;
         self.prepare_deck_pages(context);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     /// Advances the collection download; true when it owned the store result.
@@ -895,13 +941,13 @@ impl Flashcards {
                 self.loading_total = (total > 0).then_some(u64::from(total));
                 if bucket != self.loading_bucket {
                     self.loading_bucket = bucket;
-                    context.set_screen(self.screen());
+                    context.set_screen(self.screen(context));
                 }
             }
             ShelfProgress::Failed(StoreError::Missing) => {
                 self.library_download = None;
                 self.view = View::FirstUse;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen(context));
             }
             ShelfProgress::Failed(_) => {
                 self.library_download = None;
@@ -974,7 +1020,7 @@ impl Flashcards {
         self.pending_card_id = None;
         self.pending_review = None;
         self.media_message = Some(message.to_owned());
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn commit_review(&mut self, context: &mut Context) {
@@ -993,14 +1039,14 @@ impl Flashcards {
         self.media_message = None;
         self.prepare_deck_pages(context);
         self.prepare_current_card(context);
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn open_view(&mut self, context: &mut Context, view: View) {
         self.return_view = self.view;
         self.view = view;
         self.menu_open = false;
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn close_supporting_screen(&mut self, context: &mut Context) {
@@ -1009,7 +1055,7 @@ impl Flashcards {
         if self.view == View::Review {
             self.repaginate_card(context);
         }
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
     fn move_page(&mut self, context: &mut Context, forward: bool) {
@@ -1030,6 +1076,24 @@ impl Flashcards {
                     self.card_page.saturating_sub(1)
                 };
             }
+            View::Settings => {
+                let last = settings_pages(context, self.show_details)
+                    .len()
+                    .saturating_sub(1);
+                self.settings_page = if forward {
+                    self.settings_page.saturating_add(1).min(last)
+                } else {
+                    self.settings_page.saturating_sub(1)
+                };
+            }
+            View::Notices => {
+                let last = self.notice_index_pages(context).len().saturating_sub(1);
+                self.notice_index_page = if forward {
+                    self.notice_index_page.saturating_add(1).min(last)
+                } else {
+                    self.notice_index_page.saturating_sub(1)
+                };
+            }
             View::NoticeDocument => {
                 let last = self
                     .notice_document
@@ -1043,7 +1107,7 @@ impl Flashcards {
             }
             _ => return,
         }
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 }
 
@@ -1057,40 +1121,42 @@ impl KoboApp for Flashcards {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == action_id("more") {
             self.menu_open = true;
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
             return;
         }
         if action == ActionId::BACK {
             if self.menu_open {
                 self.menu_open = false;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen(context));
             } else if self.view == View::NoticeDocument {
                 self.view = View::Notices;
                 self.notice_document = None;
                 self.notice_page = 0;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen(context));
             } else if matches!(self.view, View::Settings | View::Notices) {
                 self.close_supporting_screen(context);
             } else if self.view == View::Review {
                 self.view = View::Decks;
                 self.answer = false;
                 self.card_page = 0;
-                context.set_screen(self.screen());
+                context.set_screen(self.screen(context));
             }
             return;
         }
         self.menu_open = false;
         if action == action_id("settings") {
+            self.settings_page = 0;
             self.open_view(context, View::Settings);
         } else if action == action_id("notices") {
             self.notice_page = 0;
+            self.notice_index_page = 0;
             self.notice_document = None;
             self.open_view(context, View::Notices);
         } else if action == action_id("notice-index") {
             self.view = View::Notices;
             self.notice_document = None;
             self.notice_page = 0;
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
         } else if action == action_id("screen-back") {
             self.close_supporting_screen(context);
         } else if action == action_id("retry") {
@@ -1104,43 +1170,33 @@ impl KoboApp for Flashcards {
             self.loading_total = None;
             self.loading_bucket = None;
             self.view = View::Loading;
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
         } else if action == action_id("choose-deck") || action == action_id("back-decks") {
             self.view = View::Decks;
             self.answer = false;
             self.prepare_deck_pages(context);
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
         } else if action == action_id("deck-all") {
             self.select_deck(context, None);
         } else if let Some(index) = self.study.as_ref().and_then(|study| {
             (0..study.groups().len()).find(|index| action == action_id(&format!("deck-{index}")))
         }) {
             self.select_deck(context, Some(index));
-        } else if action == action_id("deck-page-prev") {
-            self.move_page(context, false);
-        } else if action == action_id("deck-page-next") {
-            self.move_page(context, true);
-        } else if action == action_id("card-page-prev") {
-            self.move_page(context, false);
-        } else if action == action_id("card-page-next") {
-            self.move_page(context, true);
-        } else if action == action_id("notice-prev") {
-            self.move_page(context, false);
-        } else if action == action_id("notice-next") {
-            self.move_page(context, true);
+        } else if let Some(forward) = page_turn(action) {
+            self.move_page(context, forward);
         } else if let Some(index) = (0..self.notice_documents.len())
             .find(|index| action == action_id(&format!("notice-document-{index}")))
         {
             self.notice_document = Some(index);
             self.notice_page = 0;
             self.view = View::NoticeDocument;
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
         } else if action == action_id("details-compact") {
             self.show_details = false;
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
         } else if action == action_id("details-detailed") {
             self.show_details = true;
-            context.set_screen(self.screen());
+            context.set_screen(self.screen(context));
         } else if action == action_id("answer") {
             self.reveal(context);
         } else if let Some(grade) = Grade::ALL
@@ -1163,7 +1219,7 @@ impl KoboApp for Flashcards {
                 if self.view == View::Review {
                     self.prepare_current_card(context);
                 }
-                context.set_screen(self.screen());
+                context.set_screen(self.screen(context));
             }
         }
         if matches!(self.view, View::Decks | View::FirstUse | View::Problem)
@@ -1275,20 +1331,30 @@ struct DeckChoice {
     due: usize,
 }
 
-fn loading_screen(received: u64, total: Option<u64>, sample_saving: bool) -> Screen {
+fn loading_screen(
+    context: &Context,
+    received: u64,
+    total: Option<u64>,
+    sample_saving: bool,
+) -> Screen {
     let screen = ScreenBuilder::new("flashcards-loading").top_bar("Flashcards");
     if received == 0 && total.is_none() {
-        screen
+        return screen
             .splash(
                 Some(Glyph::Note),
                 "Opening collection",
                 "Checking the prepared offline bundle.",
             )
-            .build()
-    } else {
+            .build();
+    }
+    let with = |rows: u8| {
+        let screen = screen.clone().section("Opening collection");
+        let screen = if rows == 0 {
+            screen
+        } else {
+            screen.skeleton(rows)
+        };
         screen
-            .section("Opening collection")
-            .skeleton(5)
             .transfer(
                 if sample_saving {
                     "Saving the sample deck"
@@ -1299,7 +1365,21 @@ fn loading_screen(received: u64, total: Option<u64>, sample_saving: bool) -> Scr
                 total,
             )
             .build()
-    }
+    };
+    // The placeholder stands in for the deck list, so it holds as many lines
+    // as the panel has room for above the transfer, up to five. A fixed five
+    // ran under the foot of the panel held sideways, and at the largest text
+    // sizes upright, where the transfer is the line that matters.
+    let metrics = context.metrics();
+    (1..=5)
+        .rev()
+        .map(with)
+        .find(|candidate| {
+            !candidate
+                .diagnostics(&metrics, &Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| with(0))
 }
 
 fn first_use_screen(menu_open: bool) -> Screen {
@@ -1307,14 +1387,16 @@ fn first_use_screen(menu_open: bool) -> Screen {
         .top_bar("Flashcards")
         .top_bar_overflow("more", menu_open, [("notices", "Licences & about")])
         .heading("No collection yet")
-        .text("Start with the sample deck, or bring your own Anki deck from a computer.")
+        // No sentence before the button: it said what the button and the
+        // section under it already say, and at the largest text size held
+        // sideways the two commands had no room left under it.
         .primary_button("sample", "Start with the sample")
         // The two commands, each set apart and whole. The sentence these
         // replace carried a run of spaces in the middle of a filename and left
         // out where the bundle goes, so typing it as shown failed.
-        .section("Your own deck")
+        .section("Your own Anki deck")
         .command("kobo flashcards import deck.apkg --merge collection.cobfc")
-        .text("Then send it to this Kobo over Wi-Fi:")
+        .text("Then send it over Wi-Fi:")
         .command("kobo flashcards push collection.cobfc")
         .bottom_action("retry", "Read collection again")
         .build()
@@ -1333,34 +1415,114 @@ fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
         .build()
 }
 
-fn settings_screen(detailed: bool) -> Screen {
-    ScreenBuilder::new("flashcards-settings")
+/// Whether an action is one of the page turns the screens declare, and
+/// which way it turns.
+fn page_turn(action: ActionId) -> Option<bool> {
+    const BACK: [&str; 5] = [
+        "deck-page-prev",
+        "card-page-prev",
+        "notice-prev",
+        "notice-index-prev",
+        "settings-prev",
+    ];
+    const ON: [&str; 5] = [
+        "deck-page-next",
+        "card-page-next",
+        "notice-next",
+        "notice-index-next",
+        "settings-next",
+    ];
+    if BACK.iter().any(|name| action == action_id(name)) {
+        Some(false)
+    } else if ON.iter().any(|name| action == action_id(name)) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// What each licences row says under its title. "This device application"
+/// took two lines at the largest text size and said no more than "this app".
+const NOTICE_SUMMARY: &str = "Included with this app";
+
+/// "1 page" or "28 pages".
+fn notice_page_count(pages: usize) -> String {
+    format!("{pages} page{}", if pages == 1 { "" } else { "s" })
+}
+
+/// The three parts of Review settings, in the order they are read.
+const SETTINGS_PARTS: usize = 3;
+
+/// Which parts of Review settings go on which page at this panel and size.
+///
+/// One page wherever the three fit, as they do upright at the default size.
+/// Held sideways, or at a large text size, the choice, the facts and the
+/// note on grading take a page each or share one as they fit, so nothing is
+/// clipped and nothing is left out.
+fn settings_pages(context: &Context, detailed: bool) -> Vec<Vec<usize>> {
+    let metrics = context.metrics();
+    let fits = |screen: &Screen| {
+        !screen
+            .diagnostics(&metrics, &Chrome::measuring(true))
+            .has_errors()
+    };
+    let all = (0..SETTINGS_PARTS).collect::<Vec<_>>();
+    if fits(&settings_screen(detailed, &all, (0, 1))) {
+        return vec![all];
+    }
+    let mut pages: Vec<Vec<usize>> = Vec::new();
+    let mut page: Vec<usize> = Vec::new();
+    for part in 0..SETTINGS_PARTS {
+        let mut trial = page.clone();
+        trial.push(part);
+        if page.is_empty() || fits(&settings_screen(detailed, &trial, (0, 2))) {
+            page = trial;
+        } else {
+            pages.push(std::mem::replace(&mut page, vec![part]));
+        }
+    }
+    pages.push(page);
+    pages
+}
+
+fn settings_screen(detailed: bool, parts: &[usize], (page, pages): (usize, usize)) -> Screen {
+    let mut screen = ScreenBuilder::new("flashcards-settings")
         .top_bar("Review settings")
-        .owns_back(true)
-        .section("Card details")
-        .choose(
-            "Information shown during review",
-            [
-                ("details-compact", "Compact"),
-                ("details-detailed", "Detailed"),
-            ],
-        )
-        .chosen(usize::from(detailed))
-        .section("Review behavior")
-        .facts([
-            ("Order", "Due cards, then missed ones"),
-            ("Text size", "Reader setting"),
-            ("Intervals", "FSRS, on this Kobo"),
-            ("Media", "Fit without stretching"),
-        ])
-        .section("Grading")
-        .text(
-            "Each grade sets the day a card comes back, and a card you miss comes back \
-             before you finish. Grades stay in a review log on this Kobo, and sending the \
-             collection again keeps them. Anki on your computer does not see them.",
-        )
-        .bottom_action("screen-back", "Done")
-        .build()
+        .owns_back(true);
+    for part in parts {
+        screen = match part {
+            0 => screen
+                .section("Card details")
+                .choose(
+                    "Information shown during review",
+                    [
+                        ("details-compact", "Compact"),
+                        ("details-detailed", "Detailed"),
+                    ],
+                )
+                .chosen(usize::from(detailed)),
+            1 => screen.section("Review behavior").facts([
+                ("Order", "Due cards, then missed ones"),
+                ("Text size", "Reader setting"),
+                ("Intervals", "FSRS, on this Kobo"),
+                ("Media", "Fit without stretching"),
+            ]),
+            _ => screen.section("Grading").text(
+                "Each grade sets the day a card comes back, and a card you miss comes back \
+                 before you finish. Grades stay in a review log on this Kobo, and sending the \
+                 collection again keeps them. Anki on your computer does not see them.",
+            ),
+        };
+    }
+    if pages > 1 {
+        screen = screen
+            .page_turns("settings-prev", "settings-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages).unwrap_or(u16::MAX),
+            );
+    }
+    screen.bottom_action("screen-back", "Done").build()
 }
 
 fn done_screen(
@@ -2108,7 +2270,7 @@ mod tests {
         app.start_download(&mut context);
         app.on_store(&mut context, StoreResult::Denied(StoreError::Missing));
         assert_eq!(app.view, View::FirstUse);
-        let screen = app.screen();
+        let screen = app.screen(&context);
         assert!(screen_text(&screen, "No collection yet"));
         assert!(screen_text(
             &screen,
@@ -2235,7 +2397,10 @@ mod tests {
         let commands = runner.action(action_id("sample"));
         pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
         assert_eq!(runner.app().view, View::Decks);
-        assert!(screen_text(&runner.app().screen(), "Getting started"));
+        assert!(screen_text(
+            &runner.app().screen(&runner.context()),
+            "Getting started"
+        ));
         assert_eq!(
             answer_store(
                 &mut values,
@@ -2315,7 +2480,7 @@ mod tests {
         }
         assert_eq!(seen.last(), Some(&missed));
         assert_eq!(seen.len(), sample::CARDS.len());
-        let done = runner.app().screen();
+        let done = runner.app().screen(&runner.context());
         assert!(screen_text(&done, "Done for today"));
         assert!(screen_text(&done, "You reviewed 6 cards today."));
     }
@@ -2385,7 +2550,7 @@ mod tests {
         deck_app.notice_documents = build_notice_documents(&context);
         let notice_index = {
             deck_app.view = View::Notices;
-            deck_app.notice_index()
+            deck_app.notice_index(&context)
         };
         let notice_screen = {
             deck_app.view = View::NoticeDocument;
@@ -2393,11 +2558,12 @@ mod tests {
             deck_app.notice_page = 0;
             deck_app.notice()
         };
+        let loading = |received, total| loading_screen(&context, received, total, false);
         let mut cases = vec![
-            ("loading", loading_screen(0, None, false), None, false),
+            ("loading", loading(0, None), None, false),
             (
                 "loading-progress",
-                loading_screen(384 * 1024, Some(1024 * 1024), false),
+                loading(384 * 1024, Some(1024 * 1024)),
                 None,
                 false,
             ),
@@ -2452,7 +2618,12 @@ mod tests {
                 None,
                 false,
             ),
-            ("settings", settings_screen(false), None, false),
+            (
+                "settings",
+                settings_screen(false, &[0, 1, 2], (0, 1)),
+                None,
+                false,
+            ),
             ("licenses", notice_index, None, false),
             ("license-document", notice_screen, None, false),
         ];
@@ -2609,6 +2780,93 @@ mod tests {
         }
     }
 
+    /// The screens an owner meets before any deck exists, Review settings
+    /// and the licences, measured at every text size on a Clara held either
+    /// way with the faces the reader draws them in. Settings and the licences
+    /// list may take more than one page there; everything is on one of them.
+    #[test]
+    fn first_use_loading_settings_and_licences_fit_every_text_size_held_either_way() {
+        for text_scale in TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = kobo_sdk::AppRunner::with_metrics(Flashcards::default(), metrics);
+                install_fonts();
+                let context = runner.context();
+                let at = format!("{text_scale:?} {orientation:?}");
+                let assert_fits = |name: &str, screen: &Screen| {
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &Chrome::measuring(screen.owns_back));
+                    assert!(
+                        !diagnostics.has_errors(),
+                        "{name} at {at}: {:?}",
+                        diagnostics.issues
+                    );
+                };
+                let first_use = first_use_screen(false);
+                assert_fits("first use", &first_use);
+                assert!(screen_text(
+                    &first_use,
+                    "kobo flashcards push collection.cobfc"
+                ));
+                assert_fits("opening", &loading_screen(&context, 0, None, false));
+                assert_fits(
+                    "reading the bundle",
+                    &loading_screen(&context, 384 * 1024, Some(1024 * 1024), true),
+                );
+                assert_fits(
+                    "a rejected collection",
+                    &problem_screen(
+                        ProblemKind::Corrupt,
+                        "The staged collection is corrupt or unsupported.",
+                        true,
+                    ),
+                );
+                assert_fits("done", &done_screen("Japanese", 20, Some(3), false, None));
+                if matches!(text_scale, TextScale::Default | TextScale::Largest) {
+                    let mut app = Flashcards {
+                        view: View::Notices,
+                        notice_documents: build_notice_documents(&context),
+                        ..Flashcards::default()
+                    };
+                    let pages = app.notice_index_pages(&context);
+                    assert_eq!(
+                        pages.iter().flatten().copied().collect::<Vec<_>>(),
+                        (0..app.notice_documents.len()).collect::<Vec<_>>(),
+                        "{at}"
+                    );
+                    for page in 0..pages.len() {
+                        app.notice_index_page = page;
+                        assert_fits("licences", &app.notice_index(&context));
+                    }
+                    app.view = View::NoticeDocument;
+                    for document in 0..app.notice_documents.len() {
+                        app.notice_document = Some(document);
+                        assert_fits("a licence", &app.notice());
+                    }
+                }
+                for detailed in [false, true] {
+                    let pages = settings_pages(&context, detailed);
+                    assert_eq!(
+                        pages.iter().flatten().copied().collect::<Vec<_>>(),
+                        (0..SETTINGS_PARTS).collect::<Vec<_>>(),
+                        "{at}"
+                    );
+                    for (page, parts) in pages.iter().enumerate() {
+                        let screen = settings_screen(detailed, parts, (page, pages.len()));
+                        assert_fits("settings", &screen);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn rating_positions_are_stable_while_a_grade_is_saved() {
         let normal = review_screen(&review_model(true), "Answer", &[])
@@ -2736,7 +2994,7 @@ mod tests {
             notice_documents: notices.clone(),
             ..Flashcards::default()
         }
-        .notice_index();
+        .notice_index(&context);
         let diagnostics = notice_index.diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true));
         assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
         for index in 0..notices.len() {
@@ -2747,9 +3005,9 @@ mod tests {
             assert!(rect.height >= CLARA_BW_METRICS.touch_target_minimum());
         }
         let screens = [
-            loading_screen(0, None, false),
-            loading_screen(100, Some(200), false),
-            settings_screen(false),
+            loading_screen(&context, 0, None, false),
+            loading_screen(&context, 100, Some(200), false),
+            settings_screen(false, &[0, 1, 2], (0, 1)),
             problem_screen(
                 ProblemKind::Corrupt,
                 "The staged collection is corrupt or unsupported.",

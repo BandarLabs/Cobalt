@@ -437,6 +437,23 @@ impl Grimoire {
     /// claimed. A reference that overstates its own contents sends somebody
     /// looking through filters for a spell that was never in the file.
     fn about(&self, s: ScreenBuilder, context: &Context) -> Screen {
+        let pages = context.paginate(&self.about_text(), true);
+        let page = self.detail_page.min(pages.len().saturating_sub(1));
+        let mut s = s;
+        for paragraph in pages.get(page).into_iter().flatten() {
+            s = s.text(paragraph);
+        }
+        if pages.len() > 1 {
+            s = s.page_turns("previous", "next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        s.bottom_action("back", "Back").build()
+    }
+
+    /// Everything About says, in paragraphs, before it is set into pages.
+    fn about_text(&self) -> String {
         let mut text = String::from(
             "Grimoire is an unofficial offline reference. It requests no capabilities.\n\n",
         );
@@ -448,29 +465,17 @@ impl Grimoire {
                     (held > 0).then(|| format!("{held} {}", kind.plural()))
                 })
                 .collect();
-            let _ = writeln!(text, "{edition}: {}", counted.join(" · "));
+            // A paragraph each: one line break inside a paragraph is set as a
+            // space, and the two editions' counts ran on as one sentence.
+            let _ = write!(text, "{edition}: {}\n\n", counted.join(" · "));
         }
         text.push_str(
-            "\nThe System Reference Documents do not cover classes, subclasses, \
+            "The System Reference Documents do not cover classes, subclasses, \
              backgrounds or feats, so this reference has none of them. No \
              third-party OGL-only material or artwork is included.\n\n",
         );
         text.push_str(ATTRIBUTION);
-        let pages = context.paginate(&text, true);
-        let page = self.detail_page.min(pages.len().saturating_sub(1));
-        let mut s = s.text(
-            pages
-                .get(page)
-                .map(|lines| lines.join("\n"))
-                .unwrap_or_default(),
-        );
-        if pages.len() > 1 {
-            s = s.page_turns("previous", "next").page_position(
-                u16::try_from(page + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len()).unwrap_or(u16::MAX),
-            );
-        }
-        s.bottom_action("back", "Back").build()
+        text
     }
 
     /// How many entries of one category this build holds for an edition.
@@ -1519,7 +1524,10 @@ impl KoboApp for Grimoire {
             }
         } else if a == action_id("next") {
             match self.view {
-                View::About => self.detail_page += 1,
+                View::About => {
+                    let last = c.paginate(&self.about_text(), true).len().saturating_sub(1);
+                    self.detail_page = (self.detail_page + 1).min(last);
+                }
                 View::Member => self.member_page = 1,
                 View::Initiative => {
                     self.page =
@@ -2074,6 +2082,61 @@ mod tests {
         assert_eq!((app.party[0].success, app.party[0].failure), (2, 1));
         assert_eq!(app.party[0].slots[1].used, 1);
     }
+    /// About pages at the larger sizes; every page fits, the two editions'
+    /// counts stay apart, and the licence is on one of the pages.
+    #[test]
+    fn every_about_page_fits_and_the_licence_is_on_one_of_them_at_every_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let mut runner = kobo_sdk::AppRunner::with_metrics(Grimoire::default(), metrics);
+                runner.app_mut().view = View::About;
+                let mut read = Vec::new();
+                for page in 0..8 {
+                    runner.app_mut().detail_page = page;
+                    let screen = runner.app().screen(&runner.context());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?} {orientation:?} page {page}: {:?}",
+                        diagnostics.issues
+                    );
+                    let paragraphs = screen
+                        .nodes
+                        .iter()
+                        .filter_map(|node| match node {
+                            kobo_ui::Node::Text { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if read.last() == Some(&paragraphs) {
+                        break;
+                    }
+                    read.push(paragraphs);
+                }
+                // A paragraph may carry on over a page turn, so the pages are
+                // read as one text.
+                let all = read.concat();
+                assert!(
+                    all.join(" ").contains("Creative Commons Attribution 4.0"),
+                    "{text_scale:?} {orientation:?}: {read:?}"
+                );
+                assert!(
+                    !all.iter()
+                        .any(|text| text.contains("2014") && text.contains("2024")),
+                    "{text_scale:?} {orientation:?}: {all:?}"
+                );
+            }
+        }
+    }
+
     /// Every screen a table touches during a fight, at every size the
     /// interface offers.
     #[test]

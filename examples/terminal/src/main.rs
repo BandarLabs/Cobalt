@@ -70,6 +70,22 @@ impl Status {
     /// itself, when what it meant was that the shell had closed and the last
     /// thing run in it had failed, which the output above already shows. Kept
     /// short enough to sit whole beside Restart and Earlier on a Clara.
+    /// A word or two for the same status, for a top bar too narrow for the
+    /// sentence: at the largest text sizes the title has room for about
+    /// eight letters beside two actions, and "Shell closed after an error"
+    /// cut to "Shell cl…" says less than "Error" does.
+    const fn short_title(self) -> &'static str {
+        match self {
+            Self::Starting | Self::Running => "Terminal",
+            Self::Ended(0) => "Closed",
+            Self::Ended(status) if status > 0 => "Error",
+            Self::Ended(_) => "Stopped",
+            Self::Refused(ShellError::NotPermitted) => "Refused",
+            Self::Refused(ShellError::Unavailable) => "No shell",
+            Self::Refused(_) => "Failed",
+        }
+    }
+
     fn title(self) -> String {
         match self {
             Self::Starting | Self::Running => "Terminal".to_string(),
@@ -100,6 +116,9 @@ struct App {
     /// screen per chunk to a runtime that is showing something else is traffic
     /// for no picture, so the screen is rebuilt once on the way back instead.
     visible: bool,
+    /// The panel, as last measured, so the top bar can tell whether its
+    /// title fits beside its actions.
+    metrics: Option<kobo_sdk::DisplayMetrics>,
 }
 
 impl Default for App {
@@ -113,6 +132,7 @@ impl Default for App {
             grid: (0, 0),
             status: Status::Starting,
             visible: true,
+            metrics: None,
         }
     }
 }
@@ -131,21 +151,53 @@ impl App {
         } else {
             self.status.title()
         };
-        // At most two controls fit beside the title. Looking back takes both,
-        // because the way forward matters more than a restart that is one tap
-        // away again as soon as the newest output is showing.
+        // Where the sentence would be cut beside the actions, the short form
+        // says the same thing whole.
+        let title = if self.title_fits(&title) {
+            title
+        } else if looking_back {
+            "History".to_string()
+        } else {
+            self.status.short_title().to_string()
+        };
+        self.bar(title)
+            .terminal(rows, cursor)
+            .terminal_keys(&self.keys)
+            .build()
+    }
+
+    /// The top bar with its actions. At most two controls fit beside the
+    /// title. Looking back takes both, because the way forward matters more
+    /// than a restart that is one tap away again as soon as the newest output
+    /// is showing.
+    fn bar(&self, title: String) -> ScreenBuilder {
         let mut builder = ScreenBuilder::new("terminal")
             .top_bar(title)
             .top_bar_action(EARLIER, "Earlier");
-        if looking_back {
+        if self.terminal.lines_back() > 0 {
             builder = builder.top_bar_action(LATEST, "Latest");
         } else if self.status.finished() {
             builder = builder.top_bar_action(RESTART, "Restart");
         }
         builder
-            .terminal(rows, cursor)
-            .terminal_keys(&self.keys)
+    }
+
+    /// Whether `title` is drawn whole beside the actions on the panel last
+    /// measured. Before the first measurement there is nothing to measure
+    /// against, and the full title is kept.
+    fn title_fits(&self, title: &str) -> bool {
+        let Some(metrics) = self.metrics else {
+            return true;
+        };
+        // Nothing but the bar is on this screen, so the title is drawn whole
+        // exactly when some line of it says the title in full.
+        self.bar(title.to_owned())
             .build()
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .layout
+            .nodes
+            .iter()
+            .any(|node| node.text_lines.first().map(String::as_str) == Some(title))
     }
 
     /// The screen as it stands. A shell that has closed gets no cursor: there
@@ -160,7 +212,8 @@ impl App {
     }
 
     /// Asks the layout engine, not arithmetic, how big the grid is.
-    fn measure(&self, context: &Context) -> (u16, u16) {
+    fn measure(&mut self, context: &Context) -> (u16, u16) {
+        self.metrics = Some(context.metrics());
         let empty = self.compose(Vec::<String>::new(), None);
         kobo_sdk::terminal_grid_for(&empty, &context.metrics())
     }
@@ -229,11 +282,18 @@ impl KoboApp for App {
     }
 
     fn on_shell_event(&mut self, context: &mut Context, event: ShellEvent) {
+        let ended = matches!(event, ShellEvent::Closed { .. } | ShellEvent::Refused(_));
         match event {
             ShellEvent::Opened => self.status = Status::Running,
             ShellEvent::Output(bytes) => self.terminal.feed(&bytes),
             ShellEvent::Closed { status } => self.status = Status::Ended(status),
             ShellEvent::Refused(error) => self.status = Status::Refused(error),
+        }
+        // The whole sentence goes under the output as well, where a large
+        // text size cannot cut it short the way it cuts the title.
+        if ended {
+            self.terminal
+                .feed(format!("\r\n{}.\r\n", self.status.title()).as_bytes());
         }
         self.repaint(context);
     }
@@ -404,9 +464,13 @@ mod tests {
         let commands = runner.shell_event(ShellEvent::Refused(ShellError::NotPermitted));
         let screen = screens(&commands).pop().expect("a refusal redraws");
         let title = screen.top_bar.as_ref().map(|bar| bar.title.clone());
-        assert_eq!(
-            title.as_deref(),
-            Some("Terminal is not allowed on this reader")
+        // Beside Earlier and Restart the sentence does not fit even at the
+        // default size, so the bar says it in a word and the sentence is
+        // written whole under the output.
+        assert_eq!(title.as_deref(), Some("Refused"));
+        assert!(
+            format!("{screen:?}").contains("Terminal is not allowed on this reader."),
+            "{screen:?}"
         );
         assert!(
             layout(&screen).rect_of_action(action_id(RESTART)).is_some(),

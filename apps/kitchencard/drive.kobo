@@ -5,6 +5,8 @@ clean
 shot kitchen-connect
 tap Check again
 wait-for No account has arrived
+clean
+shot kitchen-check-again
 tap Type the address here
 expect Kitchen Card settings
 tap https://mealie.example

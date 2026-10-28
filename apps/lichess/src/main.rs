@@ -393,6 +393,9 @@ impl Puzzle {
 struct Lichess {
     route: Route,
     home_page: usize,
+    /// The page of How to play on screen, where the larger text sizes need
+    /// more than one.
+    help_page: usize,
     account: AccountState,
     loaded_session: bool,
     loaded_puzzles: bool,
@@ -473,6 +476,7 @@ impl Default for Lichess {
         Self {
             route: Route::Home,
             home_page: 0,
+            help_page: 0,
             account: AccountState::Unknown,
             loaded_session: false,
             loaded_puzzles: false,
@@ -558,7 +562,7 @@ impl Lichess {
         }
         let screen = match self.route {
             Route::Home => self.home(context),
-            Route::HowTo => Self::how_to_screen(),
+            Route::HowTo => self.how_to_screen(context),
             Route::Puzzles => self.puzzles_screen(),
             Route::Solve => self.solve_screen(),
             Route::PuzzleResult => self.puzzle_result(),
@@ -622,32 +626,90 @@ impl Lichess {
         screen
     }
 
+    /// How many cards a home row holds: as many as the panel takes, fewer
+    /// while a card's name or the line under it would be cut short.
+    ///
+    /// The line under a time card says whether the game is rated, the one
+    /// thing an owner must know before tapping it, so a text size that cuts
+    /// it to "Rapid ·…" gets wider cards instead. Measured on the cards
+    /// themselves, row by row, so the columns follow the words on this panel
+    /// rather than a guess at the text size.
+    fn home_columns(&self, context: &Context) -> usize {
+        let metrics = context.metrics();
+        let widest = metrics.grid_columns(TileShape::Square).clamp(1, 3);
+        let seek_state = self.seek_tile_state();
+        let tiles = (0..HOME_TILE_COUNT).collect::<Vec<_>>();
+        (1..=widest)
+            .rev()
+            .find(|&columns| {
+                tiles.chunks(columns).all(|row| {
+                    let cards = row
+                        .iter()
+                        .map(|&index| Self::home_tile(index, seek_state, self.seek_rated))
+                        .collect();
+                    !Self::home_card_row(self.home_header(), cards, columns)
+                        .build()
+                        .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
+                        .nodes
+                        .iter()
+                        .any(|node| {
+                            matches!(
+                                node.kind,
+                                kobo_ui::LayoutKind::TileLabel
+                                    | kobo_ui::LayoutKind::TileLabelMuted
+                                    | kobo_ui::LayoutKind::TileSubtitle
+                            ) && node
+                                .text_lines
+                                .iter()
+                                .any(|line| line.ends_with('\u{2026}'))
+                        })
+                })
+            })
+            // Held sideways at the largest sizes a card is as tall as the
+            // panel allows and no narrower grid widens it, so fewer columns
+            // would only cost pages.
+            .unwrap_or(widest)
+    }
+
+    /// The home cards a page holds, in rows of [`Self::home_columns`].
+    ///
+    /// Everything on one page where it fits; otherwise as many whole rows
+    /// as the panel holds under the header with the pager drawn, measured
+    /// the way the runtime will draw them, so a tall card at a large text
+    /// size moves to the next page instead of off the foot of this one.
     fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        let measured = context.paginate_tiles_under(
-            HOME_TILE_COUNT,
-            TileShape::Square,
-            false,
-            &self.home_header().build(),
-        );
-        let columns = context
-            .metrics()
-            .grid_columns(TileShape::Square)
-            .clamp(1, 3);
-        let rows = if context.metrics().width > context.metrics().height {
-            2
-        } else {
-            3
+        self.home_pages_in(context, self.home_columns(context))
+    }
+
+    /// [`Self::home_pages`] for a column count already measured, so drawing
+    /// the home screen measures its cards once.
+    fn home_pages_in(&self, context: &Context, columns: usize) -> Vec<Vec<usize>> {
+        let metrics = context.metrics();
+        let fits = |tiles: &[usize], pages: usize| {
+            !self
+                .home_page_screen(tiles, columns, 0, pages)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
         };
-        let capacity = measured
-            .first()
-            .map_or(columns, Vec::len)
-            .min(columns * rows)
-            .max(1);
-        (0..HOME_TILE_COUNT)
-            .collect::<Vec<_>>()
-            .chunks(capacity)
-            .map(<[usize]>::to_vec)
-            .collect()
+        let all = (0..HOME_TILE_COUNT).collect::<Vec<_>>();
+        if fits(&all, 1) {
+            return vec![all];
+        }
+        let mut pages = Vec::new();
+        let mut page = Vec::new();
+        for row in all.chunks(columns) {
+            let mut candidate = page.clone();
+            candidate.extend_from_slice(row);
+            if !page.is_empty() && !fits(&candidate, 2) {
+                pages.push(std::mem::take(&mut page));
+                candidate = row.to_vec();
+            }
+            page = candidate;
+        }
+        if !page.is_empty() {
+            pages.push(page);
+        }
+        pages
     }
 
     /// How a time tile looks while a seek cannot start yet.
@@ -748,24 +810,31 @@ impl Lichess {
     }
 
     fn home(&mut self, context: &Context) -> Screen {
-        let pages = self.home_pages(context);
+        let columns = self.home_columns(context);
+        let pages = self.home_pages_in(context, columns);
         self.home_page = self.home_page.min(pages.len().saturating_sub(1));
-        let page = self.home_page;
-        let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
+        self.home_page_screen(&pages[self.home_page], columns, self.home_page, pages.len())
+    }
+
+    /// One page of home cards, `columns` to a row.
+    fn home_page_screen(
+        &self,
+        tiles: &[usize],
+        columns: usize,
+        page: usize,
+        page_count: usize,
+    ) -> Screen {
         let page_index = u16::try_from(page).unwrap_or(u16::MAX);
         let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
+        let page_count = u16::try_from(page_count).unwrap_or(u16::MAX);
         let seek_state = self.seek_tile_state();
-        let columns = context
-            .metrics()
-            .grid_columns(TileShape::Square)
-            .clamp(1, 3);
         let mut screen = self.home_header().page_rail(page_index, page_count);
-        for row in pages[page].chunks(columns) {
-            let tiles = row
+        for row in tiles.chunks(columns) {
+            let cards = row
                 .iter()
                 .map(|index| Self::home_tile(*index, seek_state, self.seek_rated))
                 .collect();
-            screen = Self::home_card_row(screen, tiles, columns);
+            screen = Self::home_card_row(screen, cards, columns);
         }
         // A position only where there is somewhere to turn to: "1 of 1" under
         // a home screen that fits on one page reads as a list that failed to
@@ -811,18 +880,67 @@ impl Lichess {
         screen.build()
     }
 
-    fn how_to_screen() -> Screen {
-        ScreenBuilder::new("lichess-help")
+    /// What How to play says, a paragraph at a time.
+    const HOW_TO: [&'static str; 6] = [
+        "Tap a piece, then a marked square. Tap the selected piece again to cancel.",
+        "Outlined squares show the last move.",
+        "Computer starts an offline game. Choose your side and whether to use a clock.",
+        "Time tiles seek a live opponent. Choose rated or casual games in Account/Games.",
+        "Account/Games holds challenges and ongoing boards. Puzzles work offline after download.",
+        "During a live game, the clock and board update while this screen is open.",
+    ];
+
+    /// The paragraphs of How to play each page holds.
+    ///
+    /// All of them on one page where they fit, as at the default size; at
+    /// the larger sizes as many whole paragraphs as fit with the pager
+    /// drawn, so the last two are a page turn away instead of refused.
+    fn how_to_pages(context: &Context) -> Vec<Vec<usize>> {
+        let metrics = context.metrics();
+        let fits = |paragraphs: &[usize], pages: usize| {
+            !Self::how_to_page(paragraphs, 0, pages)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        };
+        let all = (0..Self::HOW_TO.len()).collect::<Vec<_>>();
+        if fits(&all, 1) {
+            return vec![all];
+        }
+        let mut pages = Vec::new();
+        let mut page: Vec<usize> = Vec::new();
+        for paragraph in all {
+            page.push(paragraph);
+            if page.len() > 1 && !fits(&page, 2) {
+                page.pop();
+                pages.push(std::mem::replace(&mut page, vec![paragraph]));
+            }
+        }
+        pages.push(page);
+        pages
+    }
+
+    fn how_to_page(paragraphs: &[usize], page: usize, pages: usize) -> Screen {
+        let mut screen = ScreenBuilder::new("lichess-help")
             .top_bar("How to play")
-            .heading("Chess on Lichess")
-            .text("Tap a piece, then a marked square. Tap the selected piece again to cancel.")
-            .text("Outlined squares show the last move.")
-            .text("Computer starts an offline game. Choose your side and whether to use a clock.")
-            .text("Time tiles seek a live opponent. Choose rated or casual games in Account/Games.")
-            .text("Account/Games holds challenges and ongoing boards. Puzzles work offline after download.")
-            .text("During a live game, the clock and board update while this screen is open.")
-            .bottom_action("home", "Play")
-            .build()
+            .heading("Chess on Lichess");
+        for &paragraph in paragraphs {
+            screen = screen.text(Self::HOW_TO[paragraph]);
+        }
+        if pages > 1 {
+            screen = screen
+                .page_turns("help-previous", "help-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages).unwrap_or(u16::MAX),
+                );
+        }
+        screen.bottom_action("home", "Play").build()
+    }
+
+    fn how_to_screen(&self, context: &Context) -> Screen {
+        let pages = Self::how_to_pages(context);
+        let page = self.help_page.min(pages.len() - 1);
+        Self::how_to_page(&pages[page], page, pages.len())
     }
 
     fn solve_screen(&self) -> Screen {
@@ -4618,7 +4736,15 @@ impl KoboApp for Lichess {
             self.route = Route::Puzzles;
         } else if action == action_id("how-to-play") {
             self.home_page = 0;
+            self.help_page = 0;
             self.route = Route::HowTo;
+        } else if action == action_id("help-next") || action == action_id("help-previous") {
+            let last = Self::how_to_pages(context).len().saturating_sub(1);
+            self.help_page = if action == action_id("help-next") {
+                (self.help_page + 1).min(last)
+            } else {
+                self.help_page.saturating_sub(1)
+            };
         } else if action == action_id("home") {
             self.home_page = 0;
             self.route = Route::Home;
@@ -5483,6 +5609,108 @@ mod tests {
                 screen = next;
             }
             assert_eq!(seen, expected, "{name}: a home tile was lost or duplicated");
+        }
+    }
+
+    /// The line under a time card is where the owner reads whether a game
+    /// will touch their rating, so no text size may cut it short. Held
+    /// upright, the way this app holds the panel, every card's name and
+    /// line read in full on every page at every size, and every card is on
+    /// some page. Held sideways, which the app never asks for, the pages
+    /// still fit and still reach every card.
+    #[test]
+    fn every_home_card_reads_in_full_on_a_clara_at_every_text_size() {
+        for text_scale in TextScale::STEPS {
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Lichess::default(), metrics);
+                let context = runner.context();
+                let at = format!("{text_scale:?} {orientation:?}");
+                for rated in [true, false] {
+                    let mut app = Lichess {
+                        seek_rated: rated,
+                        ..Lichess::default()
+                    };
+                    let mut seen = BTreeSet::new();
+                    for page in 0..app.home_pages(&context).len() {
+                        app.home_page = page;
+                        let screen = app.home(&context);
+                        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "{at} page {page}: {:?}",
+                            diagnostics.issues
+                        );
+                        seen.extend(visible_tile_actions(&screen, &metrics));
+                        if orientation == Orientation::Landscape {
+                            continue;
+                        }
+                        for node in &diagnostics.layout.nodes {
+                            if matches!(
+                                node.kind,
+                                LayoutKind::TileLabel
+                                    | LayoutKind::TileLabelMuted
+                                    | LayoutKind::TileSubtitle
+                            ) {
+                                assert!(
+                                    node.text_lines
+                                        .iter()
+                                        .all(|line| !line.ends_with('\u{2026}')),
+                                    "{at} page {page}: {:?} was cut short",
+                                    node.text_lines
+                                );
+                            }
+                        }
+                    }
+                    assert_eq!(seen.len(), HOME_TILE_COUNT, "{at}: a card was never shown");
+                }
+            }
+        }
+    }
+
+    /// How to play is prose an owner reads once, so at the larger sizes it
+    /// turns a page rather than losing its last paragraphs off the foot of
+    /// the panel; at the default size held upright it stays one page.
+    #[test]
+    fn how_to_play_says_every_paragraph_on_a_clara_at_every_text_size() {
+        for text_scale in TextScale::STEPS {
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let mut runner = AppRunner::with_metrics(Lichess::default(), metrics);
+                runner.action(action_id("how-to-play"));
+                let pages = Lichess::how_to_pages(&runner.context()).len();
+                if text_scale == TextScale::Default && orientation == Orientation::Portrait {
+                    assert_eq!(pages, 1);
+                }
+                let mut said = String::new();
+                for page in 0..pages {
+                    let screen = runner.app().how_to_screen(&runner.context());
+                    let at = format!("{text_scale:?} {orientation:?} page {page}");
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{at}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(diagnostics
+                        .layout
+                        .rect_of_action(action_id("home"))
+                        .is_some());
+                    said.push_str(&format!("{screen:?}"));
+                    runner.action(action_id("help-next"));
+                }
+                for paragraph in Lichess::HOW_TO {
+                    assert!(said.contains(paragraph), "{text_scale:?}: {paragraph}");
+                }
+            }
         }
     }
 

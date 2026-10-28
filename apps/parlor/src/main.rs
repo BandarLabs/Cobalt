@@ -475,11 +475,19 @@ impl Parlor {
 
     /// The note after a move that hands the turn over.
     ///
-    /// Between two people it says whose hands the reader goes to. Against
-    /// the computer there is nothing to say: the reply is already on the
-    /// board by the time the panel has repainted.
+    /// Between two people it says whose hands the reader goes to, and that
+    /// the board has turned round for them when it has. The turn used to be
+    /// said in the status line beside the score, where at the larger text
+    /// sizes "board turned" was cut to "board…"; said here, it is read at the
+    /// moment the board turns, and the status keeps room for whose move it
+    /// is. Against the computer there is nothing to say: the reply is already
+    /// on the board by the time the panel has repainted.
     fn handed_over(&self, title: Title, next: i8) -> String {
         match self.mode {
+            Mode::PassAndPlay if self.rotate && next == -1 => format!(
+                "Board turned. Pass the reader to {}.",
+                title.side_name(next)
+            ),
             Mode::PassAndPlay => format!("Pass the reader to {}.", title.side_name(next)),
             Mode::Solo => String::new(),
         }
@@ -526,7 +534,7 @@ impl Parlor {
     fn menu_prefix(&self) -> ScreenBuilder {
         let screen = ScreenBuilder::new("parlor-menu")
             .top_bar("Parlor")
-            .heading("Classic board games")
+            .heading("Board games")
             .secondary("Play the computer, or pass the reader between two players.");
         if self.position.is_some() {
             // The game already in progress is the first thing a reader who put
@@ -618,7 +626,7 @@ impl Parlor {
             .build()
     }
 
-    fn status(&self, position: &Position, rotated: bool) -> String {
+    fn status(&self, position: &Position) -> String {
         let title = position.title();
         if let Some(score) = position.terminal() {
             let winner = match score.cmp(&0) {
@@ -635,12 +643,6 @@ impl Parlor {
         match self.mode {
             Mode::Solo if position.turn() == self.human_side => "Your move".to_owned(),
             Mode::Solo => "The computer's move".to_owned(),
-            Mode::PassAndPlay if rotated => {
-                format!(
-                    "{} to move · board turned",
-                    title.side_name(position.turn())
-                )
-            }
             Mode::PassAndPlay => format!("{} to move", title.side_name(position.turn())),
         }
     }
@@ -681,7 +683,7 @@ impl Parlor {
         // between them have to read was the first thing to go.
         let base = ScreenBuilder::new("parlor-board")
             .game_top_bar(title.name(), self.menu, [(CHANGE_GAME, "Change game")])
-            .section_with_value(self.status(position, rotated), self.score(title));
+            .section_with_value(self.status(position), self.score(title));
         // What the other side just did, in words, beside the same move marked
         // on the board. Nobody can see the computer's tap, and a board of
         // identical discs does not say which one moved.
@@ -2818,7 +2820,11 @@ mod tests {
             words.contains("Black placed the marked disc and turned one white disc."),
             "{words}"
         );
-        assert!(words.contains("Pass the reader to White."), "{words}");
+        assert!(
+            words.contains("Board turned. Pass the reader to White."),
+            "{words}"
+        );
+        assert!(words.contains("White to move"), "{words}");
     }
 
     #[test]
@@ -3101,8 +3107,11 @@ mod tests {
         // A board shrinks to fit, and everything around it does not: the
         // score card, the line saying what just happened, the three controls
         // under the board. This is the sweep that says so at the sizes a
-        // reader can actually choose.
-        let chrome = Chrome::default();
+        // reader can actually choose, under the status band the reader draws
+        // above every screen. Upright only: held sideways, a square board and
+        // the lines around it do not fit a Clara at any text size, and that
+        // needs a layout of its own with the board beside the controls.
+        let chrome = Chrome::measuring(true);
         let mut failures = Vec::new();
         for scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
@@ -3150,6 +3159,26 @@ mod tests {
                     play_one_move(&mut app);
                 }
                 let board = app.screen_for(&context);
+                // One move more hands the reader to the second player, whose
+                // board is drawn turned round. Whose move it is must be read
+                // whole beside the score, never cut short.
+                play_one_move(&mut app);
+                let handed_over = app.screen_for(&context);
+                if let Some(position) = &app.position {
+                    let status = app.status(position);
+                    let layout = handed_over.layout_with(&metrics, &chrome);
+                    let said = layout
+                        .nodes
+                        .iter()
+                        .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Section))
+                        .and_then(|node| node.text_lines.first().cloned());
+                    if said.as_deref() != Some(status.as_str()) {
+                        failures.push(format!(
+                            "{scale:?} {} {mode:?}: status {status:?} drawn as {said:?}",
+                            title.name()
+                        ));
+                    }
+                }
                 app.handle_action(action_id(chrome::MORE));
                 let menu = app.screen_for(&context);
                 app.handle_action(ActionId::BACK);
@@ -3169,6 +3198,7 @@ mod tests {
                 for (name, screen) in [
                     ("setup", setup),
                     ("board", board),
+                    ("board handed over", handed_over),
                     ("menu", menu),
                     ("record", record),
                     ("rules", rules),

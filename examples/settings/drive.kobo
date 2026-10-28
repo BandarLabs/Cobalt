@@ -2,13 +2,16 @@
 # network says so in words, and its banner offers Join Wi-Fi, which opens
 # the Wi-Fi page. The channel and the automatic updates are runtime controls
 # on a screen of their own, and changing the channel still asks first.
+# At the largest text size About is on the second page of the list, so the
+# route turns to it, and turns back for Software update.
 wait-for Settings
-expect Model, versions and Wi-Fi address
-tap About
+tap-paged Model, versions and Wi-Fi address
 wait-for From your computer
 expect kobo setup
 shot settings-about
 tap-id 4294967295
+wait-for Settings
+maybe-tap-id previous
 wait-for Software update
 tap Software update
 wait-for Check for updates

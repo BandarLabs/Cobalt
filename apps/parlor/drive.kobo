@@ -1,4 +1,4 @@
-expect Classic board games
+expect Board games
 expect Play the computer, or pass the reader between two players.
 tap Reversi
 expect Computer strength
@@ -52,8 +52,8 @@ expect Turns for each player
 tap Start game
 expect Black to move
 tap-id cell-19
-expect White to move · board turned
-expect Pass the reader to White.
+expect White to move
+expect Board turned. Pass the reader to White.
 expect Black placed the marked disc and turned one white disc.
 expect-missing South
 expect-missing North

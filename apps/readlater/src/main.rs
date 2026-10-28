@@ -164,6 +164,20 @@ struct ReadLater {
 
 /// The fix for every account problem, said where the owner reads it.
 const ACCOUNT_FIX: &str = "Run kobo connect readlater on your computer.";
+
+/// What Check again says when the computer has sent nothing. The banner that
+/// says it carries Check again itself, so the sentence need not tell the
+/// owner to check again.
+const NO_SIGN_IN_YET: &str = "No sign-in has arrived yet.";
+
+/// How much of the first-run screen the panel has room for, most first.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Marked,
+    Plain,
+    Compact,
+}
+
 /// Where a Wallabag server makes API clients, under the owner's own address.
 /// `kobo connect readlater` asks for a client's ID and secret, and this is the
 /// page that makes one.
@@ -448,28 +462,58 @@ impl ReadLater {
         )
     }
 
-    fn queue_screen(&self, context: &Context) -> kobo_sdk::Screen {
-        if !self.ready() {
+    /// The first-run screen: the one computer command and Check again.
+    ///
+    /// The login asks for nothing once it starts: the server, the API client
+    /// and the account all go on its command line, and the password comes
+    /// from the environment. A shorter command here read better and failed
+    /// with a usage line, and the whole of it wraps past the foot of the
+    /// panel at the larger text sizes, so this sends the reader to the guide
+    /// that prints it complete, beside what each value is.
+    ///
+    /// Once a check has found nothing, Check again is the action of the
+    /// banner that says so, and the button under the command goes, so it is
+    /// offered once. Where the panel still has no room, held sideways at the
+    /// larger text sizes, the bookmark mark goes first and then the heading
+    /// is set as a section over the full width; the words and the control
+    /// stay at every size.
+    fn connect_screen(&self, context: &Context) -> kobo_sdk::Screen {
+        const TEXT: &str = "Sign in from a computer. It asks for your server, a Wallabag API client and your password.";
+        let checked = self.notice.as_deref() == Some(NO_SIGN_IN_YET);
+        let build = |shape: Shape| {
             let mut page = ScreenBuilder::new("readlater").top_bar("Read Later");
             if let Some(note) = &self.notice {
                 page = page.banner(BannerLevel::Attention, note);
+                if checked {
+                    page = page.banner_action("check-again", "Check again");
+                }
             }
-            return page
-                // The login asks for nothing once it starts: the server, the
-                // API client and the account all go on its command line, and
-                // the password comes from the environment. A shorter command
-                // here read better and failed with a usage line, and the whole
-                // of it wraps past the foot of the panel at the larger text
-                // sizes, so this sends the reader to the guide that prints it
-                // complete, beside what each value is.
-                .splash(
-                    Some(Glyph::Bookmark),
-                    "Connect Wallabag",
-                    "Sign in from a computer. This asks for your server, a Wallabag API client and your password, then sends the sign-in here.",
-                )
-                .command("kobo connect readlater")
-                .primary_button("check-again", "Check again")
-                .build();
+            page = match shape {
+                Shape::Marked => page.splash(Some(Glyph::Bookmark), "Connect Wallabag", TEXT),
+                Shape::Plain => page.splash(None, "Connect Wallabag", TEXT),
+                Shape::Compact => page.section("Connect Wallabag").secondary(TEXT),
+            }
+            .command("kobo connect readlater");
+            if !checked {
+                page = page.primary_button("check-again", "Check again");
+            }
+            page.build()
+        };
+        let metrics = context.metrics();
+        [Shape::Marked, Shape::Plain]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| build(Shape::Compact))
+    }
+
+    fn queue_screen(&self, context: &Context) -> kobo_sdk::Screen {
+        if !self.ready() {
+            return self.connect_screen(context);
         }
         let mut page = self.queue_prefix();
         let rows = self.queue_rows(context);
@@ -817,10 +861,7 @@ impl KoboApp for ReadLater {
             // A missing file is the usual answer before the computer step,
             // and the owner who asked is told so rather than shown nothing.
             if checking && self.session.is_none() && self.notice.is_none() {
-                self.notice = Some(
-                    "No sign-in has arrived from the computer yet. Run the command, then check again."
-                        .into(),
-                );
+                self.notice = Some(NO_SIGN_IN_YET.into());
             }
         } else if let Some(snapshot) = self
             .snapshot
@@ -1192,7 +1233,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, Orientation, CLARA_BW_METRICS};
     fn reading_list(count: usize) -> ReadLater {
         ReadLater {
             server: "https://bag.example".into(),
@@ -1826,25 +1867,52 @@ mod tests {
         // an address that cannot sign in by itself.
         let guide = include_str!("../cobalt-app.json");
         assert!(guide.contains("kobo connect readlater"), "{guide}");
+        // Held either way, before a check and after one that found nothing:
+        // the banner that check adds is the tallest thing on the screen, and
+        // Check again moves onto it rather than being offered twice.
         for text_scale in kobo_ui::TextScale::STEPS {
-            let metrics = kobo_sdk::DisplayMetrics {
-                text_scale,
-                ..CLARA_BW_METRICS
-            };
-            let runner = kobo_sdk::AppRunner::with_metrics(ReadLater::default(), metrics);
-            let app = runner.app();
-            assert!(!app.ready());
-            let screen = app.queue_screen(&runner.context());
-            let shown = format!("{screen:?}");
-            assert!(shown.contains("kobo connect readlater"), "{shown}");
-            assert!(shown.contains("Check again"), "{shown}");
-            assert!(!shown.contains("Add address"), "{shown}");
-            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
-            assert!(
-                diagnostics.issues.is_empty(),
-                "{text_scale:?}: {:?}",
-                diagnostics.issues
-            );
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = kobo_sdk::AppRunner::with_metrics(ReadLater::default(), metrics);
+                for checked in [false, true] {
+                    let app = ReadLater {
+                        notice: checked.then(|| NO_SIGN_IN_YET.to_owned()),
+                        ..ReadLater::default()
+                    };
+                    assert!(!app.ready());
+                    let at = format!("{text_scale:?} {orientation:?} checked {checked}");
+                    let screen = app.queue_screen(&runner.context());
+                    let shown = format!("{screen:?}");
+                    assert!(shown.contains("kobo connect readlater"), "{at}: {shown}");
+                    assert!(shown.contains("a Wallabag API client"), "{at}: {shown}");
+                    assert!(!shown.contains("Add address"), "{at}: {shown}");
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{at}: {:?}",
+                        diagnostics.issues
+                    );
+                    let offered = diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .filter(|node| node.kind.acts_on() == Some(action_id("check-again")))
+                        .count();
+                    assert_eq!(offered, 1, "{at}");
+                    let on_banner = screen.nodes.iter().any(|node| {
+                        matches!(
+                            node,
+                            kobo_ui::Node::Banner { action: Some(action), .. }
+                                if action.action == action_id("check-again")
+                        )
+                    });
+                    assert_eq!(on_banner, checked, "{at}");
+                }
+            }
         }
         let mut runner = kobo_sdk::AppRunner::new(ReadLater::default());
         runner.start();

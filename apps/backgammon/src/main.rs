@@ -1924,21 +1924,23 @@ fn fitted_playing_screen(game: &Game, bands: Option<Bands>, context: &Context) -
 }
 
 /// The status under the board at each level of detail.
+///
+/// The score itself is not here: it sits beside whose move it is, above the
+/// board, where it is read at every text size. It used to be the last row of
+/// these facts, and at the larger sizes it was the first thing dropped, so
+/// the reader who needed the biggest type played a match without its score.
 fn facts_for(game: &Game, detail: Detail) -> Vec<(&'static str, String)> {
     match detail {
         Detail::Full => vec![
             ("Dice", dice_line(game)),
             ("Cube", cube_line(game)),
-            ("Score", score_line(game)),
+            ("To win", points(game.match_to)),
         ],
         Detail::Short => vec![
             ("Dice", dice_line(game)),
             (
-                "Score",
-                format!(
-                    "{}–{} to {} · cube {}",
-                    game.score[0], game.score[1], game.match_to, game.cube
-                ),
+                "To win",
+                format!("{} · cube {}", points(game.match_to), game.cube),
             ),
         ],
         Detail::Dice => vec![("Dice", dice_line(game))],
@@ -1949,11 +1951,11 @@ fn facts_for(game: &Game, detail: Detail) -> Vec<(&'static str, String)> {
 fn playing_screen(game: &Game, bands: Option<Bands>, detail: Detail) -> Screen {
     let mut screen = ScreenBuilder::new("backgammon")
         .game_top_bar("Backgammon", game.menu, MORE_ITEMS)
-        // Whose move it is, first and on its own line. It used to be the first
-        // clause of a line that also carried the score, the cube and the dice,
-        // which is the one thing somebody picking the reader up again needs to
-        // read at a glance.
-        .section(turn_line(game));
+        // Whose move it is, first and on its own line, with the score at the
+        // far end of it. It used to be the first clause of a line that also
+        // carried the score, the cube and the dice, which is the one thing
+        // somebody picking the reader up again needs to read at a glance.
+        .section_with_value(turn_line(game), score_pair(game));
     if let Some(bands) = bands {
         screen = screen.full_bleed_picture(bands.top, 10);
     }
@@ -3534,6 +3536,8 @@ mod tests {
     /// and where the cube stands.
     #[test]
     fn the_board_states_the_turn_the_dice_and_the_cube_at_every_text_size() {
+        // Upright only: held sideways the board is taller than a Clara at any
+        // text size, which needs a layout of its own.
         for text_scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
                 text_scale,
@@ -3577,6 +3581,10 @@ mod tests {
                     View::Board => {
                         assert!(drawn.contains("to play"), "{text_scale:?}: {drawn}");
                         assert!(drawn.contains("5 and 3"), "{text_scale:?}: {drawn}");
+                        assert!(
+                            drawn.contains("White 3 · Black 1"),
+                            "{text_scale:?} lost the score: {drawn}"
+                        );
                     }
                     View::Match => {
                         assert!(drawn.contains("Points to win"), "{drawn}");
@@ -4063,10 +4071,14 @@ mod large_text_tests {
                 text.contains("Computer opened with"),
                 "{text_scale:?}: {text}"
             );
+            assert!(
+                text.contains("Your move") && text.contains("You 0 · Computer 0"),
+                "{text_scale:?} lost whose move it is or the score: {text}"
+            );
             if text.contains("Cube") {
                 assert!(
-                    text.contains("first to 5"),
-                    "{text_scale:?} lost the score: {text}"
+                    text.contains("To win 5 points"),
+                    "{text_scale:?} lost the match length: {text}"
                 );
             }
         }

@@ -608,11 +608,18 @@ mod tests {
     }
     #[test]
     fn shelf_recovery_states_fit_all_text_sizes_with_actual_fonts() {
-        for text_scale in kobo_ui::TextScale::STEPS {
+        for (text_scale, orientation) in kobo_ui::TextScale::STEPS.into_iter().flat_map(|scale| {
+            [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ]
+            .map(|orientation| (scale, orientation))
+        }) {
             let metrics = kobo_sdk::DisplayMetrics {
                 text_scale,
                 ..kobo_ui::CLARA_BW_METRICS
-            };
+            }
+            .oriented(orientation);
             let _runner =
                 kobo_sdk::AppRunner::with_metrics(super::super::Calibre::default(), metrics);
             let mut reading = ready();
@@ -640,7 +647,7 @@ mod tests {
                     .diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
                 assert!(
                     diagnostics.issues.is_empty(),
-                    "{state} {text_scale:?}: {:?}",
+                    "{state} {text_scale:?} {orientation:?}: {:?}",
                     diagnostics.issues
                 );
             }

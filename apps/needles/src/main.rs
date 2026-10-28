@@ -225,7 +225,7 @@ impl Needles {
 
     fn screen(&self, context: &Context) -> Screen {
         match self.route {
-            Route::Project => self.project(),
+            Route::Project => self.project(context),
             Route::Projects => self.projects_screen(context).0,
             Route::Library => self.library(context).0,
             Route::Pattern => self.pattern(),
@@ -262,7 +262,29 @@ impl Needles {
         self.projects.len() - 1
     }
 
-    fn project(&self) -> Screen {
+    /// The counter, with the shortcut to a sent pattern when there is room.
+    ///
+    /// A notice over the counter, such as the one saying Undo brings a
+    /// restarted section back, pushed Undo and +1 row off the panel at the
+    /// larger text sizes. The shortcut is the one thing here with another
+    /// way in (Library, then a pattern, then Read a pattern), so it gives
+    /// way first; then the bar under the repeat, which draws what the
+    /// Repeat line already says. The count and its controls never go.
+    fn project(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        let fits = |screen: &Screen| {
+            !screen
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        };
+        [(true, true), (false, true)]
+            .into_iter()
+            .map(|(shortcut, bar)| self.project_with(shortcut, bar))
+            .find(fits)
+            .unwrap_or_else(|| self.project_with(false, false))
+    }
+
+    fn project_with(&self, shortcut: bool, bar: bool) -> Screen {
         // Projects and the pattern library are places, so they are marks in
         // the bar rather than two more boxes in a wall of eight.
         let mut screen = ScreenBuilder::new("needles-project")
@@ -274,7 +296,7 @@ impl Needles {
         }
         let counter = self.counter();
         let project = &self.projects[self.current];
-        screen
+        let screen = screen
             .section(project.name.as_str())
             // The row count is the thing a knitter glances at between
             // stitches, so it is the heading rather than one fact among four.
@@ -296,9 +318,10 @@ impl Needles {
                         format!("row {} of {}", counter.repeat, counter.repeat_total)
                     },
                 ),
-            ])
-            // Where in the repeat the row sits, drawn rather than only said.
-            .progress(if counter.repeat == 0 {
+            ]);
+        // Where in the repeat the row sits, drawn rather than only said.
+        let screen = if bar {
+            screen.progress(if counter.repeat == 0 {
                 0
             } else {
                 #[allow(clippy::integer_division)]
@@ -307,12 +330,16 @@ impl Needles {
                     .try_into()
                     .unwrap_or(100)
             })
-            // The count is what this screen is for, so the controls sit at
-            // the foot where a thumb rests between stitches, and +1 row is
-            // the one filled control: it is pressed a hundred times for every
-            // press of anything else, and it was the same small box as six
-            // things done once a project.
-            .rows([(
+        } else {
+            screen
+        };
+        // The count is what this screen is for, so the controls sit at the
+        // foot where a thumb rests between stitches, and +1 row is the one
+        // filled control: it is pressed a hundred times for every press of
+        // anything else, and it was the same small box as six things done
+        // once a project.
+        let screen = if shortcut {
+            screen.rows([(
                 "read",
                 "Read a pattern",
                 match self.shelved.len() {
@@ -322,6 +349,10 @@ impl Needles {
                 },
                 Glyph::Note,
             )])
+        } else {
+            screen
+        };
+        screen
             .fill()
             .buttons([
                 ("section", "Change section"),
@@ -1803,11 +1834,62 @@ mod tests {
         assert_eq!(SECTIONS, ["Body", "Sleeve", "Finishing"]);
     }
 
+    /// A notice over the counter used to push Undo and +1 row off the panel
+    /// at the larger text sizes: restarting a section, the one place Undo
+    /// matters most, was refused by the reader at the largest size.
+    #[test]
+    fn the_counter_keeps_undo_and_the_increment_under_any_notice_at_every_text_size() {
+        let notices = [
+            None,
+            Some("Leg starts again at row 0. Undo brings back row 24."),
+            Some("That pattern is no longer on this Kobo. Send it again with kobo needles push."),
+            Some("This pattern could not be read. Send it again with kobo needles push."),
+        ];
+        // Upright only: held sideways the counter's stack of controls is
+        // taller than a Clara at every text size, which needs a layout of
+        // its own with the controls beside the count.
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Needles::default(), metrics);
+            for notice in notices {
+                let app = Needles {
+                    notice: notice.map(str::to_owned),
+                    ..Needles::default()
+                };
+                let screen = app.screen(&runner.context());
+                let chrome = Chrome::measuring(true);
+                let issues = screen.diagnostics(&metrics, &chrome).issues;
+                assert!(issues.is_empty(), "{text_scale:?} {notice:?}: {issues:?}");
+                let layout = screen.layout_with(&metrics, &chrome);
+                for action in ["undo", "plus", "section", "repeat-total", "restart-section"] {
+                    assert!(
+                        layout.rect_of_action(action_id(action)).is_some(),
+                        "{text_scale:?} {notice:?}: {action}"
+                    );
+                }
+                let drawn = format!("{screen:?}");
+                assert!(drawn.contains("Row 0"), "{text_scale:?} {notice:?}");
+                if let Some(notice) = notice {
+                    assert!(drawn.contains(notice), "{text_scale:?}");
+                }
+                if notice.is_none() {
+                    assert!(
+                        layout.rect_of_action(action_id("read")).is_some(),
+                        "{text_scale:?}: the shortcut to a pattern went with no notice"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn undo_sits_beside_the_increment_it_reverses() {
         let app = Needles::default();
         let layout = app
-            .project()
+            .project(&Context::default())
             .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let plus = layout
             .rect_of_action(action_id("plus"))
@@ -1828,7 +1910,7 @@ mod tests {
         for _ in 0..7 {
             app.on_action(&mut context, action_id("plus"));
         }
-        let drawn = format!("{:?}", app.project());
+        let drawn = format!("{:?}", app.project(&Context::default()));
         assert!(
             drawn.contains("Heading") && drawn.contains("Row 7"),
             "the row count is not the heading: {drawn}"
@@ -1843,7 +1925,7 @@ mod tests {
         for _ in 0..6 {
             app.on_action(&mut context, action_id("plus"));
         }
-        let drawn = format!("{:?}", app.project());
+        let drawn = format!("{:?}", app.project(&Context::default()));
         assert!(
             drawn.contains("Progress") && drawn.contains("50"),
             "the repeat progress is not drawn: {drawn}"
@@ -1854,7 +1936,7 @@ mod tests {
     fn counter_target_is_large_on_clara() {
         let app = Needles::default();
         let layout = app
-            .project()
+            .project(&Context::default())
             .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let plus = layout
             .rect_of_action(action_id("plus"))
@@ -1865,7 +1947,7 @@ mod tests {
         app.on_action(&mut context, action_id("library"));
         assert_eq!(app.route, Route::Library);
         assert!(app
-            .project()
+            .project(&Context::default())
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
             .issues
             .is_empty());
