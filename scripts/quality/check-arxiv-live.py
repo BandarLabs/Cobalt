@@ -8,6 +8,10 @@ No fixture, no mock: the API and HTML bases are the app's own defaults
 every browser carries. One read-only session, a handful of GETs. The
 deterministic fixture harness (check-arxiv-sim.py) stays the CI gate; this
 script exists so the proof the user sees is real papers.
+
+`--no-network` runs the same taps with the simulator offline, as far as the
+listing's offline notice, so the route can be kept current without a single
+request leaving the machine.
 """
 import argparse
 import json
@@ -24,12 +28,16 @@ from simulator_cli import build_cli, verify_cli
 ROOT = Path(__file__).resolve().parents[2]
 
 SUBJECT = "Artificial Intelligence"
+# The heading the subject sits under on the first screen.
+HEADING = "Computer Science"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scale", default="default")
+    parser.add_argument("--no-network", action="store_true",
+                        help="drive the taps offline, stopping at the listing")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -52,6 +60,8 @@ def main():
         for name in ("KOBO_SIM_TRUST_DIR", "ARXIV_API_BASE", "ARXIV_HTML_BASE",
                      "KOBO_SIM_OFFLINE"):
             env.pop(name, None)
+        if args.no_network:
+            env["KOBO_SIM_OFFLINE"] = "1"
 
         process = None
         address = None
@@ -125,16 +135,38 @@ def main():
                 return False
 
             def rows(text):
-                # dump prints one control per line as:  kind  ["line", "line"]
+                # dump prints one control per line as:  kind  ["line", "line"],
+                # and a paper is a row title, not the clock or a bar control.
                 return [line for line in text.splitlines()
-                        if re.search(r"\[\"", line)]
+                        if line.strip().startswith("RowTitle")]
 
             def quoted(text):
                 return re.findall(r'"((?:[^"\\]|\\.)*)"', text)
 
             try:
                 start()
-                drive("wait-for " + SUBJECT, "wait-idle", timeout=300)
+                drive("wait-for " + HEADING, "wait-idle", timeout=300)
+                drive("tap " + HEADING, "wait-for " + SUBJECT, "wait-idle",
+                      timeout=300)
+
+                if args.no_network:
+                    drive("tap " + SUBJECT, timeout=60, soft=True)
+                    if not wait_until(
+                            lambda text: "This reader is not on a network" in text,
+                            seconds=240, advance_clock=True):
+                        raise RuntimeError("the offline listing said nothing; on screen:\n"
+                                           + screen_text())
+                    capture("arxiv-live-offline-taps")
+                    result["server"] = "none (simulator offline)"
+                    result["checks"].append(dict(
+                        name="taps reach the listing", status="passed",
+                        detail=f"{HEADING} then {SUBJECT} reached the listing, "
+                               "which said the reader is not on a network "
+                               "and offered Try again"))
+                    result["status"] = "passed"
+                    (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+                    print(json.dumps(result, indent=2))
+                    return
 
                 # The live listing: real titles, fetched now.
                 drive("tap " + SUBJECT, timeout=60, soft=True)
@@ -256,6 +288,11 @@ def main():
                                       seconds=60):
                         raise RuntimeError("the follow never landed")
                 capture("arxiv-live-followed")
+                # The listing was reached through its heading, so Back goes
+                # to the heading first and then to the first screen.
+                drive("tap Back", timeout=60, soft=True)
+                if not wait_until(lambda text: "cs.AI" in text, seconds=60):
+                    raise RuntimeError("the heading never came back")
                 result["checks"].append(dict(
                     name="live follow marks the subject", status="passed",
                     detail="the live listing offered Follow this subject and "

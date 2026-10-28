@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Drive the arXiv app against a local TLS fixture posing as the arXiv API:
-browse into a subject, fetch the listing feed, open a paper, and read its
-abstract - through the actual simulator with real taps.
+browse a heading into a subject, fetch the listing feed, open a paper, read
+it, keep it with its figures, and reopen it with the network gone - through
+the actual simulator with real taps.
 
 The fixture serves a synthetic Atom feed shaped like the parser test fixture
 in apps/arxiv/src/atom.rs. No arXiv traffic leaves the machine; TLS is
@@ -20,6 +21,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 
 from simulator_cli import build_cli, verify_cli
 
@@ -210,8 +212,15 @@ def main():
         config = private / "config"
         env.update(KOBO_STREAM_CONFIG_DIR=str(config),
                    KOBO_SIM_TRUST_DIR=str(config / "trust"))
-        subprocess.run([str(cli), "stream", "init", "--host", "127.0.0.1"],
-                       cwd=ROOT, env=env, check=True, capture_output=True, timeout=60)
+        # Only the computer's identity is wanted here: its certificate is what
+        # the fixture serves TLS with. Naming the loopback as the reader stops
+        # init scanning the network for a real one, and the pairing it then
+        # cannot finish is expected, so its exit status is not the test.
+        subprocess.run([str(cli), "stream", "init", "--device", "127.0.0.1",
+                        "--host", "127.0.0.1"],
+                       cwd=ROOT, env=env, check=False, capture_output=True, timeout=60)
+        if not (config / "stream/cert.pem").is_file():
+            raise RuntimeError("kobo stream init made no certificate for the fixture")
 
         archive = Archive()
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0),
@@ -235,11 +244,15 @@ def main():
                     process.wait(timeout=15)
                 process = None
 
-            def start():
+            def start(offline=False):
                 nonlocal process, address
                 offset = (out / "simulator.log").stat().st_size
+                # Offline is the whole reader without a network, which is how
+                # a kept paper is meant to be read: every request fails the
+                # way it does on a train.
+                session = dict(env, KOBO_SIM_OFFLINE="1") if offline else env
                 process = subprocess.Popen([str(cli), "dev", "127.0.0.1:0"],
-                                           cwd=ROOT / "apps/arxiv", env=env,
+                                           cwd=ROOT / "apps/arxiv", env=session,
                                            stdout=log, stderr=log,
                                            start_new_session=True)
                 deadline = time.monotonic() + 300
@@ -275,6 +288,23 @@ def main():
                     raise RuntimeError("dump step failed; see simulator.log")
                 return probe.stdout
 
+            def top_bar(text):
+                match = re.search(r'TopBarTitle\s+\["((?:[^"\\]|\\.)*)"', text)
+                return match.group(1) if match else None
+
+            def simulator(endpoint):
+                with urllib.request.urlopen(f"http://{address}{endpoint}",
+                                            timeout=30) as answer:
+                    return json.loads(answer.read())
+
+            def turn_back_until(anchor, max_turns=12):
+                for _ in range(max_turns):
+                    if anchor in screen_text():
+                        return
+                    drive("input gpio 1 193 1", "input gpio 1 193 0",
+                          "clock advance 1500", "wait-idle")
+                raise AssertionError(f"{anchor!r} never came back onto the panel")
+
             def turn_until(anchor, shot_name, max_turns=10, settle=2):
                 # One page at a time with the clock advancing past the pacing
                 # sleeps, until the anchor is on the panel. The picture under
@@ -293,11 +323,26 @@ def main():
 
             try:
                 start()
-                # The subject list is the way in; a tap fetches the listing.
-                # The frozen evidence clock also paces request spacing, so it
-                # advances before the feed is waited on.
-                drive("wait-for Artificial Intelligence", "wait-idle",
-                      timeout=300)
+                # The first screen is arXiv's own headings. A category sits
+                # under its heading, not in one list of a hundred and fifty.
+                drive("wait-for Computer Science", "wait-for 40 subjects",
+                      "wait-idle", timeout=300)
+                home = screen_text()
+                assert "Artificial Intelligence" not in home, \
+                    "a category was listed on the first screen"
+                capture("arxiv-subjects")
+                drive("tap Computer Science", "wait-for Artificial Intelligence",
+                      "wait-for cs.AI", "wait-idle", timeout=300)
+                capture("arxiv-group")
+                result["checks"].append(dict(
+                    name="categories under their headings", status="passed",
+                    detail="the first screen lists arXiv's headings with how "
+                           "many categories each holds, and Computer Science "
+                           "opens its categories (panel shots arxiv-subjects, "
+                           "arxiv-group)"))
+
+                # A category's listing. The frozen evidence clock also paces
+                # request spacing, so it advances before the feed is waited on.
                 drive("tap Artificial Intelligence", "clock advance 1500",
                       "wait-for Attention Reconsidered",
                       "wait-for A Second Fixture Paper",
@@ -307,12 +352,11 @@ def main():
                 assert archive.feeds == 1, "the listing feed was fetched once"
                 result["checks"].append(dict(
                     name="subject listing over TLS", status="passed",
-                    detail="tapping a subject fetched the fixture feed over TLS "
-                           "and all three parsed papers rendered as rows"))
+                    detail="tapping a category fetched the fixture feed over "
+                           "TLS and all three parsed papers rendered as rows"))
 
                 # Opening a paper needs no network: the abstract was in the
-                # feed. The first page carries the title as a heading, each
-                # fact on a muted line of its own, and the prose beneath.
+                # feed. The bar names the paper in words, not by its number.
                 drive("tap Attention Reconsidered",
                       "wait-for We revisit the transformer",
                       "wait-for Ada Lovelace", "wait-for cs.LG, cs.CL",
@@ -321,39 +365,36 @@ def main():
                       timeout=300)
                 capture("arxiv-abstract")
                 assert archive.feeds == 1, "opening a paper fetches nothing"
+                bar = top_bar(screen_text())
+                assert bar == "Attention Reconsidered", f"the bar said {bar!r}"
                 result["checks"].append(dict(
-                    name="abstract separates title, facts and prose",
+                    name="abstract titled in the bar, facts and prose below",
                     status="passed",
-                    detail="the first page shows the title, the byline, the "
-                           "categories, the journal reference and the comment "
-                           "as distinct elements above the paginated abstract"))
+                    detail="the bar carries the paper's title rather than "
+                           "2609.00042v2; the first page shows the title, the "
+                           "byline, the categories, the journal reference and "
+                           "the comment above the abstract"))
 
-                # Full text: the fetching state shows while the fixture's
-                # answer is still in the air (the evidence clock is manual,
-                # so the pacing sleep has not fired yet).
                 drive("tap Full text", "clock advance 1500",
                       "wait-for Paragraph 0", "wait-idle", timeout=300)
                 capture("arxiv-reading")
                 assert archive.htmls == 1, "the full text was fetched once"
+                bar = top_bar(screen_text())
+                assert bar in (None, "Attention Reconsidered"), \
+                    f"the reader's bar said {bar!r}"
                 result["checks"].append(dict(
-                    name="downloading state then full text", status="passed",
+                    name="full text in the reader", status="passed",
                     detail="the fixture's HTML fetched over TLS opened "
-                           "straight in the reader (the fetching state itself "
-                           "is unit-tested; the fixture answers within one "
-                           "drive step, too fast to film)"))
+                           "straight in the reader, titled in words"))
 
-                # Read a few pages with the page-turn button, then leave.
+                # Read a few pages, then leave and keep it. Back from the
+                # reader lets the rendering go, so keeping fetches it again
+                # and opens it at the place saved on the way out.
                 drive("input gpio 1 194 1", "input gpio 1 194 0",
                       "input gpio 1 194 1", "input gpio 1 194 0",
                       "input gpio 1 194 1", "input gpio 1 194 0")
                 drive("tap Back", "wait-for Keep for offline", "wait-idle",
                       timeout=300)
-
-                # Keep it, and the listing row says so.
-                # Back from the reader lets the rendering go, so keeping
-                # fetches it again; the manual clock advances for that fetch.
-                # The landed paper opens in the reader - at the place that
-                # was saved on the way out, not at the top.
                 drive("tap Keep for offline", "clock advance 1500",
                       "wait-for Paragraph 44", "wait-for 4 of 5", "wait-idle",
                       timeout=300)
@@ -365,24 +406,29 @@ def main():
                 result["checks"].append(dict(
                     name="listing shows the kept paper offline",
                     status="passed",
-                    detail="after Keep for offline, the listing row carries "
-                           "the offline badge"))
+                    detail="once the kept file was acknowledged, the listing "
+                           "row carries the offline badge"))
 
-                # The library row says how far through it was read.
-                drive("tap Back", "wait-for Artificial Intelligence",
-                      "wait-idle", timeout=300)
-                drive("tap Library", "wait-for %", "wait-idle", timeout=300)
+                # Back from a listing reached through a heading is the
+                # heading, and the heading's Back is the first screen.
+                drive("tap Back", "wait-for cs.AI", "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
+                drive("tap Library", "wait-for %",
+                      "wait-for Ready offline: 1 paper", "wait-idle",
+                      timeout=300)
                 capture("arxiv-library")
                 result["checks"].append(dict(
-                    name="library shows reading progress", status="passed",
-                    detail="the kept row carries the size and a reading "
-                           "percentage recorded when the reader saved the "
-                           "place on the way out"))
-                # A paper carrying a displayed formula, a table and a
-                # figure keeps all three in the reader: the formula is
-                # typeset from its LaTeX, the table stays columnar, and the
-                # figure is fetched from beside the paper and drawn.
-                drive("tap Back", "wait-for Artificial Intelligence",
+                    name="library says what is ready offline",
+                    status="passed",
+                    detail="Library opens with 'Ready offline: 1 paper, ...' "
+                           "and the kept row carries its size and a reading "
+                           "percentage"))
+
+                # A paper carrying a displayed formula, a table and figures.
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
+                drive("tap Computer Science", "wait-for Artificial Intelligence",
                       "wait-idle", timeout=300)
                 drive("tap Artificial Intelligence", "clock advance 1500",
                       "wait-for A Fixture of Formulas and Tables",
@@ -400,76 +446,133 @@ def main():
                 assert archive.pngs == 1, "the figure was fetched once"
                 result["checks"].append(dict(
                     name="formulas, tables and figures survive", status="passed",
-                    detail="a paper with a displayed formula, a columnar table "
-                           "and a figure kept all three: the formula typeset "
-                           "from its LaTeX, the table read as rows and the "
-                           "figure fetched over TLS and drawn (panel shots "
-                           "arxiv-formula/-table/-figure)"))
-                # A figure that never comes reads as its caption, and the
-                # paper around it is untouched.
+                    detail="the formula typeset from its LaTeX, the table read "
+                           "as rows and the figure fetched over TLS and drawn "
+                           "(panel shots arxiv-formula/-table/-figure)"))
                 turn_until("Figure 2", "arxiv-figure-missing", settle=4)
                 assert archive.misses == 1, "the missing figure was asked for once"
                 result["checks"].append(dict(
                     name="a failed figure fetch degrades to the caption",
                     status="passed",
-                    detail="the figure the fixture 404s drew no error and no "
-                           "placeholder frame - the page reads the caption and "
-                           "the text after it (panel shot arxiv-figure-missing)"))
+                    detail="the figure the fixture 404s drew no error; the page "
+                           "reads the caption and the text after it"))
 
-                # Everything the reader was holding survives the application
-                # being restarted outright: the kept paper is still in the
-                # library with its progress, and opening it lands at the
-                # saved place, not at the top.
+                # Keep it, which puts the figure on the reader beside it.
                 drive("tap Back", "wait-for Keep for offline", "wait-idle",
                       timeout=300)
-                drive("tap Back", "wait-for offline", "wait-idle", timeout=300)
-                drive("tap Back", "wait-for Artificial Intelligence",
-                      "wait-idle", timeout=300)
-                stop()
-                start()
-                drive("wait-for Artificial Intelligence", "wait-idle",
+                pngs_before = archive.pngs
+                drive("tap Keep for offline", "clock advance 1500",
+                      "wait-for Figure 2", "wait-idle", timeout=300)
+                for _ in range(8):
+                    drive("clock advance 1500", "wait-idle")
+                drive("tap Back", "wait-for Remove from library", "wait-idle",
                       timeout=300)
-                drive("tap Library", "wait-for 74%", "wait-idle", timeout=300)
-                capture("arxiv-restart-library")
+                drive("tap Back", "wait-idle", timeout=300)
+                if not any("offline" in line and "Maria Gauss" in line
+                           for line in screen_text().splitlines()):
+                    for _ in range(10):
+                        drive("clock advance 1500", "wait-idle")
+                        if any("offline" in line and "Maria Gauss" in line
+                               for line in screen_text().splitlines()):
+                            break
+                    else:
+                        raise AssertionError("the kept paper never said offline")
+                assert archive.pngs > pngs_before, "keeping fetched no figure"
+                drive("tap Back", "wait-for cs.AI", "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
+                drive("tap Library", "wait-for Ready offline: 2 papers",
+                      "wait-idle", timeout=300)
+                capture("arxiv-library-two")
+                result["checks"].append(dict(
+                    name="keeping a paper keeps its figures",
+                    status="passed",
+                    detail="Keep for offline fetched the paper's figure beside "
+                           "it and the library counts both papers ready "
+                           "offline (panel shot arxiv-library-two)"))
+
+                # Restart with no network at all. The library, the place in
+                # each paper and the figures are all on the reader.
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
+                stop()
+                served = (archive.feeds, archive.htmls, archive.pngs,
+                          archive.misses)
+                start(offline=True)
+                drive("wait-for Computer Science", "wait-idle", timeout=300)
+                drive("tap Library", "wait-for 64%",
+                      "wait-for Ready offline: 2 papers", "wait-idle",
+                      timeout=300)
+                capture("arxiv-offline-library")
                 drive("tap Attention Reconsidered", "clock advance 1500",
                       "wait-for 4 of 5", "wait-idle", timeout=300)
-                capture("arxiv-restart-reopened")
+                capture("arxiv-offline-reopened")
+                bar = top_bar(screen_text())
+                assert bar in (None, "Attention Reconsidered"), \
+                    f"the reader's bar said {bar!r}"
+                drive("tap Back", "wait-for 64%", "wait-idle", timeout=300)
+                drive("tap A Fixture of Formulas and Tables",
+                      "clock advance 1500", "wait-for Figure 2", "wait-idle",
+                      timeout=300)
+                turn_back_until("Figure 1")
+                for _ in range(4):
+                    drive("clock advance 1500", "wait-idle")
+                capture("arxiv-offline-figure")
+                # The plate drawn right above its caption, which is the kept
+                # figure and not the formula typeset earlier in the paper.
+                nodes = simulator("/layout")["nodes"]
+                caption = next(node for node in nodes
+                               if any("Figure 1" in line for line in node["lines"]))
+                pictures = [node for node in nodes
+                            if node["kind"].startswith(("Picture(", "FramedPicture("))
+                            and node["y"] + node["height"] <= caption["y"]
+                            and caption["y"] - node["y"] - node["height"] < 200]
+                assert pictures, "the kept figure was not on the page offline"
+                missing = [issue for issue in
+                           simulator("/diagnostics").get("issues", [])
+                           if "MissingPicture" in json.dumps(issue)]
+                assert not missing, f"the kept figure never drew: {missing}"
+                assert (archive.feeds, archive.htmls, archive.pngs,
+                        archive.misses) == served, \
+                    "the offline session reached the fixture"
                 result["checks"].append(dict(
-                    name="kept reading survives a simulator restart",
+                    name="kept papers open offline with their figures",
                     status="passed",
-                    detail="after the simulator process was killed and started "
-                           "again, the library still listed the kept paper at "
-                           "74% and opening it landed on page 4 of 5, the "
-                           "place saved before the restart (panel shots "
-                           "arxiv-restart-library/-reopened)"))
-                # Saved searches and followed subjects. Back out of the
-                # paper to the library, then to the subjects.
-                drive("tap Back", "wait-for 74%", "wait-idle", timeout=300)
-                drive("tap Back", "wait-for Artificial Intelligence",
-                      "wait-idle", timeout=300)
+                    detail="restarted with KOBO_SIM_OFFLINE=1, the library "
+                           "still listed both papers at their progress, the "
+                           "first reopened on page 4 of 5, and the second drew "
+                           "its kept figure with no request reaching the "
+                           "fixture (panel shots arxiv-offline-library, "
+                           "-reopened, -figure)"))
+                drive("tap Back", "wait-for 64%", "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
+                stop()
 
-                # Following is offered on the subject's own listing, and the
-                # bar then says so.
+                # Saved searches and followed subjects, online again.
+                start()
+                drive("wait-for Computer Science", "wait-idle", timeout=300)
+                drive("tap Computer Science", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
                 drive("tap Artificial Intelligence", "clock advance 1500",
                       "wait-for Attention Reconsidered", "wait-idle",
                       timeout=300)
-                assert archive.feeds == 3, "the followed subject refetched"
+                assert archive.feeds == 3, "the subject refetched"
                 drive("tap Follow this subject", "wait-for Stop following",
                       "wait-idle", timeout=300)
                 capture("arxiv-followed")
+                drive("tap Back", "wait-for cs.AI", "wait-idle", timeout=300)
                 drive("tap Back", "wait-for Artificial Intelligence",
-                      "wait-idle", timeout=300)
+                      "wait-for Computer Science", "wait-idle", timeout=300)
                 capture("arxiv-subjects-followed")
                 result["checks"].append(dict(
-                    name="following marks the subject",
+                    name="following pins the subject to the first screen",
                     status="passed",
                     detail="the listing offered Follow this subject and then "
-                           "said Stop following; the subject list carries the "
-                           "follow mark (panel shots arxiv-followed, "
-                           "arxiv-subjects-followed)"))
+                           "said Stop following; the first screen then leads "
+                           "with the followed subject above the headings "
+                           "(panel shots arxiv-followed, arxiv-subjects-followed)"))
 
-                # A word search is saved from its own listing, and Saved
-                # lists it beside the followed subject.
                 drive("tap Search arXiv",
                       "wait-for A phrase, an author, a title", "wait-idle",
                       timeout=300)
@@ -479,8 +582,8 @@ def main():
                       timeout=300)
                 assert archive.feeds == 4, "the typed search fetched the feed"
                 drive("tap Save this search", "wait-idle", timeout=300)
-                drive("tap Back", "wait-for Artificial Intelligence",
-                      "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
                 drive("tap Saved", "wait-for neural fields",
                       "wait-for Artificial Intelligence", "wait-idle",
                       timeout=300)
@@ -492,7 +595,6 @@ def main():
                            "followed subject are listed together in Saved "
                            "(panel shot arxiv-saved)"))
 
-                # A saved row runs its search again, without the keyboard.
                 drive("tap neural fields", "clock advance 1500",
                       "wait-for Attention Reconsidered", "wait-idle",
                       timeout=300)
@@ -503,10 +605,8 @@ def main():
                     detail="tapping the saved row fetched the same listing a "
                            "second time, with no typing"))
 
-                # Manage turns a row into the removal of itself; the subject
-                # stays.
-                drive("tap Back", "wait-for Artificial Intelligence",
-                      "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Computer Science", "wait-idle",
+                      timeout=300)
                 drive("tap Saved", "wait-for neural fields", "wait-idle",
                       timeout=300)
                 drive("tap Manage", "wait-for Done", "wait-idle", timeout=300)

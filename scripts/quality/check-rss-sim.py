@@ -174,7 +174,7 @@ def main():
                 drive('tap Back', 'tap Back', 'tap-id add', 'tap-id import-opml',
                       'wait-for-id import-file-0', 'tap-id import-file-0', 'wait-for-id import-confirm',
                       'expect 1 new feed')
-                drive('expect Second journal', 'expect https://example.com/', 'expect second.xml',
+                drive('expect Second journal', 'expect example.com', 'expect-missing second.xml',
                       'tap-id import-toggle-1', 'expect Not selected',
                       'tap-id import-toggle-1', 'expect Selected', 'wait-for-id import-confirm')
                 capture('12-opml-preview')
@@ -212,7 +212,7 @@ def main():
                 (state/'feeds').write_bytes(before_import)
                 drive('tap-id retry-load-subscriptions', 'wait-for-id feed-0')
                 capture('19-subscriptions-reloaded')
-                drive('tap-id add', 'tap-id browse-feeds', 'expect BBC Science', 'expect NASA Science')
+                drive('tap-id add', 'tap-id browse-feeds', 'expect Science + Tech', 'expect NASA Science')
                 capture('20-browse-feeds')
                 drive('scenario offline', 'tap-id starter-0', 'wait-for This reader is not on a network')
                 assert (state/'feeds').read_bytes()==before_import

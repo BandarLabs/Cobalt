@@ -58,7 +58,7 @@ def main():
         config = private / 'config'
         env.update(KOBO_STREAM_CONFIG_DIR=str(config),
                    KOBO_SIM_TRUST_DIR=str(config / 'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
+        subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'], cwd=ROOT,
                        env=env, check=True, capture_output=True, timeout=60)
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -87,7 +87,45 @@ def main():
                        secret.read_text() == f'cobalt-server-account-v1\n{origin}\n{TOKEN}'))
         checks.append(('the gateway address reaches the application state',
                        state.is_file() and state.read_text() == origin))
+        checks.append(('the login says how to pick it up without a restart',
+                       'Check again' in accepted.stdout))
+
+        # The guided command and the server-bound secret form install the same
+        # record and setting, checked against the same gateway first.
+        secret.unlink()
+        state.unlink()
+
+        def connect(token):
+            return subprocess.run([str(cli), 'connect', 'post', '--sim', '--server', origin,
+                                   '--stdin'], env=env, input=token, capture_output=True,
+                                  text=True, timeout=120)
+
+        wrong = connect('wrong-token')
+        checks.append(('kobo connect post refuses a token the gateway refuses',
+                       wrong.returncode != 0 and 'did not accept the token' in wrong.stderr))
+        checks.append(('a refused connect installs nothing',
+                       not secret.exists() and not state.exists()))
+        right = connect(TOKEN)
+        checks.append(('kobo connect post installs the pinned record and the gateway',
+                       right.returncode == 0 and secret.is_file()
+                       and secret.read_text() == f'cobalt-server-account-v1\n{origin}\n{TOKEN}'
+                       and state.read_text() == origin))
+        secret.unlink()
+        state.unlink()
+        token_file = private / 'bound-token'
+        token_file.write_text(TOKEN + '\n')
+        os.chmod(token_file, 0o600)
+        bound = subprocess.run([str(cli), 'secret', 'set', 'hermes-post', '--app', 'post',
+                                '--server', origin, '--from', str(token_file), '--sim'],
+                               env=env, capture_output=True, text=True, timeout=120)
+        checks.append(('kobo secret set --app --server checks the token and writes the gateway',
+                       bound.returncode == 0 and 'Checked the token' in bound.stdout
+                       and secret.is_file() and state.read_text() == origin))
         server.shutdown()
+        server.server_close()
+        down = connect(TOKEN)
+        checks.append(('a gateway that does not answer is named, and nothing is installed',
+                       down.returncode != 0 and 'did not answer' in down.stderr))
 
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:

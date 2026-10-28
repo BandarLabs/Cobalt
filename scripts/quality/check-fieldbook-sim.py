@@ -172,12 +172,43 @@ def main():
                 drive("wait-for lake merced")
                 capture("fieldbook-home-restored")
 
+                # Every species is one tap away: Mallard, the eighth bird, is on
+                # the tally's second page. An open outing survives a restart.
+                drive("tap-id new-outing", "wait-for Name this place",
+                      "type pier", "tap Save", "wait-for pier")
+                drive("tap-id outing-next", "wait-for Mallard", "tap Mallard",
+                      "wait-for 1 logged")
+                capture("fieldbook-tally-page-two")
+                stop()
+                start()
+                drive("wait-for Open outing", "wait-for Resume tally")
+                capture("fieldbook-open-outing-restored")
+
+                # A pack pushed with the companion is added beside the others
+                # and shows when the app comes back, without a restart.
+                pack = private / "harbor.json"
+                pack.write_text(json.dumps({
+                    "format": "fieldbook-shelf", "version": "1", "failures": [],
+                    "packs": [{"id": "harbor", "title": "Harbor", "region": "US-CA",
+                               "issued": "2026-10-28", "species": [
+                                   {"code": "HERG", "common": "Herring Gull",
+                                    "scientific": "Larus argentatus"}]}]}))
+                pushed = subprocess.run([str(cli), "fieldbook", "push", str(pack), "--sim"],
+                                        env=env, capture_output=True, text=True, timeout=60)
+                assert pushed.returncode == 0, pushed.stderr
+                assert "On the reader: 3 packs" in pushed.stdout, pushed.stdout
+                drive("lifecycle background", "lifecycle foreground",
+                      "wait-for 3 packs, 11 species.")
+                capture("fieldbook-pack-added-on-wake")
+
                 result["checks"].append(dict(
                     name="fieldbook journey",
                     detail="pack shelf decoded, pack scoped search, keyboard location "
                            "naming, tally, delete+undo, log-from-search beyond the "
                            "six-row tally cap, life list, eBird CSV export verified "
-                           "on disk, state proven across a restart",
+                           "on disk, state proven across a restart, a second-page "
+                           "species tallied in one tap, an open outing restored "
+                           "after a restart, and a pushed pack added on wake",
                     status="passed"))
                 result["status"] = "passed"
             finally:

@@ -59,6 +59,35 @@ def original_picture():
             + chunk(b'IDAT', zlib.compress(bytes(rows))) + chunk(b'IEND', b''))
 
 
+def certificates(config):
+    """A private certificate authority and a server certificate for 127.0.0.1.
+
+    Made here rather than with `kobo stream init`, which now looks for a reader
+    on the local network to install its trust root on, and a check that runs on
+    a developer's desk must never reach the reader sitting next to it.
+    """
+    trust = config/'trust'
+    stream = config/'stream'
+    trust.mkdir(parents=True)
+    stream.mkdir(parents=True)
+
+    def openssl(*arguments):
+        subprocess.run(['openssl', *arguments], check=True, capture_output=True, timeout=60)
+
+    extensions = config/'server.ext'
+    extensions.write_text('basicConstraints=CA:FALSE\n'
+                          'subjectAltName=IP:127.0.0.1\n'
+                          'extendedKeyUsage=serverAuth\n')
+    openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj',
+            '/CN=Fixture authority', '-keyout', str(config/'root.key'),
+            '-out', str(trust/'root.pem'), '-addext', 'basicConstraints=critical,CA:TRUE',
+            '-addext', 'keyUsage=critical,keyCertSign')
+    openssl('req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=127.0.0.1',
+            '-keyout', str(stream/'key.pem'), '-out', str(config/'server.csr'))
+    openssl('x509', '-req', '-in', str(config/'server.csr'), '-CA', str(trust/'root.pem'),
+            '-CAkey', str(config/'root.key'), '-CAcreateserial', '-days', '2',
+            '-extfile', str(extensions), '-out', str(stream/'cert.pem'))
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -77,9 +106,8 @@ def main():
                    KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE='original-rss-journal', KOBO_SIM_SEED='0')
         config = private/'config'
-        env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config/'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
-                       env=env, check=True, capture_output=True, timeout=30)
+        env.update(KOBO_SIM_TRUST_DIR=str(config/'trust'))
+        certificates(config)
         picture = original_picture()
         latest_feed = [b'']
         atom_feed = [b'']

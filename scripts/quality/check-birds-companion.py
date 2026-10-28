@@ -12,7 +12,7 @@ def png():
 def main():
  p=argparse.ArgumentParser();p.add_argument('--cli',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args(); transcript=[]
  with tempfile.TemporaryDirectory(prefix='cobalt-birds-check-',dir='/tmp') as temp:
-  root=Path(temp);env=dict(os.environ,TMPDIR=temp); snapshot=root/'current.json'; image=root/'collage.png'; image.write_bytes(png())
+  root=Path(temp);env=dict(os.environ,TMPDIR=temp,XDG_STATE_HOME=str(root/'state')); snapshot=root/'current.json'; image=root/'collage.png'; image.write_bytes(png())
   shelf=root/'cobalt-sim-data'/'birds'
   def pair():
    meta=json.loads((shelf/'current.json').read_bytes()); return (shelf/'current.json').read_bytes(),(shelf/meta['image']).read_bytes()
@@ -26,5 +26,13 @@ def main():
   pending=shelf/'.current.json.writing';pending.write_bytes(b'other')
   newer=png()+b'' ; run('push',snapshot,image,'--sim',ok=False)
   assert pending.read_bytes()==b'other' and pair()==before, 'a failed pointer commit must leave the whole previous pair intact'
- a.output.mkdir(parents=True,exist_ok=True);(a.output/'transcript.json').write_text(json.dumps(transcript,indent=2)+'\n');(a.output/'result.json').write_text(json.dumps({'status':'passed','physical_hardware':False,'checks':['valid v1 snapshot published with content-addressed image','invalid JSON preserves prior snapshot','occupied pointer staging preserves the complete prior pair']},indent=2)+'\n')
+  # Listening to a station that is not running fails up front, names the
+  # station and the fix, and leaves nothing running that would claim to be.
+  run('listen','--source','http://127.0.0.1:9','--sim',ok=False)
+  said=transcript[-1]['output']
+  assert 'Fugleramme did not answer at http://127.0.0.1:9' in said and 'Start Fugleramme' in said, said
+  assert 'Nothing was left running' in said, said
+  run('status',ok=False)
+  assert 'not running' in transcript[-1]['output'], transcript[-1]
+ a.output.mkdir(parents=True,exist_ok=True);(a.output/'transcript.json').write_text(json.dumps(transcript,indent=2)+'\n');(a.output/'result.json').write_text(json.dumps({'status':'passed','physical_hardware':False,'checks':['valid v1 snapshot published with content-addressed image','invalid JSON preserves prior snapshot','occupied pointer staging preserves the complete prior pair','listen without a station fails with its cause and starts nothing']},indent=2)+'\n')
 if __name__=='__main__':main()

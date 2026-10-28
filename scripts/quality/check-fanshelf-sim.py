@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Drive Fanshelf in demo mode through the shelf, work, and updates screens."""
+"""Drive Fanshelf in demo mode through the shelf, work, and updates screens.
+
+Checking and downloading against a server is covered by
+check-fanshelf-epub-sim.py, which has a fixture archive to download from. This
+one stays off the network: demo works have nowhere real to fetch from.
+"""
 import argparse
 import json
 import os
@@ -77,18 +82,25 @@ def main():
                 # The demo shelf: an update waiting, a finished download, and a
                 # work in progress that has never been checked.
                 drive("wait-for The Clockwork Garden", "wait-for updates unchecked",
-                      "wait-for reading")
+                      "wait-for reading", "wait-for update waiting",
+                      "wait-for Ready offline: 2 works, 840 KB")
                 drive("clean", "shot fanshelf-shelf")
-                # The work screen names the last manual check.
-                drive("tap The Clockwork Garden", "wait-for New chapters found")
+                # The work screen carries the author's summary above the rating,
+                # names the last check, and downloads waiting chapters in place.
+                drive("tap The Clockwork Garden", "wait-for New chapters found",
+                      "wait-for A synthetic demonstration work.",
+                      "wait-for Download new chapters", "expect Check for new chapters",
+                      "expect-missing Re-download")
                 drive("clean", "shot fanshelf-work-update")
                 drive("tap back", "wait-for A Field Guide to Small Hours")
                 drive("tap A Field Guide to Small Hours", "wait-for Updates never checked")
                 drive("clean", "shot fanshelf-work-unchecked")
                 # The updates screen is the manual schedule.
                 drive("tap back", "wait-for Updates", "tap Updates",
-                      "wait-for Unread update",
-                      "wait-for Never checked")
+                      "wait-for Update waiting to download",
+                      "wait-for Never checked", "wait-for Update all",
+                      "wait-for New chapters waiting for 1 work. Update all downloads them.",
+                      "expect-missing Check all")
                 drive("clean", "shot fanshelf-updates")
                 # The shelf narrows to one fandom and widens again.
                 drive("tap Shelf", "tap Filter", "wait-for Fandoms",
@@ -100,23 +112,40 @@ def main():
                 drive("expect-missing The Clockwork Garden")
                 drive("tap All", "wait-for The Clockwork Garden")
                 # Manage: bulk counts and the removal confirmation.
-                drive("tap Manage", "wait-for Download all updates", "wait-for 1 waiting",
-                      "wait-for 2 on the shelf")
+                drive("tap Manage", "wait-for Remove downloaded copies",
+                      "wait-for 2 on the reader, 840 KB",
+                      "expect-missing Download all updates")
                 drive("clean", "shot fanshelf-manage")
                 drive("tap Remove downloaded copies", "wait-for Remove 2 downloaded copies?",
                       "wait-for Reading places are kept")
                 drive("clean", "shot fanshelf-manage-confirm")
-                drive("tap Go back", "wait-for Download all updates", "tap Shelf",
+                drive("tap Go back", "wait-for Remove downloaded copies", "tap Shelf",
                       "wait-for reading")
+                # A mistyped work stays where it was typed, with the reason,
+                # and Back leaves the screen it used to trap.
+                drive("tap Add", "wait-for Work address or number", "type nonsense",
+                      "tap Open work", "wait-for That is not an AO3 work address",
+                      "expect nonsense")
+                drive("clean", "shot fanshelf-add-mistyped")
+                drive("tap back", "wait-for Followed tags", "wait-for Ready offline")
+                # Followed tags are described in words, not as a feed file.
+                drive("tap Followed tags", "wait-for Newest works in this tag",
+                      "expect-missing feeds.atom", "tap Public Domain Fairy Tales",
+                      "wait-for Newest works in this tag on AO3",
+                      "expect-missing Atom")
+                drive("clean", "shot fanshelf-tag-feed")
                 result["checks"].append(dict(
                     name="update-check journey",
                     detail="Demo shelf showed the update, reading and never-checked "
-                           "badges; each work screen named its last manual check; the "
-                           "updates screen listed unread, never-checked and current "
-                           "states; the fandom filter narrowed the shelf to one fandom "
-                           "(hiding the other work) and All restored it; Manage listed "
-                           "bulk counts and the removal confirmation kept the shelf "
-                           "intact after Go back",
+                           "badges and the ready-offline line; the work screen showed "
+                           "the author's summary and offered to download waiting "
+                           "chapters in place; the updates screen listed waiting and "
+                           "never-checked states with Update all; the fandom filter "
+                           "narrowed the shelf and All restored it; Manage counted the "
+                           "copies on the reader and the removal confirmation kept "
+                           "the shelf intact after Go back; a mistyped work stayed on "
+                           "screen with its reason and Back left; tag screens spoke "
+                           "of works rather than feed files",
                     status="passed"))
                 result["status"] = "passed"
             finally:
