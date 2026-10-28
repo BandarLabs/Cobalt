@@ -4680,6 +4680,27 @@ fn action_for_oriented(
     orientation: kobo_ui::Orientation,
     landscape_turn: kobo_ui::LandscapeTurn,
 ) -> Option<ActionId> {
+    let (hit, note) = resolve_touch(event, screen, chrome, held, orientation, landscape_turn)?;
+    // Reported so a tap that lands on nothing stays distinguishable from a tap
+    // that never arrived at all. Diagnosing the difference without this cost a
+    // whole debugging session.
+    trace(&note);
+    println!("{note}");
+    hit
+}
+
+/// The action a touch lands on, and the line the session log keeps about it.
+///
+/// Split from [`action_for_oriented`] so a test can read exactly what would
+/// have been written for each tap.
+fn resolve_touch(
+    event: TouchEvent,
+    screen: Option<&Screen>,
+    chrome: &Chrome,
+    held: bool,
+    orientation: kobo_ui::Orientation,
+    landscape_turn: kobo_ui::LandscapeTurn,
+) -> Option<(Option<ActionId>, String)> {
     let TouchEvent::Up { x, y } = event else {
         return None;
     };
@@ -4711,12 +4732,73 @@ fn action_for_oriented(
     } else {
         layout.hit_test(x, y)
     };
-    // Reported so a tap that lands on nothing stays distinguishable from a tap
-    // that never arrived at all. Diagnosing the difference without this cost a
-    // whole debugging session.
-    trace(&format!("touch up ({x},{y}) -> {hit:?}"));
-    println!("touch up ({x},{y}) -> {hit:?}");
-    hit
+    Some((hit, touch_note(x, y, hit)))
+}
+
+/// What the session log says about one tap.
+///
+/// Where the tap landed and what it hit are written so that a tap on nothing
+/// can be told from one that never arrived. On a keyboard the application
+/// draws itself, either of them names the key, and a run of them spells out
+/// what was typed, the Settings Wi-Fi password included, into a log that the
+/// black box keeps on the book partition where anyone with a USB cable can
+/// read it. So a key is written down as a key and nothing more: the log still
+/// shows that typing happened, and not what was typed.
+fn touch_note(x: i32, y: i32, hit: Option<ActionId>) -> String {
+    match hit {
+        Some(action) if is_keyboard_key(action) => {
+            "touch up -> a keyboard key (which one is not recorded)".to_owned()
+        }
+        _ => format!("touch up ({x},{y}) -> {hit:?}"),
+    }
+}
+
+/// The keys a terminal adds to the shared keyboard's, as the SDK's terminal
+/// keys and Paperterm name them.
+const TERMINAL_KEYS: [&str; 7] = [
+    "term.ctrl",
+    "term.esc",
+    "term.tab",
+    "term.up",
+    "term.down",
+    "term.left",
+    "term.right",
+];
+
+/// Whether `action` is a key on an on-screen keyboard: the shared
+/// keyboard's `kb.*` keys, or the `term.*` keys a terminal adds to them.
+///
+/// Matched by name because a keyboard reaches the runtime as ordinary grids
+/// of cells; nothing in the screen marks them as keys. The character keys
+/// are named by position, so every position a keyboard could draw is
+/// covered, with room for rows and columns it does not have yet.
+fn is_keyboard_key(action: ActionId) -> bool {
+    use kobo_ui::keyboard::{
+        key_name, AT, BACKSPACE, CANCEL, DOT, ENTER, LAYER, SHIFT, SLASH, SPACE,
+    };
+    static KEYS: std::sync::OnceLock<std::collections::BTreeSet<ActionId>> =
+        std::sync::OnceLock::new();
+    KEYS.get_or_init(|| {
+        let named = [
+            SHIFT,
+            LAYER,
+            SPACE,
+            BACKSPACE,
+            ENTER,
+            CANCEL,
+            AT,
+            SLASH,
+            DOT,
+            kobod::text_entry::REVEAL,
+        ]
+        .into_iter()
+        .chain(TERMINAL_KEYS)
+        .map(ActionId::from_name);
+        let positions = (0..6)
+            .flat_map(|row| (0..16).map(move |column| ActionId::from_name(&key_name(row, column))));
+        named.chain(positions).collect()
+    })
+    .contains(&action)
 }
 
 /// Resolves a page-key press to the message the application should hear.
@@ -5592,3 +5674,6 @@ mod hosting_tests;
 
 #[cfg(test)]
 mod text_field_tests;
+
+#[cfg(test)]
+mod touch_trace_tests;

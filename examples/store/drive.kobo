@@ -7,7 +7,8 @@ shot store-catalog
 tap Available 1
 wait-for Available to install
 expect Sudoku
-# A failed install stays on the app and offers to try again.
+# A failed install stays on the app, and its error banner offers to try
+# again.
 scenario offline
 tap Sudoku
 wait-for Not installed
@@ -36,5 +37,11 @@ wait-for Uninstall Sudoku?
 tap-id confirm-remove
 wait-for Sudoku is uninstalled.
 shot store-uninstalled
+# Install on the row itself installs without opening the app, and the list
+# says so where the owner already is.
+tap-id install-sudoku
+wait-for Sudoku is installed.
+expect Every app in the catalog is installed.
+shot store-installed-from-row
 tap Updates 0
 wait-for Every installed app is up to date.

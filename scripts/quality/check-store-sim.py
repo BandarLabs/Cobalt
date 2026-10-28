@@ -109,8 +109,11 @@ def main():
                 address = start()
                 # Uninstall asks first. Cancel keeps the app; confirming removes
                 # it and keeps its data, as the question promised.
-                drive('wait-idle', 'expect Installed · 1.1.0', 'expect Updates 0', 'shot reopened',
-                      'tap-id app-quality-fixture', 'tap-id remove-quality-fixture',
+                # The row offers Open now that nothing newer is waiting, and
+                # the app's page says which version is installed.
+                drive('wait-idle', 'expect Updates 0', 'expect-missing Updates 1', 'shot reopened',
+                      'tap-id app-quality-fixture', 'expect-missing Not installed',
+                      'tap-id remove-quality-fixture',
                       'wait-for Its saved data stays on this reader', 'shot confirm-uninstall',
                       'tap Cancel', 'expect-missing Its saved data stays on this reader', 'expect Open')
                 assert installed() == '1.1.0'
