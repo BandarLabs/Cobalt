@@ -1413,6 +1413,10 @@ impl Drop for OperationLock {
     }
 }
 
+/// Whether the process a lock or pid file names is still running.
+///
+/// Unix asks the kernel through `kill -0`.
+#[cfg(unix)]
 fn process_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -1421,6 +1425,41 @@ fn process_exists(pid: u32) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// Windows has no `kill`, and a probe that could not start used to answer
+/// "not running", so every Sync lock looked stale there and two runs could
+/// each delete the other's lock and drive the same Syncthing home at once.
+/// `tasklist` ships with every Windows edition and quotes the PID as its own
+/// CSV field whatever the display language. A probe that cannot run keeps
+/// the lock: an owner can delete a lock that really is stale, but nothing
+/// undoes two runs rewriting one configuration.
+#[cfg(windows)]
+fn process_exists(pid: u32) -> bool {
+    let Ok(output) = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return true;
+    };
+    !output.status.success() || tasklist_names_pid(&String::from_utf8_lossy(&output.stdout), pid)
+}
+
+/// Whether `tasklist /FO CSV` output lists `pid`. Only the second field is
+/// the PID; the session number further along is quoted the same way and
+/// must not answer for it. A filter that matches nothing prints a localized
+/// notice instead of a row, which has no quoted fields at all.
+#[cfg(any(windows, test))]
+fn tasklist_names_pid(listing: &str, pid: u32) -> bool {
+    let pid = pid.to_string();
+    listing.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with('"')
+            && line.ends_with('"')
+            && line[1..line.len() - 1].split("\",\"").nth(1) == Some(pid.as_str())
+    })
 }
 
 fn valid_device_id(value: &str) -> bool {
@@ -1831,6 +1870,18 @@ mod tests {
             assert_eq!(host_folder_type(folder), "sendonly");
         }
         assert_eq!(host_folder_type("out"), "receiveonly");
+    }
+
+    #[test]
+    fn a_tasklist_row_names_its_pid_and_a_no_match_notice_names_none() {
+        let row = "\"syncthing.exe\",\"4242\",\"Console\",\"1\",\"52,148 K\"\r\n";
+        assert!(tasklist_names_pid(row, 4242));
+        assert!(!tasklist_names_pid(row, 424));
+        assert!(!tasklist_names_pid(row, 1));
+        assert!(!tasklist_names_pid(
+            "INFO: No tasks are running which match the specified criteria.\r\n",
+            4242
+        ));
     }
 
     #[cfg(windows)]
