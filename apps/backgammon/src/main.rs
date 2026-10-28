@@ -3549,11 +3549,17 @@ mod tests {
             };
             game.roll();
             game.played.push("Black 13/8 24/23".into());
+            // The board picks how much status it can show, and the history is
+            // paged, by measuring against the context they are built with. A
+            // default context made both choices for the default size, so the
+            // board was checked here at sizes it had never been fitted to.
+            let runner = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics);
+            let context = runner.context();
             // The rules are measured against the panel they are paged for,
             // which the rules' own test covers at every size.
             for view in [View::Board, View::Match, View::History] {
                 game.view = view;
-                let screen = test_screen(&game);
+                let screen = screen_for(&game, Some(test_bands()), &context);
                 let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                 assert!(
                     diagnostics.issues.is_empty(),

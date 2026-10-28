@@ -637,6 +637,10 @@ fn download_recovery_controls_fit_every_portrait_text_size() {
                 pixels_per_inch,
                 text_scale,
             };
+            // A runner installs the face the runtime measures with. Without
+            // one, this test measured in the built-in fallback type whenever
+            // it ran before any other test had made one.
+            let _runner = kobo_sdk::AppRunner::with_metrics(Panels::default(), metrics);
             for notice in [
                 "This paused download could not be opened. Retry, or remove it and download the comic again.",
                 "The comic on your server has changed. Remove this download and start again.",

@@ -3109,6 +3109,12 @@ mod tests {
                 text_scale: scale,
                 ..CLARA_BW_METRICS
             };
+            // Every screen is built through a runner at the size it is checked
+            // at, the way the runtime builds it. Built first, the runner also
+            // installs the real face before anything is measured, so the
+            // smallest size is not measured in the fallback type when this test
+            // runs on its own.
+            let context = kobo_sdk::AppRunner::with_metrics(Parlor::default(), metrics).context();
             // The shelf itself, which is the screen every reader sees first,
             // in both of its states: bare, and carrying the offer to pick up a
             // game that is already under way.
@@ -3118,7 +3124,7 @@ mod tests {
             resumable.view = View::Menu;
             for (name, table) in [("table", Parlor::default()), ("table resuming", resumable)] {
                 let issues = table
-                    .screen()
+                    .screen_for(&context)
                     .diagnostics(&metrics, &chrome)
                     .issues
                     .into_iter()
@@ -3143,25 +3149,23 @@ mod tests {
                 for _ in 0..8 {
                     play_one_move(&mut app);
                 }
-                let board = app.screen();
+                let board = app.screen_for(&context);
                 app.handle_action(action_id(chrome::MORE));
-                let menu = app.screen();
+                let menu = app.screen_for(&context);
                 app.handle_action(ActionId::BACK);
                 // The record is paged for the size it is read at, the way the
                 // runtime pages it, so it is built against that size.
                 app.view = View::Record;
-                let record = app.screen_for(
-                    &kobo_sdk::AppRunner::with_metrics(Parlor::default(), metrics).context(),
-                );
+                let record = app.screen_for(&context);
                 app.view = View::Rules(title, false);
-                let rules = app.screen();
+                let rules = app.screen_for(&context);
                 // Setup over a game in progress carries the line saying what
                 // starting would replace.
                 app.view = View::Setup(title);
-                let setup = app.screen();
+                let setup = app.screen_for(&context);
                 app.view = View::Board;
                 app.save_failed = true;
-                let save_failed = app.screen();
+                let save_failed = app.screen_for(&context);
                 for (name, screen) in [
                     ("setup", setup),
                     ("board", board),

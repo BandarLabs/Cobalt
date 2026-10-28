@@ -811,7 +811,11 @@ mod tests {
                 text_scale,
                 ..CLARA_BW_METRICS
             };
-            let _runner = kobo_sdk::AppRunner::with_metrics(Calibre::default(), metrics);
+            // The catalog is paged by the context it is built with. A default
+            // context paged it at the default size, so a page measured here at
+            // a larger one could hold rows only the default size has room for.
+            let runner = kobo_sdk::AppRunner::with_metrics(Calibre::default(), metrics);
+            let context = runner.context();
             let mut app = loaded_catalog();
             for view in [
                 View::Libraries,
@@ -828,7 +832,7 @@ mod tests {
                     kobo_sdk::TaskError::Unauthorized,
                 ));
                 let diagnostics = app
-                    .screen(&Context::default())
+                    .screen(&context)
                     .diagnostics(&metrics, &Chrome::measuring(true));
                 assert!(
                     diagnostics.issues.is_empty(),

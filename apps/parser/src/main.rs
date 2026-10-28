@@ -1702,10 +1702,16 @@ mod tests {
                         pixels_per_inch: ppi,
                         text_scale: scale,
                     };
+                    // The library is paged by the context it is built with,
+                    // so it is built for the panel and size it is measured on.
+                    // A default context paged it for a portrait Clara at the
+                    // default size whatever was being checked.
+                    let context =
+                        kobo_sdk::AppRunner::with_metrics(Parser::default(), metrics).context();
                     for keyboard_open in [false, true] {
                         parser.keyboard_open = keyboard_open;
                         for (name, screen) in [
-                            ("library", parser.library_screen(&Context::default())),
+                            ("library", parser.library_screen(&context)),
                             ("play", parser.play_screen()),
                         ] {
                             let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
