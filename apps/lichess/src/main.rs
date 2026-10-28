@@ -8420,30 +8420,27 @@ mod tests {
         assert!(prompt.contains("Use computer"), "{prompt}");
     }
 
-    /// The taps that type `lip_Ab3` on the SDK keyboard: the prefix every
-    /// Lichess token starts with, its underscore from the symbol layer, a
-    /// capital and a digit.
-    const TOKEN_TAPS: [&str; 11] = [
-        "kb.r1c8", "kb.r0c7", "kb.r0c9", "kb.layer", "kb.r1c9", "kb.layer", "kb.shift", "kb.r1c0",
-        "kb.r2c4", "kb.layer", "kb.r0c2",
-    ];
-
     #[test]
     fn a_token_typed_on_the_reader_is_saved_by_the_runtime_and_checked_at_once() {
         let mut runner = AppRunner::new(unconnected());
         runner.action(action_id(CONNECT));
-        runner.action(action_id("credential.enter"));
-        for tap in TOKEN_TAPS {
-            runner.action(action_id(tap));
-        }
-        let saving = runner.action(action_id("kb.enter"));
-        assert!(saving.iter().any(|command| matches!(
+        let asked = runner.action(action_id("credential.enter"));
+        // The token is typed on the runtime's keyboard and kept by the
+        // runtime. Lichess asks for it by name and never holds it.
+        assert!(asked.iter().any(|command| matches!(
             command,
-            Command::Device(DeviceRequest::SetSecret { name, value })
-                if name == "lichess" && value.as_str() == "lip_Ab3"
+            Command::Device(DeviceRequest::TypeText { save_as: Some(target), initial, .. })
+                if target.name == "lichess" && initial.is_empty()
         )));
-
-        let saved = painted(runner.device_result(DeviceResult::Done)).expect("account games");
+        let confirming = runner.answer_text(kobo_sdk::TextOutcome::Saved);
+        assert!(confirming.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::CheckSecrets { names }) if names == &["lichess".to_owned()]
+        )));
+        let saved = painted(runner.device_result(DeviceResult::Secrets {
+            present: vec!["lichess".to_owned()],
+        }))
+        .expect("account games");
 
         let app = runner.app_mut();
         assert!(!app.credential.is_open());

@@ -1165,10 +1165,13 @@ mod tests {
         runner.action(action_id("edit-0"));
         runner.action(action_id("rename"));
         assert!(runner.app().entry.is_open());
-        runner.action(action_id("kb.space"));
-        runner.action(action_id("kb.r0c1"));
+        // A tap that reaches the app while the reader's keyboard is up, such
+        // as a redraw, does not turn the rename into an add.
+        runner.action(action_id("redraw"));
         assert_eq!(runner.app().entry_mode, EntryMode::Rename);
+        runner.type_text("read daily");
         assert_eq!(runner.app().items.len(), 1);
+        assert_eq!(runner.app().items[0].name, "read daily");
     }
 
     #[test]

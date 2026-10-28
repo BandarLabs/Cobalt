@@ -136,11 +136,22 @@ fn enter_token(runner: &mut AppRunner<Readeck>, origin: &str) -> Vec<Command> {
     let commands = runner.action(action_id("settings"));
     runner.app_mut().keyboard = Keyboard::with_text(origin);
     let commands = runner.action(key(last_screen(&commands), "Next"));
-    let commands = runner.action(key(last_screen(&commands), "Enter account key"));
-    // Type via the public masked keyboard; the token never appears on a screen.
-    let commands = runner.action(key(last_screen(&commands), "a"));
-    assert!(!format!("{:?}", last_screen(&commands)).contains("super-secret"));
-    runner.action(key(last_screen(&commands), "Save"))
+    // The token is typed on the runtime's keyboard and kept by the runtime.
+    // Readeck says only where it goes.
+    runner.action(key(last_screen(&commands), "Enter account key"))
+}
+/// The runtime's answer to the token field, and the check that reports the
+/// token saved.
+fn saved(runner: &mut AppRunner<Readeck>) -> Vec<Command> {
+    let commands = runner.answer_text(kobo_sdk::TextOutcome::Saved);
+    let names = commands
+        .iter()
+        .find_map(|c| match c {
+            Command::Device(DeviceRequest::CheckSecrets { names }) => Some(names.clone()),
+            _ => None,
+        })
+        .expect("the save is confirmed");
+    runner.device_result(DeviceResult::Secrets { present: names })
 }
 #[test]
 fn computer_saved_token_saves_only_address_before_fetching() {
@@ -188,13 +199,13 @@ fn token_and_server_save_acknowledgements_precede_any_network_request() {
     let commands = enter_token(&mut runner, "https://second.example/library/");
     no_spawn(&commands);
     assert!(commands.iter().any(
-        |c| matches!(c, Command::Device(DeviceRequest::SetServerSecret { name, server, .. })
-        if name == "readeck" && server == "https://second.example/library")
+        |c| matches!(c, Command::Device(DeviceRequest::TypeText { save_as: Some(target), .. })
+        if target.name == "readeck" && target.server.as_deref() == Some("https://second.example/library"))
     ));
     assert!(!commands
         .iter()
         .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))));
-    let commands = runner.device_result(DeviceResult::Done);
+    let commands = saved(&mut runner);
     no_spawn(&commands);
     assert!(commands.iter().any(
         |c| matches!(c, Command::Store(StoreRequest::Save { key, value })
@@ -214,7 +225,7 @@ fn token_and_server_save_acknowledgements_precede_any_network_request() {
 fn failed_server_save_does_not_claim_connection_and_can_retry() {
     let mut runner = loaded();
     enter_token(&mut runner, "https://second.example");
-    runner.device_result(DeviceResult::Done);
+    saved(&mut runner);
     let commands = runner.store_result(StoreResult::Denied(StoreError::Unwritable));
     no_spawn(&commands);
     assert!(runner.app_mut().pending_server.is_some());
@@ -446,7 +457,9 @@ fn saved_position_and_reading_size_are_restored_after_restart() {
 fn rejected_token_does_not_save_address_or_fetch() {
     let mut runner = loaded();
     enter_token(&mut runner, "https://second.example");
-    let commands = runner.device_result(DeviceResult::Denied(kobo_sdk::DenyReason::PolicyRejected));
+    let commands = runner.answer_text(kobo_sdk::TextOutcome::Denied(
+        kobo_sdk::DenyReason::PolicyRejected,
+    ));
     no_spawn(&commands);
     assert!(!commands
         .iter()

@@ -2353,15 +2353,22 @@ mod tests {
 
     fn save_missing_credential(runner: &mut AppRunner<ReadingList>, task: TaskId) -> Vec<Command> {
         runner.task_outcome(task, TaskOutcome::Failed(TaskError::NoCredential));
-        runner.action(action_id("credential.enter"));
-        runner.action(action_id("kb.r0c0"));
-        let saving = runner.action(action_id("kb.enter"));
-        assert!(saving.iter().any(|command| matches!(
+        let asked = runner.action(action_id("credential.enter"));
+        // The key is typed on the runtime's keyboard and kept by the runtime;
+        // the app says only where it goes.
+        assert!(asked.iter().any(|command| matches!(
             command,
-            Command::Device(kobo_sdk::DeviceRequest::SetSecret { name, .. })
-                if name == "zotero"
+            Command::Device(kobo_sdk::DeviceRequest::TypeText { save_as: Some(target), .. })
+                if target.name == "zotero"
         )));
-        runner.device_result(DeviceResult::Done)
+        let confirming = runner.answer_text(kobo_sdk::TextOutcome::Saved);
+        assert!(confirming.iter().any(|command| matches!(
+            command,
+            Command::Device(kobo_sdk::DeviceRequest::CheckSecrets { .. })
+        )));
+        runner.device_result(DeviceResult::Secrets {
+            present: vec!["zotero".to_owned()],
+        })
     }
 
     #[test]

@@ -10,9 +10,15 @@ tap Marks
 wait 900
 maybe-tap-id panel-next
 wait 900
+tap Tone
+wait 900
+tap-paged Check again
+wait 900
 tap Lists
 wait-for Lists, rows and tiles
 wait 900
+tap-paged Robin
+wait-for 2 selected
 tap Tiles
 wait 900
 maybe-tap-id panel-next
@@ -26,8 +32,20 @@ wait 900
 tap Input
 wait-for Groups, fields and asking
 wait 900
+tap-paged Night light
+wait 900
 tap Fields
 wait 900
+tap-paged Pretend it was refused
+wait-for Lichess refused this token
+tap-paged Time zone: London
+wait-for Choose the zone this reader keeps
+tap-id zones-next
+wait 900
+tap-id zones-previous
+wait 900
+tap Lisbon
+wait-for Time zone: Lisbon
 maybe-tap-id panel-next
 wait 900
 tap Overlays

@@ -16,7 +16,8 @@ expect New item
 type buy milk
 tap Add
 expect Todo: 2 left
-tap Done
+# Back on the reader's keyboard puts it away after a run of adds.
+tap Back
 wait-for water the fern
 expect buy milk
 expect-missing Nothing to do

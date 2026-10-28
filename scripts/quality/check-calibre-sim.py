@@ -187,7 +187,7 @@ def main():
                 drive('tap-id add', 'tap-id kb.layer', 'type '+root.removeprefix('https://').removesuffix('opds'), 'tap-id kb.layer', 'type opds', 'tap Continue')
                 authentication['required'] = True
                 drive('tap-id sign-in', 'tap-id credential.enter', 'type reader', 'tap Next', 'type sample',
-                      'expect 6 characters entered', 'tap-id credential.reveal', 'expect sample', 'tap Save', 'wait-for-id entry-0', 'wait-idle')
+                      'expect 6 characters entered', 'tap-id kb.reveal', 'expect sample', 'tap Save', 'wait-for-id entry-0', 'wait-idle')
                 assert (state/'catalog').read_text()==root+'|calibre'
                 capture('18-private-catalog')
                 drive('tap-id entry-0', 'wait-idle', 'expect Authors', 'tap Back', 'tap-id entry-2', 'tap-id download-book', 'wait-for-id offline-0', 'wait-idle')

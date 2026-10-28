@@ -1183,7 +1183,7 @@ mod tests {
         assert_eq!(runner.app().view, View::Address);
         runner.action(action_id("enter-address"));
         assert_eq!(runner.app().entry.text(), "192.168.1.5:8080");
-        runner.action(action_id("kb.cancel"));
+        runner.cancel_text();
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Grid);
         assert_eq!(runner.app().code, "code");

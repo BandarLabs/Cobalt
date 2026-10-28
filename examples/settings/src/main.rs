@@ -1522,7 +1522,8 @@ impl KoboApp for Settings {
             | DeviceResult::RemoteInstall(_)
             | DeviceResult::Library { .. }
             | DeviceResult::LibraryDocument { .. }
-            | DeviceResult::Secrets { .. } => {}
+            | DeviceResult::Secrets { .. }
+            | DeviceResult::Text(_) => {}
         }
         self.show(context);
     }

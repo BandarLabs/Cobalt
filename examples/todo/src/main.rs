@@ -43,8 +43,6 @@ const ITEMS: &str = "items";
 const MAX_ITEMS: usize = 60;
 
 const ADD: &str = "add";
-/// Puts the keyboard away after a run of adds, keeping anything still typed.
-const DONE_ADDING: &str = "done-adding";
 const CLEAR_DONE: &str = "clear-done";
 const UNDO_CLEAR: &str = "undo-clear";
 const PREVIOUS: &str = "previous";
@@ -336,16 +334,17 @@ impl Todo {
                 Some(_) => ("Change the words", "Save"),
                 None => ("New item", "Add"),
             };
-            let mut screen = ScreenBuilder::new("Todo").top_bar(self.title());
-            if self.renaming.is_none() {
-                screen = screen.top_bar_action(DONE_ADDING, "Done");
-                if let Some(added) = &self.added {
-                    screen = screen.secondary(format!("Added \u{201c}{added}\u{201d}."));
-                }
-            }
-            screen
+            // What the last Add did stays under the prompt on the reader's
+            // keyboard, so a run of adds can be followed without leaving it.
+            // Back puts the keyboard away when the run is over.
+            let added = match (&self.added, self.renaming) {
+                (Some(added), None) => format!("Added \u{201c}{added}\u{201d}."),
+                _ => String::new(),
+            };
+            ScreenBuilder::new("Todo")
+                .top_bar(self.title())
                 .owns_back(true)
-                .text_entry(&self.entry, prompt, submit)
+                .text_entry_with_hint(&self.entry, prompt, &added, submit)
                 .build()
         } else {
             match self.view {
@@ -931,18 +930,6 @@ impl KoboApp for Todo {
             self.show(context);
             return;
         }
-        if self.entry.is_open() && action == action_id(DONE_ADDING) {
-            // Done keeps what was typed rather than throwing it away: the
-            // words on screen are the ones the owner expects to see listed.
-            let typed = self.entry.text().trim().to_owned();
-            self.entry.close();
-            self.added = None;
-            if !typed.is_empty() {
-                self.add(context, typed);
-            }
-            self.show(context);
-            return;
-        }
         // The field first, because while it is open it owns the panel.
         if let Some(event) = self.entry.handle(action) {
             if !matches!(event, Typing::Submitted(_) | Typing::Changed) {
@@ -964,8 +951,8 @@ impl KoboApp for Todo {
                     return;
                 }
                 if self.add(context, text.clone()) {
-                    // Straight back to an empty field for the next one. Done
-                    // in the top bar, or Cancel, puts the keyboard away.
+                    // Straight back to an empty field for the next one. Back
+                    // on the keyboard puts it away.
                     self.added = Some(text);
                     self.entry.open();
                 } else {
@@ -1188,6 +1175,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{decode, encode, item_name, tag_action, Item, Todo, ADD, CLEAR_DONE, ITEMS};
     use super::{today, when, View, DUE_TODAY, EDIT_LIST};
+    use kobo_sdk::keyboard::testing::{asked, cancel_text, type_text};
     use kobo_sdk::{action_id, AppRunner, Command, Context, KoboApp, StoreRequest, StoreResult};
     use kobo_ui::{DiagnosticSeverity, LayoutKind, TextScale};
 
@@ -1440,11 +1428,11 @@ mod tests {
             todo.entry.is_open(),
             "tapping add did not raise the keyboard"
         );
-        for name in ["kb.r0c0", "kb.r0c1"] {
-            todo.on_action(&mut context, action_id(name));
-        }
-        let _ignored = context.take_commands();
-        todo.on_action(&mut context, action_id("kb.enter"));
+        assert!(
+            asked(&context.take_commands()).is_some(),
+            "the reader's keyboard was not asked for"
+        );
+        type_text(&mut todo, &mut context, "qw");
         assert!(
             todo.entry.is_open(),
             "the keyboard went away after one item, when lists are written several at a time"
@@ -1459,14 +1447,19 @@ mod tests {
     }
 
     #[test]
-    fn done_puts_the_keyboard_away_and_keeps_what_was_still_typed() {
+    fn a_run_of_adds_says_what_each_one_added_and_ends_when_the_keyboard_is_put_away() {
         let mut todo = started(&[]);
         let mut context = Context::default();
         todo.on_action(&mut context, action_id(ADD));
-        todo.on_action(&mut context, action_id("kb.r0c0"));
-        todo.on_action(&mut context, action_id("kb.enter"));
-        todo.on_action(&mut context, action_id("kb.r0c1"));
-        todo.on_action(&mut context, action_id(super::DONE_ADDING));
+        type_text(&mut todo, &mut context, "q");
+        let Some(kobo_sdk::DeviceRequest::TypeText { hint, .. }) =
+            asked(&context.take_commands()).cloned()
+        else {
+            panic!("the keyboard did not come back for the next item")
+        };
+        assert_eq!(hint, "Added \u{201c}q\u{201d}.");
+        type_text(&mut todo, &mut context, "w");
+        cancel_text(&mut todo, &mut context);
         assert!(!todo.entry.is_open());
         let texts: Vec<_> = todo.items.iter().map(|item| item.text.as_str()).collect();
         assert_eq!(texts, ["q", "w"]);
@@ -1484,10 +1477,9 @@ mod tests {
         assert!(!todo.entry.is_open(), "back left the keyboard up");
         assert!(matches!(todo.view, View::Item(0)), "back left the item");
         todo.on_action(&mut context, action_id(super::EDIT));
-        todo.on_action(&mut context, action_id("kb.cancel"));
+        cancel_text(&mut todo, &mut context);
         todo.on_action(&mut context, action_id(ADD));
-        todo.on_action(&mut context, action_id("kb.r0c0"));
-        todo.on_action(&mut context, action_id("kb.enter"));
+        type_text(&mut todo, &mut context, "q");
         let texts: Vec<_> = todo.items.iter().map(|item| item.text.as_str()).collect();
         assert_eq!(texts, ["first", "q"], "the add renamed the item instead");
     }
@@ -1497,8 +1489,7 @@ mod tests {
         let mut todo = started(&[]);
         let mut context = Context::default();
         todo.on_action(&mut context, action_id(ADD));
-        todo.on_action(&mut context, action_id("kb.r0c0"));
-        todo.on_action(&mut context, action_id("kb.enter"));
+        type_text(&mut todo, &mut context, "q");
         let screen = context
             .take_commands()
             .into_iter()
@@ -1520,8 +1511,7 @@ mod tests {
         let mut todo = started(&[]);
         let mut context = Context::default();
         todo.on_action(&mut context, action_id(ADD));
-        todo.on_action(&mut context, action_id("kb.r0c0"));
-        todo.on_action(&mut context, action_id("kb.cancel"));
+        cancel_text(&mut todo, &mut context);
         assert!(!todo.entry.is_open());
         assert!(todo.items.is_empty());
     }

@@ -2098,10 +2098,7 @@ mod regression_tests {
         runner.action(action_id("count-2"));
         assert_eq!(runner.app().players, 2);
         runner.action(action_id("rename-0"));
-        // Shift, s, a, m, then accept.
-        for key in ["kb.shift", "kb.r1c1", "kb.r1c0", "kb.r2c6", "kb.enter"] {
-            runner.action(action_id(key));
-        }
+        runner.type_text("Sam");
         assert_eq!(runner.app().names[0], "Sam");
         assert!(!runner.app().entry.is_open());
         runner.action(action_id("start"));

@@ -57,7 +57,8 @@ tap-id repair
 wait-for Pair with your computer
 tap-id enter-address
 expect 192.168.1.20:9331
-tap-id kb.cancel
+# Back on the reader's keyboard puts it away; the second leaves pairing.
+tap Back
 tap back
 wait-for This reader is not on Wi-Fi.
 clean
