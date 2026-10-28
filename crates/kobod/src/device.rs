@@ -2126,15 +2126,21 @@ fn host_applications(
             // Updates found in the background are applied only to a panel
             // nobody is using: enough quiet has passed since the last touch,
             // and the battery can afford the writes. Applying blocks this
-            // loop exactly as a store install does, which is acceptable here
-            // for the same reason it is there: nobody is waiting.
+            // loop, and the reader can pick the panel up again at any moment,
+            // so one package goes per turn: a touch made meanwhile is read as
+            // soon as that package is done, and the rest wait until the panel
+            // is quiet again. Applying the whole plan at once held every
+            // touch behind the entire batch.
             if pending_updates.is_some()
                 && power.state() == kobod::power::State::Awake
                 && now.saturating_duration_since(last_activity) >= AUTO_UPDATE_QUIET
                 && auto_update_battery_permits()
             {
-                if let Some(plan) = pending_updates.take() {
-                    apply_auto_update(plan, &mut apps, front, watchdog);
+                if let Some(mut plan) = pending_updates.take() {
+                    apply_next_update(&mut plan, &mut apps, front, watchdog);
+                    if !plan.is_empty() {
+                        pending_updates = Some(plan);
+                    }
                 }
             }
             // An application that was offered Back and drew nothing has had
@@ -3774,7 +3780,9 @@ fn auto_update_battery_permits() -> bool {
         .is_none_or(|battery| battery.charging || battery.percent >= AUTO_UPDATE_MIN_BATTERY)
 }
 
-/// Applies what the background checker found, now that the panel is quiet.
+/// Applies the next part of what the background checker found, now that the
+/// panel is quiet: one application, or the platform once no application is
+/// left. What remains stays in `plan` for a later turn.
 ///
 /// The owner's choices are read again rather than trusted from the plan,
 /// because the plan may be hours old and the settings screen may have moved a
@@ -3782,8 +3790,8 @@ fn auto_update_battery_permits() -> bool {
 /// under the reader; its turn comes with a later plan. A staged platform
 /// release takes effect the next time Cobalt starts, exactly as one installed
 /// from the settings screen does.
-fn apply_auto_update(
-    plan: crate::autoupdate::Plan,
+fn apply_next_update(
+    plan: &mut crate::autoupdate::Plan,
     apps: &mut [Hosted],
     front: u64,
     watchdog: &Arc<Watchdog>,
@@ -3792,6 +3800,8 @@ fn apply_auto_update(
     let chosen = crate::autoupdate::preferences(root);
     if chosen.channel != plan.channel {
         trace("the update channel changed, so the old background plan was discarded");
+        plan.apps.clear();
+        plan.platform = None;
         return;
     }
     let showing = apps
@@ -3799,7 +3809,8 @@ fn apply_auto_update(
         .find(|app| app.id == front)
         .map(|app| app.name.clone());
     if chosen.apps {
-        for id in plan.apps {
+        while !plan.apps.is_empty() {
+            let id = plan.apps.remove(0);
             if showing.as_deref() == Some(id.as_str()) {
                 trace(&format!("{id} is on the panel, so its update waits"));
                 continue;
@@ -3816,12 +3827,15 @@ fn apply_auto_update(
                 }
                 Err(error) => trace(&format!("{id} background update failed: {error}")),
             }
+            return;
         }
     }
+    plan.apps.clear();
+    let update = plan.platform.take();
     if !chosen.cobalt {
         return;
     }
-    if let Some(update) = plan.platform {
+    if let Some(update) = update {
         match while_beating(watchdog, || {
             crate::update::apply(&update.url, &update.sha256)
         }) {
