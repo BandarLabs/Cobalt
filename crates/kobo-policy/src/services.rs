@@ -95,6 +95,12 @@ pub struct DeviceServices {
     audio_duration_ms: u32,
     audio_volume: u8,
     dictionaries: kobo_dict::Index,
+    /// Where the library is read from, when not the reader's own storage.
+    ///
+    /// Only the simulator sets this. A computer has no `/mnt/onboard`, so
+    /// without a folder of its own every library app opened on an empty
+    /// shelf and nothing about opening or reopening a book could be tried.
+    library_roots: Option<Vec<std::path::PathBuf>>,
     auto_update: AutoUpdateChoices,
     update_channel: UpdateChannel,
 }
@@ -127,6 +133,13 @@ impl DeviceServices {
     ///
     /// Pass only the capabilities this build can genuinely perform. Anything
     /// else is refused as unsupported rather than silently ignored.
+    /// Reads the library from these folders instead of the reader's storage.
+    #[must_use]
+    pub fn with_library_roots(mut self, roots: Vec<std::path::PathBuf>) -> Self {
+        self.library_roots = Some(roots);
+        self
+    }
+
     #[must_use]
     pub fn new(declared: Declared, policy: PowerPolicy, backends: Backends) -> Self {
         Self {
@@ -144,6 +157,7 @@ impl DeviceServices {
             audio_duration_ms: 0,
             audio_volume: 70,
             dictionaries: kobo_dict::Index::default(),
+            library_roots: None,
             // Both on, matching a real reader that never opened settings.
             auto_update: AutoUpdateChoices {
                 cobalt: true,
@@ -348,7 +362,10 @@ impl DeviceServices {
         if let Some(reason) = self.refusal(Capability::Library) {
             return DeviceResult::Denied(reason);
         }
-        let listing = crate::library::list();
+        let listing = self
+            .library_roots
+            .as_deref()
+            .map_or_else(crate::library::list, crate::library::list_in);
         let truncated =
             listing.truncated || listing.entries.len() > kobo_protocol::MAX_LIBRARY_ENTRIES;
         DeviceResult::Library {
@@ -366,7 +383,11 @@ impl DeviceServices {
         if let Some(reason) = self.refusal(Capability::Library) {
             return DeviceResult::Denied(reason);
         }
-        match crate::library::read(id) {
+        let bytes = match self.library_roots.as_deref() {
+            Some(roots) => crate::library::read_in(roots, id),
+            None => crate::library::read(id),
+        };
+        match bytes {
             Some(bytes) if bytes.len() <= kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES => {
                 DeviceResult::LibraryDocument {
                     id: id.to_owned(),
@@ -771,6 +792,31 @@ mod tests {
                 entries: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn a_simulator_library_folder_is_listed_and_read_instead_of_the_readers_storage() {
+        let folder =
+            std::env::temp_dir().join(format!("kobo-policy-library-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("library folder");
+        std::fs::write(folder.join("Moby Dick.epub"), b"not really a book").expect("document");
+        let mut services = DeviceServices::simulated().with_library_roots(vec![folder.clone()]);
+        let DeviceResult::Library { entries, .. } = services.handle(DeviceRequest::ListLibrary)
+        else {
+            panic!("the library is listed");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Moby Dick");
+        assert_eq!(
+            services.handle(DeviceRequest::ReadLibrary {
+                id: entries[0].id.clone()
+            }),
+            DeviceResult::LibraryDocument {
+                id: entries[0].id.clone(),
+                bytes: b"not really a book".to_vec(),
+            }
+        );
+        std::fs::remove_dir_all(folder).expect("clean up");
     }
 
     fn declared(names: &[&str]) -> Declared {

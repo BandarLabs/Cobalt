@@ -215,6 +215,75 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// changed.
 const STATUS_POLL: Duration = Duration::from_secs(2);
 
+/// How often the runtime looks at whether a scheduled sync is due.
+///
+/// The shortest schedule the Sync app offers is an hour, so a minute late is
+/// nothing, and looking is two small reads from the app's state.
+const SYNC_CHECK: Duration = Duration::from_secs(60);
+
+/// The Sync windows this session starts, so the owner's schedule and their
+/// Sync now tap actually move files.
+///
+/// Nothing else runs them. The Sync app can only save its settings and ask;
+/// starting the engine needs the runtime's own privileges, and the reader
+/// cannot yet wake from sleep on a timer, so a schedule is kept while Cobalt
+/// is open and caught up when it next opens.
+#[derive(Default)]
+struct SyncWindows {
+    running: Option<Child>,
+    checked: Option<Instant>,
+    /// Set when the Sync app saved something that may make a window due now,
+    /// so a tap is answered at once rather than within the minute.
+    asked: bool,
+}
+
+impl SyncWindows {
+    fn tend(&mut self, online: bool) {
+        if !self.asked && self.checked.is_some_and(|at| at.elapsed() < SYNC_CHECK) {
+            return;
+        }
+        self.asked = false;
+        self.checked = Some(Instant::now());
+        if let Some(window) = &mut self.running {
+            if matches!(window.try_wait(), Ok(None)) {
+                return;
+            }
+            self.running = None;
+        }
+        let Some(due) = crate::syncthing::due() else {
+            return;
+        };
+        if !online {
+            // A schedule simply waits. A tap is answered, so the owner is not
+            // left looking at a request that seems to have gone nowhere.
+            if due == crate::syncthing::Due::Owner {
+                crate::syncthing::waiting_for_wifi();
+            }
+            return;
+        }
+        let started = std::env::current_exe().and_then(|runtime| {
+            use std::os::unix::process::CommandExt;
+            Command::new(runtime)
+                .args(due.arguments())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                // Its own group, so a signal meant for the session cannot take
+                // the window down halfway and leave the engine with nobody to
+                // stop it.
+                .process_group(0)
+                .spawn()
+        });
+        match started {
+            Ok(window) => {
+                trace(&format!("sync window started ({due:?})"));
+                self.running = Some(window);
+            }
+            Err(error) => trace(&format!("sync window could not start: {error}")),
+        }
+    }
+}
+
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
 ///
 /// Held by the session rather than read per frame. Every reading here is from
@@ -347,6 +416,11 @@ impl StatusSource {
         &self.last
     }
 
+    /// Whether the last reading found a routed connection.
+    fn online(&self) -> bool {
+        self.link == Some(kobo_hal::network::LinkState::Online)
+    }
+
     fn read(&mut self) -> kobo_ui::Status {
         let (reading, link) = read_status();
         // Traced on change only, so a field report says when the radio went
@@ -430,9 +504,9 @@ fn read_status() -> (Reading, kobo_hal::network::LinkState) {
 /// The wall clock as `HH:MM`, or empty when it cannot be read.
 ///
 /// Computed from the system clock without pulling in a date library: the band
-/// needs hours and minutes in local time and nothing else. The offset comes
-/// from the `TZ` the firmware already sets, read once per call because a
-/// reader who crosses a timezone should not have to restart anything.
+/// needs hours and minutes in local time and nothing else. The offset is
+/// resolved once per call because a reader who crosses a timezone should not
+/// have to restart anything.
 fn clock() -> String {
     let Ok(since_epoch) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
         // A clock before 1970 is a device whose time was never set. Blank is
@@ -445,32 +519,77 @@ fn clock() -> String {
     let Ok(seconds) = i64::try_from(since_epoch.as_secs()) else {
         return String::new();
     };
-    let seconds = seconds + local_offset_seconds();
+    let seconds = seconds + i64::from(reader_offset_minutes()) * 60;
     let day = seconds.rem_euclid(86_400);
     format!("{:02}:{:02}", day / 3600, (day % 3600) / 60)
 }
 
-/// Seconds to add to UTC for local time.
+/// The reader's offset from UTC in minutes east, resolved the way the C
+/// library resolves it for the stock reader.
 ///
-/// Read from `TZ` in the `<NAME><offset>` form that POSIX specifies and that
-/// the firmware writes, where the sign is inverted from what everyone expects:
-/// `EST5` is five hours *behind* UTC. Anything not understood is treated as
-/// UTC rather than guessed at.
-fn local_offset_seconds() -> i64 {
-    let Ok(tz) = std::env::var("TZ") else {
-        return 0;
+/// Cobalt is started from the stock reader's menu and inherits its
+/// environment, so `TZ` comes first when the firmware set one. Without it the
+/// C library falls back to `/etc/localtime`, and so does this. Agreeing with
+/// the C library is the whole point: what it tells the stock reader is the
+/// time the owner already sees on the home screen, and a second opinion here
+/// could only be a wrong one. Finding neither means UTC, which is also the
+/// right answer on a firmware that keeps the system clock at local time.
+fn reader_offset_minutes() -> i16 {
+    offset_minutes(std::env::var("TZ").ok().as_deref(), |path| {
+        fs::read(path).ok()
+    })
+}
+
+/// [`reader_offset_minutes`] with the environment and the filesystem passed
+/// in, so every way a firmware can spell its zone is tested without touching
+/// either.
+fn offset_minutes(tz: Option<&str>, read: impl Fn(&Path) -> Option<Vec<u8>>) -> i16 {
+    let zone = match tz.map(str::trim) {
+        None => read(Path::new("/etc/localtime")),
+        // An empty `TZ` is UTC to the C library, not "unset".
+        Some("") => return 0,
+        Some(tz) => {
+            if let Some(minutes) = kobo_policy::clock::posix_offset_minutes(tz) {
+                return minutes;
+            }
+            zone_file(tz).and_then(|path| read(&path))
+        }
     };
-    let rest = tz.trim_start_matches(|character: char| character.is_ascii_alphabetic());
-    let (sign, digits) = match rest.strip_prefix('-') {
-        Some(digits) => (1, digits),
-        None => (-1, rest.strip_prefix('+').unwrap_or(rest)),
-    };
-    let mut parts = digits.split(':');
-    let Some(Ok(hours)) = parts.next().map(str::parse::<i64>) else {
-        return 0;
-    };
-    let minutes = parts.next().and_then(|part| part.parse::<i64>().ok());
-    sign * (hours * 3600 + minutes.unwrap_or(0) * 60)
+    zone.as_deref()
+        .and_then(zone_rule)
+        .and_then(kobo_policy::clock::posix_offset_minutes)
+        .unwrap_or(0)
+}
+
+/// The zone file a `TZ` such as `Europe/London` or `:Asia/Kolkata` names.
+///
+/// A relative name may not climb out of the zone directory: it is read from
+/// the environment, and a `..` in it is a mistake rather than a zone.
+fn zone_file(tz: &str) -> Option<PathBuf> {
+    let name = tz.strip_prefix(':').unwrap_or(tz);
+    if name.starts_with('/') {
+        return Some(PathBuf::from(name));
+    }
+    if name.is_empty() || name.split('/').any(|part| part.is_empty() || part == "..") {
+        return None;
+    }
+    Some(Path::new("/usr/share/zoneinfo").join(name))
+}
+
+/// The POSIX rule a zone file of version 2 or later carries on its last line.
+///
+/// The rule is what the C library itself uses for times past the end of the
+/// file's table, which makes it the current offset, and it is plain text, so
+/// the binary transition table never has to be decoded.
+fn zone_rule(bytes: &[u8]) -> Option<&str> {
+    if !bytes.starts_with(b"TZif") || !matches!(bytes.get(4), Some(b'2'..=b'9')) {
+        return None;
+    }
+    let body = bytes.strip_suffix(b"\n")?;
+    let start = body.iter().rposition(|byte| *byte == b'\n')? + 1;
+    std::str::from_utf8(&body[start..])
+        .ok()
+        .filter(|rule| !rule.is_empty())
 }
 /// How long to wait for the restarted reader to feed the freeze watchdog
 /// before handing it back regardless.
@@ -2045,6 +2164,7 @@ fn host_applications(
         let mut power = kobod::power::Power::default();
         let mut power_button = kobod::power::Button::default();
         let mut consume_wake_touch = false;
+        let mut sync_windows = SyncWindows::default();
 
         loop {
             let now = Instant::now();
@@ -2082,6 +2202,7 @@ fn host_applications(
                     &mut status,
                 )?;
             }
+            sync_windows.tend(status.online());
             // Only the foreground application hears this. A magnet arriving
             // is a thing that happened in front of the reader, and a
             // background application has no standing to react to it.
@@ -3272,6 +3393,18 @@ fn host_applications(
                                 .shelf
                                 .handle(&request)
                                 .unwrap_or_else(|| apps[index].store.handle(&request));
+                            // Sync asks for a window by saving its settings or
+                            // a request, and only by that: it has no way to
+                            // start the engine itself.
+                            if apps[index].name == "syncthing"
+                                && matches!(
+                                    &request,
+                                    kobo_protocol::StoreRequest::Save { key, .. }
+                                        if crate::syncthing::asks_for_a_window(key)
+                                )
+                            {
+                                sync_windows.asked = true;
+                            }
                             reply(
                                 &mut apps[index],
                                 frame.request_id,
@@ -3897,6 +4030,45 @@ fn coldest(seen: &[(u64, Instant, bool)], front: u64) -> Option<usize> {
     kobod::navigation::eviction(seen, front, None)
 }
 
+/// The process an application runs as, before any sandbox is applied.
+///
+/// The environment is emptied so nothing of the runtime's own leaks into an
+/// application, which leaves it two things: the socket to talk on, and the
+/// reader's offset from UTC. The offset is passed as a number rather than as
+/// `TZ` because an application cannot read the firmware's zone files from
+/// inside its jail, and one number cannot be resolved two different ways.
+fn application_command(program: &Path, socket: &Path, offset_minutes: i16) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("KOBO_SOCKET", socket)
+        .env(
+            kobo_policy::clock::READER_OFFSET_VARIABLE,
+            offset_minutes.to_string(),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        // An application that dies of something the protocol never hears about
+        // -- a panic, a signal, a failed allocation -- says so on its standard
+        // error and nowhere else. Sent to nothing, as this was, the only trace
+        // left of a crash was the application no longer being there, and the
+        // one question worth asking of a crash could not be answered at all.
+        .stderr(Stdio::piped());
+    command
+}
+
+/// The address this reader uses on its network, if it has one.
+///
+/// Connecting a UDP socket sends nothing; it only asks the kernel which local
+/// address it would route from. That answers without parsing interface
+/// tables, and fails cleanly when Wi-Fi is off and there is no route at all.
+fn wifi_address() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    socket.connect(("192.0.2.1", 9)).ok()?;
+    let address = socket.local_addr().ok()?.ip();
+    (!address.is_unspecified() && !address.is_loopback()).then_some(address)
+}
+
 /// Starts one application and completes its opening exchange.
 #[allow(
     clippy::too_many_lines,
@@ -3937,18 +4109,17 @@ fn start_application(
         sandbox,
         identity_slot,
     } = launch;
-    let mut command = Command::new(&program);
-    command
-        .env_clear()
-        .env("KOBO_SOCKET", &child_socket)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        // An application that dies of something the protocol never hears about
-        // -- a panic, a signal, a failed allocation -- says so on its standard
-        // error and nowhere else. Sent to nothing, as this was, the only trace
-        // left of a crash was the application no longer being there, and the
-        // one question worth asking of a crash could not be answered at all.
-        .stderr(Stdio::piped());
+    let mut command = application_command(&program, &child_socket, reader_offset_minutes());
+    // Settings shows the reader's Wi-Fi address, which an owner needs for
+    // `--device` and for their router's client list. Applications cannot open
+    // sockets, so the runtime looks it up for Settings and for nothing else:
+    // a Store app with network access has no use for the reader's place on
+    // the owner's home network.
+    if expected_name == "settings" {
+        if let Some(address) = wifi_address() {
+            command.env("KOBO_READER_ADDRESS", address.to_string());
+        }
+    }
     let trace_syscalls = if let Some(sandbox) = sandbox {
         sandbox.configure(&mut command)
     } else {

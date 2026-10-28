@@ -304,11 +304,7 @@ fn supervise(request: &Request) -> Result<Outcome, String> {
 fn start(program: &str) -> Result<Child, String> {
     let deadline = Instant::now() + KILL_GRACE;
     loop {
-        let refused = match Command::new(program)
-            .env_clear()
-            .stdin(Stdio::null())
-            .spawn()
-        {
+        let refused = match child_command(program, env::var_os("TZ")).spawn() {
             Ok(child) => return Ok(child),
             Err(error) => error,
         };
@@ -318,6 +314,23 @@ fn start(program: &str) -> Result<Child, String> {
         }
         sleep(POLL_INTERVAL);
     }
+}
+
+/// The supervised program with nothing of the guardian's environment but the
+/// timezone.
+///
+/// `TZ` is the one value a supervised runtime needs from the shell it was
+/// started in. Without it the runtime's clock, and every application's day,
+/// would read UTC here and local time when the same runtime starts from the
+/// reader's menu. It carries no authority, so passing it reopens nothing the
+/// cleared environment closed.
+fn child_command(program: &str, timezone: Option<std::ffi::OsString>) -> Command {
+    let mut command = Command::new(program);
+    command.env_clear().stdin(Stdio::null());
+    if let Some(timezone) = timezone {
+        command.env("TZ", timezone);
+    }
+    command
 }
 
 /// ETXTBSY, without pulling a crate in for one number. It is 26 on Linux,
@@ -509,6 +522,21 @@ mod tests {
             Ok(Outcome::TimedOut)
         );
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_supervised_program_gets_the_timezone_and_none_of_the_unlock_phrases() {
+        let mut command = super::child_command("/usr/bin/env", Some("IST-5:30".into()));
+        command.stdout(std::process::Stdio::piped());
+        let output = command
+            .output()
+            .expect("run env under the guardian's rules");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "TZ=IST-5:30\n");
+        let mut bare = super::child_command("/usr/bin/env", None);
+        bare.stdout(std::process::Stdio::piped());
+        let output = bare.output().expect("run env with no timezone");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "");
     }
 
     struct TempScripts {
