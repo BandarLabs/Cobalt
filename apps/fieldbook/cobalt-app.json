@@ -11,12 +11,16 @@
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Send a field pack of the species you expect to see.",
-        "command": "kobo fieldbook push PACK.json"
+        "text": "Make a field pack from a CSV list of birds, such as your eBird data download.",
+        "command": "kobo fieldbook new MyEBirdData.csv --title \"Local birds\" --out pack.json"
+      },
+      {
+        "text": "Send the pack. Each push adds packs; the ones already there stay.",
+        "command": "kobo fieldbook push pack.json"
       },
       {
         "text": "Later, bring your outings back as an eBird checklist.",

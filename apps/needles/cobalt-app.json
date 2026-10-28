@@ -14,11 +14,11 @@
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already. PDF patterns also need Poppler on this computer, which kobo needles setup installs.",
+        "command": "kobo setup"
       },
       {
-        "text": "Send a pattern you own. PDFs need Poppler's pdftotext on this computer.",
+        "text": "Send a pattern you own. Each push adds a pattern; the ones already there stay.",
         "command": "kobo needles push PATTERN.pdf"
       },
       {

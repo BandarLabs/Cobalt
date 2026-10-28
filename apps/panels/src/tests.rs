@@ -692,3 +692,152 @@ fn shelf_summary_reports_the_acknowledged_page_while_a_newer_page_is_pending() {
     app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
     assert_eq!(app.previews.summary(&kept), "Saved page 3 of 3");
 }
+
+fn sent_comic(title: &str, bytes: &[u8]) -> kobo_comic::inbox::Sent {
+    let sha256 = kobo_net::sha256::hex_digest(bytes);
+    kobo_comic::inbox::Sent {
+        file: kobo_comic::inbox::file_name(&sha256),
+        title: title.to_owned(),
+        pages: 4,
+        sha256,
+    }
+}
+
+fn shelf_read(name: &str, bytes: &[u8]) -> kobo_sdk::StoreResult {
+    kobo_sdk::StoreResult::ShelfRead {
+        name: name.into(),
+        offset: 0,
+        size: u32::try_from(bytes.len()).unwrap(),
+        bytes: bytes.to_vec(),
+    }
+}
+
+#[test]
+fn comics_pushed_while_panels_was_away_start_going_on_the_shelf_when_it_comes_back() {
+    use kobo_sdk::{AppRunner, StoreResult};
+    let garden = include_bytes!("../assets/a-small-garden.cbz");
+    let pages = include_bytes!("../../../docs/quality/fixtures/original-pages.cbz");
+    let mut runner = AppRunner::new(super::Panels::default());
+    runner.start();
+    // Library, partial download, server, then the list of sent comics.
+    runner.store_result(StoreResult::Loaded {
+        key: super::LIBRARY.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: super::PARTIAL_META.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: super::server::KEY.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+    assert!(runner.app().sent.is_empty());
+    runner.resume();
+    let first = sent_comic("The Small Garden", garden);
+    let list = kobo_comic::inbox::encode(&[first.clone(), sent_comic("Original Pages", pages)]);
+    runner.store_result(shelf_read(kobo_comic::inbox::MANIFEST, &list));
+    assert_eq!(runner.app().sent.len(), 2);
+    assert_eq!(runner.app().waiting(), 2);
+    assert!(runner.app().adding, "the first sent comic is being added");
+    assert_eq!(runner.app().route, super::Route::Import);
+    assert_eq!(
+        runner
+            .app()
+            .local_load
+            .as_ref()
+            .map(|load| load.name().to_owned()),
+        Some(first.file.clone())
+    );
+    // Both stay listed under their own titles on the Add comic list.
+    let shown = format!("{:?}", runner.app().sent_screen(&runner.context()));
+    assert!(shown.contains("Original Pages") && shown.contains("The Small Garden"));
+    assert!(runner
+        .app()
+        .sent_screen(&runner.context())
+        .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+        .issues
+        .is_empty());
+}
+
+#[test]
+fn a_sent_comic_that_cannot_be_read_stops_the_run_and_is_not_tried_again() {
+    use kobo_sdk::{Context, KoboApp};
+    let broken = b"not a comic at all".to_vec();
+    let sent = sent_comic("Broken", &broken);
+    let mut app = super::Panels {
+        library: Some(super::Library::restore(None).unwrap()),
+        loaded: true,
+        sent: vec![sent.clone()],
+        ..super::Panels::default()
+    };
+    let mut context = Context::default();
+    app.add_waiting(&mut context);
+    assert!(app.adding);
+    app.on_shelf(&mut context, &sent.file, shelf_read(&sent.file, &broken));
+    assert!(!app.adding);
+    assert_eq!(app.route, super::Route::Library);
+    assert!(app.add_failed.contains(&sent.sha256));
+    app.add_waiting(&mut context);
+    assert!(
+        !app.adding,
+        "a comic that failed is not tried again this session"
+    );
+    assert_eq!(app.waiting(), 1, "it stays listed for the owner to see");
+}
+
+#[test]
+fn a_sent_comic_without_comic_info_keeps_the_title_it_was_sent_with() {
+    use kobo_sdk::{Context, KoboApp};
+    let bytes = include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec();
+    let sent = sent_comic("Original Pages, sent by name", &bytes);
+    let mut app = super::Panels {
+        library: Some(super::Library::restore(None).unwrap()),
+        loaded: true,
+        sent: vec![sent.clone()],
+        ..super::Panels::default()
+    };
+    let mut context = Context::default();
+    app.load_sideload(&mut context);
+    app.on_action(&mut context, action_id("sent-0"));
+    assert_eq!(app.route, super::Route::Import);
+    app.on_shelf(&mut context, &sent.file, shelf_read(&sent.file, &bytes));
+    let import = app.import.as_ref().expect("previewed");
+    let expected = kobo_comic::inspect(&bytes)
+        .unwrap()
+        .metadata
+        .title
+        .unwrap_or_else(|| sent.title.clone());
+    assert_eq!(import.receipt().title, expected);
+    assert_ne!(import.receipt().title, "Added comic");
+}
+
+#[test]
+fn a_sent_comic_already_on_the_shelf_opens_instead_of_importing_again() {
+    use kobo_sdk::{Context, KoboApp};
+    let bytes = include_bytes!("../assets/a-small-garden.cbz");
+    let sent = sent_comic("A small garden", bytes);
+    let mut library = super::Library::restore(None).unwrap();
+    library
+        .remember(super::Kept {
+            key: sent.sha256.clone(),
+            title: sent.title.clone(),
+            pages: 4,
+            rtl: false,
+        })
+        .unwrap();
+    let mut app = super::Panels {
+        library: Some(library),
+        loaded: true,
+        sent: vec![sent],
+        ..super::Panels::default()
+    };
+    assert_eq!(app.waiting(), 0);
+    assert!(app.waiting_notice().is_none());
+    let mut context = Context::default();
+    app.load_sideload(&mut context);
+    app.on_action(&mut context, action_id("sent-0"));
+    assert!(app.import.is_none());
+    assert!(app.pending_open.is_some(), "the shelf copy is opening");
+}

@@ -1,11 +1,17 @@
-wait 800
+# sweep: --bare --seed-root apps/syncthing/fixtures/synced
+# After a first sync, so the folder list has taken the setup guide's place.
+wait-for Folders
 expect Sync
-tap About Sync
+tap Folders
+expect Sync folders
+expect Notes, from the computer to Vault
+expect-missing Receive only
+clean
+shot folders
+tap About
 expect MPL-2.0
 clean
 shot about
 tap Back
-tap Folders
-expect Sync folders
-clean
-shot folders
+tap Back
+expect Sync now

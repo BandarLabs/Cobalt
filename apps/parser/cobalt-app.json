@@ -14,11 +14,11 @@
         "text": "First Light is bundled and plays offline. To add a story of your own:"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Check the story, then send it.",
+        "text": "Check the story, then send it. It appears in the library when the reader wakes.",
         "command": "kobo parser push story.z5"
       }
     ]

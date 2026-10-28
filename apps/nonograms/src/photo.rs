@@ -15,10 +15,10 @@ const REVEAL_HEIGHT: u32 = 724;
 /// import.
 pub const MANIFEST_FILE: &str = "imported.txt";
 
-/// How many puzzles one import may carry. The manifest is a transfer
-/// format, not an archive: past a screenful or two the answer is a second
-/// push, not a longer file.
-pub const MAX_IMPORTED: usize = 12;
+/// How many photo puzzles the reader keeps. Pushes add to the list now, so
+/// it holds a few screens of them; each is cut from its photo when the app
+/// opens, which is what keeps the number modest on a single-core reader.
+pub const MAX_IMPORTED: usize = 24;
 
 /// The longest puzzle name a manifest may carry, in characters.
 const MAX_NAME: usize = 48;

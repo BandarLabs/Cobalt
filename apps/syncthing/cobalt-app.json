@@ -2,8 +2,8 @@
   "id": "syncthing",
   "display_name": "Sync",
   "short_label": "Sync",
-  "summary": "Sync folders between your computer and Kobo with Syncthing, on a schedule.",
-  "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.",
+  "summary": "Sync folders between your computer and your Kobo with Syncthing. Needs your computer.",
+  "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.",
   "version": "0.3.4",
   "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "refresh",
@@ -13,19 +13,19 @@
   "setup": {
     "steps": [
       {
-        "text": "The first time Sync runs it downloads its engine over Wi-Fi, so the reader needs to be online once. This computer needs a package-manager-installed Syncthing."
+        "text": "Set up the reader once over USB, if you have not already. Sync also needs Syncthing on this computer, installed with its package manager.",
+        "command": "kobo setup"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
-      },
-      {
-        "text": "Pair one folder on this computer with a fixed folder on the reader.",
+        "text": "With the reader awake on Wi-Fi, pair one folder on this computer with a folder on the reader. The first time, the reader downloads the Syncthing engine.",
         "command": "kobo sync setup ~/Documents/notes --folder vault"
       },
       {
-        "text": "Resume Sync on the reader, then start this computer's private peer.",
+        "text": "Start this computer's side of Sync and leave it running.",
         "command": "kobo sync run"
+      },
+      {
+        "text": "On the reader, open Sync and tap Turn on Sync. The first sync starts at once and takes up to five minutes."
       }
     ]
   }

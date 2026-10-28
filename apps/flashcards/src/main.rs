@@ -5,9 +5,9 @@
 //! can execute script, resolve a path, or open a network socket.
 
 use kobo_flashcards_format::{
-    card_text_font, decode, digest_hex, validate_review_log, verify_card_images, AttachmentKind,
-    Card, CardTextFont, CardTextSpan, FormatError, ParsedBundle, DEVICE_DISTRIBUTION_DOCUMENTS,
-    JAPANESE_FONT, MAX_BUNDLE_BYTES, MAX_REVIEW_LOG_BYTES,
+    card_text_font, decode, digest_hex, parse_review_log, validate_review_log, verify_card_images,
+    AttachmentKind, Card, CardTextFont, CardTextSpan, FormatError, ParsedBundle, ReviewRecord,
+    DEVICE_DISTRIBUTION_DOCUMENTS, JAPANESE_FONT, MAX_BUNDLE_BYTES, MAX_REVIEW_LOG_BYTES,
 };
 use kobo_sdk::{
     action_id, ActionId, BandAlign, Chrome, Context, ControlState, FontHandle, Glyph, KoboApp,
@@ -16,9 +16,11 @@ use kobo_sdk::{
     Space, StoreError, StoreResult, TextPresentation, TilePicture,
 };
 mod sample;
+mod scheduler;
+mod study;
 
-use std::collections::BTreeSet;
 use std::process::ExitCode;
+use study::Study;
 
 const BUNDLE_NAME: &str = "collection.cobfc";
 const REVIEW_LOG_NAME: &str = "cobalt-review-log.ndjson";
@@ -60,7 +62,7 @@ enum ProblemKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Grade {
+pub enum Grade {
     Again,
     Hard,
     Good,
@@ -86,6 +88,10 @@ impl Grade {
             Self::Good => "Good",
             Self::Easy => "Easy",
         }
+    }
+
+    fn from_action(action: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|grade| grade.action() == action)
     }
 }
 
@@ -137,7 +143,10 @@ struct Flashcards {
     bundle: Option<ParsedBundle>,
     bundle_digest: String,
     selected_deck: Option<usize>,
-    reviewed_cards: BTreeSet<i64>,
+    /// Today's cards and every grade's next day, once the review log is read.
+    study: Option<Study>,
+    /// A fixed reader day, so tests do not depend on the calendar.
+    fixed_day: Option<i64>,
     answer: bool,
     saving: bool,
     pending_grade: Option<Grade>,
@@ -154,6 +163,10 @@ struct Flashcards {
     loading_received: u64,
     loading_total: Option<u64>,
     loading_bucket: Option<u8>,
+    /// The size of the collection on screen, to notice a newer push.
+    loaded_size: Option<usize>,
+    /// A shelf listing asked for on waking, to look for a newer push.
+    checking_shelf: bool,
     picture: Option<TilePicture>,
     media_message: Option<String>,
     japanese_font: Option<FontHandle>,
@@ -175,7 +188,8 @@ impl Default for Flashcards {
             bundle: None,
             bundle_digest: String::new(),
             selected_deck: None,
-            reviewed_cards: BTreeSet::new(),
+            study: None,
+            fixed_day: None,
             answer: false,
             saving: false,
             pending_grade: None,
@@ -192,6 +206,8 @@ impl Default for Flashcards {
             loading_received: 0,
             loading_total: None,
             loading_bucket: None,
+            loaded_size: None,
+            checking_shelf: false,
             picture: None,
             media_message: None,
             japanese_font: None,
@@ -226,41 +242,29 @@ impl Flashcards {
         }
     }
 
-    /// One row per deck, even when a merged collection keeps one queue per
-    /// source package. Cards stay in imported due order.
-    fn deck_groups(&self) -> Vec<(i64, Vec<i64>)> {
-        let Some(bundle) = &self.bundle else {
-            return Vec::new();
-        };
-        let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
-        for queue in &bundle.manifest().review_queue.decks {
-            if let Some(group) = groups
-                .iter_mut()
-                .find(|group| group.0 == queue.root_deck_id)
-            {
-                group.1.extend_from_slice(&queue.card_ids);
-            } else {
-                groups.push((queue.root_deck_id, queue.card_ids.clone()));
-            }
-        }
-        groups
+    /// The reader's day, from the clock at the reader's own offset.
+    fn today(&self) -> i64 {
+        self.fixed_day.unwrap_or_else(|| {
+            use kobo_sdk::clock::{Clock, SystemClock};
+            SystemClock::reader()
+                .now()
+                .ok()
+                .and_then(kobo_sdk::clock::Snapshot::local_day)
+                .unwrap_or(0)
+        })
     }
 
+    /// Cards due today in the chosen deck, or in every deck.
     fn active_card_ids(&self) -> Vec<i64> {
-        let Some(bundle) = &self.bundle else {
-            return Vec::new();
-        };
-        self.selected_deck
-            .and_then(|index| self.deck_groups().get(index).map(|group| group.1.clone()))
-            .unwrap_or_else(|| bundle.manifest().review_queue.card_ids.clone())
+        match (&self.bundle, &self.study) {
+            (Some(bundle), Some(study)) => study.due(bundle.manifest(), self.selected_deck),
+            _ => Vec::new(),
+        }
     }
 
     fn current_card(&self) -> Option<&Card> {
         let bundle = self.bundle.as_ref()?;
-        let active = self.active_card_ids();
-        let card_id = *active
-            .iter()
-            .find(|card_id| !self.reviewed_cards.contains(card_id))?;
+        let card_id = *self.active_card_ids().first()?;
         let index = bundle
             .manifest()
             .cards
@@ -269,47 +273,41 @@ impl Flashcards {
         bundle.manifest().cards.get(index)
     }
 
+    /// Cards in the selection already done for today.
     fn reviewed_count(&self) -> usize {
-        self.active_card_ids()
-            .iter()
-            .filter(|card_id| self.reviewed_cards.contains(card_id))
-            .count()
+        match (&self.bundle, &self.study) {
+            (Some(bundle), Some(study)) => {
+                study.cleared_today(bundle.manifest(), self.selected_deck)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Days from today until the selection next has a card due.
+    fn days_until_next(&self) -> Option<i64> {
+        let (Some(bundle), Some(study)) = (&self.bundle, &self.study) else {
+            return None;
+        };
+        study
+            .next_due_day(bundle.manifest(), self.selected_deck)
+            .map(|day| day - study.today())
     }
 
     fn selected_deck_name(&self) -> String {
-        let Some(bundle) = &self.bundle else {
-            return "Flashcards".to_owned();
-        };
         self.selected_deck
-            .and_then(|index| self.deck_groups().get(index).map(|group| group.0))
-            .and_then(|root_deck_id| {
-                bundle
-                    .manifest()
-                    .decks
-                    .iter()
-                    .find(|deck| deck.id == root_deck_id)
-            })
+            .and_then(|index| self.study.as_ref()?.groups().get(index))
             .map_or_else(
                 || "All due cards".to_owned(),
-                |deck| bounded_label(&deck.name, "Imported deck"),
+                |group| bounded_label(&group.name, "Imported deck"),
             )
     }
 
     fn deck_picker(&self) -> Screen {
         let choices = self.deck_choices();
-        let imported_total = self
-            .bundle
-            .as_ref()
-            .map_or(0, |bundle| bundle.manifest().review_queue.card_ids.len());
-        let total = self.bundle.as_ref().map_or(0, |bundle| {
-            bundle
-                .manifest()
-                .review_queue
-                .card_ids
-                .iter()
-                .filter(|card_id| !self.reviewed_cards.contains(card_id))
-                .count()
-        });
+        let total = match (&self.bundle, &self.study) {
+            (Some(bundle), Some(study)) => study.due(bundle.manifest(), None).len(),
+            _ => 0,
+        };
         let mut screen = ScreenBuilder::new("flashcards-decks").top_bar("Flashcards");
         screen = screen.top_bar_overflow(
             "more",
@@ -320,14 +318,25 @@ impl Flashcards {
             ],
         );
         if total == 0 {
-            let message = if imported_total == 0 {
-                "Nothing is due in this imported collection."
+            let reviewed = match (&self.bundle, &self.study) {
+                (Some(bundle), Some(study)) => study.cleared_today(bundle.manifest(), None),
+                _ => 0,
+            };
+            let next = self.days_until_next_overall();
+            let mut message = String::new();
+            if reviewed > 0 {
+                message.push_str(&reviewed_sentence(reviewed));
+                message.push(' ');
+            }
+            message.push_str(&next_due_sentence(next));
+            let title = if reviewed > 0 || next.is_some() {
+                "Done for today"
             } else {
-                "All due cards in this collection were recorded locally."
+                "No cards due"
             };
             return screen
-                .empty_state(message)
-                .bottom_action("retry", "Check collection again")
+                .splash(Some(Glyph::Check), title, message)
+                .bottom_action("retry", "Read collection again")
                 .build();
         }
         let page_count = self.deck_pages.len().max(1);
@@ -369,56 +378,72 @@ impl Flashcards {
         screen.build()
     }
 
+    fn days_until_next_overall(&self) -> Option<i64> {
+        let (Some(bundle), Some(study)) = (&self.bundle, &self.study) else {
+            return None;
+        };
+        study
+            .next_due_day(bundle.manifest(), None)
+            .map(|day| day - study.today())
+    }
+
+    /// One row per top-level deck with cards due or done today. A merged
+    /// collection keeps one queue per source package, but a deck is a deck.
     fn deck_choices(&self) -> Vec<DeckChoice> {
-        let Some(bundle) = &self.bundle else {
+        let (Some(bundle), Some(study)) = (&self.bundle, &self.study) else {
             return Vec::new();
         };
-        let queue = &bundle.manifest().review_queue;
-        let groups = self.deck_groups();
+        let manifest = bundle.manifest();
+        let rows: Vec<(usize, usize, usize)> = (0..study.groups().len())
+            .map(|group| {
+                (
+                    group,
+                    study.due(manifest, Some(group)).len(),
+                    study.cleared_today(manifest, Some(group)),
+                )
+            })
+            .filter(|(_, due, cleared)| due + cleared > 0)
+            .collect();
         let mut choices = Vec::new();
-        if groups.len() > 1 {
-            let remaining = queue
-                .card_ids
-                .iter()
-                .filter(|card_id| !self.reviewed_cards.contains(card_id))
-                .count();
+        if rows.len() > 1 {
             choices.push(DeckChoice {
                 action: "deck-all".to_owned(),
                 title: "All due cards".to_owned(),
-                summary: format!("Across {} decks · imported due order", groups.len()),
-                trailing: due_label(remaining),
+                summary: format!("Across {} decks", rows.len()),
+                trailing: due_label(study.due(manifest, None).len()),
             });
         }
-        for (index, (root_deck_id, card_ids)) in groups.iter().enumerate() {
-            let name = bundle
-                .manifest()
-                .decks
-                .iter()
-                .find(|deck| deck.id == *root_deck_id)
-                .map_or_else(|| "Imported deck".to_owned(), |deck| deck.name.clone());
-            let remaining = card_ids
-                .iter()
-                .filter(|card_id| !self.reviewed_cards.contains(card_id))
-                .count();
+        for (group, due, cleared) in rows {
+            let name = &study.groups()[group].name;
             choices.push(DeckChoice {
-                action: format!("deck-{index}"),
-                title: bounded_label(&name, "Imported deck"),
-                summary: "Imported due order".to_owned(),
-                trailing: due_label(remaining),
+                action: format!("deck-{group}"),
+                title: bounded_label(name, "Imported deck"),
+                summary: if cleared == 0 {
+                    "Not started today".to_owned()
+                } else {
+                    format!("{cleared} done today")
+                },
+                trailing: due_label(due),
             });
         }
         choices
     }
 
     fn review(&self) -> Screen {
-        let total = self.active_card_ids().len();
         let completed = self.reviewed_count();
+        let total = completed + self.active_card_ids().len();
         let Some(card) = self.current_card() else {
             let deck = self.selected_deck_name();
             let japanese_font = matches!(card_text_font(&deck), Ok(CardTextFont::Japanese))
                 .then_some(self.japanese_font)
                 .flatten();
-            return done_screen(&deck, completed, total, self.menu_open, japanese_font);
+            return done_screen(
+                &deck,
+                completed,
+                self.days_until_next(),
+                self.menu_open,
+                japanese_font,
+            );
         };
         let page_count = self.card_pages.len().max(1);
         let page = self.card_page.min(page_count - 1);
@@ -563,6 +588,7 @@ impl Flashcards {
             return;
         };
         let bytes = download.take();
+        self.loaded_size = Some(bytes.len());
         match decode(&bytes) {
             Ok(bundle) => {
                 if verify_card_images(&bundle, &bundle.manifest().review_queue.card_ids).is_err() {
@@ -619,7 +645,7 @@ impl Flashcards {
                 self.bundle_digest = digest_hex(&bytes);
                 self.bundle = Some(bundle);
                 self.selected_deck = None;
-                self.reviewed_cards.clear();
+                self.study = None;
                 self.answer = false;
                 self.saving = false;
                 self.pending_grade = None;
@@ -726,8 +752,8 @@ impl Flashcards {
         };
         let text = side_text(card, self.answer).to_owned();
         let spans = side_spans(card, self.answer).to_vec();
-        let total = self.active_card_ids().len();
         let completed = self.reviewed_count();
+        let total = completed + self.active_card_ids().len();
         let details = self.show_details.then(|| {
             let template = if matches!(
                 card_text_font(&card.template_name),
@@ -789,49 +815,50 @@ impl Flashcards {
         let Some(card) = self.current_card() else {
             return;
         };
-        let card_id = card.id;
-        let due = card.due;
-        let repetitions = card.repetitions;
-        let record = format!(
-            "{{\"format\":2,\"bundle_sha256\":\"{}\",\"card_id\":{},\"grade\":\"{}\",\"imported_due\":{},\"imported_reps\":{}}}",
-            self.bundle_digest,
-            card_id,
-            grade.action(),
-            due,
-            repetitions
-        );
+        let record = ReviewRecord {
+            bundle_sha256: self.bundle_digest.clone(),
+            card_id: card.id,
+            grade: grade.action().to_owned(),
+            imported_due: card.due,
+            imported_reps: i64::from(card.repetitions),
+            day: Some(
+                self.study
+                    .as_ref()
+                    .map_or_else(|| self.today(), Study::today),
+            ),
+        };
         self.saving = true;
         self.pending_grade = Some(grade);
-        self.pending_card_id = Some(card_id);
-        self.pending_review = Some(record);
+        self.pending_card_id = Some(record.card_id);
+        self.pending_review = Some(record.line());
         let mut download = ShelfDownload::new(REVIEW_LOG_NAME).at_most(MAX_REVIEW_LOG_BYTES);
         download.start(context);
         self.review_download = Some(download);
         context.set_screen(self.screen());
     }
 
-    /// Cards already recorded against this collection's digest do not come
-    /// up again after a restart; their grades wait in the log for the paired
-    /// computer.
-    fn seed_reviewed_cards(&mut self, log: &[u8]) {
-        if validate_review_log(log).is_err() {
-            return;
-        }
-        let Ok(text) = std::str::from_utf8(log) else {
+    /// Every grade in the log for this collection's cards, replayed so the
+    /// reader knows what is due today and when each card comes back. An
+    /// unreadable log must not lock the collection out, so it is skipped and
+    /// the imported queue is offered as it came.
+    fn replay_log(&mut self, log: &[u8]) {
+        let Some(bundle) = &self.bundle else {
             return;
         };
-        for line in text.lines() {
-            if let Some(card_id) = review_card_id(line, &self.bundle_digest) {
-                self.reviewed_cards.insert(card_id);
-            }
+        let mut study = Study::new(
+            bundle.manifest(),
+            self.today(),
+            kobo_sdk::clock::reader_offset_minutes(),
+        );
+        if let Ok(records) = parse_review_log(log) {
+            study.replay(bundle.manifest(), &records);
         }
+        self.study = Some(study);
     }
 
-    fn finish_resume(&mut self, context: &mut Context, log: Option<Vec<u8>>) {
+    fn finish_resume(&mut self, context: &mut Context, log: &[u8]) {
         self.resume_download = None;
-        if let Some(log) = log {
-            self.seed_reviewed_cards(&log);
-        }
+        self.replay_log(log);
         self.view = View::Decks;
         self.prepare_deck_pages(context);
         context.set_screen(self.screen());
@@ -870,7 +897,7 @@ impl Flashcards {
                 self.set_problem(
                     context,
                     ProblemKind::Corrupt,
-                    "The collection could not be read. Check the staged bundle and try again.",
+                    "The collection could not be read from storage. Send it again with kobo flashcards push.",
                 );
             }
             ShelfProgress::Elsewhere => return false,
@@ -940,8 +967,13 @@ impl Flashcards {
     }
 
     fn commit_review(&mut self, context: &mut Context) {
-        if let Some(card_id) = self.pending_card_id.take() {
-            self.reviewed_cards.insert(card_id);
+        if let (Some(card_id), Some(grade), Some(bundle), Some(study)) = (
+            self.pending_card_id.take(),
+            self.pending_grade,
+            &self.bundle,
+            &mut self.study,
+        ) {
+            study.grade(bundle.manifest(), card_id, grade);
         }
         self.answer = false;
         self.saving = false;
@@ -1069,9 +1101,8 @@ impl KoboApp for Flashcards {
             context.set_screen(self.screen());
         } else if action == action_id("deck-all") {
             self.select_deck(context, None);
-        } else if let Some(index) = self.bundle.as_ref().and_then(|bundle| {
-            (0..bundle.manifest().review_queue.decks.len())
-                .find(|index| action == action_id(&format!("deck-{index}")))
+        } else if let Some(index) = self.study.as_ref().and_then(|study| {
+            (0..study.groups().len()).find(|index| action == action_id(&format!("deck-{index}")))
         }) {
             self.select_deck(context, Some(index));
         } else if action == action_id("deck-page-prev") {
@@ -1109,11 +1140,47 @@ impl KoboApp for Flashcards {
         }
     }
 
+    /// Waking is when a push from the computer shows up and when a new day
+    /// starts, so the collection is looked at again and today moves on.
+    /// Nothing is reread in the middle of a card: the owner is looking at it.
+    fn on_resume(&mut self, context: &mut Context) {
+        let today = self.today();
+        if let (Some(bundle), Some(study)) = (&self.bundle, &mut self.study) {
+            if !self.saving && study.set_today(bundle.manifest(), today) {
+                self.answer = false;
+                self.prepare_deck_pages(context);
+                if self.view == View::Review {
+                    self.prepare_current_card(context);
+                }
+                context.set_screen(self.screen());
+            }
+        }
+        if matches!(self.view, View::Decks | View::FirstUse | View::Problem)
+            && self.library_download.is_none()
+            && self.sample_upload.is_none()
+        {
+            self.checking_shelf = true;
+            context.shelf().list();
+        }
+    }
+
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
         self.move_page(context, forward);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Shelf(items) = &result {
+            if std::mem::take(&mut self.checking_shelf) {
+                let size = items
+                    .iter()
+                    .find(|(name, _)| name == BUNDLE_NAME)
+                    .and_then(|(_, size)| usize::try_from(*size).ok());
+                if size.is_some() && size != self.loaded_size {
+                    self.start_download(context);
+                }
+            }
+            return;
+        }
         if self.advance_library_download(context, &result) {
             return;
         }
@@ -1128,14 +1195,14 @@ impl KoboApp for Flashcards {
                         .take()
                         .expect("active resume download")
                         .take();
-                    self.finish_resume(context, Some(log));
+                    self.finish_resume(context, &log);
                     return;
                 }
                 ShelfProgress::Moving { .. } => return,
                 // A first run has no log; an unreadable one must not lock the
                 // collection out. Offer the imported queue in both cases.
                 ShelfProgress::Failed(_) => {
-                    self.finish_resume(context, None);
+                    self.finish_resume(context, &[]);
                     return;
                 }
                 ShelfProgress::Elsewhere => {}
@@ -1235,8 +1302,8 @@ fn first_use_screen(menu_open: bool) -> Screen {
         // out where the bundle goes, so typing it as shown failed.
         .section("Your own deck")
         .command("kobo flashcards import deck.apkg --merge collection.cobfc")
-        .text("Then, with the Kobo plugged in over USB:")
-        .command("kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader")
+        .text("Then send it to this Kobo over Wi-Fi:")
+        .command("kobo flashcards push collection.cobfc")
         .bottom_action("retry", "Read collection again")
         .build()
 }
@@ -1254,19 +1321,6 @@ fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
         .build()
 }
 
-fn review_card_id(record: &str, digest: &str) -> Option<i64> {
-    if !record.contains(&format!("\"bundle_sha256\":\"{digest}\"")) {
-        return None;
-    }
-    let key = "\"card_id\":";
-    let start = record.find(key)? + key.len();
-    let digits: String = record[start..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    digits.parse().ok()
-}
-
 fn settings_screen(detailed: bool) -> Screen {
     ScreenBuilder::new("flashcards-settings")
         .top_bar("Review settings")
@@ -1282,16 +1336,16 @@ fn settings_screen(detailed: bool) -> Screen {
         .chosen(usize::from(detailed))
         .section("Review behavior")
         .facts([
-            ("Order", "Imported due queue"),
+            ("Order", "Due cards, then missed ones"),
             ("Text size", "Reader setting"),
-            ("Intervals", "Not recalculated on Kobo"),
+            ("Intervals", "FSRS, on this Kobo"),
             ("Media", "Fit without stretching"),
         ])
         .section("Grading")
         .text(
-            "Grades append to a local review log kept beside this collection, and recorded \
-             cards stay done when you come back. Staging the collection again keeps the log; \
-             your desktop scheduler is never written back.",
+            "Each grade sets the day a card comes back, and a card you miss comes back \
+             before you finish. Grades stay in a review log on this Kobo, and sending the \
+             collection again keeps them. Anki on your computer does not see them.",
         )
         .bottom_action("screen-back", "Done")
         .build()
@@ -1299,11 +1353,17 @@ fn settings_screen(detailed: bool) -> Screen {
 
 fn done_screen(
     deck: &str,
-    completed: usize,
-    total: usize,
+    reviewed: usize,
+    days_until_next: Option<i64>,
     menu_open: bool,
     japanese_font: Option<FontHandle>,
 ) -> Screen {
+    let mut summary = String::new();
+    if reviewed > 0 {
+        summary.push_str(&reviewed_sentence(reviewed));
+        summary.push(' ');
+    }
+    summary.push_str(&next_due_sentence(days_until_next));
     let mut screen = ScreenBuilder::new("flashcards-done")
         .top_bar("Flashcards")
         .top_bar_overflow(
@@ -1316,11 +1376,7 @@ fn done_screen(
         )
         .owns_back(true)
         .rich_text(deck, Vec::new(), DECK_PRESENTATION)
-        .splash(
-            Some(Glyph::Check),
-            "Review complete",
-            format!("{completed} of {total} due cards recorded locally."),
-        )
+        .splash(Some(Glyph::Check), "Done for today", summary)
         .bottom_action("back-decks", "Choose another deck");
     if let Some(font) = japanese_font {
         screen = screen.reading(true).reading_font(font);
@@ -1634,10 +1690,10 @@ fn readable_notice(text: &str) -> String {
 
 fn bundle_rejection_message(error: &FormatError) -> String {
     if *error == FormatError::UnsupportedVersion(3) {
-        "This collection uses the retired bundle format. Recreate it with the current host converter; the separate local review log will be preserved."
+        "This collection was made by an older kobo flashcards. Import the deck again on your computer and send it. Your grades on this Kobo are kept."
             .to_owned()
     } else {
-        "The staged collection is corrupt, unsupported, or incomplete. Recreate it with the current host converter."
+        "The collection on this Kobo is damaged or incomplete. Import the deck again on your computer and send it with kobo flashcards push."
             .to_owned()
     }
 }
@@ -1727,6 +1783,24 @@ fn bounded_label(value: &str, fallback: &str) -> String {
         output.push('\u{2026}');
     }
     output
+}
+
+fn reviewed_sentence(count: usize) -> String {
+    if count == 1 {
+        "You reviewed 1 card today.".to_owned()
+    } else {
+        format!("You reviewed {count} cards today.")
+    }
+}
+
+/// When the next card comes back, in words. A collection with nothing left
+/// to schedule needs new cards from the computer, and says so.
+fn next_due_sentence(days: Option<i64>) -> String {
+    match days {
+        Some(1) => "The next cards are due tomorrow.".to_owned(),
+        Some(days) if days > 1 => format!("The next cards are due in {days} days."),
+        _ => "Send more cards from your computer to keep going.".to_owned(),
+    }
 }
 
 fn due_label(count: usize) -> String {
@@ -1905,6 +1979,23 @@ mod tests {
         decode(&bytes).expect("decoded fixture")
     }
 
+    /// A fixed day well after any fixture collection was made.
+    const TEST_DAY: i64 = 20_000;
+
+    impl Flashcards {
+        fn open_study(&mut self) {
+            self.fixed_day = Some(TEST_DAY);
+            self.replay_log(b"");
+        }
+
+        fn grade_now(&mut self, card_id: i64, grade: Grade) {
+            let (Some(bundle), Some(study)) = (&self.bundle, &mut self.study) else {
+                panic!("no collection open");
+            };
+            study.grade(bundle.manifest(), card_id, grade);
+        }
+    }
+
     fn review_model(answer: bool) -> ReviewScreenModel {
         ReviewScreenModel {
             deck: "Japanese".to_owned(),
@@ -1997,6 +2088,9 @@ mod tests {
                 .iter()
                 .any(|row| row.title.contains(needle) || row.summary.contains(needle)),
             kobo_sdk::Node::Button { label, .. } => label.contains(needle),
+            kobo_sdk::Node::Splash { title, summary, .. } => {
+                title.contains(needle) || summary.contains(needle)
+            }
             _ => false,
         })
     }
@@ -2014,7 +2108,7 @@ mod tests {
         assert!(screen_text(&screen, "No collection yet"));
         assert!(screen_text(
             &screen,
-            "kobo flashcards stage collection.cobfc"
+            "kobo flashcards push collection.cobfc"
         ));
         assert!(screen
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
@@ -2179,12 +2273,47 @@ mod tests {
             &mut writes,
         );
         assert_eq!(restarted.app().view, View::Decks);
-        assert_eq!(restarted.app().reviewed_cards.len(), 1);
+        assert_eq!(restarted.app().reviewed_count(), 1);
         assert!(restarted
             .app()
             .deck_choices()
             .iter()
             .any(|choice| choice.trailing == "5 due"));
+    }
+
+    #[test]
+    fn a_card_answered_again_comes_back_before_the_session_ends() {
+        use kobo_sdk::AppRunner;
+
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
+        let mut runner = AppRunner::new(Flashcards {
+            fixed_day: Some(TEST_DAY),
+            ..Flashcards::default()
+        });
+        let commands = runner.start();
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        let commands = runner.action(action_id("sample"));
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        let mut act = |runner: &mut AppRunner<Flashcards>, action: &str| {
+            let commands = runner.action(action_id(action));
+            pump_transfers(runner, commands, &mut values, &mut blobs, &mut writes);
+        };
+        act(&mut runner, "deck-0");
+        let missed = runner.app().current_card().expect("a card").id;
+        act(&mut runner, "answer");
+        act(&mut runner, "again");
+        let mut seen = Vec::new();
+        while let Some(card) = runner.app().current_card().map(|card| card.id) {
+            seen.push(card);
+            act(&mut runner, "answer");
+            act(&mut runner, "good");
+        }
+        assert_eq!(seen.last(), Some(&missed));
+        assert_eq!(seen.len(), sample::CARDS.len());
+        let done = runner.app().screen();
+        assert!(screen_text(&done, "Done for today"));
+        assert!(screen_text(&done, "You reviewed 6 cards today."));
     }
 
     fn japanese_review_screens() -> (Screen, Screen) {
@@ -2241,11 +2370,13 @@ mod tests {
             view: View::Decks,
             ..Flashcards::default()
         };
-        let empty_app = Flashcards {
+        deck_app.open_study();
+        let mut empty_app = Flashcards {
             bundle: Some(fixture_bundle(false)),
             view: View::Decks,
             ..Flashcards::default()
         };
+        empty_app.open_study();
         let context = Context::default();
         deck_app.notice_documents = build_notice_documents(&context);
         let notice_index = {
@@ -2333,7 +2464,7 @@ mod tests {
             ("first-use", first_use_screen(false), None, false),
             (
                 "done",
-                done_screen("日本語", 18, 18, false, Some(JAPANESE_FONT_HANDLE)),
+                done_screen("日本語", 18, Some(1), false, Some(JAPANESE_FONT_HANDLE)),
                 None,
                 false,
             ),
@@ -2366,13 +2497,14 @@ mod tests {
     #[test]
     fn deck_and_review_actions_meet_the_seven_millimetre_target() {
         install_fonts();
-        let app = Flashcards {
+        let mut app = Flashcards {
             bundle: Some(fixture_bundle(true)),
             deck_pages: vec![vec![0, 1, 2]],
             japanese_font: Some(JAPANESE_FONT_HANDLE),
             view: View::Decks,
             ..Flashcards::default()
         };
+        app.open_study();
         let deck = app
             .deck_picker()
             .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(false));
@@ -2412,7 +2544,8 @@ mod tests {
             view: View::Decks,
             ..Flashcards::default()
         };
-        app.reviewed_cards.insert(1);
+        app.open_study();
+        app.grade_now(1, Grade::Good);
         let choices = app.deck_choices();
         assert_eq!(choices[0].trailing, "1 due");
         assert_eq!(choices[1].trailing, "Done");
@@ -2577,7 +2710,7 @@ mod tests {
                 "The staged collection is corrupt or unsupported.",
                 false,
             ),
-            done_screen("Japanese", 20, 20, false, None),
+            done_screen("Japanese", 20, Some(3), false, None),
         ];
         for screen in screens {
             let diagnostics =
@@ -2642,7 +2775,7 @@ mod tests {
         ));
         assert!(!message.contains("private-name"));
         assert!(!message.contains('<'));
-        assert!(message.contains("host converter"));
+        assert!(message.contains("Import the deck again"));
     }
 
     #[test]

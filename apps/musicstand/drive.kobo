@@ -3,3 +3,10 @@ wait-for Music Stand
 expect Your stand is empty
 clean
 shot musicstand-empty
+# The empty stand names only the push: setup and pairing are the setup steps.
+expect kobo musicstand push score.pdf
+expect-missing kobo musicstand init
+expect-missing kobo pair
+expect Check for scores
+tap Check for scores
+wait-for Your stand is empty

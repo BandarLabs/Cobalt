@@ -32,7 +32,7 @@ fn active_sync() -> Sync {
             files: 4,
             epoch: 1_790_841_600,
         }],
-        scheduled_at: 1_790_845_200,
+        last_attempt: 1_790_841_600,
         first_sync_seen: true,
         ..Sync::default()
     }
@@ -44,7 +44,7 @@ fn runtime_back_returns_from_every_supporting_page_without_changing_sync() {
     let config = runner.app().config.clone();
     let status = format!("{:?}", runner.app().status);
     let imports = format!("{:?}", runner.app().imports);
-    let scheduled = runner.app().scheduled_at;
+    let attempted = runner.app().last_attempt;
     for _ in 0..5 {
         for action in ["setup", "folders", "about"] {
             let opened = runner.action(action_id(action));
@@ -74,7 +74,7 @@ fn runtime_back_returns_from_every_supporting_page_without_changing_sync() {
             assert_eq!(runner.app().config, config);
             assert_eq!(format!("{:?}", runner.app().status), status);
             assert_eq!(format!("{:?}", runner.app().imports), imports);
-            assert_eq!(runner.app().scheduled_at, scheduled);
+            assert_eq!(runner.app().last_attempt, attempted);
         }
     }
 }
@@ -88,7 +88,7 @@ fn backing_out_of_setup_does_not_enable_paused_sync() {
     assert_eq!(runner.app().view, View::Status);
     assert!(!runner.app().config.enabled);
     assert_eq!(runner.app().config.cadence, Cadence::Manual);
-    assert_eq!(runner.app().scheduled_at, 0);
+    assert_eq!(runner.app().asked, Asked::No);
 }
 
 #[test]
@@ -100,6 +100,33 @@ fn setup_instructions_fit_at_every_portrait_text_size() {
         };
         let screen = guide_screen().with_own_back(true);
         let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+        let diagnostics = screen.diagnostics(&metrics, &chrome);
+        assert!(
+            !diagnostics.has_errors(),
+            "{text_scale:?}: {:?}",
+            diagnostics.issues
+        );
+    }
+}
+
+#[test]
+fn the_busiest_status_screen_fits_at_every_portrait_text_size() {
+    let mut busiest = active_sync();
+    busiest.status = WindowStatus::parse(
+        "conflict\n0\n2 file(s) could not sync. Sync tries them again next time.\n1\n1790841600\n2",
+    );
+    busiest.imports.push(Import {
+        folder: "frame".into(),
+        files: 12,
+        epoch: 1_790_841_600,
+    });
+    for text_scale in kobo_ui::TextScale::STEPS {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        let screen = busiest.status_screen();
+        let chrome = Chrome::for_screen(&screen, true, Chrome::measuring(true).status);
         let diagnostics = screen.diagnostics(&metrics, &chrome);
         assert!(
             !diagnostics.has_errors(),

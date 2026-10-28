@@ -13,6 +13,10 @@ tap Welcome
 expect home note of the fixture
 clean
 shot note
+tap Back
+wait-for Welcome
+tap Back
+wait-for notes
 tap Tags
 expect Tags
 clean

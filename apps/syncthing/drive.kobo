@@ -1,15 +1,28 @@
 expect Sync
-expect Sync is off
-tap Resume Sync
-expect Enabled
-expect Pause Sync
+expect Sync is off. Nothing moves until you turn it on.
 expect Not run yet
+expect-missing Refresh status
+expect-missing window
+tap Turn on Sync
+expect Sync now
+expect Starting
+expect Turn off Sync
 expect-missing Sync is off
 clean
 shot syncthing-on
+tap No schedule
+expect Every hour
+expect Syncs while Cobalt is open on Wi-Fi. Tap to change.
 tap Set up Sync
 expect Pair one computer folder
 expect kobo sync setup
-expect sync/vault
+expect tap Turn on Sync here
+expect-missing receive-only
 clean
 shot syncthing-guide
+tap Back
+tap Turn off Sync
+expect Sync is off
+tap Set up Sync
+tap Back
+expect Turn on Sync

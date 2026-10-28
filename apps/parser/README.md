@@ -13,9 +13,10 @@ Play interactive fiction offline on your Kobo.
 - Plays text-only Z-machine stories in versions 3, 5 and 8 (`.z3`, `.z5`,
   `.z8`).
 - The transcript is set as prose, with page turns by tap or page button.
-- Type commands, or tap LOOK, INVENTORY, EXAMINE, TAKE, directions, UNDO,
-  SAVE, RESTORE and AGAIN. Tap a word in the transcript to add it to your
-  command.
+- Type commands, or tap LOOK, INVENTORY, directions, UNDO, SAVE, RESTORE and
+  AGAIN. EXAMINE, TAKE, DROP, OPEN, READ and LIGHT ask which thing, from the
+  ones on the page, or let you type it. Tap a word in the transcript to add
+  it to your command.
 - Ten save slots per story, plus an autosave after every turn. Reopening a
   story continues where you stopped.
 - *First Light*, a short original tutorial story, is included.
@@ -24,13 +25,16 @@ Play interactive fiction offline on your Kobo.
 
 Parser never downloads games. Send a story file you own from your computer:
 
+Set up the reader once over USB with `kobo setup`, if you have not already.
+
 ```sh
-kobo parser inspect game.z5                       # format, title and compatibility
-kobo parser push game.z5 --device 192.168.1.23    # --replace overwrites a copy already there
+kobo parser inspect game.z5      # format, title and compatibility
+kobo parser push game.z5         # --replace overwrites a copy already there
 ```
 
-Then open Parser and tap **Refresh library**. Unsupported formats are refused
-before they are sent.
+Each push adds a story; the ones already there stay. The story appears in
+Parser's library, by its title, the next time Parser opens or the reader
+wakes. Unsupported formats are refused before they are sent.
 
 ## Limits
 

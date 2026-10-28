@@ -1,8 +1,9 @@
 //! A private-shelf photo frame. Images are prepared and atomically published by `kobo frame`.
 
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, Heartbeat, KoboApp, PictureHandle, Screen,
-    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, TaskId, TaskOutcome, TilePicture,
+    action_id, ActionId, BannerLevel, Context, DenyReason, DeviceRequest, DeviceResult, Glyph,
+    Heartbeat, KoboApp, PictureHandle, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+    StoreResult, TaskId, TaskOutcome, TilePicture,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
@@ -22,9 +23,17 @@ const NEXT: &str = "next";
 const PREVIOUS: &str = "previous";
 const MENU: &str = "menu";
 const EXIT: &str = "exit";
-const MODE: &str = "mode";
-const INTERVAL: &str = "interval";
-const ORDER: &str = "order";
+const SETTINGS: &str = "settings";
+const CHECK: &str = "check";
+const MODE_FRAME: &str = "mode-frame";
+const MODE_SLOW: &str = "mode-slow";
+const INTERVALS: [&str; 3] = ["interval-0", "interval-1", "interval-2"];
+const ORDER_DATE: &str = "order-date";
+const ORDER_SHUFFLE: &str = "order-shuffle";
+/// The choices each mode offers, in minutes for Frame mode and hours for the
+/// slow slideshow, in the order the settings screen shows them.
+const FRAME_MINUTES: [u8; 3] = [5, 15, 60];
+const SLOW_HOURS: [u8; 3] = [1, 6, 24];
 const LOAD_WATCH_SECS: u32 = 20;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -33,6 +42,7 @@ enum View {
     #[default]
     Home,
     Show,
+    Settings,
 }
 
 /// How a photo that misses the panel size should be fitted, as chosen at
@@ -120,11 +130,17 @@ struct Frame {
     fit_load: Option<ShelfDownload>,
     digest_load: Option<ShelfDownload>,
     digests: BTreeMap<String, String>,
+    /// The push-time fit of every photo, kept apart from the photos so that a
+    /// manifest read again after a push can be given the fits it already had.
+    fits: BTreeMap<String, FitChoice>,
     overlay: bool,
-    settings_open: bool,
     clock: Option<Heartbeat>,
     load_watch: Option<Heartbeat>,
     notice: Option<String>,
+    /// Why the reader would not stay awake for Frame mode, when it said no.
+    awake_refused: Option<DenyReason>,
+    /// Why the reader would not wake itself for the slow slideshow.
+    wake_refused: Option<DenyReason>,
 }
 
 impl Frame {
@@ -140,6 +156,7 @@ impl Frame {
                 .build(),
             View::Home => self.home(),
             View::Show => self.photo_screen(),
+            View::Settings => self.settings_screen(),
         }
     }
 
@@ -151,17 +168,20 @@ impl Frame {
         if !self.startup.manifest_loaded {
             return screen.activity("Opening your photo shelf", None).build();
         }
+        // Settings sit in the bar where they can be seen. They used to open
+        // only from a tap in the middle of the photo, which nothing on the
+        // screen ever mentioned.
+        screen = screen.top_bar_action(SETTINGS, "Settings");
         if self.photos.is_empty() {
             return screen
                 .splash(
                     Some(Glyph::App),
                     "Your frame is empty",
-                    "Send photos from a computer. A folder becomes a slideshow.",
+                    "Send photos from a computer. A folder becomes a slideshow, and new photos appear here on their own.",
                 )
                 .section("On your computer")
-                .command("kobo pair")
-                .command("kobo frame init")
                 .command("kobo frame push ~/Pictures/family")
+                .button(CHECK, "Check for photos")
                 .build();
         }
         let index = self.settings.position % self.photos.len().max(1) + 1;
@@ -198,37 +218,62 @@ impl Frame {
             screen = screen.banner(
                 BannerLevel::Attention,
                 format!(
-                    "{} photo(s) unreadable — re-push them from your computer.",
+                    "{} photo(s) could not be read. Push them again from your computer.",
                     self.unreadable.len()
                 ),
             );
         }
-        if self.settings_open {
-            let (mode, interval, order) = self.setting_labels();
-            screen = screen.modal("Settings", |overlay| {
-                overlay.buttons([(MODE, mode), (INTERVAL, interval), (ORDER, order)])
-            });
-        }
         screen.build()
     }
 
-    fn setting_labels(&self) -> (String, String, String) {
-        let mode = if self.settings.slow {
-            "Slow slideshow"
+    /// Every setting on one screen, each choice its own segment, so what is
+    /// set can be read before anything is tapped.
+    fn settings_screen(&self) -> Screen {
+        let slow = self.settings.slow;
+        let current = self.settings.interval();
+        let (choices, labels) = if slow {
+            (SLOW_HOURS, ["1 hour", "6 hours", "24 hours"])
         } else {
-            "Frame mode"
+            (FRAME_MINUTES, ["5 minutes", "15 minutes", "1 hour"])
         };
-        let interval = if self.settings.slow {
-            format!("Every {} hours", self.settings.interval())
+        let interval = choices
+            .iter()
+            .position(|choice| *choice == current)
+            .unwrap_or(1);
+        let mode_note = if slow {
+            match self.wake_refused {
+                Some(DenyReason::WithheldForBattery) => {
+                    "The battery is low, so the reader will not wake to change the photo. Charge it to keep the slideshow going.".to_owned()
+                }
+                Some(_) => "This reader cannot wake itself for Frame yet. Use Frame mode to change photos while Frame is open.".to_owned(),
+                None => "The reader sleeps between photos and wakes to change them.".to_owned(),
+            }
         } else {
-            format!("Every {} minutes", self.settings.interval())
+            match self.awake_refused {
+                Some(DenyReason::WithheldForBattery) => {
+                    "The battery is low, so the reader may go to sleep. Charge it to keep the frame on.".to_owned()
+                }
+                Some(_) => "This reader cannot stay awake for Frame yet. After an hour without a touch it goes back to the Kobo home screen, unless it is charging.".to_owned(),
+                None => "The screen stays on while Frame is open.".to_owned(),
+            }
         };
-        let order = if self.settings.shuffled {
-            "Shuffle"
-        } else {
-            "By date"
-        };
-        (mode.to_owned(), interval, order.to_owned())
+        ScreenBuilder::new("frame-settings")
+            .top_bar("Settings")
+            .section("Mode")
+            .segmented(
+                usize::from(slow),
+                [(MODE_FRAME, "Frame mode"), (MODE_SLOW, "Slow slideshow")],
+            )
+            .secondary(mode_note)
+            .section("Change the photo every")
+            .segmented(interval, INTERVALS.into_iter().zip(labels))
+            .section("Order")
+            .segmented(
+                usize::from(self.settings.shuffled),
+                [(ORDER_DATE, "By date"), (ORDER_SHUFFLE, "Shuffle")],
+            )
+            .build()
+            .with_own_back(true)
     }
 
     fn photo_screen(&self) -> Screen {
@@ -391,7 +436,6 @@ impl Frame {
             self.settings.position.checked_sub(1).unwrap_or(count - 1)
         };
         self.overlay = false;
-        self.settings_open = false;
         self.picture = None;
         self.save(context);
         self.start_current(context);
@@ -578,21 +622,127 @@ impl Frame {
         self.pump_verify(context);
     }
 
+    /// Reads the shelf again: the manifest and both sidecars.
+    ///
+    /// Frame used to read its shelf once, when it opened, and a frame is the
+    /// one app nobody closes, so a photo pushed on Monday was still not on
+    /// the panel on Friday. This runs whenever the reader comes back to Frame
+    /// and every time the photo changes on its own, which is when somebody
+    /// would notice the new photos.
+    fn reload_shelf(&mut self, context: &mut Context) {
+        if !self.startup.manifest_loaded
+            || self.manifest_load.is_some()
+            || self.digest_load.is_some()
+            || self.fit_load.is_some()
+        {
+            return;
+        }
+        self.start_shelf_reads(context);
+    }
+
+    fn start_shelf_reads(&mut self, context: &mut Context) {
+        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
+        manifest.start(context);
+        self.manifest_load = Some(manifest);
+        let mut digests = ShelfDownload::new(DIGEST_MANIFEST).at_most(MAX_MANIFEST);
+        digests.start(context);
+        self.digest_load = Some(digests);
+        let mut fits = ShelfDownload::new(FIT_MANIFEST).at_most(MAX_MANIFEST);
+        fits.start(context);
+        self.fit_load = Some(fits);
+    }
+
+    /// Takes a manifest read after Frame was already showing photos.
+    ///
+    /// The photo on the panel stays where it is when the push kept it, so a
+    /// push never yanks the frame to a different picture; only a photo that
+    /// left the shelf is replaced. Everything remembered about photos that are
+    /// gone is forgotten with them.
+    fn replace_photos(&mut self, context: &mut Context, mut photos: Vec<Photo>) {
+        for photo in &mut photos {
+            photo.fit = self.fits.get(&photo.id).copied().unwrap_or_default();
+        }
+        if photos == self.photos {
+            return;
+        }
+        let selected = self.selected().map(|photo| photo.id.clone());
+        self.photos = photos;
+        let ids = self
+            .photos
+            .iter()
+            .map(|photo| photo.id.clone())
+            .collect::<BTreeSet<_>>();
+        for set in [
+            &mut self.unreadable,
+            &mut self.verified,
+            &mut self.verify_paused,
+            &mut self.mismatched,
+        ] {
+            set.retain(|id| ids.contains(id));
+        }
+        let order = self.ordered_indices();
+        let kept = selected
+            .as_ref()
+            .and_then(|id| order.iter().position(|index| &self.photos[*index].id == id));
+        if let Some(position) = kept {
+            self.settings.position = position;
+        } else {
+            self.settings.position %= self.photos.len().max(1);
+            self.picture = None;
+            self.overlay = false;
+            if self
+                .photo_load_id
+                .as_ref()
+                .is_some_and(|id| !ids.contains(id))
+            {
+                self.abandon_photo_load(context);
+            }
+            if self.verify_id.as_ref().is_some_and(|id| !ids.contains(id)) {
+                self.verify_load = None;
+                self.verify_id = None;
+            }
+        }
+        if self.photos.is_empty() {
+            self.picture = None;
+            self.view = View::Home;
+        }
+        self.save(context);
+        if self.startup.started {
+            self.start_deferred(context);
+            self.pump_verify(context);
+        }
+    }
+
     fn advance_manifest(&mut self, context: &mut Context, result: &StoreResult) -> bool {
         let Some(load) = &mut self.manifest_load else {
             return false;
         };
+        let reloading = self.startup.manifest_loaded;
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.manifest_load.take().expect("active manifest").take();
                 match decode_manifest(&bytes) {
+                    Ok(photos) if reloading => {
+                        self.notice = None;
+                        self.replace_photos(context, photos);
+                    }
                     Ok(photos) => {
                         self.photos = photos;
+                        for photo in &mut self.photos {
+                            photo.fit = self.fits.get(&photo.id).copied().unwrap_or_default();
+                        }
                         self.notice = None;
                     }
+                    // A push that is still being written is read whole or not
+                    // at all, so a damaged manifest found while photos are
+                    // already showing is left alone rather than emptying the
+                    // frame; the next look will find the finished one.
+                    Err(_) if reloading => {}
                     Err(error) => {
                         self.photos.clear();
-                        self.notice = Some(format!("Frame shelf needs re-pushing: {error}"));
+                        self.notice = Some(format!(
+                            "Frame's photo list could not be read ({error}). Push the album again from your computer."
+                        ));
                     }
                 }
                 self.startup.manifest_loaded = true;
@@ -600,13 +750,18 @@ impl Frame {
             }
             ShelfProgress::Failed(kobo_sdk::StoreError::Missing) => {
                 self.manifest_load = None;
+                if reloading {
+                    self.replace_photos(context, Vec::new());
+                }
                 self.startup.manifest_loaded = true;
                 true
             }
             ShelfProgress::Failed(_) => {
                 self.manifest_load = None;
+                if !reloading {
+                    self.notice = Some("Frame's photo list could not be opened.".to_owned());
+                }
                 self.startup.manifest_loaded = true;
-                self.notice = Some("Frame shelf could not be opened.".to_owned());
                 true
             }
             ShelfProgress::Moving { .. } => true,
@@ -621,11 +776,9 @@ impl Frame {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.fit_load.take().expect("active fit map").take();
-                let map = decode_fit_map(&bytes);
+                self.fits = decode_fit_map(&bytes).into_iter().collect();
                 for photo in &mut self.photos {
-                    if let Some((_, fit)) = map.iter().find(|(id, _)| *id == photo.id) {
-                        photo.fit = *fit;
-                    }
+                    photo.fit = self.fits.get(&photo.id).copied().unwrap_or_default();
                 }
                 true
             }
@@ -645,7 +798,17 @@ impl Frame {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.digest_load.take().expect("active digest map").take();
-                self.digests = decode_digest_map(&bytes);
+                let digests = decode_digest_map(&bytes);
+                // A photo pushed again under the same name has to be checked
+                // again: what was verified was the bytes it replaced.
+                for (id, digest) in &self.digests {
+                    if digests.get(id) != Some(digest) {
+                        self.verified.remove(id);
+                        self.mismatched.remove(id);
+                        self.verify_paused.remove(id);
+                    }
+                }
+                self.digests = digests;
                 self.pump_verify(context);
                 true
             }
@@ -701,29 +864,11 @@ impl KoboApp for Frame {
         self.panel_height = u32::try_from(context.metrics().height).unwrap_or_default();
         self.view = View::Opening;
         context.store().load(STATE);
-        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
-        manifest.start(context);
-        self.manifest_load = Some(manifest);
-        let mut digests = ShelfDownload::new(DIGEST_MANIFEST).at_most(MAX_MANIFEST);
-        digests.start(context);
-        self.digest_load = Some(digests);
-        let mut fits = ShelfDownload::new(FIT_MANIFEST).at_most(MAX_MANIFEST);
-        fits.start(context);
-        self.fit_load = Some(fits);
+        self.start_shelf_reads(context);
         self.show(context);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if self.advance_manifest(context, &result)
-            || self.advance_fit_map(context, &result)
-            || self.advance_digest_map(context, &result)
-            || self.advance_photo(context, &result)
-            || self.advance_verify(context, &result)
-        {
-            self.start_when_ready(context);
-            self.show(context);
-            return;
-        }
         if let StoreResult::Loaded { key, value } = result {
             if key == STATE {
                 self.settings = value
@@ -737,10 +882,38 @@ impl KoboApp for Frame {
         self.show(context);
     }
 
+    /// Every shelf answer goes to the read that asked for it, by name.
+    ///
+    /// A refusal carries no name of its own, so before the shelf was read
+    /// more than once a missing sidecar could be taken by whichever read was
+    /// asked first. Reading the manifest again while a photo is on its way is
+    /// exactly that case, and the name the runtime answers for is the only
+    /// thing that tells the two apart.
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        let named = |load: &Option<ShelfDownload>| load.as_ref().is_some_and(|l| l.name() == name);
+        let handled = if named(&self.manifest_load) {
+            self.advance_manifest(context, &result)
+        } else if named(&self.fit_load) {
+            self.advance_fit_map(context, &result)
+        } else if named(&self.digest_load) {
+            self.advance_digest_map(context, &result)
+        } else if named(&self.photo_load) {
+            self.advance_photo(context, &result)
+        } else if named(&self.verify_load) {
+            self.advance_verify(context, &result)
+        } else {
+            false
+        };
+        if handled {
+            self.start_when_ready(context);
+            self.show(context);
+        }
+    }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK || action == action_id(EXIT) {
-            if self.settings_open {
-                self.settings_open = false;
+            if self.view == View::Settings {
+                self.view = View::Home;
             } else if self.view == View::Show {
                 self.view = View::Home;
                 self.overlay = false;
@@ -754,46 +927,47 @@ impl KoboApp for Frame {
             if self.picture.is_some() {
                 self.view = View::Show;
             }
-            self.settings_open = false;
             self.start_current(context);
         } else if action == action_id(NEXT) {
             self.advance(context, true);
         } else if action == action_id(PREVIOUS) {
             self.advance(context, false);
+        } else if action == action_id(CHECK) {
+            self.reload_shelf(context);
         } else if action == action_id(MENU) {
             if self.view == View::Home {
-                self.settings_open = !self.settings_open;
+                self.view = View::Settings;
             } else {
                 self.overlay = true;
             }
-        } else if action == action_id(MODE) {
-            self.settings.slow = !self.settings.slow;
-            self.settings.interval = if self.settings.slow { 6 } else { 15 };
-            self.save(context);
-            self.apply_power_policy(context);
-        } else if action == action_id(INTERVAL) {
+        } else if action == action_id(SETTINGS) {
+            self.view = View::Settings;
+        } else if action == action_id(MODE_FRAME) || action == action_id(MODE_SLOW) {
+            let slow = action == action_id(MODE_SLOW);
+            if slow != self.settings.slow {
+                self.settings.slow = slow;
+                self.settings.interval = if slow { 6 } else { 15 };
+                self.save(context);
+                self.apply_power_policy(context);
+            }
+        } else if let Some(choice) = INTERVALS.iter().position(|name| action == action_id(name)) {
             self.settings.interval = if self.settings.slow {
-                match self.settings.interval() {
-                    1 => 6,
-                    6 => 24,
-                    _ => 1,
-                }
+                SLOW_HOURS[choice]
             } else {
-                match self.settings.interval() {
-                    5 => 15,
-                    15 => 60,
-                    _ => 5,
-                }
+                FRAME_MINUTES[choice]
             };
             self.save(context);
             self.apply_power_policy(context);
-        } else if action == action_id(ORDER) {
-            self.settings.shuffled = !self.settings.shuffled;
-            self.settings.position = 0;
-            self.picture = None;
-            self.save(context);
-            self.abandon_photo_load(context);
-            self.start_current(context);
+        } else if action == action_id(ORDER_DATE) || action == action_id(ORDER_SHUFFLE) {
+            let shuffled = action == action_id(ORDER_SHUFFLE);
+            if shuffled != self.settings.shuffled {
+                self.settings.shuffled = shuffled;
+                self.settings.position = 0;
+                self.picture = None;
+                self.save(context);
+                self.abandon_photo_load(context);
+                self.start_current(context);
+            }
         }
         self.show(context);
     }
@@ -824,17 +998,47 @@ impl KoboApp for Frame {
             if !self.settings.slow {
                 self.advance(context, true);
                 self.apply_power_policy(context);
+                self.reload_shelf(context);
             }
             self.show(context);
         }
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.reload_shelf(context);
+        self.show(context);
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.reload_shelf(context);
+        self.show(context);
     }
 
     fn on_scheduled_wake(&mut self, context: &mut Context) {
         if self.settings.slow {
             self.advance(context, true);
             self.apply_power_policy(context);
-            self.show(context);
         }
+        self.reload_shelf(context);
+        self.show(context);
+    }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        let refused = match result {
+            DeviceResult::Denied(reason) => Some(reason),
+            _ => None,
+        };
+        match request {
+            DeviceRequest::KeepAwake { .. } => self.awake_refused = refused,
+            DeviceRequest::ScheduleWake { .. } => self.wake_refused = refused,
+            _ => return,
+        }
+        self.show(context);
     }
 }
 
@@ -1293,13 +1497,21 @@ mod tests {
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.action(action_id(MENU));
-        assert!(runner.app().settings_open);
-        runner.action(action_id(MODE));
+        assert_eq!(runner.app().view, View::Settings);
+        runner.action(action_id(MODE_SLOW));
         assert!(runner.app().settings.slow);
-        runner.action(action_id(INTERVAL));
-        runner.action(action_id(ORDER));
+        runner.action(action_id(INTERVALS[2]));
+        assert_eq!(runner.app().settings.interval(), 24);
+        runner.action(action_id(ORDER_SHUFFLE));
         runner.action(ActionId::BACK);
-        assert!(!runner.app().settings_open);
+        assert_eq!(runner.app().view, View::Home);
+        // Answers arrive in the order they were asked for: the first photo
+        // read, the three settings saves, then the read the new order asked
+        // for, which finds nothing left waiting for it.
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        for _ in 0..3 {
+            runner.store_result(StoreResult::Saved { key: STATE.into() });
+        }
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         assert!(runner.app().photos_all_unreadable());
         assert_eq!(runner.app().view, View::Home);
@@ -1326,6 +1538,175 @@ mod tests {
         runner.action(action_id(EXIT));
         assert_eq!(runner.app().view, View::Home);
         assert!(!runner.app().overlay);
+    }
+
+    fn manifest_of(ids: &[&str]) -> Vec<u8> {
+        let mut text = "cobalt-frame-v1\n".to_owned();
+        for (index, id) in ids.iter().enumerate() {
+            text.push_str(&format!(
+                "{id}\t{}\t{index}\tFamily\t{id}.png\n",
+                "a".repeat(64)
+            ));
+        }
+        text.into_bytes()
+    }
+
+    fn shelf_read(name: &str, bytes: &[u8]) -> StoreResult {
+        StoreResult::ShelfRead {
+            name: name.into(),
+            offset: 0,
+            bytes: bytes.to_vec(),
+            size: u32::try_from(bytes.len()).expect("fits"),
+        }
+    }
+
+    /// Opens a frame on a shelf holding `ids`, with no sidecars and every
+    /// photo read refused, so the shelf reads are the only thing in flight.
+    fn opened_on(ids: &[&str]) -> kobo_sdk::AppRunner<Frame> {
+        let mut runner = kobo_sdk::AppRunner::new(Frame::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner.store_result(shelf_read(MANIFEST, &manifest_of(ids)));
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner
+    }
+
+    #[test]
+    fn a_photo_pushed_while_frame_was_asleep_is_on_the_shelf_when_it_wakes() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa"]);
+        assert_eq!(runner.app().photos.len(), 1);
+        runner.resume();
+        assert!(
+            runner.app().manifest_load.is_some(),
+            "waking must read the shelf again"
+        );
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.store_result(shelf_read(
+            MANIFEST,
+            &manifest_of(&["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]),
+        ));
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert_eq!(runner.app().photos.len(), 2);
+    }
+
+    #[test]
+    fn coming_back_to_frame_and_a_scheduled_wake_both_look_at_the_shelf_again() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa"]);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+        assert!(runner.app().manifest_load.is_some());
+
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa"]);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.scheduled_wake();
+        assert!(runner.app().manifest_load.is_some());
+    }
+
+    #[test]
+    fn a_push_that_keeps_the_photo_on_screen_does_not_move_the_frame() {
+        let mut runner = opened_on(&["photo-bbbbbbbbbbbbbbbb"]);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        let shown = runner.app().selected().map(|photo| photo.id.clone());
+        runner.resume();
+        // An earlier photo sorts in front of the one being shown.
+        runner.store_result(shelf_read(
+            MANIFEST,
+            &manifest_of(&["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]),
+        ));
+        assert_eq!(
+            runner.app().selected().map(|photo| photo.id.clone()),
+            shown,
+            "the photo on the panel must stay the photo on the panel"
+        );
+        assert_eq!(runner.app().settings.position, 1);
+    }
+
+    #[test]
+    fn a_photo_removed_from_the_shelf_leaves_the_frame_and_its_marks_go_with_it() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]);
+        // The first photo is refused, which moves the frame on and saves the
+        // new position before asking for the second, refused as well.
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.store_result(StoreResult::Saved { key: STATE.into() });
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert!(runner.app().unreadable.contains("photo-aaaaaaaaaaaaaaaa"));
+        runner.resume();
+        runner.store_result(shelf_read(
+            MANIFEST,
+            &manifest_of(&["photo-bbbbbbbbbbbbbbbb"]),
+        ));
+        assert_eq!(runner.app().photos.len(), 1);
+        assert!(!runner.app().unreadable.contains("photo-aaaaaaaaaaaaaaaa"));
+        assert_eq!(
+            runner.app().selected().map(|photo| photo.id.as_str()),
+            Some("photo-bbbbbbbbbbbbbbbb")
+        );
+    }
+
+    #[test]
+    fn a_shelf_read_again_while_a_photo_loads_never_takes_the_photos_refusal() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]);
+        // The first photo's read is still in flight when the reader wakes.
+        assert!(runner.app().photo_load.is_some());
+        runner.resume();
+        // The photo's refusal comes back first and must not empty the shelf.
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert_eq!(runner.app().photos.len(), 2);
+        assert!(runner.app().manifest_load.is_some());
+    }
+
+    #[test]
+    fn settings_are_reachable_from_the_bar_and_name_the_current_choice() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa"]);
+        let home = runner.app().home();
+        let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(layout.rect_of_action(action_id(SETTINGS)).is_some());
+        runner.action(action_id(SETTINGS));
+        assert_eq!(runner.app().view, View::Settings);
+        let screen = runner.app().settings_screen();
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        for name in [MODE_FRAME, MODE_SLOW, ORDER_DATE, ORDER_SHUFFLE]
+            .into_iter()
+            .chain(INTERVALS)
+        {
+            assert!(layout.rect_of_action(action_id(name)).is_some(), "{name}");
+        }
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        runner.action(action_id(INTERVALS[0]));
+        assert_eq!(runner.app().settings.interval(), 5);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn an_empty_frame_names_only_the_push_and_can_look_again() {
+        let mut runner = opened_on(&[]);
+        let text = format!("{:?}", runner.app().home());
+        assert!(text.contains("kobo frame push"));
+        assert!(!text.contains("kobo frame init"));
+        assert!(!text.contains("kobo pair"));
+        runner.action(action_id(CHECK));
+        assert!(runner.app().manifest_load.is_some());
+    }
+
+    #[test]
+    fn a_reader_that_will_not_stay_awake_says_so_in_settings() {
+        let mut frame = Frame::default();
+        let mut context = Context::default();
+        frame.on_device_result(
+            &mut context,
+            DeviceRequest::KeepAwake { seconds: 960 },
+            DeviceResult::Denied(DenyReason::Unsupported),
+        );
+        assert!(format!("{:?}", frame.settings_screen()).contains("cannot stay awake"));
     }
 
     #[test]

@@ -1,9 +1,10 @@
 //! Needles keeps patterns and row counters usable without Wi-Fi. Ravelry Basic
 //! credentials are only passed to the runtime by name and never enter app memory.
 
+use kobo_bookview::positions::{Progress, KEY as POSITIONS};
 use kobo_bookview::{BookView, Step};
 use kobo_json::Value;
-use kobo_read::{Memory, Outcome};
+use kobo_read::Outcome;
 use kobo_sdk::{
     action_id, is_valid_key, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp,
     RowLead, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, Task, TaskError,
@@ -12,7 +13,15 @@ use kobo_sdk::{
 use std::{collections::VecDeque, process::ExitCode, time::Duration};
 
 const STATE: &str = "counter-state-v1";
+/// The one pattern a push wrote before patterns had names of their own.
 const PATTERN_BLOB: &str = "pattern.md";
+/// Patterns pushed since, one shelf file each: `pattern-<name>.md`.
+const PATTERN_PREFIX: &str = "pattern-";
+/// The titles of the pushed patterns, one `file<TAB>title` line each, written
+/// by `kobo needles push` so the list shows a pattern's real name before it
+/// has ever been opened.
+const PATTERN_INDEX: &str = "patterns.tsv";
+const MAX_INDEX: usize = 64 * 1024;
 const MAX_JSON: u32 = 256 * 1024;
 const MAX_PATTERN: usize = 4 * 1024 * 1024;
 const MAX_PATTERNS: usize = 60;
@@ -29,6 +38,8 @@ enum Route {
     Projects,
     Library,
     Pattern,
+    /// The patterns sent from the computer, to choose one to read.
+    Patterns,
     Reading,
 }
 
@@ -95,6 +106,13 @@ struct Counter {
 struct Pattern {
     title: String,
     detail: String,
+}
+
+/// A pattern file on this Kobo, sent from the computer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Shelved {
+    file: String,
+    title: String,
 }
 
 /// One thing on the needles: a name, the section being worked, and a counter
@@ -180,6 +198,21 @@ struct Needles {
     /// The chart being read off the shelf, and its transfer.
     chart: Option<(String, ShelfDownload)>,
     book: BookView,
+    /// The patterns on this Kobo, in the order they were sent.
+    shelved: Vec<Shelved>,
+    /// Titles from the push index, by file.
+    titles: Vec<(String, String)>,
+    /// The pattern files on the shelf, as last listed.
+    listed: Vec<String>,
+    index_load: Option<ShelfDownload>,
+    patterns_page: usize,
+    /// The pattern file open in the reader, or loading into it.
+    reading: Option<String>,
+    /// Where each pattern was left, so it reopens on the same page.
+    positions: Progress,
+    /// The count a "Start section again" cleared, so Undo can bring it back:
+    /// the project, the section and the counter as it was.
+    restarted: Option<(usize, usize, Counter)>,
 }
 
 impl Needles {
@@ -196,19 +229,13 @@ impl Needles {
             Route::Projects => self.projects_screen(context).0,
             Route::Library => self.library(context).0,
             Route::Pattern => self.pattern(),
-            Route::Reading => self
-                .book
-                .screen(
-                    self.selected
-                        .as_ref()
-                        .map_or("Pattern", |pattern| &pattern.title),
-                )
-                .unwrap_or_else(|| {
-                    ScreenBuilder::new("needles-reader")
-                        .top_bar("Pattern")
-                        .secondary("Opening your synced pattern…")
-                        .build()
-                }),
+            Route::Patterns => self.patterns_screen(context).0,
+            Route::Reading => self.book.screen(self.reading_title()).unwrap_or_else(|| {
+                ScreenBuilder::new("needles-reader")
+                    .top_bar("Pattern")
+                    .secondary("Opening your synced pattern…")
+                    .build()
+            }),
         }
     }
 
@@ -287,8 +314,12 @@ impl Needles {
             // things done once a project.
             .rows([(
                 "read",
-                "Read synced pattern",
-                "The pattern sent from your computer",
+                "Read a pattern",
+                match self.shelved.len() {
+                    0 => "Send one from your computer".to_owned(),
+                    1 => self.shelved[0].title.clone(),
+                    count => format!("{count} patterns from your computer"),
+                },
                 Glyph::Note,
             )])
             .fill()
@@ -296,6 +327,9 @@ impl Needles {
                 ("section", "Change section"),
                 ("repeat-total", "Repeat length"),
             ])
+            // The second sleeve is the same rows again: a fresh count for
+            // the section, and Undo beside +1 brings the old one back.
+            .button("restart-section", "Start section again")
             // Undo still sits beside the increment it reverses: a miscount is
             // fixed with a tap next to the tap that made it.
             .band(
@@ -433,15 +467,188 @@ impl Needles {
         (screen.bottom_action("sync", sync).build(), pages)
     }
 
+    /// The patterns sent from the computer, newest last, each saying
+    /// whether it has been opened, since that is where it reopens.
+    fn patterns_screen(&self, context: &Context) -> (Screen, usize) {
+        let mut screen = ScreenBuilder::new("needles-patterns").top_bar("Patterns");
+        if let Some(note) = &self.notice {
+            screen = screen.banner(BannerLevel::Attention, note);
+        }
+        if self.shelved.is_empty() {
+            return (
+                screen
+                    .splash(
+                        Some(Glyph::Note),
+                        "No patterns yet",
+                        "Send a pattern you own from your computer. It shows up here \
+                         when the reader wakes.",
+                    )
+                    .command("kobo needles push PATTERN.pdf")
+                    .build(),
+                1,
+            );
+        }
+        let rows = self
+            .shelved
+            .iter()
+            .enumerate()
+            .map(|(index, pattern)| {
+                let opened = self
+                    .positions
+                    .has_read(&position_id(&pattern.file))
+                    .unwrap_or(false);
+                (
+                    format!("shelved-{index}"),
+                    context.clamped_row(&pattern.title, 2, false),
+                    if opened {
+                        "Opens where you left it".to_owned()
+                    } else {
+                        "Not opened yet".to_owned()
+                    },
+                    RowLead::Icon(Glyph::Note),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (screen, pages) = Self::paged_rows(context, screen, &rows, self.patterns_page, false);
+        (screen.build(), pages)
+    }
+
+    fn reading_title(&self) -> &str {
+        self.reading
+            .as_ref()
+            .and_then(|file| self.shelved.iter().find(|pattern| &pattern.file == file))
+            .map_or("Pattern", |pattern| pattern.title.as_str())
+    }
+
+    /// Reads the shelf again: what is on it, and what the push index calls
+    /// it. Done on start and on every wake, so a push shows up without a
+    /// restart.
+    fn refresh_shelf(&mut self, context: &mut Context) {
+        context.shelf().list();
+        if self.index_load.is_none() {
+            let mut load = ShelfDownload::new(PATTERN_INDEX).at_most(MAX_INDEX);
+            load.start(context);
+            self.index_load = Some(load);
+        }
+    }
+
+    fn shelf_listed(&mut self, items: &[(String, u32)]) {
+        self.listed = items
+            .iter()
+            .map(|(name, _)| name.clone())
+            .filter(|name| is_pattern_file(name))
+            .collect();
+        self.arrange();
+    }
+
+    /// The listed patterns in the push index's order with its titles, then
+    /// any it does not name. Either answer can arrive first.
+    fn arrange(&mut self) {
+        let mut files = self.listed.clone();
+        // The order the push index gives, then anything it does not know.
+        files.sort_by_key(|file| {
+            (
+                self.titles
+                    .iter()
+                    .position(|(known, _)| known == file)
+                    .unwrap_or(usize::MAX),
+                file.clone(),
+            )
+        });
+        self.shelved = files
+            .into_iter()
+            .map(|file| Shelved {
+                title: self
+                    .titles
+                    .iter()
+                    .find(|(known, _)| *known == file)
+                    .map_or_else(|| title_from_file(&file), |(_, title)| title.clone()),
+                file,
+            })
+            .collect();
+    }
+
+    fn read_index(&mut self, bytes: &[u8]) {
+        self.titles = std::str::from_utf8(bytes)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                let (file, title) = line.split_once('\t')?;
+                let title = title.trim();
+                (is_pattern_file(file) && !title.is_empty())
+                    .then(|| (file.to_owned(), title.chars().take(80).collect()))
+            })
+            .collect();
+        self.arrange();
+    }
+
+    /// Opens the one pattern there is, or the list when there are several.
+    fn choose_pattern(&mut self, context: &mut Context) {
+        if let [only] = self.shelved.as_slice() {
+            let file = only.file.clone();
+            self.open_pattern(context, file);
+        } else {
+            self.patterns_page = 0;
+            self.route = Route::Patterns;
+            self.notice = None;
+        }
+    }
+
+    /// Leaves the pattern being read, keeping its page for next time.
+    fn close_pattern(&mut self, context: &mut Context) {
+        self.keep_position(context);
+        self.book.close(context);
+        self.reading = None;
+        self.charts.clear();
+        self.chart = None;
+        context.device().allow_sleep();
+    }
+
+    /// Keeps the open pattern's page, so it reopens there.
+    fn keep_position(&mut self, context: &mut Context) {
+        if let (Some(file), Some(memory)) = (&self.reading, self.book.memory()) {
+            self.positions
+                .keep(context, position_id(file), memory.clone());
+        }
+    }
+
+    /// Clears the count of the section being worked, keeping it for Undo.
+    fn restart_section(&mut self, context: &mut Context) {
+        let current = self.current;
+        let project = &mut self.projects[current];
+        let section = project.section;
+        let old = project.counters[section].clone();
+        if old.row == 0 {
+            self.notice = Some("This section is already at row 0.".to_owned());
+            return;
+        }
+        project.counters[section] = Counter {
+            repeat_total: old.repeat_total,
+            ..Counter::default()
+        };
+        self.notice = Some(format!(
+            "{} starts again at row 0. Undo brings back row {}.",
+            project
+                .sections
+                .get(section)
+                .map_or("This section", String::as_str),
+            old.row
+        ));
+        self.restarted = Some((current, section, old));
+        self.save(context);
+    }
+
     fn turn_list(&mut self, context: &Context, forward: bool) {
         let count = match self.route {
             Route::Projects => self.projects_screen(context).1,
             Route::Library => self.library(context).1,
+            Route::Patterns => self.patterns_screen(context).1,
             _ => return,
         };
         let page = match self.route {
             Route::Projects => &mut self.project_page,
             Route::Library => &mut self.collection_pages[self.collection.index()],
+            Route::Patterns => &mut self.patterns_page,
             _ => return,
         };
         let last = count.saturating_sub(1);
@@ -460,9 +667,9 @@ impl Needles {
         let mut screen = ScreenBuilder::new("needles-pattern")
             .top_bar("Pattern")
             .heading(title)
-            .text("Use kobo needles push on your computer to prepare and transfer a PDF you own. Text pages reflow here.")
+            .text("To read it here, send a PDF you own from your computer with kobo needles push.")
             .primary_button("follow", "Follow this pattern")
-            .button("read", "Open synced pattern");
+            .button("read", "Read a pattern");
         if let Some(note) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, note);
         }
@@ -501,6 +708,7 @@ impl Needles {
     }
 
     fn increment(&mut self, context: &mut Context) {
+        self.restarted = None;
         let counter = self.counter_mut();
         counter.row = counter.row.saturating_add(1);
         counter.repeat = if counter.repeat >= counter.repeat_total {
@@ -514,6 +722,14 @@ impl Needles {
     }
 
     fn undo(&mut self, context: &mut Context) {
+        if let Some((project, section, counter)) = self.restarted.take() {
+            if project == self.current && section == self.projects[project].section {
+                self.projects[project].counters[section] = counter;
+                self.notice = None;
+                self.save(context);
+                return;
+            }
+        }
         let counter = self.counter_mut();
         if counter.row > 0 {
             counter.row -= 1;
@@ -585,16 +801,17 @@ impl Needles {
         true
     }
 
-    fn open_pattern(&mut self, context: &mut Context) {
+    fn open_pattern(&mut self, context: &mut Context, file: String) {
         if self.loading.is_some() {
             return;
         }
         self.charts.clear();
         self.chart = None;
-        let mut loading = ShelfDownload::new(PATTERN_BLOB).at_most(MAX_PATTERN);
+        let mut loading = ShelfDownload::new(file.clone()).at_most(MAX_PATTERN);
         loading.start(context);
         self.loading = Some(loading);
-        self.notice = Some("Opening the pattern transferred from your computer.".to_owned());
+        self.reading = Some(file);
+        self.notice = Some("Opening the pattern sent from your computer.".to_owned());
     }
 
     /// Reads the pattern's charts off the shelf one at a time. A chart only
@@ -754,6 +971,14 @@ impl Default for Needles {
             charts: VecDeque::new(),
             chart: None,
             book: BookView::new(),
+            shelved: Vec::new(),
+            titles: Vec::new(),
+            listed: Vec::new(),
+            index_load: None,
+            patterns_page: 0,
+            reading: None,
+            positions: Progress::default(),
+            restarted: None,
         }
     }
 }
@@ -857,6 +1082,36 @@ fn parse_counters(text: &str) -> Option<Vec<Counter>> {
         .collect::<Option<Vec<_>>>()
 }
 
+fn is_pattern_file(name: &str) -> bool {
+    name == PATTERN_BLOB
+        || name
+            .strip_prefix(PATTERN_PREFIX)
+            .and_then(|rest| rest.strip_suffix(".md"))
+            .is_some_and(|stem| !stem.is_empty())
+}
+
+/// A readable name for a pattern the push index does not list, from its
+/// file name: `pattern-winter-socks.md` reads "Winter socks".
+fn title_from_file(file: &str) -> String {
+    if file == PATTERN_BLOB {
+        return "Pattern".to_owned();
+    }
+    let words = file
+        .trim_start_matches(PATTERN_PREFIX)
+        .trim_end_matches(".md")
+        .replace(['-', '_'], " ");
+    let mut letters = words.trim().chars();
+    letters.next().map_or_else(
+        || "Pattern".to_owned(),
+        |first| first.to_uppercase().chain(letters).collect(),
+    )
+}
+
+/// The key a pattern's reading position is kept under.
+fn position_id(file: &str) -> String {
+    kobo_bookview::positions::identity(&format!("needles:{file}"))
+}
+
 fn hex(text: &str) -> String {
     use std::fmt::Write as _;
     text.bytes().fold(String::new(), |mut out, byte| {
@@ -887,11 +1142,63 @@ impl KoboApp for Needles {
         for collection in Collection::ALL {
             context.store().load(collection.key());
         }
+        context.store().load(POSITIONS);
+        self.refresh_shelf(context);
         self.show(context);
+    }
+
+    /// A pattern pushed while the reader slept is on the shelf when it
+    /// wakes, so the list is read again.
+    fn on_resume(&mut self, context: &mut Context) {
+        self.refresh_shelf(context);
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.refresh_shelf(context);
+        self.show(context);
+    }
+
+    fn on_background(&mut self, context: &mut Context) {
+        self.keep_position(context);
+    }
+
+    /// Shelf answers carry the file they are for, so the index read is
+    /// routed by name and a refusal for it cannot fail a pattern opening.
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if name == PATTERN_INDEX {
+            let Some(load) = &mut self.index_load else {
+                return;
+            };
+            match load.advance(context, &result) {
+                ShelfProgress::Done => {
+                    let bytes = self.index_load.take().expect("index read").take();
+                    self.read_index(&bytes);
+                    self.show(context);
+                }
+                ShelfProgress::Failed(_) => self.index_load = None,
+                ShelfProgress::Moving { .. } | ShelfProgress::Elsewhere => {}
+            }
+            return;
+        }
+        self.on_store(context, result);
     }
 
     #[allow(clippy::too_many_lines)]
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Shelf(items) = &result {
+            self.shelf_listed(items);
+            self.show(context);
+            return;
+        }
+        if matches!(&result, StoreResult::Loaded { key, .. } if key == POSITIONS) {
+            self.positions.load(result);
+            self.show(context);
+            return;
+        }
+        if matches!(&result, StoreResult::Saved { key } if key == POSITIONS) {
+            self.positions.saved(context, result);
+            return;
+        }
         if let StoreResult::Loaded { key, value } = &result {
             if key == STATE {
                 if let Some(value) = value {
@@ -919,42 +1226,40 @@ impl KoboApp for Needles {
                         self.show(context);
                         return;
                     };
+                    let file = loading.name().to_owned();
                     let bytes = loading.take();
-                    match self
-                        .book
-                        .open_bytes(context, PATTERN_BLOB, &bytes, Memory::default())
-                    {
-                        Ok(()) => {
-                            // The pattern being read is the work being
-                            // counted: its own sections take over the project
-                            // it belongs to, named after its title heading.
-                            let (title, sections) = parse_pattern(&bytes);
-                            let counting =
-                                title.map_or(self.current, |title| self.project_for(&title));
-                            self.current = counting;
-                            if !sections.is_empty() {
-                                self.projects[counting].adopt_sections(sections);
-                            }
-                            self.save(context);
-                            self.charts = self.book.missing_pictures().into_iter().collect();
-                            self.load_next_chart(context);
-                            self.route = Route::Reading;
-                            self.notice = None;
+                    let memory = self.positions.memory(&position_id(&file));
+                    if self.book.open_bytes(context, &file, &bytes, memory).is_ok() {
+                        // The pattern being read is the work being
+                        // counted: its own sections take over the project
+                        // it belongs to, named after its title heading.
+                        let (title, sections) = parse_pattern(&bytes);
+                        let counting = title.map_or(self.current, |title| self.project_for(&title));
+                        self.current = counting;
+                        if !sections.is_empty() {
+                            self.projects[counting].adopt_sections(sections);
                         }
-                        Err(_) => {
-                            self.notice = Some(
-                                "The transferred pattern is not readable Markdown or text. Run kobo needles push again."
-                                    .to_owned(),
-                            );
-                        }
+                        self.save(context);
+                        self.charts = self.book.missing_pictures().into_iter().collect();
+                        self.load_next_chart(context);
+                        self.route = Route::Reading;
+                        self.notice = None;
+                    } else {
+                        self.reading = None;
+                        self.notice = Some(
+                            "This pattern could not be read. Send it again with kobo needles push."
+                                .to_owned(),
+                        );
                     }
                 }
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
+                    self.reading = None;
                     self.notice = Some(
-                        "No readable pattern is on this Kobo yet. Run kobo needles push PATTERN.pdf on your computer."
+                        "That pattern is no longer on this Kobo. Send it again with kobo needles push."
                             .to_owned(),
                     );
+                    context.shelf().list();
                 }
                 ShelfProgress::Elsewhere | ShelfProgress::Moving { .. } => {}
             }
@@ -986,22 +1291,23 @@ impl KoboApp for Needles {
         if self.route == Route::Reading {
             if let Some(outcome) = self.book.act(context, action) {
                 if matches!(outcome, Outcome::Close) {
-                    self.book.close(context);
-                    self.charts.clear();
-                    self.chart = None;
+                    self.close_pattern(context);
                     self.route = Route::Project;
-                    context.device().allow_sleep();
                 }
                 self.show(context);
                 return;
             }
         }
         if action == ActionId::BACK {
+            if self.route == Route::Reading {
+                self.close_pattern(context);
+            }
             self.route = if self.route == Route::Pattern {
                 Route::Library
             } else {
                 Route::Project
             };
+            self.notice = None;
         } else if action == action_id("list-next") {
             self.turn_list(context, true);
         } else if action == action_id("list-previous") {
@@ -1011,6 +1317,7 @@ impl KoboApp for Needles {
         } else if action == action_id("undo") {
             self.undo(context);
         } else if action == action_id("section") {
+            self.restarted = None;
             let project = &mut self.projects[self.current];
             project.section = (project.section + 1) % project.sections.len();
             self.notice = None;
@@ -1037,7 +1344,14 @@ impl KoboApp for Needles {
             context.device().keep_awake(Duration::from_secs(14_400));
             self.save(context);
         } else if action == action_id("read") {
-            self.open_pattern(context);
+            self.choose_pattern(context);
+        } else if action == action_id("restart-section") {
+            self.restart_section(context);
+        } else if let Some(index) =
+            (0..self.shelved.len()).find(|index| action == action_id(&format!("shelved-{index}")))
+        {
+            let file = self.shelved[index].file.clone();
+            self.open_pattern(context, file);
         } else if let Some(index) =
             (0..self.projects.len()).find(|index| action == action_id(&format!("project-{index}")))
         {
@@ -1057,7 +1371,20 @@ impl KoboApp for Needles {
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
-        if matches!(self.route, Route::Projects | Route::Library) {
+        if self.route == Route::Reading {
+            let action = if forward {
+                kobo_read::action::FORWARD
+            } else {
+                kobo_read::action::BACK
+            };
+            let _ = self.book.act(context, action_id(action));
+            self.show(context);
+            return;
+        }
+        if matches!(
+            self.route,
+            Route::Projects | Route::Library | Route::Patterns
+        ) {
             self.turn_list(context, forward);
             self.show(context);
         }
@@ -1316,6 +1643,105 @@ mod tests {
         );
         assert!(app.chart.is_none());
         assert!(app.charts.is_empty());
+    }
+
+    #[test]
+    fn every_pushed_pattern_is_listed_by_its_title_in_push_order() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        app.read_index(b"pattern-winter-socks.md\tWinter Socks\npattern-lace.md\tLace Shawl\n");
+        app.on_store(
+            &mut context,
+            StoreResult::Shelf(vec![
+                ("chart-main.png".to_owned(), 3),
+                ("pattern-lace.md".to_owned(), 10),
+                ("pattern-new-hat.md".to_owned(), 9),
+                ("pattern-winter-socks.md".to_owned(), 10),
+                ("pattern.md".to_owned(), 5),
+            ]),
+        );
+        let titles = app
+            .shelved
+            .iter()
+            .map(|pattern| pattern.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Winter Socks", "Lace Shawl", "New hat", "Pattern"]);
+        app.on_action(&mut context, action_id("read"));
+        assert_eq!(app.route, Route::Patterns);
+    }
+
+    fn deliver(app: &mut Needles, context: &mut Context, file: &str, bytes: &[u8]) {
+        app.open_pattern(context, file.to_owned());
+        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        app.on_store(
+            context,
+            StoreResult::ShelfRead {
+                name: file.to_owned(),
+                offset: 0,
+                bytes: bytes.to_vec(),
+                size,
+            },
+        );
+    }
+
+    #[test]
+    fn a_pattern_reopens_at_the_page_it_was_left_on() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        app.positions.load(StoreResult::Loaded {
+            key: super::POSITIONS.to_owned(),
+            value: None,
+        });
+        let mut long = String::from("# Long cardigan\n\n");
+        for row in 1..=400 {
+            long.push_str(&format!(
+                "Row {row}: knit to the marker, slip it, purl two together.\n\n"
+            ));
+        }
+        deliver(
+            &mut app,
+            &mut context,
+            "pattern-long-cardigan.md",
+            long.as_bytes(),
+        );
+        assert_eq!(app.route, Route::Reading);
+        let start = app.book.memory().cloned();
+        for _ in 0..3 {
+            app.on_page_turn(&mut context, true);
+        }
+        let left = app.book.memory().cloned();
+        assert_ne!(left, start);
+        app.keep_position(&mut context);
+        app.book.close(&mut context);
+        app.route = Route::Project;
+        deliver(
+            &mut app,
+            &mut context,
+            "pattern-long-cardigan.md",
+            long.as_bytes(),
+        );
+        assert_eq!(app.book.memory().cloned(), left);
+    }
+
+    #[test]
+    fn starting_a_section_again_clears_its_count_and_undo_brings_it_back() {
+        let mut app = Needles::default();
+        let mut context = Context::default();
+        for _ in 0..42 {
+            app.increment(&mut context);
+        }
+        app.on_action(&mut context, action_id("restart-section"));
+        assert_eq!(app.counter().row, 0);
+        assert!(app
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("Undo brings back row 42")));
+        app.on_action(&mut context, action_id("undo"));
+        assert_eq!(app.counter().row, 42);
+        app.on_action(&mut context, action_id("restart-section"));
+        app.on_action(&mut context, action_id("plus"));
+        app.on_action(&mut context, action_id("undo"));
+        assert_eq!(app.counter().row, 0);
     }
 
     #[test]

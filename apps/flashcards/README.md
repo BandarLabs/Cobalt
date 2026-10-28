@@ -1,7 +1,7 @@
 # Flashcards
 
 Review flashcard decks on your Kobo, offline. Import Anki packages on your
-computer and send them to the reader.
+computer and send them to the reader over Wi-Fi.
 
 <table>
 <tr>
@@ -22,18 +22,23 @@ computer and send them to the reader.
 
 - Choose a deck with cards due, reveal each card and grade it Again, Hard,
   Good or Easy. The buttons never move.
+- A card you grade Again comes back at the end of the same session.
+- Each grade sets the day the card comes back, with the FSRS scheduler Anki
+  uses, so cards come due on their own between pushes. When everything due is
+  done, the app says so and says when the next cards are due.
 - Long cards turn page by page without covering the controls.
 - Images (PNG, JPEG and SVG converted on the computer), cloze cards and
   Japanese text.
 - Audio and video attachments are listed but do not play.
 - A built-in sample deck to try it without importing anything.
-- Grades are kept in a review log on the reader. A card you have graded is not
-  shown again after a restart.
+- Grades are kept in a review log on the reader and survive a restart and a
+  new push of the same collection.
 
 ## Importing a collection
 
-Import runs on your computer with a separate helper, `flashcards-import`. With
-the Kobo connected over USB at `MOUNT` and Flashcards closed:
+Set up the reader once over USB with `kobo setup`, if you have not already.
+Import runs on your computer with a separate helper, `flashcards-import`.
+Export a deck from Anki (File, Export, Anki Deck Package), then:
 
 ```sh
 kobo flashcards status                                   # check the helper
@@ -41,16 +46,22 @@ kobo flashcards formats                                  # supported package typ
 kobo flashcards import deck.apkg --merge collection.cobfc
 kobo flashcards verify collection.cobfc
 kobo flashcards preview collection.cobfc --out preview.html
-kobo flashcards stage collection.cobfc --kobo-root MOUNT
+kobo flashcards push collection.cobfc                    # send it over Wi-Fi
 ```
+
+Anki's current export format is read as it is. Flashcards picks up a pushed
+collection the next time it opens or the reader wakes.
 
 - `--replace` replaces the collection from a `.colpkg`.
 - `--merge NEW.cobfc --merge-into EXISTING.cobfc` adds an `.apkg` to an
   existing collection.
 - `preview` writes an HTML page showing each card's front and back, counts
   and media. It does not reproduce the reader's page layout.
-- `stage` copies the collection to the reader and resumes if interrupted. The
-  reader's review log is kept.
+- `push` sends the collection over Wi-Fi and prints what is on the reader. The
+  reader holds one collection, so add a deck with `--merge-into` and push the
+  result. The reader's review log is kept.
+- `stage COLLECTION.cobfc --kobo-root MOUNT` copies it to a reader plugged in
+  over USB instead, and resumes if interrupted.
 
 To copy the review log back to your computer:
 
@@ -58,7 +69,8 @@ To copy the review log back to your computer:
 kobo flashcards export-review-log --kobo-root MOUNT reviews.ndjson
 ```
 
-Grades on the reader are not applied to Anki's scheduling.
+Grades on the reader are not applied to Anki's scheduling. New cards beyond
+the ones due on the day you imported arrive with the next push.
 
 ### Installing the import helper
 
@@ -74,8 +86,8 @@ cargo +1.88.0 build --locked --manifest-path crates/kobo-flashcards-import/Cargo
 
 - Only the package formats in
   [FLASHCARDS_COMPATIBILITY.md](../../docs/FLASHCARDS_COMPATIBILITY.md) are
-  supported. Modern `collection.anki21b` packages are not, whatever the file
-  name.
+  supported. A package from an Anki newer than the helper is refused with the
+  fix: tick Support older Anki versions in Anki's export window.
 - Collections from earlier versions of this app must be imported again.
 - GIF and WebP images are not supported, and a card side may have one image.
 - Template styles and scripts are not applied.

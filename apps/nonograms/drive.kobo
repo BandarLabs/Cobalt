@@ -1,5 +1,17 @@
 expect Nonograms
-tap Help
+expect Picture puzzles
+expect-missing Earlier
+tap Patterns
+wait-for Pattern puzzles
+expect 60 puzzles
+tap Photos
+wait-for No photo puzzles yet
+expect kobo nonograms push
+clean
+shot nonograms-photos-empty
+tap Pictures
+wait-for Picture puzzles
+tap How to play
 expect Use the clues to fill the picture
 wait 250
 clean

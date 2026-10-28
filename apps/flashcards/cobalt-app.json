@@ -3,7 +3,7 @@
   "display_name": "Flashcards",
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
-  "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
+  "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
   "version": "0.2.7",
   "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "bookmark",
@@ -11,15 +11,19 @@
   "setup": {
     "steps": [
       {
-        "text": "Turn an Anki deck into a collection on this computer.",
+        "text": "Or start with the sample deck in the app, no computer needed."
+      },
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Export a deck from Anki and turn it into a collection on this computer.",
         "command": "kobo flashcards import deck.apkg --merge collection.cobfc"
       },
       {
-        "text": "Plug the Kobo in over USB and stage the collection on it.",
-        "command": "kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader"
-      },
-      {
-        "text": "Or start with the sample deck from the app, no computer needed."
+        "text": "Send the collection to the reader over Wi-Fi. Grades on the reader are kept.",
+        "command": "kobo flashcards push collection.cobfc"
       }
     ]
   }
