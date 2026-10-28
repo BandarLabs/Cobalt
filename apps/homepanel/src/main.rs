@@ -20,6 +20,7 @@ const LASTOK: &str = "last-ok";
 const ADD: &str = "add";
 const SEARCH: &str = "search";
 const BACK: &str = "back";
+const CHECK_AGAIN: &str = "check-again";
 const MAX_TILES: usize = 12;
 const EDIT_PAGE: usize = 6;
 const STALE_AFTER_MINUTES: i64 = 15;
@@ -59,6 +60,8 @@ struct HomePanel {
     grid_page: usize,
     picker_page: usize,
     poll_failed: bool,
+    /// The owner tapped Check again on setup and is owed an answer.
+    checking: bool,
 }
 
 impl Default for HomePanel {
@@ -82,6 +85,7 @@ impl Default for HomePanel {
             grid_page: 0,
             picker_page: 0,
             poll_failed: false,
+            checking: false,
         }
     }
 }
@@ -126,31 +130,19 @@ fn now_hhmm() -> String {
 }
 
 /// What a failed task means for the person holding the reader, in the
-/// words of the thing they can actually do about it.
-fn failure_message(error: TaskError) -> String {
-    match error {
-        TaskError::NoCredential => {
-            "The homeassistant token is not on this reader. Install it from your computer: kobo secret set homeassistant.".to_owned()
-        }
-        TaskError::Offline => "No network. Join Wi-Fi, then try again.".to_owned(),
-        TaskError::Unreachable | TaskError::TimedOut => {
-            "Home Assistant did not answer. Check the address and that it is running.".to_owned()
-        }
-        TaskError::Unauthorized => {
-            "Home Assistant refused the token. Create a new long-lived access token and install it again.".to_owned()
-        }
-        TaskError::RateLimited(seconds) => {
-            format!("Home Assistant asked us to wait {seconds}s. Trying again shortly.")
-        }
-        TaskError::TooLarge => {
-            "Home Assistant answered with more than this panel can hold.".to_owned()
-        }
-        TaskError::NotFound => {
-            "Home Assistant answered not found. Check the address ends at the server root."
-                .to_owned()
-        }
-        TaskError::Denied => "The panel is not allowed to make that request.".to_owned(),
-    }
+/// words of the thing they can actually do about it. A Home Assistant on the
+/// home network that does not answer is usually a panel that has left home,
+/// so that is said before "check the address".
+fn failure_message(base: &str, error: TaskError) -> String {
+    let service = kobo_sdk::failure::Service::new("Home Assistant").fixed_by(
+        "Run kobo connect homepanel on your computer with a new long-lived access token.",
+    );
+    let service = if base.is_empty() {
+        service
+    } else {
+        service.at(base)
+    };
+    service.explain(error).message
 }
 
 fn title(id: &str) -> String {
@@ -269,12 +261,14 @@ impl HomePanel {
     }
 
     fn setup(&self) -> Screen {
+        // The token step comes first because nothing works without it, and
+        // the reader has no way to make one: it used to appear only after a
+        // test had already failed for want of it.
         let mut s = ScreenBuilder::new("homepanel-setup")
             .top_bar("Home Panel")
-            .section("Connect Home Assistant")
-            .text(
-                "Enter your Home Assistant address after installing the token from your computer. The test below checks the address, the token, and the network.",
-            )
+            .top_bar_action(CHECK_AGAIN, "Check again")
+            .text("On your computer, run this and give it a long-lived access token. Home Assistant must be on HTTPS.")
+            .command("kobo connect homepanel")
             .field("home-url", self.keyboard.text(), "https://ha.example.net");
         if let Some(b) = &self.banner {
             s = s.banner(BannerLevel::Attention, b);
@@ -854,6 +848,7 @@ impl HomePanel {
 
 impl KoboApp for HomePanel {
     fn on_start(&mut self, context: &mut Context) {
+        self.checking = false;
         context.store().load(BASE);
         context.store().load(TILES);
         context.store().load(STATES);
@@ -900,6 +895,27 @@ impl KoboApp for HomePanel {
                 .split_once('|')
                 .and_then(|(minutes, hhmm)| Some((minutes.parse::<i64>().ok()?, hhmm.to_owned())));
         }
+        if key == BASE && self.view == View::Setup {
+            // An address written by `kobo connect homepanel` while setup was
+            // on screen: the panel opens without anything typed here.
+            if self.base.is_empty() {
+                if std::mem::take(&mut self.checking) {
+                    self.banner = Some(
+                        "No address has arrived from the computer yet. Run the command, then check again."
+                            .into(),
+                    );
+                    self.show(context);
+                }
+            } else {
+                self.checking = false;
+                self.banner = None;
+                self.view = View::Grid;
+                self.show(context);
+                self.fetch(context);
+                self.poll_clock.start(context);
+            }
+            return;
+        }
         if self.view == View::Opening {
             if key == BASE {
                 // Wait for the rest of the store before choosing a screen.
@@ -930,6 +946,12 @@ impl KoboApp for HomePanel {
                 _ => View::Grid,
             };
             self.show(context);
+            return;
+        }
+        if self.view == View::Setup && action == action_id(CHECK_AGAIN) {
+            self.banner = None;
+            self.checking = true;
+            context.store().load(BASE);
             return;
         }
         if matches!(self.view, View::Setup | View::Search) {
@@ -1017,7 +1039,7 @@ impl KoboApp for HomePanel {
                 self.poll_clock.start(context);
             }
             ("test", TaskOutcome::Failed(error)) => {
-                self.banner = Some(failure_message(error));
+                self.banner = Some(failure_message(&self.base, error));
                 self.show(context);
             }
             ("poll", TaskOutcome::Completed(bytes)) => {
@@ -1025,7 +1047,7 @@ impl KoboApp for HomePanel {
             }
             ("poll", TaskOutcome::Failed(error)) => {
                 self.poll_failed = true;
-                let mut message = failure_message(error);
+                let mut message = failure_message(&self.base, error);
                 if let Some((id, _)) = self.pending.take() {
                     message = format!("Couldn't confirm {}. {message}", title(&id));
                 } else if let Some((_, hhmm)) = &self.last_ok {
@@ -1044,7 +1066,7 @@ impl KoboApp for HomePanel {
                 self.show(context);
             }
             ("entities", TaskOutcome::Failed(error)) => {
-                self.banner = Some(failure_message(error));
+                self.banner = Some(failure_message(&self.base, error));
                 self.view = View::Grid;
                 self.show(context);
             }
@@ -1060,7 +1082,7 @@ impl KoboApp for HomePanel {
                     .map_or_else(|| "that device".to_owned(), |(id, _)| title(&id));
                 self.banner = Some(format!(
                     "Couldn't update {name}. {}",
-                    failure_message(error)
+                    failure_message(&self.base, error)
                 ));
                 self.show(context);
             }
@@ -1070,7 +1092,7 @@ impl KoboApp for HomePanel {
             ("climate", TaskOutcome::Failed(error)) => {
                 self.banner = Some(format!(
                     "Couldn't set the temperature. {}",
-                    failure_message(error)
+                    failure_message(&self.base, error)
                 ));
                 self.show(context);
             }
@@ -1083,9 +1105,23 @@ impl KoboApp for HomePanel {
     }
 
     fn on_foreground(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+}
+
+impl HomePanel {
+    /// Coming back to the front: the grid refreshes, and setup looks for an
+    /// address `kobo connect homepanel` may have written meanwhile.
+    fn returned(&mut self, context: &mut Context) {
         if self.view == View::Grid {
             self.poll_clock.start(context);
             self.fetch(context);
+        } else if self.view == View::Setup {
+            context.store().load(BASE);
         }
     }
 }
@@ -1162,10 +1198,16 @@ mod tests {
 
     #[test]
     fn failure_messages_name_the_fix() {
-        assert!(failure_message(TaskError::NoCredential).contains("kobo secret set homeassistant"));
-        assert!(failure_message(TaskError::Offline).contains("Wi-Fi"));
-        assert!(failure_message(TaskError::Unreachable).contains("address"));
-        assert!(failure_message(TaskError::Unauthorized).contains("long-lived access token"));
+        let base = "https://ha.example";
+        assert!(failure_message(base, TaskError::NoCredential).contains("kobo connect homepanel"));
+        assert!(failure_message(base, TaskError::Offline).contains("Wi-Fi"));
+        assert!(failure_message(base, TaskError::Unreachable).contains("did not answer"));
+        assert!(failure_message(base, TaskError::Unauthorized).contains("long-lived access token"));
+        assert!(!failure_message(base, TaskError::Unauthorized).contains("address"));
+        assert!(
+            failure_message("https://homeassistant.local:8123", TaskError::Unreachable)
+                .contains("home network")
+        );
     }
 
     #[test]
@@ -1287,10 +1329,8 @@ mod large_text_tests {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(" ");
-            assert!(
-                text.contains("the address, the token, and the network."),
-                "{text}"
-            );
+            assert!(text.contains("kobo connect homepanel"), "{text}");
+            assert!(text.contains("must be on HTTPS."), "{text}");
             assert!(layout.rect_of_action(action_id("kb.enter")).is_some());
         }
     }

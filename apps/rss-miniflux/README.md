@@ -30,16 +30,30 @@ without Wi-Fi.
 
 ## Setup
 
-1. In Miniflux, create an API token.
-2. Install it on the reader:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. In Miniflux, create an API key.
+3. Connect from your computer:
 
    ```sh
-   kobo secret set miniflux --device <address>
+   kobo connect rss-miniflux
    ```
 
-3. In Digest's Settings, enter your Miniflux server's HTTPS address.
+   It asks for your Miniflux server and the key, checks them, installs the key
+   bound to that server and fills in the address in Digest. Open Digest, or
+   tap **Check again**.
 
-The runtime attaches the token to requests itself, so the app never sees it.
+With the key in a private file, the same setup is one command:
+
+```sh
+kobo secret set miniflux --app rss-miniflux --server https://miniflux.example --from KEY_FILE
+```
+
+Prefer this to plain `kobo secret set miniflux`: a bound key can only ever be
+sent to the server it was checked against, and Digest gets its address with
+it. A plain key still works, limited to the requests Digest makes. If a sync
+part is refused, Digest keeps the fresh Unread list and says why.
+
+The runtime attaches the key to requests itself, so the app never sees it.
 The account cannot be changed while changes are waiting to be sent.
 
 ## Limits

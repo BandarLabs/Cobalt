@@ -1,0 +1,11 @@
+# First run: the user ID opens on the digits, the computer route is named,
+# and Check again answers when no ID has arrived.
+wait-for Connect Zotero
+expect kobo connect zotero-reader
+expect 1
+clean
+shot stacks-setup
+tap Check again
+wait-for No user ID has arrived
+clean
+shot stacks-check-again

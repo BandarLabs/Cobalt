@@ -13,44 +13,45 @@ Laptop setup additionally requires a CLI with the `secret set --app --server`
 options introduced alongside this app; older CLIs do not support them.
 On-device token entry does not require the new CLI.
 
-## Setup from a computer
+## Setup
 
-Create a Readeck API token with bookmark read/write access. Close Cobalt normally
-and wait for teardown. Keep the Kobo awake on Wi-Fi, with owner SSH configured.
-Using the CLI from this change, run:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. In Readeck, create an API token that can read and update bookmarks.
+3. Connect from your computer:
+
+   ```sh
+   kobo connect readeck
+   ```
+
+   It asks for the HTTPS server (subpaths such as
+   `https://reader.example/readeck` work) and the token, typed without being
+   shown. It checks the token against Readeck, installs it bound to that one
+   server, and saves the server in the app. Cobalt can stay open. Open
+   Readeck, or tap **Check again** if it is already open.
+
+With the token in a private file (`chmod 600`), the same thing is one
+command, which also checks the token and saves the server:
 
 ```sh
-kobo secret set readeck --app readeck --server https://readeck.example \
-  --from /path/to/private-token --device <reader-address>
+kobo secret set readeck --app readeck --server https://readeck.example --from TOKEN_FILE
 ```
-
-The file must contain only the token and be private (`chmod 600`). Alternatively,
-on macOS copy the token and run:
-
-```sh
-pbpaste | kobo secret set readeck --app readeck --server https://readeck.example \
-  --stdin --device <reader-address>
-```
-
-Do not put tokens in command-line arguments or shell history. Clipboard history
-or sync tools may retain them. The command neither prints the token nor checks
-it against Readeck. It atomically installs a private server-bound account, not
-app settings. If interrupted, an occupied `.server-account-setup.lock` needs
-inspection before retrying; do not blindly delete it.
-
-Open Readeck on the Kobo, enter the **same HTTPS server address**, and choose
-**Use saved token**. Subpaths are supported, for example
-`https://reader.example/readeck`. A different server cannot use that token.
 
 ## Setup on the Kobo
 
-Enter the HTTPS address, tap **Next**, and enter the token in the masked account
-form. The runtime stores the account; the app saves only the server address.
-The inbox opens after both save replies.
+Enter the HTTPS address, tap **Next**, and enter the token in the account
+form. The form counts the characters typed and has **Show** to read the token
+back once. The runtime stores the account; the app saves only the server.
 
-Use **More → Account** to replace the account or select a computer-saved token.
-Replacing credentials does not revoke the old token: revoke unused tokens in
-Readeck settings. Missing or invalid tokens require setup again.
+Use **More, Account** to replace the account. Replacing credentials does not
+revoke the old token: revoke unused tokens in Readeck settings.
+
+## Offline and failures
+
+Articles you open are kept on the reader (the most recent ones, up to 240 KiB
+each), and the last inbox is kept too, so both open without Wi-Fi. A failed
+refresh keeps the inbox on screen with a banner saying why: a refused token
+offers **Sign in again**, a server at home that does not answer says the
+reader must be on the home Wi-Fi, and no Wi-Fi offers **Join Wi-Fi**.
 
 ## Reading and storage
 

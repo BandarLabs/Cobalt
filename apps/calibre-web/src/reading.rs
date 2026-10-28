@@ -249,7 +249,8 @@ impl Reading {
                 }
             }
             TaskOutcome::Failed(error) => {
-                self.message = catalog::failure(*error);
+                let url = self.book.as_ref().map_or("", |book| book.url.as_str());
+                self.message = catalog::failure(url, *error);
                 self.bytes.clear();
             }
             TaskOutcome::Cancelled => {

@@ -1,8 +1,11 @@
 expect Connect Mealie
-expect secret set
+expect kobo connect kitchencard
+expect-missing secret set
 clean
 shot kitchen-connect
-tap Add address
+tap Check again
+wait-for No account has arrived
+tap Type the address here
 expect Kitchen Card settings
 tap https://mealie.example
 expect https://
@@ -23,7 +26,9 @@ expect No recipes yet
 clean
 shot kitchen-empty
 tap Sync Mealie
-wait-for No credential named
+wait-for No Mealie account is on this reader yet
+expect kobo connect kitchencard
+expect-missing Check the address
 expect No recipes yet
 clean
 shot kitchen-setup-needed

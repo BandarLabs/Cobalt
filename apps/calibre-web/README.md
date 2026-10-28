@@ -28,20 +28,31 @@ offline.
 
 ## Setup
 
-1. Choose **Add library** and enter the HTTPS address of the OPDS catalog. A
-   bare server address opens `/opds`. A full path is used as entered.
-2. Choose **Sign in** for a private library, or **Use public library**.
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. Connect from your computer:
+
+   ```sh
+   kobo connect calibre-web
+   ```
+
+   It asks for the OPDS address, your username and password, checks them with
+   the library, and sets Library up. Open Library, or tap **Check again**.
+
+Or, on the reader, choose **Add library**, enter the HTTPS OPDS address (a
+bare server address opens `/opds`), then **Sign in** or **Use public
+library**. The password form counts the characters typed and has **Show**.
 
 Your username and password are stored by the runtime for that server only,
-used only to read from it, and never shown to the app. Changing servers means
-signing in again.
+used only to read from it, and never shown to the app.
 
 For a private certificate authority, install its root with
-`kobo trust set calibre --from ROOT.pem --device <address>`. For `calibre serve`, use Basic
+`kobo trust set calibre --from ROOT.pem`, and pass the same file to
+`kobo connect calibre-web --ca ROOT.pem`. For `calibre serve`, use Basic
 authentication.
 
-If you set up an earlier version with `kobo secret set calibre`, sign in again
-on the reader. The old credential only reaches the catalog's first page.
+A failed request keeps the catalog on screen with a banner saying why. A
+refused account offers **Sign in again**, and a library on your home network
+that does not answer says the reader must be at home on the same Wi-Fi.
 
 ## Limits
 

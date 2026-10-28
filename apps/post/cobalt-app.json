@@ -2,7 +2,7 @@
   "id": "post",
   "display_name": "Post",
   "short_label": "Post",
-  "summary": "Read and reply to letters from Hermes.",
+  "summary": "Read and reply to letters from Hermes. Needs an account.",
   "page_description": "Read and reply to letters from your own Hermes Agent. The inbox and your drafts stay readable offline, and replies are sent when the gateway is back.",
   "version": "0.2.6",
   "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
@@ -13,15 +13,12 @@
   "setup": {
     "steps": [
       {
-        "text": "Deploy a compatible Hermes gateway behind HTTPS and note its address."
+        "text": "Set up the reader once over USB, if you have not already. Your Hermes gateway must be reachable over HTTPS.",
+        "command": "kobo setup"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
-      },
-      {
-        "text": "Sign Post in. The token is checked against the gateway before it is installed.",
-        "command": "kobo post login --gateway https://hermes.example.net --token-file token.txt"
+        "text": "Sign Post in from your computer. It asks for the gateway and its token, checks them, and sends both to the reader. Open Post, or tap Check again.",
+        "command": "kobo connect post"
       }
     ]
   }

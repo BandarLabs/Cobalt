@@ -1,6 +1,7 @@
 wait 500
 expect Libraries
 expect No libraries
+expect kobo connect calibre-web
 clean
 shot libraries
 tap Add

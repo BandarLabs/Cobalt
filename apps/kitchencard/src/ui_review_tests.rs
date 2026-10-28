@@ -194,3 +194,87 @@ fn supporting_views_have_one_back_destination() {
         }
     }
 }
+
+#[test]
+fn a_refused_token_is_blamed_on_the_token_and_never_on_the_address() {
+    let mut app = kitchen();
+    app.fail(kobo_sdk::TaskError::Unauthorized);
+    let (attention, said) = app.note.clone().unwrap();
+    assert!(attention);
+    assert!(said.contains("did not accept your account"), "{said}");
+    assert!(said.contains("kobo connect kitchencard"), "{said}");
+    assert!(!said.contains("Check the address"), "{said}");
+    assert!(said.contains("Saved recipes still cook"), "{said}");
+    let mut home = Kitchen {
+        server: "https://192.168.1.30:9925".into(),
+        ..kitchen()
+    };
+    home.fail(kobo_sdk::TaskError::Unreachable);
+    assert!(home.note.unwrap().1.contains("home network"));
+}
+
+#[test]
+fn the_cooking_step_is_set_large_and_still_fits_at_every_text_size() {
+    let mut app = kitchen();
+    app.view = Some(View::Cook);
+    let screen = app.screen(&Context::default());
+    assert!(
+        screen.nodes.iter().any(|node| matches!(node, kobo_sdk::Node::Heading { text, level: 2, .. } if text == "Mix the ingredients.")),
+        "{screen:?}"
+    );
+    let long = "Bring a large pot of salted water to the boil, add the pasta and cook it until it is just tender, stirring now and then so it does not stick, then scoop out a mug of the cooking water before you drain it and set it aside for the sauce.".to_owned();
+    for text_scale in TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        let runner = AppRunner::with_metrics(Kitchen::default(), metrics);
+        let mut app = kitchen();
+        app.view = Some(View::Cook);
+        app.recipes[0].steps[0] = long.clone();
+        let screen = app.screen(&runner.context());
+        assert_fits(&screen, metrics);
+        if text_scale == TextScale::Default {
+            assert!(
+                screen
+                    .nodes
+                    .iter()
+                    .any(|node| matches!(node, kobo_sdk::Node::Heading { level: 2, .. })),
+                "a step of a few sentences is still large at the default size"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_connection_made_on_the_computer_is_found_by_check_again() {
+    let mut runner = AppRunner::new(Kitchen::default());
+    runner.start();
+    for key in [CONFIG, TONIGHT] {
+        runner.store_result(StoreResult::Loaded {
+            key: key.into(),
+            value: None,
+        });
+    }
+    let commands = runner.action(action_id("check-again"));
+    assert!(commands.iter().any(
+        |c| matches!(c, Command::Store(kobo_sdk::StoreRequest::Load { key }) if key == CONFIG)
+    ));
+    runner.store_result(StoreResult::Loaded {
+        key: CONFIG.into(),
+        value: None,
+    });
+    assert!(runner
+        .app()
+        .note
+        .as_ref()
+        .unwrap()
+        .1
+        .contains("No account has arrived"));
+    runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+    runner.store_result(StoreResult::Loaded {
+        key: CONFIG.into(),
+        value: Some(b"https://mealie.example\nmealie".to_vec()),
+    });
+    assert!(runner.app().ready());
+}
