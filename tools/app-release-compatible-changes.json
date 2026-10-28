@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
     }
    ]
   },
@@ -428,7 +428,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
     }
    ]
   },
@@ -450,7 +450,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
     }
    ]
   },
@@ -461,99 +461,28 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f394649a66bc235232478bb20240de9596390eff",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
     }
    ]
   },
   {
    "protocol_version": 15,
-   "reason": "Windows host support for the CLI and simulator. The SDK host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The lock gains only the kobo-abi edges for the CLI, SDK, sidekickd, and wifi-trace, none of which resolves differently for a Unix build. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected.",
-   "files": [
-    {
-     "path": "crates/kobo-abi/src/entropy.rs",
-     "base_blob": null,
-     "compatible_blob": "830985f15812fc529fd475f0bbdd890d894d6b48"
-    },
-    {
-     "path": "crates/kobo-abi/src/lib.rs",
-     "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
-     "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
-    },
-    {
-     "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
-     "base_blob": "d3a38bababc85d720ac33d9208db7037ed6c1120",
-     "compatible_blob": "ea9d096f89417240268e2bc509b211bd68ed8f55"
-    },
-    {
-     "path": "crates/kobo-policy/src/credential_servers.rs",
-     "base_blob": "ad519237796a31a2b587487b8a8f77e311c030f6",
-     "compatible_blob": "f40dccb057537225c5d085a478a5103884077592"
-    },
-    {
-     "path": "crates/kobo-policy/src/credentials.rs",
-     "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
-     "compatible_blob": "f00c86f6fefdd1d6ffcfb847eeaf8039c117c0fb"
-    },
-    {
-     "path": "crates/kobo-policy/src/persistence.rs",
-     "base_blob": "9b93e0d803738261d02e79282d230960d38cb105",
-     "compatible_blob": "7d3038e3f2210f42f36116bd4bc59913d1e145b2"
-    },
-    {
-     "path": "crates/kobo-policy/src/tasks.rs",
-     "base_blob": "011425614aeb9f85ac435db1bce8da6aa37f369b",
-     "compatible_blob": "fea7ca16fe3a0016735b1dfca80d8b62e82c2a54"
-    },
-    {
-     "path": "crates/kobo-protocol/src/channel.rs",
-     "base_blob": null,
-     "compatible_blob": "d5d1af6f86c3ab9225e4add3de827d4c1a2c6779"
-    },
-    {
-     "path": "crates/kobo-protocol/src/durability.rs",
-     "base_blob": null,
-     "compatible_blob": "c8e8fd49487587d0e2b605b7facd0088bf820d2d"
-    },
-    {
-     "path": "crates/kobo-protocol/src/lib.rs",
-     "base_blob": "e68b7d0c48c34c62784efcc725272f55ec1ed693",
-     "compatible_blob": "7742f00724710705431d064bf7b558fd785e4bca"
-    },
-    {
-     "path": "crates/kobo-sdk/Cargo.toml",
-     "base_blob": "a8bd10dbafc3ba8e4ded6a2b8e812f532f03f1e3",
-     "compatible_blob": "cfe6a5571dd1ed76958cd45891b07de4c6fba890"
-    },
-    {
-     "path": "crates/kobo-sdk/src/entropy.rs",
-     "base_blob": "a200e99d7cf78cde2d73cc14ea22b2e83c42c129",
-     "compatible_blob": "eafecffa4dbb5f3fe724cd8a0b54fda538966780"
-    },
-    {
-     "path": "crates/kobo-sdk/src/lib.rs",
-     "base_blob": "ff20655ce9538a06735590dc31513f555218e7a3",
-     "compatible_blob": "4b90af686dd47ac5d249ae882146cb48e361c9d6"
-    }
-   ]
-  },
-  {
-   "protocol_version": 15,
-   "reason": "The beta app catalog moved its published base to the companion-merge revision: re-anchor the standing protocol-15 blessing there. The Windows host support, the merged companion wiring, and the re-resolved lock carry no reader-visible wire or rendering change; existing Store apps keep working against the runtime they already have.",
+   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from e4317882. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged, so published Store apps keep working against the runtime they already have.",
    "files": [
     {
      "path": "Cargo.lock",
-     "base_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607",
-     "compatible_blob": "b264c8e2a7ac600cf3f19a1a7372d61b62f38bc6"
+     "base_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200",
+     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
     },
     {
      "path": "crates/kobo-abi/src/entropy.rs",
      "base_blob": null,
-     "compatible_blob": "830985f15812fc529fd475f0bbdd890d894d6b48"
+     "compatible_blob": "2da8ab7c0e25cf681dd1dc9c6d04a8a14a051006"
     },
     {
      "path": "crates/kobo-abi/src/lib.rs",
-     "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
-     "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
+     "base_blob": "89f9c0febb5b5f96e9a549a922e3c3f677156c5b",
+     "compatible_blob": "007631a64e65880a0a533b45c6168419aee64a98"
     },
     {
      "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
@@ -562,18 +491,18 @@
     },
     {
      "path": "crates/kobo-policy/src/credential_servers.rs",
-     "base_blob": "045d25b5b0c7b8fe42bdb8b99f1fb47d27ee6fe4",
-     "compatible_blob": "f40dccb057537225c5d085a478a5103884077592"
+     "base_blob": "adca88e678e000f53d1889cec09ce85f49f4cd74",
+     "compatible_blob": "789dd13bca250ee672dfce996e02562ce0bf5785"
     },
     {
      "path": "crates/kobo-policy/src/credentials.rs",
-     "base_blob": "53acec36c3d33f6c62af75530f23da7a643f8737",
-     "compatible_blob": "f00c86f6fefdd1d6ffcfb847eeaf8039c117c0fb"
+     "base_blob": "ef09d749527fa3df5e06f27f5b7ed8f4e67e834b",
+     "compatible_blob": "f83d81dc43b95d2f487d081924781f81dd5ee903"
     },
     {
      "path": "crates/kobo-policy/src/persistence.rs",
      "base_blob": "9b93e0d803738261d02e79282d230960d38cb105",
-     "compatible_blob": "7d3038e3f2210f42f36116bd4bc59913d1e145b2"
+     "compatible_blob": "190204a0563bd2ef78a41cf77218ef985bacdb8c"
     },
     {
      "path": "crates/kobo-policy/src/tasks.rs",
@@ -592,13 +521,13 @@
     },
     {
      "path": "crates/kobo-protocol/src/lib.rs",
-     "base_blob": "c8859f6095d663df333519070e81e45f72a26cb7",
-     "compatible_blob": "7742f00724710705431d064bf7b558fd785e4bca"
+     "base_blob": "6efd2ba14e9eff8b6b198a94c9ff4679496bb656",
+     "compatible_blob": "b95bab2c9e836f4313ed5bf92b5ada1a01041c2a"
     },
     {
      "path": "crates/kobo-sdk/Cargo.toml",
-     "base_blob": "a8bd10dbafc3ba8e4ded6a2b8e812f532f03f1e3",
-     "compatible_blob": "cfe6a5571dd1ed76958cd45891b07de4c6fba890"
+     "base_blob": "cee48dcb6b15e331b44a3707a7b0f589e7de71a7",
+     "compatible_blob": "db4c4937af02138ae8c5edd75c6f56f32fa4a999"
     },
     {
      "path": "crates/kobo-sdk/src/entropy.rs",
@@ -607,8 +536,8 @@
     },
     {
      "path": "crates/kobo-sdk/src/lib.rs",
-     "base_blob": "4b0a0f32dbb9ca3b5fc421d6973ff40ab07c3e76",
-     "compatible_blob": "4b90af686dd47ac5d249ae882146cb48e361c9d6"
+     "base_blob": "de60b1208a05cba3427096aa6490265ac19b5ba4",
+     "compatible_blob": "1a56e23947475605f68e64e2ab9bfeda0be7b573"
     }
    ]
   }
