@@ -201,10 +201,10 @@ impl App {
                     screen = screen.banner(BannerLevel::Attention, error);
                 }
                 screen
-                    .text("On your computer, run these. The first pairs this reader for you.")
+                    .text("On your computer, run these two.")
                     .command("kobo sidekick init")
                     .command("kobo sidekick run")
-                    .secondary("If it could not reach this reader, it prints an address and a code to enter here.")
+                    .secondary("If the first cannot reach this reader, enter the address and code it prints.")
                     .primary_button("enter-address", "Enter the address")
                     .build()
             }
@@ -1265,6 +1265,12 @@ mod tests {
                 text_scale,
                 ..CLARA_BW_METRICS
             };
+            // Built through a runner, as on a reader: the screen is laid out at
+            // the size being checked. A default context built it at the
+            // default size, and whether it then fit at a larger one depended on
+            // what the thread's previous test had left set.
+            let runner = kobo_sdk::AppRunner::with_metrics(App::default(), metrics);
+            let context = runner.context();
             for (view, error) in [
                 (View::Address, None),
                 (View::Address, Some("That is not an address. Enter the one kobo sidekick init printed, like 192.168.1.20.")),
@@ -1276,7 +1282,7 @@ mod tests {
                     previous: Some(("192.168.1.5:9331".into(), "abc234".into())),
                     ..App::default()
                 };
-                let screen = app.screen(&kobo_sdk::Context::default());
+                let screen = app.screen(&context);
                 let errors: Vec<_> = screen
                     .diagnostics(&metrics, &Chrome::measuring(true))
                     .issues
