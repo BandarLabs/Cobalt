@@ -4,11 +4,11 @@ mod amounts;
 mod cache;
 mod mealie;
 
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, Glyph, KoboApp, Position, Screen,
-    ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Credential, FieldKind, Glyph, KoboApp, Position,
+    Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use mealie::Recipe;
 use std::{process::ExitCode, time::Duration};
@@ -60,7 +60,8 @@ struct Kitchen {
     view: Option<View>,
     note: Option<(bool, String)>,
     offline: bool,
-    keyboard: Keyboard,
+    /// The setting being typed on the runtime's keyboard.
+    entry: TextEntry,
     editing: Option<Setting>,
     /// The owner tapped Check again and is owed an answer either way.
     checking: bool,
@@ -526,8 +527,7 @@ impl Kitchen {
             };
             return ScreenBuilder::new("kitchencard")
                 .top_bar("Kitchen Card settings")
-                .typed(&self.keyboard, prompt)
-                .keyboard(&self.keyboard, "Save")
+                .text_entry(&self.entry, prompt, "Save")
                 .build();
         }
         let view = self.view.unwrap_or(View::Tonight);
@@ -675,7 +675,10 @@ impl Kitchen {
             View::Settings => ScreenBuilder::new("kitchencard")
                 .top_bar("Kitchen Card settings")
                 .field("server", &self.server, "https://mealie.example")
+                .field_label("Mealie address")
+                .field_kind(FieldKind::Address)
                 .field("credential", &self.credential, "mealie")
+                .field_label("Credential name")
                 .secondary(
                     "On your computer run kobo secret set mealie with a Mealie API token, then sync here.",
                 )
@@ -862,9 +865,8 @@ impl KoboApp for Kitchen {
     #[allow(clippy::too_many_lines)] // Actions are flat by design; each arm is one behavior.
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if let Some(setting) = self.editing {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let value = self.keyboard.take().trim().to_owned();
+            match self.entry.handle(action) {
+                Some(Typing::Submitted(value)) => {
                     if !value.is_empty() {
                         match setting {
                             Setting::Server => {
@@ -895,9 +897,11 @@ impl KoboApp for Kitchen {
                     }
                     self.editing = None;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {}
+                Some(Typing::Cancelled) => self.editing = None,
+                Some(_) => {}
                 None => {
                     if action == ActionId::BACK {
+                        self.entry.close();
                         self.editing = None;
                     }
                 }
@@ -909,14 +913,16 @@ impl KoboApp for Kitchen {
         } else if action == action_id("settings") {
             self.view = Some(View::Settings);
         } else if action == action_id("server") {
-            self.keyboard = Keyboard::with_text(if self.server.is_empty() {
+            self.entry = TextEntry::new().address();
+            self.entry.open_with(if self.server.is_empty() {
                 "https://"
             } else {
                 &self.server
             });
             self.editing = Some(Setting::Server);
         } else if action == action_id("credential") {
-            self.keyboard = Keyboard::with_text(&self.credential);
+            self.entry = TextEntry::new();
+            self.entry.open_with(&self.credential);
             self.editing = Some(Setting::Credential);
         } else if action == action_id("back") || action == ActionId::BACK {
             if self.view == Some(View::Ingredients) {
@@ -1174,6 +1180,36 @@ mod tests {
         let mut app = cooking();
         app.step = app.recipe().unwrap().steps.len() - 1;
         assert!(app.step + 1 >= app.recipe().unwrap().steps.len());
+    }
+
+    #[test]
+    fn the_address_and_the_credential_name_are_typed_on_the_runtime_with_their_own_keys() {
+        let mut runner = kobo_sdk::AppRunner::new(Kitchen {
+            view: Some(View::Settings),
+            ..Kitchen::default()
+        });
+        let asked = |commands: &[kobo_sdk::Command]| {
+            commands.iter().find_map(|command| match command {
+                kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText {
+                    kind,
+                    initial,
+                    ..
+                }) => Some((*kind, initial.clone())),
+                _ => None,
+            })
+        };
+        let commands = runner.action(action_id("server"));
+        assert_eq!(
+            asked(&commands),
+            Some((FieldKind::Address, "https://".to_owned()))
+        );
+        runner.type_text("https://mealie.example");
+        assert_eq!(runner.app().server, "https://mealie.example");
+        let commands = runner.action(action_id("credential"));
+        assert_eq!(asked(&commands), Some((FieldKind::Text, String::new())));
+        runner.cancel_text();
+        assert!(runner.app().editing.is_none());
+        assert!(runner.app().credential.is_empty());
     }
 
     #[test]

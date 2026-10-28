@@ -133,15 +133,9 @@ def main():
             try:
                 start()
                 drive("wait-for Connect Mealie", "expect kobo connect kitchencard", "tap Type the address here", "wait-for Kitchen Card settings", "tap https://mealie.example")
-                steps = []
-                layer = "letters"
-                for character in "demo.mealie.io":
-                    wanted = "letters" if character.isalpha() else "symbols"
-                    if wanted != layer:
-                        steps.append("tap ?123" if wanted == "symbols" else "tap abc")
-                        layer = wanted
-                    steps.append("type " + character)
-                drive(*steps)
+                # The runtime's address keys carry the dot beside the letters,
+                # and `type` turns to whichever page holds each character.
+                drive("type demo.mealie.io")
                 drive("tap Save", "expect Kitchen Card settings", "expect https://demo.mealie.io")
                 drive("tap Back", "expect No recipes yet")
                 drive("tap Sync Mealie", "wait-for Pick tonight")

@@ -4,10 +4,11 @@ use kobo_json::Value;
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::credentials::{CredentialEvent, CredentialSetup};
 use kobo_sdk::failure::{Problem, Service};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome, UpdateMethod,
+    action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, FieldKind,
+    Glyph, KoboApp, Position, RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskId,
+    TaskOutcome, UpdateMethod,
 };
 use kobo_ui::TextScale;
 use std::fmt::Write as _;
@@ -22,6 +23,27 @@ const ACCOUNT_FIX: &str = "Run kobo connect readeck on your computer.";
 const KEEP_LIMIT: usize = 240 * 1024;
 const LIST_PATH: &str = "/api/bookmarks?limit=50&offset=0&is_archived=false&read_status=unread&read_status=reading&type=article&type=photo&sort=-created";
 const LIMIT: usize = 50;
+/// The connect flow, named on each of its screens: the server address, the
+/// API token kept by the runtime, and the first request that checks both.
+const STEPS: [&str; 3] = ["Address", "Token", "Check"];
+/// Where a Readeck server makes API tokens, under the owner's own address.
+const TOKEN_PAGE: &str = "/profile/tokens";
+
+/// The token flow. `connecting` puts it in its place among [`STEPS`]; signing
+/// in again from the inbox is the token alone, so it carries none.
+fn account(connecting: bool) -> CredentialSetup {
+    let account = CredentialSetup::new("readeck", "Readeck API token")
+        .with_computer_command("kobo connect readeck")
+        .with_key_page(
+            TOKEN_PAGE,
+            "Opens the API token page on your Readeck server.",
+        );
+    if connecting {
+        account.with_steps(1, STEPS)
+    } else {
+        account
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Bookmark {
@@ -82,7 +104,14 @@ struct Readeck {
     pending_server: Option<String>,
     saving_server: bool,
     account: CredentialSetup,
-    keyboard: Keyboard,
+    /// The server address being typed on the runtime's keyboard.
+    address: TextEntry,
+    /// The address shown in the field, kept between tries so a typing slip
+    /// is mended rather than typed again.
+    draft: String,
+    /// Why the address in the field was refused, said under the field.
+    address_error: Option<String>,
+    search_entry: TextEntry,
     view: View,
     bookmarks: Vec<Bookmark>,
     page: usize,
@@ -108,9 +137,11 @@ impl Default for Readeck {
             server: None,
             pending_server: None,
             saving_server: false,
-            account: CredentialSetup::new("readeck", "Readeck API token")
-                .with_computer_command("kobo connect readeck"),
-            keyboard: Keyboard::new(),
+            account: account(true),
+            address: TextEntry::new().address(),
+            draft: String::new(),
+            address_error: None,
+            search_entry: TextEntry::new(),
             view: View::Loading,
             bookmarks: Vec::new(),
             page: 0,
@@ -145,6 +176,7 @@ impl Readeck {
     }
     fn sign_in_again(&mut self) {
         if let Some(server) = self.server.clone() {
+            self.account = account(false);
             if self.account.bind_server(&server).is_ok() {
                 self.pending_server = Some(server);
                 self.account.open();
@@ -173,12 +205,17 @@ impl Readeck {
             .collect();
         if let Some(failure) = &self.failure {
             // Under a banner the rows give up their minutes, so they can be
-            // measured with the banner's height taken off the page.
+            // measured under the banner as it is drawn, with its mark and its
+            // action, rather than as plain words.
             let rows: Vec<_> = rows
                 .iter()
                 .map(|(title, summary, _)| (*title, *summary))
                 .collect();
-            return context.paginate_rows_below_notice(&rows, true, Some(&failure.message));
+            let banner = ScreenBuilder::new("readeck-measure")
+                .top_bar("Readeck")
+                .problem_banner_with(failure, "refresh", Some("sign-in-again"))
+                .build();
+            return context.paginate_rows_under(&rows, true, Position::AtTheFoot, &banner);
         }
         context.paginate_rows_with_trailing(&rows, true)
     }
@@ -197,6 +234,7 @@ impl Readeck {
         if self.saving_server {
             return ScreenBuilder::new("readeck-saving")
                 .top_bar("Readeck")
+                .steps(2, 3, STEPS)
                 .activity("Saving server address", None)
                 .owns_back(true)
                 .build();
@@ -210,33 +248,76 @@ impl Readeck {
                 .build();
         }
         match self.view {
-            View::Loading => ScreenBuilder::new("readeck-loading").top_bar("Readeck")
-                .activity("Opening settings", None).build(),
-            View::Server => ScreenBuilder::new("readeck-server").top_bar("Connect Readeck")
-                .top_bar_action("check-again", "Check again")
-                .secondary("Run kobo connect readeck on your computer, then tap Check again. Or type your HTTPS server here and tap Next.")
-                .button("saved-token", "Use saved token")
-                .typed(&self.keyboard, "https://readeck.example")
-                .keyboard(&self.keyboard, "Next").owns_back(true).build(),
-            View::Search => ScreenBuilder::new("readeck-search").top_bar("Search library")
-                .secondary("Search includes read and archived articles.")
-                .typed(&self.keyboard, "Search terms").keyboard(&self.keyboard, "Search")
-                .owns_back(true).build(),
+            View::Loading => ScreenBuilder::new("readeck-loading")
+                .top_bar("Readeck")
+                .activity("Opening settings", None)
+                .build(),
+            View::Server => self.server_screen(),
+            View::Search => ScreenBuilder::new("readeck-search")
+                .top_bar("Search library")
+                .text_entry_with_hint(
+                    &self.search_entry,
+                    "Search terms",
+                    "Search includes read and archived articles.",
+                    "Search",
+                )
+                .owns_back(true)
+                .build(),
             View::Reading => {
-                let mut screen = self.book.screen(self.current().map_or("Readeck", |b| &b.title))
-                    .unwrap_or_else(|| ScreenBuilder::new("readeck-empty-reader").top_bar("Readeck").build())
+                let mut screen = self
+                    .book
+                    .screen(self.current().map_or("Readeck", |b| &b.title))
+                    .unwrap_or_else(|| {
+                        ScreenBuilder::new("readeck-empty-reader")
+                            .top_bar("Readeck")
+                            .build()
+                    })
                     .with_own_back(true);
                 // Do not offer local marks that could be mistaken for Readeck annotations.
                 screen.hold = None;
                 screen
             }
             View::Controls => self.controls(),
-            View::Delete => ScreenBuilder::new("readeck-delete").top_bar("Readeck")
-                .confirm("Delete this article?", "This removes it from your Readeck library.",
-                    ("confirm-delete", "Delete article"), ("keep-article", "Keep article"))
-                .owns_back(true).build(),
+            View::Delete => ScreenBuilder::new("readeck-delete")
+                .top_bar("Readeck")
+                .confirm(
+                    "Delete this article?",
+                    "This removes it from your Readeck library.",
+                    ("confirm-delete", "Delete article"),
+                    ("keep-article", "Keep article"),
+                )
+                .owns_back(true)
+                .build(),
             View::Inbox => self.inbox_screen(context),
         }
+    }
+    /// The first step of connecting: where the server is. The runtime draws
+    /// the keys; this screen is the field, the computer route beside it, and
+    /// the way to keep a token that is already on the reader.
+    fn server_screen(&self) -> Screen {
+        if self.address.is_open() {
+            return ScreenBuilder::new("readeck-server")
+                .top_bar("Connect Readeck")
+                .owns_back(true)
+                .text_entry(&self.address, "Readeck server address", "Next")
+                .build();
+        }
+        let mut screen = ScreenBuilder::new("readeck-server")
+            .top_bar("Connect Readeck")
+            .top_bar_action("check-again", "Check again")
+            .steps(0, 3, STEPS)
+            .secondary("Run kobo connect readeck on your computer, then tap Check again. Or type your HTTPS server here.")
+            .field("server-address", &self.draft, "https://readeck.example")
+            .field_label("Server address")
+            .field_hint("The address you open Readeck at, starting with https://")
+            .field_kind(FieldKind::Address);
+        if let Some(error) = &self.address_error {
+            screen = screen.field_error(error);
+        }
+        screen
+            .button("saved-token", "Use saved token")
+            .owns_back(true)
+            .build()
     }
     fn controls(&self) -> Screen {
         if self.mutation.is_some() {
@@ -263,38 +344,28 @@ impl Readeck {
             .build()
     }
     fn inbox_screen(&self, context: &Context) -> Screen {
-        let mut screen = ScreenBuilder::new("readeck")
-            .top_bar(
-                self.search
-                    .as_ref()
-                    .map_or_else(|| "Readeck".into(), |s| format!("Search: {}", s.query)),
-            )
-            .top_bar_action(
-                // Search spends the same refused account, so the bar offers
-                // the fix in its place.
-                if self.failure.as_ref().is_some_and(Problem::needs_account) {
-                    "sign-in-again"
+        let mut screen = ScreenBuilder::new("readeck").top_bar(
+            self.search
+                .as_ref()
+                .map_or_else(|| "Readeck".into(), |s| format!("Search: {}", s.query)),
+        );
+        // Search spends the same refused account, so it is left out while the
+        // account is the problem; the banner over the inbox carries the fix.
+        if !self.failure.as_ref().is_some_and(Problem::needs_account) {
+            screen = screen.top_bar_action("search", "Search");
+        }
+        let mut screen = screen.top_bar_overflow(
+            "more",
+            self.more_open,
+            [
+                ("refresh", "Refresh"),
+                if self.search.is_some() {
+                    ("inbox", "Inbox")
                 } else {
-                    "search"
+                    ("settings", "Account")
                 },
-                if self.failure.as_ref().is_some_and(Problem::needs_account) {
-                    "Sign in again"
-                } else {
-                    "Search"
-                },
-            )
-            .top_bar_overflow(
-                "more",
-                self.more_open,
-                [
-                    ("refresh", "Refresh"),
-                    if self.search.is_some() {
-                        ("inbox", "Inbox")
-                    } else {
-                        ("settings", "Account")
-                    },
-                ],
-            );
+            ],
+        );
         if self.list.is_some() || self.article.is_some() {
             return screen
                 .activity("Loading articles", None)
@@ -328,18 +399,17 @@ impl Readeck {
                 })
             };
             if let Some(failure) = &self.failure {
-                screen =
-                    screen
-                        .problem_banner(failure)
-                        .rows(pages.get(page).into_iter().flatten().map(|index| {
-                            let b = &self.bookmarks[*index];
-                            (
-                                format!("article-{index}"),
-                                b.title.clone(),
-                                b.summary.clone(),
-                                lead(b),
-                            )
-                        }));
+                screen = screen
+                    .problem_banner_with(failure, "refresh", Some("sign-in-again"))
+                    .rows(pages.get(page).into_iter().flatten().map(|index| {
+                        let b = &self.bookmarks[*index];
+                        (
+                            format!("article-{index}"),
+                            b.title.clone(),
+                            b.summary.clone(),
+                            lead(b),
+                        )
+                    }));
             } else {
                 screen =
                     screen.rows_with_trailing(pages.get(page).into_iter().flatten().map(|index| {
@@ -397,7 +467,8 @@ impl Readeck {
     }
     fn edit_server(&mut self, context: &mut Context) {
         self.cancel_requests(context);
-        self.keyboard = Keyboard::with_text(self.server.clone().unwrap_or_default());
+        self.draft = self.server.clone().unwrap_or_default();
+        self.address_error = None;
         self.more_open = false;
         self.view = View::Server;
     }
@@ -405,21 +476,22 @@ impl Readeck {
         self.prepare_server(true);
     }
     fn prepare_server(&mut self, enter_token: bool) {
-        let server = self.keyboard.text().trim().trim_end_matches('/').to_owned();
+        let server = self.draft.trim().trim_end_matches('/').to_owned();
         // Validate exactly the origin/base-path shape enforced by runtime storage.
         if !valid_server(&server) {
-            self.problem = Some("Enter an HTTPS server without a query, fragment, credentials or relative path segments.".into());
+            self.address_error = Some("Enter an HTTPS server without a query, fragment, credentials or relative path segments.".into());
             return;
         }
+        self.account = account(true);
         if let Err(problem) = self.account.bind_server(&server) {
-            self.problem = Some(problem);
+            self.address_error = Some(problem);
             return;
         }
+        self.address_error = None;
         self.pending_server = Some(server);
         if enter_token {
             self.account.open();
         }
-        self.keyboard.clear();
     }
     fn save_server(&mut self, context: &mut Context) {
         if let Some(server) = &self.pending_server {
@@ -427,8 +499,8 @@ impl Readeck {
             self.saving_server = true;
         }
     }
-    fn start_search(&mut self, context: &mut Context) {
-        let query = self.keyboard.text().trim().to_owned();
+    fn start_search(&mut self, context: &mut Context, query: &str) {
+        let query = query.trim().to_owned();
         if query.is_empty() || query.len() > 256 || query.chars().any(char::is_control) {
             self.problem = Some("Enter a search of 1–256 bytes without control characters.".into());
             return;
@@ -448,6 +520,14 @@ impl Readeck {
         self.page = 0;
         self.view = View::Inbox;
         self.fetch_list(context, 0, false);
+    }
+    /// Back to the inbox from a screen that typed, loading it if nothing is
+    /// on it yet.
+    fn leave_typing(&mut self, context: &mut Context) {
+        self.view = View::Inbox;
+        if self.bookmarks.is_empty() {
+            self.fetch_list(context, self.search.as_ref().map_or(0, |s| s.offset), false);
+        }
     }
     fn leave_search(&mut self, context: &mut Context) {
         self.cancel_requests(context);
@@ -597,7 +677,7 @@ impl Readeck {
             }
         } else if action == action_id("search") {
             self.cancel_requests(context);
-            self.keyboard = Keyboard::with_text(
+            self.search_entry.open_with(
                 self.search
                     .as_ref()
                     .map_or_else(String::new, |s| s.query.clone()),
@@ -647,7 +727,6 @@ impl KoboApp for Readeck {
         if self.account.is_open() {
             if self.account.on_action(context, action) == Some(CredentialEvent::Cancelled) {
                 self.pending_server = None;
-                self.keyboard = Keyboard::with_text(self.server.clone().unwrap_or_default());
             }
         } else if self.problem.is_some() {
             if action == ActionId::BACK || action == action_id("dismiss") {
@@ -659,30 +738,36 @@ impl KoboApp for Readeck {
             if action == action_id("save-server") {
                 self.save_server(context);
             }
-        } else if matches!(self.view, View::Server | View::Search) {
-            if action == ActionId::BACK {
-                if self.view == View::Search || self.server.is_some() {
-                    self.view = View::Inbox;
-                    if self.bookmarks.is_empty() {
-                        self.fetch_list(
-                            context,
-                            self.search.as_ref().map_or(0, |s| s.offset),
-                            false,
-                        );
-                    }
+        } else if self.view == View::Search {
+            match self.search_entry.handle(action) {
+                Some(Typing::Submitted(query)) => self.start_search(context, &query),
+                // Backed out of the runtime's field, or Back before it opened.
+                typing
+                    if typing == Some(Typing::Cancelled)
+                        || (typing.is_none() && action == ActionId::BACK) =>
+                {
+                    self.leave_typing(context);
                 }
-            } else if self.view == View::Server && action == action_id("check-again") {
-                self.reload_server(context);
-            } else if self.view == View::Server && action == action_id("saved-token") {
-                self.prepare_server(false);
-                if self.problem.is_none() {
-                    self.save_server(context);
-                }
-            } else if self.keyboard.press(action) == Some(Pressed::Submitted) {
-                if self.view == View::Server {
+                _ => {}
+            }
+        } else if self.view == View::Server {
+            if let Some(typing) = self.address.handle(action) {
+                if let Typing::Submitted(address) = typing {
+                    self.draft = address;
                     self.submit_server();
-                } else {
-                    self.start_search(context);
+                }
+            } else if action == ActionId::BACK {
+                if self.server.is_some() {
+                    self.leave_typing(context);
+                }
+            } else if action == action_id("server-address") {
+                self.address.open_with(&self.draft);
+            } else if action == action_id("check-again") {
+                self.reload_server(context);
+            } else if action == action_id("saved-token") {
+                self.prepare_server(false);
+                if self.address_error.is_none() {
+                    self.save_server(context);
                 }
             }
         } else if matches!(self.view, View::Reading | View::Controls | View::Delete) {

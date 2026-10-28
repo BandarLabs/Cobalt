@@ -10,3 +10,22 @@ tap Continue
 expect https://readeck.example
 clean
 shot readeck-server
+expect Step 1 of 3
+expect Server address
+tap-id server-address
+wait-for Readeck server address
+type https://read.example
+expect https://read.example
+clean
+shot readeck-address-typed
+tap Next
+wait-for Account key
+expect Step 2 of 3
+clean
+shot readeck-token
+tap Use phone
+wait-for Opens the API token page
+clean
+shot readeck-phone
+tap Back
+wait-for Account key

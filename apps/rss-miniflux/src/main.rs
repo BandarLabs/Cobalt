@@ -4,11 +4,11 @@ mod pending;
 use kobo_bookview::illustrations::Illustrations;
 use kobo_bookview::positions::{Progress, KEY as READING};
 use kobo_bookview::BookView;
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Position, Screen, ScreenBuilder,
-    StoreResult, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, FieldKind, Glyph, KoboApp, Position, Screen,
+    ScreenBuilder, StoreResult, TaskId, TaskOutcome,
 };
 use miniflux::{Article, Status};
 use pending::{Change, Pending};
@@ -141,7 +141,8 @@ struct Reader {
     unreachable: bool,
     task: Option<(TaskId, Awaiting)>,
     notice: Option<String>,
-    keyboard: Keyboard,
+    /// The server address, typed on the runtime's keyboard.
+    address: TextEntry,
     editing: Option<Setting>,
     /// A Check again is waiting for the saved address to come back.
     checking: bool,
@@ -303,7 +304,7 @@ impl Reader {
     }
 
     fn shelf_prefix(&self, notice: Option<&str>) -> ScreenBuilder {
-        let mut screen = ScreenBuilder::new("rss-miniflux")
+        let screen = ScreenBuilder::new("rss-miniflux")
             .top_bar("Digest")
             .top_bar_glyph("sync", "Sync", Glyph::Refresh)
             .top_bar_glyph("settings", "Settings", Glyph::Settings)
@@ -311,20 +312,18 @@ impl Reader {
                 self.tab.index(),
                 Tab::ORDER.map(|tab| (tab.action(), tab.label())),
             );
-        if let Some(notice) = notice {
-            screen = screen.banner(
-                if self.retryable() {
-                    BannerLevel::Attention
-                } else {
-                    BannerLevel::Info
-                },
-                notice,
-            );
+        match notice {
+            // Retry saving is the fix for what the banner says, so it is the
+            // banner's own action rather than a control at the foot.
+            Some(notice) if self.retryable() => screen
+                .banner(BannerLevel::Attention, notice)
+                .banner_action("retry-save", "Retry saving"),
+            Some(notice) => screen.banner(BannerLevel::Info, notice),
+            None if self.retryable() => {
+                screen.bottom_action_marked("retry-save", "Retry saving", Glyph::Refresh)
+            }
+            None => screen,
         }
-        if self.retryable() {
-            screen = screen.bottom_action_marked("retry-save", "Retry saving", Glyph::Refresh);
-        }
-        screen
     }
 
     fn shelf_rows(&self, context: &Context, listed: &[usize]) -> Vec<(String, String)> {
@@ -435,6 +434,8 @@ impl Reader {
         ScreenBuilder::new("rss-miniflux")
             .top_bar("Digest settings")
             .field("server", &self.server, "https://miniflux.example")
+            .field_label("Server address")
+            .field_kind(FieldKind::Address)
             .secondary(
                 "To change the account, run kobo connect rss-miniflux on your computer. \
                  It checks the token, ties it to your server and fills in the address here.",
@@ -489,8 +490,7 @@ impl Reader {
             context.set_screen(
                 ScreenBuilder::new("rss-miniflux")
                     .top_bar("Digest settings")
-                    .typed(&self.keyboard, prompt)
-                    .keyboard(&self.keyboard, "Save")
+                    .text_entry(&self.address, prompt, "Save")
                     .build()
                     .with_own_back(true),
             );
@@ -835,7 +835,8 @@ impl KoboApp for Reader {
         } else if action == action_id("settings") {
             self.view = Some(View::Settings);
         } else if action == action_id("server") {
-            self.keyboard = Keyboard::with_text(if self.server.is_empty() {
+            self.address = TextEntry::new().address();
+            self.address.open_with(if self.server.is_empty() {
                 "https://"
             } else {
                 &self.server
@@ -936,8 +937,8 @@ impl Reader {
     }
 
     fn edit(&mut self, context: &mut Context, setting: Setting, action: ActionId) {
-        match self.keyboard.press(action) {
-            Some(Pressed::Submitted) => {
+        match self.address.handle(action) {
+            Some(Typing::Submitted(value)) => {
                 if !self.settings_are_safe_to_change() {
                     self.notice =
                         Some("Finish saving and syncing before changing accounts.".into());
@@ -948,7 +949,6 @@ impl Reader {
                 if let Some((task, _)) = self.task.take() {
                     context.cancel(task);
                 }
-                let value = self.keyboard.take().trim().to_owned();
                 if !value.is_empty() {
                     match setting {
                         Setting::Server => self.server = value,
@@ -961,9 +961,11 @@ impl Reader {
                 }
                 self.editing = None;
             }
-            Some(Pressed::Edited | Pressed::Shifted) => {}
+            Some(Typing::Cancelled) => self.editing = None,
+            Some(_) => {}
             None => {
                 if action == ActionId::BACK {
+                    self.address.close();
                     self.editing = None;
                 }
             }
@@ -1524,6 +1526,27 @@ mod tests {
     }
 
     #[test]
+    fn the_server_is_typed_on_the_runtime_and_backing_out_keeps_the_old_one() {
+        let mut runner = connected();
+        runner.action(action_id("settings"));
+        let commands = runner.action(action_id("server"));
+        assert!(commands.iter().any(|c| matches!(
+            c,
+            Command::Device(kobo_sdk::DeviceRequest::TypeText { kind: FieldKind::Address, initial, submit, .. })
+                if initial == "https://flux.example" && submit == "Save"
+        )));
+        runner.cancel_text();
+        assert!(runner.app().editing.is_none());
+        assert_eq!(runner.app().server, "https://flux.example");
+        runner.action(action_id("server"));
+        runner.type_text("https://other.example");
+        assert!(
+            runner.app().editing.is_none(),
+            "a submitted address closes the field"
+        );
+    }
+
+    #[test]
     fn a_failed_save_keeps_the_articles_and_retry_does_not_download_them_again() {
         let mut runner = connected();
         let key = runner.app().snapshot.as_ref().unwrap().key.clone();
@@ -1535,6 +1558,19 @@ mod tests {
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::NoRoom));
         assert!(runner.app().snapshot.as_ref().unwrap().retryable());
         assert_eq!(runner.app().articles.len(), 1);
+        let shelf = runner.app().shelf(&runner.context());
+        let banner_retries = shelf.nodes.iter().any(|node| {
+            matches!(node, kobo_sdk::Node::Banner { action: Some(action), .. }
+                if action.action == action_id("retry-save"))
+        });
+        let foot_retries = shelf
+            .bottom_action
+            .as_ref()
+            .is_some_and(|bottom| format!("{bottom:?}").contains("Retry saving"));
+        assert!(
+            banner_retries != foot_retries,
+            "Retry saving is offered once, on the banner when there is one: {shelf:?}"
+        );
         let retry = runner.action(action_id("retry-save"));
         assert!(retry.iter().any(
             |c| matches!(c, Command::Store(StoreRequest::Load { key: loaded }) if loaded == &key)
@@ -1773,8 +1809,7 @@ mod tests {
         assert_eq!(runner.app().changes.len(), 1);
         runner.action(action_id("settings"));
         runner.action(action_id("server"));
-        runner.app_mut().keyboard = Keyboard::with_text("https://other.example");
-        let refused = runner.action(action_id("kb.enter"));
+        let refused = runner.type_text("https://other.example");
         assert_eq!(runner.app().server, "https://flux.example");
         assert!(saved(&refused, CONFIG).is_none(), "the account was changed");
         assert!(runner

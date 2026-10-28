@@ -4,10 +4,10 @@ mod wallabag;
 
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome, UpdateMethod,
+    action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, FieldKind,
+    Glyph, KoboApp, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome, UpdateMethod,
 };
 use std::process::ExitCode;
 use wallabag::Entry;
@@ -126,6 +126,10 @@ impl OutboxAction {
 }
 
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the reading list, not the states of one machine"
+)]
 struct ReadLater {
     snapshot: Option<Snapshot>,
     cache_dirty: bool,
@@ -148,8 +152,11 @@ struct ReadLater {
     /// refresh-refused-refresh loop at a single renewal.
     refresh_attempts: u8,
     notice: Option<String>,
-    keyboard: Keyboard,
+    /// The server address, typed on the runtime's keyboard.
+    address: TextEntry,
     editing: Option<Setting>,
+    /// Whether settings is showing the code for a phone.
+    phone: bool,
     /// The owner tapped Check again and is owed an answer even when no
     /// sign-in has arrived.
     checking: bool,
@@ -157,6 +164,10 @@ struct ReadLater {
 
 /// The fix for every account problem, said where the owner reads it.
 const ACCOUNT_FIX: &str = "Run kobo connect readlater on your computer.";
+/// Where a Wallabag server makes API clients, under the owner's own address.
+/// `kobo connect readlater` asks for a client's ID and secret, and this is the
+/// page that makes one.
+const CLIENTS_PAGE: &str = "/developer";
 
 impl ReadLater {
     /// Looks for a sign-in delivered from the computer.
@@ -181,6 +192,15 @@ impl ReadLater {
             service.at(&server)
         };
         service.explain(error).message
+    }
+
+    /// The API clients page on the address typed in settings, while there is
+    /// one a phone can read off the panel and no session has arrived.
+    fn clients_page(&self) -> Option<String> {
+        let server = self.server.trim().trim_end_matches('/');
+        (self.session.is_none() && server.starts_with("https://") && server.len() > 8)
+            .then(|| format!("{server}{CLIENTS_PAGE}"))
+            .filter(|page| page.len() <= kobo_sdk::MAX_CODE_BYTES)
     }
 
     fn open_cache(&mut self, context: &mut Context) {
@@ -283,8 +303,20 @@ impl ReadLater {
             context.set_screen(
                 ScreenBuilder::new("readlater")
                     .top_bar("Read Later settings")
-                    .typed(&self.keyboard, prompt)
-                    .keyboard(&self.keyboard, "Save")
+                    .text_entry(&self.address, prompt, "Save")
+                    .owns_back(true)
+                    .build(),
+            );
+            return;
+        }
+        if let Some(page) = self.clients_page().filter(|_| self.phone) {
+            context.set_screen(
+                ScreenBuilder::new("readlater")
+                    .top_bar("Read Later settings")
+                    .code(
+                        page,
+                        "Opens your Wallabag's API clients page, to make the client the command asks for.",
+                    )
                     .owns_back(true)
                     .build(),
             );
@@ -315,8 +347,16 @@ impl ReadLater {
                         session.server
                     ))
                 } else {
-                    page.field("server", &self.server, "https://wallabag.example")
-                        .secondary("Finish Wallabag setup on your computer.")
+                    let page = page
+                        .field("server", &self.server, "https://wallabag.example")
+                        .field_label("Server address")
+                        .field_kind(FieldKind::Address)
+                        .secondary("Finish Wallabag setup on your computer.");
+                    if self.clients_page().is_some() {
+                        page.button("phone", "Use phone")
+                    } else {
+                        page
+                    }
                 };
                 page.choose(
                     "Articles to keep",
@@ -350,11 +390,18 @@ impl ReadLater {
                     ("archive-tab", "Archive"),
                 ],
             );
-        if let Some(note) = &self.notice {
-            page = page.banner(BannerLevel::Attention, note);
-        }
-        if self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty {
-            page = page.button("retry-save", "Retry saving");
+        let retry = self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty;
+        // Retry saving is the fix for what the banner says, so it is the
+        // banner's own action whenever there is a banner to carry it.
+        match &self.notice {
+            Some(note) if retry => {
+                page = page
+                    .banner(BannerLevel::Attention, note)
+                    .banner_action("retry-save", "Retry saving");
+            }
+            Some(note) => page = page.banner(BannerLevel::Attention, note),
+            None if retry => page = page.button("retry-save", "Retry saving"),
+            None => {}
         }
         if !self.pending.is_empty() {
             page = page.secondary(format!(
@@ -831,9 +878,8 @@ impl KoboApp for ReadLater {
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if let Some(setting) = self.editing {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let value = self.keyboard.take().trim().to_owned();
+            match self.address.handle(action) {
+                Some(Typing::Submitted(value)) => {
                     if !value.is_empty() {
                         if self
                             .snapshot
@@ -856,17 +902,24 @@ impl KoboApp for ReadLater {
                     }
                     self.editing = None;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {}
+                Some(Typing::Cancelled) => self.editing = None,
+                Some(_) => {}
                 None => {
                     if action == ActionId::BACK {
+                        self.address.close();
                         self.editing = None;
                     }
                 }
             }
         } else if action == action_id("settings") {
             self.view = Some(View::Settings);
+        } else if self.phone && action == ActionId::BACK {
+            self.phone = false;
+        } else if action == action_id("phone") && self.clients_page().is_some() {
+            self.phone = true;
         } else if action == action_id("server") {
-            self.keyboard = Keyboard::with_text(if self.server.is_empty() {
+            self.address = TextEntry::new().address();
+            self.address.open_with(if self.server.is_empty() {
                 "https://"
             } else {
                 &self.server
@@ -1158,6 +1211,87 @@ mod tests {
                 .collect(),
             ..ReadLater::default()
         }
+    }
+
+    /// The screen the app sent last.
+    fn sent(context: &Context) -> kobo_sdk::Screen {
+        context
+            .commands()
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                kobo_sdk::Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a screen")
+    }
+
+    #[test]
+    fn settings_offer_the_api_clients_page_as_a_code_once_the_server_is_known() {
+        let mut app = ReadLater {
+            view: Some(View::Settings),
+            ..ReadLater::default()
+        };
+        let mut context = Context::default();
+        app.show(&mut context);
+        assert!(
+            !format!("{:?}", sent(&context)).contains("Use phone"),
+            "no code before the server is known"
+        );
+        app.server = "https://bag.example/".into();
+        app.on_action(&mut context, action_id("phone"));
+        let phone = sent(&context);
+        assert!(phone.owns_back);
+        assert!(
+            phone.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Code { payload, .. } if payload == "https://bag.example/developer"
+            )),
+            "{phone:?}"
+        );
+        app.on_action(&mut context, ActionId::BACK);
+        assert!(!app.phone);
+        assert_eq!(app.view, Some(View::Settings));
+    }
+
+    #[test]
+    fn the_server_is_typed_on_the_runtime_on_the_address_keys() {
+        let mut runner = kobo_sdk::AppRunner::new(ReadLater {
+            view: Some(View::Settings),
+            ..ReadLater::default()
+        });
+        let commands = runner.action(action_id("server"));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(DeviceRequest::TypeText { kind: FieldKind::Address, initial, .. })
+                if initial == "https://"
+        )));
+        runner.type_text("https://bag.example");
+        assert_eq!(runner.app().server, "https://bag.example");
+        assert!(runner.app().editing.is_none());
+    }
+
+    #[test]
+    fn retry_saving_rides_on_the_banner_that_says_saving_failed() {
+        let mut app = reading_list(3);
+        app.notice = Some(CACHE_ERROR.into());
+        app.cache_dirty = true;
+        let screen = app.queue_prefix().build();
+        assert!(
+            screen.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Banner { action: Some(action), .. }
+                    if action.action == action_id("retry-save")
+            )),
+            "{screen:?}"
+        );
+        assert!(
+            !screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, kobo_sdk::Node::Button { .. })),
+            "{screen:?}"
+        );
     }
 
     #[test]

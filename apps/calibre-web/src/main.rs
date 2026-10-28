@@ -3,15 +3,33 @@ mod books;
 mod catalog;
 mod reading;
 mod settings;
+use kobo_sdk::credentials::CredentialSetup;
 use kobo_sdk::failure::Problem;
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, Context, Credential, KoboApp, Screen, ScreenBuilder, StoreResult, Task,
-    TaskId, TaskOutcome,
+    action_id, ActionId, Context, Credential, KoboApp, Position, Screen, ScreenBuilder,
+    StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 const REGISTRY: &str = "catalog";
 const BYTES: u32 = 256 * 1024;
+/// Adding a library, named on each of its screens: the catalog address,
+/// whether it needs an account and which, and the first catalog request that
+/// checks both.
+const STEPS: [&str; 3] = ["Address", "Account", "Check"];
+
+/// The account flow. `adding` puts it in its place among [`STEPS`]; signing
+/// in again to a library already added is the account alone.
+fn account(adding: bool) -> CredentialSetup {
+    let account = CredentialSetup::new("calibre", "calibre-web")
+        .with_basic()
+        .with_computer_command("kobo connect calibre-web");
+    if adding {
+        account.with_steps(1, STEPS)
+    } else {
+        account
+    }
+}
 #[derive(Clone, Copy, PartialEq)]
 enum View {
     Libraries,
@@ -23,13 +41,14 @@ enum View {
 }
 struct Calibre {
     view: View,
-    keyboard: Keyboard,
+    /// The catalog address, typed on the runtime's keyboard.
+    address: TextEntry,
     url: String,
     credential: Option<String>,
     task: Option<TaskId>,
     loaded: bool,
     settings: settings::Settings,
-    account: kobo_sdk::credentials::CredentialSetup,
+    account: CredentialSetup,
     page: Option<catalog::Page>,
     history: Vec<catalog::Page>,
     pending_url: String,
@@ -45,15 +64,13 @@ impl Default for Calibre {
     fn default() -> Self {
         Self {
             view: View::Libraries,
-            keyboard: Keyboard::new(),
+            address: TextEntry::new().address(),
             url: String::new(),
             credential: None,
             task: None,
             loaded: false,
             settings: settings::Settings::default(),
-            account: kobo_sdk::credentials::CredentialSetup::new("calibre", "calibre-web")
-                .with_basic()
-                .with_computer_command("kobo connect calibre-web"),
+            account: account(true),
             page: None,
             history: Vec::new(),
             pending_url: String::new(),
@@ -116,15 +133,27 @@ impl Calibre {
             })
             .collect()
     }
-    /// What sits above the entries: a failure, or the state of the setup.
-    fn library_notice(&self) -> Option<String> {
+    /// What sits above the entries: a failure with the control that fixes
+    /// it, or the state of the setup with Retry saving when it failed.
+    ///
+    /// Built once for drawing and once for measuring, so the page of entries
+    /// under it is counted under the banner as it is drawn, with its mark and
+    /// its action line.
+    fn library_notice(&self, s: ScreenBuilder) -> ScreenBuilder {
         if let Some(failure) = &self.failure {
-            return Some(failure.message.clone());
+            return s.problem_banner_with(failure, "retry", Some("sign-in-again"));
         }
         match self.settings.state {
-            settings::State::Failed => Some("Library setup is not saved.".into()),
-            settings::State::Saving => Some("Saving library setup.".into()),
-            _ => None,
+            settings::State::Failed => s
+                .banner(
+                    kobo_sdk::BannerLevel::Attention,
+                    "Library setup is not saved.",
+                )
+                .banner_action("settings-save", "Retry saving"),
+            settings::State::Saving => {
+                s.banner(kobo_sdk::BannerLevel::Attention, "Saving library setup.")
+            }
+            _ => s,
         }
     }
     /// Entries per screen, measured, rather than a fixed two: two rows left
@@ -136,7 +165,10 @@ impl Calibre {
             .iter()
             .map(|(title, subtitle)| (title.as_str(), subtitle.as_str()))
             .collect();
-        let pages = c.paginate_rows_below_notice(&rows, true, self.library_notice().as_deref());
+        let notice = self
+            .library_notice(ScreenBuilder::new("calibre-measure").top_bar("Library"))
+            .build();
+        let pages = c.paginate_rows_under(&rows, true, Position::AtTheFoot, &notice);
         if pages.is_empty() {
             vec![Vec::new()]
         } else {
@@ -156,6 +188,11 @@ impl Calibre {
                 .top_bar("Library")
                 .owns_back(true);
             if self.task.is_some() {
+                let s = if self.settings.checking() {
+                    s.steps(2, 3, STEPS)
+                } else {
+                    s
+                };
                 return s
                     .secondary("Opening catalog…")
                     .button("cancel", "Cancel")
@@ -183,19 +220,7 @@ impl Calibre {
                 .button("cancel", "Cancel")
                 .build();
         }
-        if let Some(failure) = &self.failure {
-            s = s.problem_banner(failure);
-            if failure.needs_account() {
-                s = s.top_bar_action("sign-in-again", "Sign in again");
-            } else if failure.retryable {
-                s = s.top_bar_action("retry", "Try again");
-            }
-        } else if let Some(notice) = self.library_notice() {
-            s = s.banner(kobo_sdk::BannerLevel::Attention, notice);
-            if self.settings.state == settings::State::Failed {
-                s = s.top_bar_action("settings-save", "Retry saving");
-            }
-        }
+        s = self.library_notice(s);
         if page.count() == 0 {
             s = s.text("No books or sections in this catalog.");
         }
@@ -226,25 +251,32 @@ impl Calibre {
     }
     fn setup_or_library_action(&mut self, c: &mut Context, a: ActionId) {
         match self.view {
-            View::Url => {
-                if let Some(Pressed::Submitted) = self.keyboard.press(a) {
-                    let url = self.keyboard.take();
+            View::Url => match self.address.handle(a) {
+                Some(Typing::Submitted(url)) => {
                     if let Some(url) = catalog::endpoint(&url) {
                         self.url = url;
                         self.notice.clear();
+                        self.account = account(true);
                         self.view = View::Credential;
                     } else {
-                        self.keyboard = Keyboard::with_text(&url);
+                        // The field comes back with the address in it and
+                        // the reason under its prompt.
+                        self.address.open_with(url);
                         self.notice =
                             "Use an HTTPS OPDS address without a username or password.".into();
                     }
                 }
-            }
+                Some(Typing::Cancelled) => {
+                    self.notice.clear();
+                    self.view = View::Libraries;
+                }
+                _ => {}
+            },
             _ => {
                 if a == action_id("add") {
                     self.view = View::Url;
                     self.notice.clear();
-                    self.keyboard = Keyboard::with_text("https://");
+                    self.address.open_with("https://");
                 } else if a == action_id("library") {
                     self.view = View::Library;
                     self.page = None;
@@ -330,6 +362,7 @@ impl Calibre {
     }
     fn sign_in_again(&mut self) {
         let origin = self.url.split('/').take(3).collect::<Vec<_>>().join("/");
+        self.account = account(false);
         if self.account.bind_server(&origin).is_ok() {
             self.account.open();
         }
@@ -380,21 +413,25 @@ impl Calibre {
                 }
                 s.button("offline", "Downloaded books").build()
             }
+            // The runtime draws the field and its keys under this title.
             View::Url => ScreenBuilder::new("calibre-url")
                 .top_bar("Library address")
-                .heading("Library address")
-                .secondary(if self.notice.is_empty() {
-                    "Enter the HTTPS OPDS address of your library."
-                } else {
-                    &self.notice
-                })
-                .typed(&self.keyboard, "https://library.example")
-                .keyboard(&self.keyboard, "Continue")
                 .owns_back(true)
+                .text_entry_with_hint(
+                    &self.address,
+                    "Library address",
+                    if self.notice.is_empty() {
+                        "Enter the HTTPS OPDS address of your library."
+                    } else {
+                        &self.notice
+                    },
+                    "Continue",
+                )
                 .build(),
             View::Credential => ScreenBuilder::new("calibre-account-choice")
                 .top_bar("Library account")
                 .owns_back(true)
+                .steps(1, 3, STEPS)
                 .text("Does this library require a username and password?")
                 .primary_button("sign-in", "Sign in")
                 .button("public-library", "Use public library")
@@ -879,6 +916,85 @@ mod tests {
         let c = Credential::basic("calibre");
         assert_eq!(c.secret, "calibre");
         assert_eq!(c.header_name(), "Authorization");
+    }
+    #[test]
+    fn adding_a_library_types_its_address_on_the_runtime_and_names_each_step() {
+        let mut runner = kobo_sdk::AppRunner::new(Calibre::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: REGISTRY.into(),
+            value: None,
+        });
+        let commands = runner.action(action_id("add"));
+        assert!(
+            commands.iter().any(|c| matches!(
+                c,
+                kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText {
+                    kind: kobo_sdk::FieldKind::Address,
+                    initial,
+                    submit,
+                    ..
+                }) if initial == "https://" && submit == "Continue"
+            )),
+            "{commands:?}"
+        );
+        let commands = runner.type_text("http://library.test/opds");
+        assert!(
+            commands.iter().any(|c| matches!(
+                c,
+                kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText { initial, hint, .. })
+                    if initial == "http://library.test/opds" && hint.contains("HTTPS OPDS")
+            )),
+            "a refused address comes back to mend with the reason: {commands:?}"
+        );
+        runner.type_text("https://library.test/opds");
+        let app = runner.app_mut();
+        assert!(app.view == View::Credential);
+        let choice = app.screen(&Context::default());
+        assert!(
+            choice.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Steps {
+                    current: 1,
+                    total: 3,
+                    ..
+                }
+            )),
+            "{choice:?}"
+        );
+    }
+    #[test]
+    fn a_refused_account_puts_sign_in_again_on_the_banner_over_the_catalog() {
+        let mut app = loaded_catalog();
+        let mut c = Context::default();
+        app.on_action(&mut c, action_id("entry-0"));
+        let task = app.task.unwrap();
+        app.on_task(
+            &mut c,
+            task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized),
+        );
+        let screen = app.screen(&c);
+        assert!(
+            screen.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Banner { level: kobo_sdk::BannerLevel::Error, action: Some(action), .. }
+                    if action.action == action_id("sign-in-again") && action.label == "Sign in again"
+            )),
+            "{screen:?}"
+        );
+        assert!(
+            screen
+                .top_bar
+                .as_ref()
+                .is_some_and(|bar| bar.actions.is_empty()),
+            "one way to sign in again: {screen:?}"
+        );
+        app.on_action(&mut c, action_id("sign-in-again"));
+        assert!(
+            !format!("{:?}", app.screen(&c)).contains("Steps {"),
+            "signing in again is not the add-a-library flow"
+        );
     }
     #[test]
     fn library_add_fits() {

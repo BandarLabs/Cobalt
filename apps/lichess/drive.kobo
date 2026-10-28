@@ -24,6 +24,20 @@ expect Connect a Lichess account to play people. Computer and Puzzles work witho
 expect-missing Challenge player
 clean
 shot time-tile-without-account
+tap Connect Lichess
+wait-for Account key
+expect lichess.org/account/oauth/token
+expect Use phone
+clean
+shot connect-prompt
+tap Use phone
+wait-for Opens the Lichess token page
+clean
+shot connect-phone
+tap Back
+wait-for Account key
+tap Back
+wait-for Connect Lichess
 tap-id seek-casual
 tap Back
 wait-for Rapid · Casual

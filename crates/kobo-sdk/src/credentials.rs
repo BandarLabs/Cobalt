@@ -6,17 +6,26 @@
 //! server password passes through nothing but the runtime that keeps it. A
 //! username is typed here like any other text, because it is shown on screen
 //! anyway and the runtime stores it in front of the password.
+//!
+//! The prompt is drawn as a labelled field, so where the key comes from sits
+//! under the field as its hint and a refused save sits there as its error,
+//! the way every other field on the platform explains itself. An app that
+//! knows the page where the key is made names it with
+//! [`CredentialSetup::with_key_page`], and the flow offers a QR code for a
+//! phone, so the owner does not type an address on e-ink to find it.
 
 use crate::keyboard::{TextEntry, Typing};
 use crate::{
     action_id, ActionId, Context, DeviceError, DeviceRequest, DeviceResult, Screen, ScreenBuilder,
 };
 use kobo_protocol::SecretTarget;
+use kobo_ui::{BannerLevel, FieldKind};
 use std::fmt;
 
 const ENTER: &str = "credential.enter";
 const CLI: &str = "credential.cli";
 const CHECK: &str = "credential.check";
+const PHONE: &str = "credential.phone";
 
 /// Whether a presence check is out, and who wanted it.
 ///
@@ -45,6 +54,8 @@ enum View {
     /// username typed before it.
     Password,
     Cli,
+    /// A QR code for the page where the key is made, for a phone to open.
+    Phone,
     /// Saved by the runtime, and waiting for the check that says so.
     Saving,
 }
@@ -68,12 +79,22 @@ pub struct CredentialSetup {
     service: String,
     view: View,
     entry: TextEntry,
+    /// Why what was typed was not saved. Drawn as the field's error, because
+    /// it is about what went into the field.
     problem: Option<String>,
+    /// What a presence check found. Drawn as a banner that carries Check
+    /// again, because the fix is to look again once the account is there.
+    check: Option<String>,
     basic: bool,
     username: String,
     server: Option<String>,
     guidance: Option<String>,
     computer: Option<String>,
+    /// The page where the owner makes the key, and what to say under its code.
+    key_page: Option<(String, String)>,
+    /// Where this sign-in sits in the app's connect flow: the step it is,
+    /// counted from zero, and the name of every step.
+    steps: Option<(u8, Vec<String>)>,
     checking: Checking,
 }
 
@@ -85,6 +106,7 @@ impl fmt::Debug for CredentialSetup {
             .field("service", &self.service)
             .field("view", &self.view)
             .field("problem", &self.problem)
+            .field("check", &self.check)
             .finish_non_exhaustive()
     }
 }
@@ -104,11 +126,14 @@ impl CredentialSetup {
             view: View::Closed,
             entry: TextEntry::new(),
             problem: None,
+            check: None,
             basic: false,
             username: String::new(),
             server: None,
             guidance: None,
             computer: None,
+            key_page: None,
+            steps: None,
             checking: Checking::Idle,
         }
     }
@@ -136,6 +161,40 @@ impl CredentialSetup {
     #[must_use]
     pub fn with_guidance(mut self, guidance: impl Into<String>) -> Self {
         self.guidance = Some(guidance.into());
+        self
+    }
+
+    /// Name the page where the owner makes this key, so the flow can offer a
+    /// QR code for a phone to open it.
+    ///
+    /// Typing a long address into a phone is easy; finding it on a reader
+    /// that has no browser is not, and typing it off the panel is error
+    /// prone. `page` is a whole address, or a path starting with `/` that is
+    /// joined to the server bound with [`Self::bind_server`], since a
+    /// self-hosted service's token page lives on the owner's own server. The
+    /// code is offered only while the address fits in
+    /// [`crate::MAX_CODE_BYTES`]. Never put a secret in it: a code on a
+    /// panel can be read by anyone who can see the panel.
+    #[must_use]
+    pub fn with_key_page(mut self, page: impl Into<String>, caption: impl Into<String>) -> Self {
+        self.key_page = Some((page.into(), caption.into()));
+        self
+    }
+
+    /// Show where this sign-in sits in a longer connect flow, as a step
+    /// indicator over the prompt.
+    ///
+    /// An app that asks for the server address first, then the key, then
+    /// checks both, says so on every screen of the flow, so the owner knows
+    /// how much is left. `current` counts from zero and `labels` names every
+    /// step.
+    #[must_use]
+    pub fn with_steps<I, L>(mut self, current: u8, labels: I) -> Self
+    where
+        I: IntoIterator<Item = L>,
+        L: Into<String>,
+    {
+        self.steps = Some((current, labels.into_iter().map(Into::into).collect()));
         self
     }
 
@@ -189,6 +248,7 @@ impl CredentialSetup {
 
     pub fn open(&mut self) {
         self.problem = None;
+        self.check = None;
         self.view = View::Prompt;
     }
 
@@ -196,6 +256,7 @@ impl CredentialSetup {
         self.entry.close();
         self.username.clear();
         self.problem = None;
+        self.check = None;
         self.checking = Checking::Idle;
         self.view = View::Closed;
     }
@@ -229,6 +290,39 @@ impl CredentialSetup {
         }
     }
 
+    /// The address the phone code opens, while there is one that fits.
+    fn key_page(&self) -> Option<(String, &str)> {
+        let (page, caption) = self.key_page.as_ref()?;
+        let address = if page.starts_with('/') {
+            format!("{}{page}", self.server.as_deref()?.trim_end_matches('/'))
+        } else {
+            page.clone()
+        };
+        (!address.is_empty() && address.len() <= crate::MAX_CODE_BYTES)
+            .then_some((address, caption.as_str()))
+    }
+
+    /// Puts the step indicator, when the app gave one, under the top bar.
+    fn steps(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match &self.steps {
+            Some((current, labels)) if !labels.is_empty() => screen.steps(
+                *current,
+                u8::try_from(labels.len()).unwrap_or(u8::MAX),
+                labels.iter().cloned(),
+            ),
+            _ => screen,
+        }
+    }
+
+    /// The words on the control that starts typing.
+    const fn enter_label(&self) -> &'static str {
+        if self.basic {
+            "Sign in"
+        } else {
+            "Enter account key"
+        }
+    }
+
     /// The server a field saves to, as a line under its prompt, so an owner
     /// with two libraries can see which one they are signing in to.
     fn server_line(&self) -> String {
@@ -238,6 +332,68 @@ impl CredentialSetup {
             .unwrap_or_default()
     }
 
+    /// The prompt: the key as a labelled field, and the other ways in.
+    fn prompt_screen(&self, app_title: &str, computer: bool) -> Screen {
+        let mut screen = ScreenBuilder::new("credential-required").top_bar(app_title);
+        // Check again sits in the bar rather than among the buttons
+        // so the prompt keeps its height, until a check has said the
+        // account is not there: then it is the banner's own action,
+        // beside the words it answers, and one control is enough.
+        if self.check.is_none() {
+            screen = screen.top_bar_action(CHECK, "Check again");
+        }
+        // A flow with steps names this one in its step line, so the
+        // heading would say the same thing twice on the line under it.
+        screen = if self.steps.is_some() {
+            self.steps(screen)
+        } else {
+            screen.heading(format!("Connect {}", self.service))
+        };
+        screen = screen
+            .field(ENTER, "", self.enter_label())
+            .field_label(if self.basic {
+                "Username and password"
+            } else {
+                "Account key"
+            })
+            // Nothing is in the field to hide: the runtime holds the
+            // key, and the kind says what the field is for.
+            .field_kind(if self.basic {
+                FieldKind::Text
+            } else {
+                FieldKind::Secret
+            });
+        // While a check's banner is up, it is what the owner needs to
+        // read, and the hint gives up its lines to it so the prompt
+        // still fits a panel held on its side at the largest text.
+        // The same guidance is under the runtime's field when typing.
+        if self.check.is_none() {
+            screen = screen.field_hint(self.guidance.as_deref().unwrap_or(if self.basic {
+                "Use your server username and password."
+            } else {
+                "Add the account key for this service."
+            }));
+        }
+        if let Some(problem) = &self.problem {
+            screen = screen.field_error(problem);
+        }
+        if let Some(check) = &self.check {
+            screen = screen
+                .banner(BannerLevel::Attention, check)
+                .banner_action(CHECK, "Check again");
+        }
+        // The other ways in share one line, so a prompt with a
+        // refused save and a missing account still fits a panel held
+        // on its side at the larger text sizes.
+        screen = match (self.key_page().is_some(), computer) {
+            (true, true) => screen.buttons([(PHONE, "Use phone"), (CLI, "Use computer")]),
+            (true, false) => screen.button(PHONE, "Use phone"),
+            (false, true) => screen.button(CLI, "Use computer"),
+            (false, false) => screen,
+        };
+        screen.build()
+    }
+
     #[must_use]
     pub fn screen(&self, app_title: &str) -> Screen {
         let command = self.computer_command();
@@ -245,35 +401,7 @@ impl CredentialSetup {
             View::Closed => ScreenBuilder::new("credential-closed")
                 .top_bar(app_title)
                 .build(),
-            View::Prompt => {
-                let mut screen = ScreenBuilder::new("credential-required")
-                    .top_bar(app_title)
-                    .heading(format!("Connect {}", self.service))
-                    .text(self.guidance.as_deref().unwrap_or(if self.basic {
-                        "Use your server username and password."
-                    } else {
-                        "Add the account key for this service."
-                    }));
-                if let Some(problem) = &self.problem {
-                    screen = screen.banner(crate::BannerLevel::Attention, problem);
-                }
-                // Check again sits in the bar rather than among the buttons
-                // so the prompt keeps its height with a problem shown: the
-                // smallest panel at the largest text has no room for a third
-                // control under the banner.
-                screen = screen.top_bar_action(CHECK, "Check again").primary_button(
-                    ENTER,
-                    if self.basic {
-                        "Sign in"
-                    } else {
-                        "Enter account key"
-                    },
-                );
-                if command.is_some() {
-                    screen = screen.button(CLI, "Use computer");
-                }
-                screen.build()
-            }
+            View::Prompt => self.prompt_screen(app_title, command.is_some()),
             // The runtime draws these three. What is built here is this
             // application's screen under its field, whose title the runtime
             // keeps in its top bar while the owner types.
@@ -301,17 +429,37 @@ impl CredentialSetup {
             // beside it would leave two controls that look alike and go to
             // different places when an app owns back for the whole flow.
             View::Cli => {
-                let mut screen = ScreenBuilder::new("credential-cli")
+                let screen = ScreenBuilder::new("credential-cli")
                     .top_bar(app_title)
                     .owns_back(true)
                     .heading("Set it from a computer");
-                if let Some(problem) = &self.problem {
-                    screen = screen.banner(crate::BannerLevel::Attention, problem);
+                // Once a check has found nothing, Check again is the banner's
+                // action, beside the words it answers, rather than a second
+                // button further down.
+                let screen = match &self.check {
+                    Some(check) => screen
+                        .banner(BannerLevel::Attention, check)
+                        .banner_action(CHECK, "Check again"),
+                    None => screen,
                 }
-                screen
-                    .text(command.unwrap_or_default())
-                    .secondary("Run this on your computer, then tap Check again.")
-                    .primary_button(CHECK, "Check again")
+                .text(command.unwrap_or_default())
+                .secondary("Run this on your computer, then tap Check again.");
+                if self.check.is_some() {
+                    screen.build()
+                } else {
+                    screen.primary_button(CHECK, "Check again").build()
+                }
+            }
+            // The code and the way on to typing, with nothing else, so the
+            // code keeps its full size on a panel held either way at the
+            // largest text.
+            View::Phone => {
+                let (address, caption) = self.key_page().unwrap_or_default();
+                ScreenBuilder::new("credential-phone")
+                    .top_bar(app_title)
+                    .owns_back(true)
+                    .code(address, caption)
+                    .bottom_action(ENTER, self.enter_label())
                     .build()
             }
             View::Saving => ScreenBuilder::new("credential-saving")
@@ -338,7 +486,7 @@ impl CredentialSetup {
         if self.view == View::Saving {
             return Some(CredentialEvent::Changed);
         }
-        if self.view == View::Cli && action == ActionId::BACK {
+        if matches!(self.view, View::Cli | View::Phone) && action == ActionId::BACK {
             self.view = View::Prompt;
             return Some(CredentialEvent::Changed);
         }
@@ -347,8 +495,9 @@ impl CredentialSetup {
             return Some(CredentialEvent::Cancelled);
         }
         match (self.view, action) {
-            (View::Prompt, value) if value == action_id(ENTER) => {
+            (View::Prompt | View::Phone, value) if value == action_id(ENTER) => {
                 self.problem = None;
+                self.check = None;
                 if self.basic {
                     self.entry.close();
                     self.entry = TextEntry::new();
@@ -363,11 +512,19 @@ impl CredentialSetup {
                 if value == action_id(CLI) && self.computer_command().is_some() =>
             {
                 self.problem = None;
+                self.check = None;
                 self.view = View::Cli;
+                Some(CredentialEvent::Changed)
+            }
+            (View::Prompt, value) if value == action_id(PHONE) && self.key_page().is_some() => {
+                self.problem = None;
+                self.check = None;
+                self.view = View::Phone;
                 Some(CredentialEvent::Changed)
             }
             (View::Prompt | View::Cli, value) if value == action_id(CHECK) => {
                 self.problem = None;
+                self.check = None;
                 if self.checking == Checking::Idle {
                     context.secrets().check(&[&self.name]);
                 }
@@ -456,14 +613,14 @@ impl CredentialSetup {
                 Some(CredentialEvent::TryAccount)
             }
             DeviceResult::Secrets { .. } => {
-                self.problem = Some(format!(
+                self.check = Some(format!(
                     "No {} account is on this reader yet.",
                     self.service
                 ));
                 Some(CredentialEvent::Changed)
             }
             _ => {
-                self.problem = Some("The reader could not check. Try again.".into());
+                self.check = Some("The reader could not check. Try again.".into());
                 Some(CredentialEvent::Changed)
             }
         }
@@ -741,23 +898,56 @@ mod tests {
                     pixels_per_inch: 212,
                     text_scale: kobo_ui::TextScale::Default,
                 }]);
+        let panels = panels.flat_map(|portrait| {
+            [
+                portrait,
+                crate::DisplayMetrics {
+                    width: portrait.height,
+                    height: portrait.width,
+                    ..portrait
+                },
+            ]
+        });
         for mut metrics in panels {
             for scale in kobo_ui::TextScale::STEPS {
                 metrics.text_scale = scale;
                 #[cfg(feature = "text")]
                 kobo_text::install(metrics).unwrap();
-                let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
+                let mut setup = CredentialSetup::new("komga", "Komga")
+                    .with_basic()
+                    .with_computer_command("kobo connect komga")
+                    .with_key_page(
+                        "/settings/tokens",
+                        "Opens the page on your server where account keys are made.",
+                    )
+                    .with_steps(1, ["Address", "Account", "Check"]);
                 setup.bind_server("https://books.example").unwrap();
-                setup.problem = Some("No Komga account is on this reader yet.".into());
-                for view in [
-                    super::View::Prompt,
-                    super::View::Username,
-                    super::View::Password,
-                    super::View::Entry,
-                    super::View::Cli,
-                    super::View::Saving,
+                // A refused save and a missing account are never shown at
+                // once: Check again clears the one, and typing clears the
+                // other. Each is checked at its longest.
+                let refused = "These account details are too long or contain a line break. Check them and try again.";
+                let missing = "No Komga account is on this reader yet.";
+                for (view, problem, check) in [
+                    (super::View::Prompt, Some(refused), None),
+                    (super::View::Prompt, None, Some(missing)),
+                    (super::View::Username, None, None),
+                    (super::View::Password, None, None),
+                    (super::View::Entry, None, None),
+                    (super::View::Cli, None, Some(missing)),
+                    (super::View::Phone, None, None),
+                    (super::View::Saving, None, None),
                 ] {
+                    // Held on its side, the prompt and the phone code are
+                    // checked: they are what this flow draws with the new
+                    // controls. The typing screens are the runtime's, and
+                    // the computer route is unchanged prose.
+                    let sideways = metrics.width > metrics.height;
+                    if sideways && !matches!(view, super::View::Prompt | super::View::Phone) {
+                        continue;
+                    }
                     setup.view = view;
+                    setup.problem = problem.map(str::to_owned);
+                    setup.check = check.map(str::to_owned);
                     setup.entry.open();
                     let screen = setup.screen("Komga").with_own_back(true);
                     let chrome = kobo_ui::Chrome::for_screen(&screen, false, None);
@@ -923,5 +1113,168 @@ mod tests {
         guided.open();
         guided.on_action(&mut context, action_id("credential.cli"));
         assert!(format!("{:?}", guided.screen("Readeck")).contains("kobo connect readeck"));
+    }
+
+    fn checks_in_bar(screen: &crate::Screen) -> bool {
+        screen.top_bar.as_ref().is_some_and(|bar| {
+            bar.actions
+                .iter()
+                .any(|action| action.label == "Check again")
+        })
+    }
+
+    #[test]
+    fn a_refused_save_is_the_fields_error_and_a_missing_account_is_a_banner_that_checks_again() {
+        let mut setup = CredentialSetup::new("zotero", "Zotero");
+        let mut context = Context::default();
+        setup.open();
+        let prompt = setup.screen("Zotero");
+        let field = prompt.nodes.iter().find_map(|node| match node {
+            kobo_ui::Node::Field {
+                label, hint, kind, ..
+            } => Some((label.clone(), hint.clone(), *kind)),
+            _ => None,
+        });
+        assert_eq!(
+            field,
+            Some((
+                Some("Account key".to_owned()),
+                Some("Add the account key for this service.".to_owned()),
+                FieldKind::Secret
+            )),
+            "{prompt:?}"
+        );
+        assert!(checks_in_bar(&prompt), "{prompt:?}");
+
+        setup.on_action(&mut context, action_id("credential.enter"));
+        asked(&setup, &mut context);
+        answer(
+            &mut setup,
+            &mut context,
+            TextOutcome::Failed(DeviceError::InvalidInput),
+        );
+        let refused = setup.screen("Zotero");
+        assert!(
+            refused.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Field { error: Some(error), .. } if error.contains("too long")
+            )),
+            "{refused:?}"
+        );
+        assert!(
+            !refused
+                .nodes
+                .iter()
+                .any(|node| matches!(node, kobo_ui::Node::Banner { .. })),
+            "a refused save is said once, under the field: {refused:?}"
+        );
+
+        setup.on_action(&mut context, action_id("credential.check"));
+        let commands = context.take_commands();
+        let Some(Command::Device(request)) = commands.last() else {
+            panic!("Check again asks the runtime: {commands:?}")
+        };
+        setup.on_device_result(
+            request,
+            &DeviceResult::Secrets {
+                present: Vec::new(),
+            },
+        );
+        let missing = setup.screen("Zotero");
+        assert!(
+            missing.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Banner { text, action: Some(action), .. }
+                    if text.contains("No Zotero account") && action.label == "Check again"
+                        && action.action == action_id("credential.check")
+            )),
+            "{missing:?}"
+        );
+        assert!(
+            !checks_in_bar(&missing),
+            "Check again is offered once: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_page_on_the_owners_server_is_offered_as_a_code_for_a_phone() {
+        let mut setup = CredentialSetup::new("readeck", "Readeck").with_key_page(
+            "/profile/tokens",
+            "Opens Readeck's token page on your server.",
+        );
+        let mut context = Context::default();
+        setup.open();
+        assert!(
+            !format!("{:?}", setup.screen("Readeck")).contains("Use phone"),
+            "no code before the server is known"
+        );
+        assert_eq!(
+            setup.on_action(&mut context, action_id("credential.phone")),
+            None
+        );
+        setup.bind_server("https://read.example/").unwrap();
+        setup.open();
+        assert!(format!("{:?}", setup.screen("Readeck")).contains("Use phone"));
+        setup.on_action(&mut context, action_id("credential.phone"));
+        let phone = setup.screen("Readeck");
+        assert!(
+            phone.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Code { payload, caption, .. }
+                    if payload == "https://read.example/profile/tokens" && caption.contains("token page")
+            )),
+            "{phone:?}"
+        );
+        assert!(phone.owns_back, "{phone:?}");
+        setup.on_action(&mut context, crate::ActionId::BACK);
+        assert!(format!("{:?}", setup.screen("Readeck")).contains("Use phone"));
+
+        setup.on_action(&mut context, action_id("credential.phone"));
+        setup.on_action(&mut context, action_id("credential.enter"));
+        assert!(
+            secret_of(asked(&setup, &mut context).as_ref()).is_some(),
+            "the phone screen leads straight on to typing the key"
+        );
+
+        let long = CredentialSetup::new("lichess", "Lichess").with_key_page(
+            format!("https://lichess.org/{}", "a".repeat(crate::MAX_CODE_BYTES)),
+            "Too long to scan.",
+        );
+        assert!(
+            long.key_page().is_none(),
+            "a code that cannot be read is not offered"
+        );
+    }
+
+    #[test]
+    fn a_sign_in_inside_a_longer_flow_says_which_step_it_is() {
+        let mut setup = CredentialSetup::new("readeck", "Readeck")
+            .with_computer_command("kobo connect readeck")
+            .with_steps(1, ["Address", "Token", "Check"]);
+        let mut context = Context::default();
+        setup.open();
+        let steps = |screen: &crate::Screen| {
+            screen.nodes.iter().find_map(|node| match node {
+                kobo_ui::Node::Steps {
+                    current,
+                    total,
+                    labels,
+                    ..
+                } => Some((*current, *total, labels.clone())),
+                _ => None,
+            })
+        };
+        let expected = Some((1, 3, vec!["Address".into(), "Token".into(), "Check".into()]));
+        assert_eq!(steps(&setup.screen("Readeck")), expected);
+        setup.on_action(&mut context, action_id("credential.cli"));
+        assert_eq!(
+            steps(&setup.screen("Readeck")),
+            None,
+            "the computer route is a way through the same step, not a step of its own"
+        );
+        assert_eq!(
+            steps(&CredentialSetup::new("zotero", "Zotero").screen("Zotero")),
+            None
+        );
     }
 }

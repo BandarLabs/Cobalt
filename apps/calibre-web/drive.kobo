@@ -9,3 +9,14 @@ expect Library address
 expect https://
 clean
 shot address
+type library.example/opds
+tap Continue
+wait-for Does this library require a username and password?
+expect Step 2 of 3
+clean
+shot account-choice
+tap-id sign-in
+wait-for Username and password
+expect Step 2 of 3
+clean
+shot sign-in

@@ -1,9 +1,9 @@
 mod protocol;
 
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{Keyboard, Pressed, TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, Space,
-    StoreResult, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, FieldKind, Glyph, KoboApp, Screen, ScreenBuilder,
+    Space, StoreResult, TaskError, TaskId, TaskOutcome,
 };
 use protocol::{Letter, Reply, ReplyState};
 use std::process::ExitCode;
@@ -17,6 +17,11 @@ const OLDER: &str = "older";
 const NEWER: &str = "newer";
 const REPLY: &str = "reply";
 const RETRY: &str = "retry";
+const GATEWAY_URL: &str = "gateway-url";
+/// What Check again says when nothing has arrived. It is answered by checking
+/// again, so the banner that says it carries that action.
+const NO_GATEWAY_YET: &str =
+    "No gateway has arrived from the computer yet. Run the command, then check again.";
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
@@ -38,7 +43,17 @@ struct Post {
     drafts: Vec<(String, String)>,
     outbox: Vec<Reply>,
     open: usize,
+    /// The reply being written. Drawn by the app rather than the runtime,
+    /// because every key saves the draft: a letter half written survives
+    /// Back, a flat battery and a closed cover, and the runtime's field
+    /// answers only once, with nothing on Back.
     keyboard: Keyboard,
+    /// The gateway address, typed on the runtime's keyboard.
+    address: TextEntry,
+    /// The address shown in the setup field until it is saved.
+    draft: String,
+    /// Why the typed address was refused, said under its field.
+    address_error: Option<String>,
     sending: Option<TaskId>,
     fetching: Option<TaskId>,
     fetching_page: usize,
@@ -71,23 +86,37 @@ impl Post {
     }
 
     fn setup(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("post-setup")
-            .top_bar("Post")
-            .top_bar_action("check-again", "Check again")
+        if self.address.is_open() {
+            return ScreenBuilder::new("post-setup")
+                .top_bar("Post")
+                .text_entry(&self.address, "Gateway address", "Save gateway")
+                .build();
+        }
+        let checked = self.notice.as_deref() == Some(NO_GATEWAY_YET);
+        let mut screen = ScreenBuilder::new("post-setup").top_bar("Post");
+        // Check again sits in the bar until a check has found nothing; then
+        // it is the action of the banner that says so, and only there.
+        if !checked {
+            screen = screen.top_bar_action("check-again", "Check again");
+        }
+        screen = screen
             .section("Connect a gateway")
             .secondary("Post reads letters from a Hermes gateway you run. On your computer:")
             .command("kobo connect post");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
+            if checked {
+                screen = screen.banner_action("check-again", "Check again");
+            }
         }
-        screen
-            .field(
-                "gateway-url",
-                self.keyboard.text(),
-                "https://hermes.example.net",
-            )
-            .keyboard(&self.keyboard, "Save gateway")
-            .build()
+        screen = screen
+            .field(GATEWAY_URL, &self.draft, "https://hermes.example.net")
+            .field_label("Gateway address")
+            .field_kind(FieldKind::Address);
+        if let Some(error) = &self.address_error {
+            screen = screen.field_error(error);
+        }
+        screen.build()
     }
 
     fn inbox_pages(&self, context: &Context) -> Vec<Vec<usize>> {
@@ -448,13 +477,41 @@ impl Post {
             text.clone_into(&mut self.gateway);
             c.store().save(GATEWAY, self.gateway.clone().into_bytes());
             self.view = View::Inbox;
-            self.keyboard.clear();
+            self.draft.clear();
+            self.address_error = None;
             self.show(c);
             self.check(c);
         } else {
-            self.notice = Some("Enter the secure https address of your Hermes gateway.".into());
+            text.clone_into(&mut self.draft);
+            self.address_error =
+                Some("Enter the secure https address of your Hermes gateway.".into());
             self.show(c);
         }
+    }
+
+    /// The gateway field on setup: tapping it opens the runtime's keyboard,
+    /// and its answer is the address. True when `a` was the field's.
+    fn setup_action(&mut self, c: &mut Context, a: ActionId) -> bool {
+        if let Some(typing) = self.address.handle(a) {
+            if let Typing::Submitted(text) = typing {
+                self.submit_gateway(c, &text);
+            } else {
+                self.show(c);
+            }
+            return true;
+        }
+        if a == action_id(GATEWAY_URL) {
+            // An empty field opens on the scheme every address needs.
+            self.address = TextEntry::new().address();
+            self.address.open_with(if self.draft.is_empty() {
+                "https://"
+            } else {
+                &self.draft
+            });
+            self.show(c);
+            return true;
+        }
+        false
     }
 
     fn open_compose(&mut self, c: &mut Context) {
@@ -538,10 +595,7 @@ impl KoboApp for Post {
             if self.view == View::Setup {
                 if self.gateway.is_empty() {
                     if std::mem::take(&mut self.checking) {
-                        self.notice = Some(
-                            "No gateway has arrived from the computer yet. Run the command, then check again."
-                                .into(),
-                        );
+                        self.notice = Some(NO_GATEWAY_YET.into());
                         self.show(c);
                     }
                 } else {
@@ -575,7 +629,6 @@ impl KoboApp for Post {
         }
         if self.view == View::Opening {
             self.view = if self.gateway.is_empty() {
-                self.keyboard = Keyboard::with_text("https://");
                 View::Setup
             } else {
                 View::Inbox
@@ -599,23 +652,22 @@ impl KoboApp for Post {
             c.store().load(GATEWAY);
             return;
         }
-        if matches!(self.view, View::Setup | View::Compose) {
+        if self.view == View::Setup && self.setup_action(c, a) {
+            return;
+        }
+        if self.view == View::Compose {
             if let Some(key) = self.keyboard.press(a) {
                 if matches!(key, Pressed::Edited | Pressed::Shifted) {
-                    if self.view == View::Compose {
-                        if let Some(letter) = self.letters.get(self.open) {
-                            let id = letter.id.clone();
-                            let body = self.keyboard.text().to_owned();
-                            self.save_draft(c, &id, &body);
-                        }
+                    if let Some(letter) = self.letters.get(self.open) {
+                        let id = letter.id.clone();
+                        let body = self.keyboard.text().to_owned();
+                        self.save_draft(c, &id, &body);
                     }
                     self.show(c);
                 }
                 if matches!(key, Pressed::Submitted) {
                     let text = self.keyboard.text().trim().to_owned();
-                    if self.view == View::Setup {
-                        self.submit_gateway(c, &text);
-                    } else if let Some(letter) = self.letters.get(self.open) {
+                    if let Some(letter) = self.letters.get(self.open) {
                         let id = letter.id.clone();
                         self.submit_reply(c, &id, &text);
                     }
@@ -923,6 +975,79 @@ mod large_text_tests {
             assert!(text.contains("On your computer:"), "{text}");
             // The whole command, so a clipped command fails here.
             assert!(text.contains("kobo connect post"), "{text}");
+            for (notice, error) in [
+                (Some(NO_GATEWAY_YET), None),
+                (
+                    None,
+                    Some("Enter the secure https address of your Hermes gateway."),
+                ),
+            ] {
+                let app = Post {
+                    view: View::Setup,
+                    notice: notice.map(Into::into),
+                    address_error: error.map(Into::into),
+                    draft: "http://hermes.example.net".into(),
+                    ..Default::default()
+                };
+                fits(&app.setup(), metrics);
+            }
         }
+    }
+
+    #[test]
+    fn the_gateway_is_typed_on_the_runtime_and_a_wrong_scheme_is_said_under_the_field() {
+        let mut runner = kobo_sdk::AppRunner::new(Post {
+            view: View::Setup,
+            ..Default::default()
+        });
+        let commands = runner.action(action_id(GATEWAY_URL));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText {
+                kind: FieldKind::Address,
+                initial,
+                submit,
+                ..
+            }) if initial == "https://" && submit == "Save gateway"
+        )));
+        runner.type_text("http://hermes.example.net");
+        let setup = runner.app().setup();
+        assert!(
+            setup.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Field { value, error: Some(error), .. }
+                    if value == "http://hermes.example.net" && error.contains("https")
+            )),
+            "{setup:?}"
+        );
+        runner.action(action_id(GATEWAY_URL));
+        let commands = runner.type_text("https://hermes.example.net");
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == GATEWAY
+        )));
+        assert!(runner.app().view == View::Inbox);
+    }
+
+    #[test]
+    fn a_check_that_found_nothing_carries_check_again_on_its_banner() {
+        let app = Post {
+            view: View::Setup,
+            notice: Some(NO_GATEWAY_YET.into()),
+            ..Default::default()
+        };
+        let setup = app.setup();
+        assert!(
+            setup.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Banner { action: Some(action), .. }
+                    if action.action == action_id("check-again")
+            )),
+            "{setup:?}"
+        );
+        assert!(setup
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
     }
 }

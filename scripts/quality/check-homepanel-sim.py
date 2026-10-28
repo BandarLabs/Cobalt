@@ -275,10 +275,10 @@ def main():
                 capture('homepanel-edited')
 
                 # Wall panel: one large tile per row.
-                drive('tap Settings', 'tap Use one large column', 'tap Done',
+                drive('tap Settings', 'tap Wall panel', 'tap Done',
                       'wait-for Home Panel')
                 capture('homepanel-wall')
-                drive('tap Settings', 'tap Use two columns', 'tap Done',
+                drive('tap Settings', 'tap Wall panel', 'tap Done',
                       'wait-for Home Panel')
 
                 # Connection failure is honest, recovery clears it.

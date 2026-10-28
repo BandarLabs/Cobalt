@@ -111,8 +111,7 @@ fn picker_navigation_clamps_resets_search_and_keeps_back_behavior() {
     }
     assert_eq!(runner.app().picker_page, last);
     runner.action(action_id(SEARCH));
-    runner.app_mut().keyboard = Keyboard::with_text("room_19");
-    runner.action(action_id("kb.enter"));
+    runner.type_text("room_19");
     assert_eq!(runner.app().picker_page, 0);
     assert_eq!(runner.app().picker_rows().len(), 1);
     runner.action(action_id("entity.light.room_19"));
@@ -295,7 +294,9 @@ fn stale_poll_does_not_consume_a_new_connection_test() {
         let mut runner = connected_panel();
         let poll = begin_poll(&mut runner);
         runner.action(action_id("change-url"));
-        runner.action(action_id("kb.enter"));
+        runner.action(action_id(HOME_URL));
+        let base = runner.app().base.clone();
+        runner.type_text(&base);
         let current = runner.app().task.expect("connection test");
         assert_eq!(current.1, "test");
         assert!(runner

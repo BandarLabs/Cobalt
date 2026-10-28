@@ -13,7 +13,7 @@ mod model;
 use api::{BoardRecord, Event, SeekPreset};
 use kobo_json::{ObjectBuilder, Value};
 use kobo_sdk::credentials::{CredentialEvent, CredentialSetup};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, DeviceRequest,
     DeviceResult, Failure, Glyph, Heartbeat, KoboApp, Orientation, Screen, ScreenBuilder,
@@ -47,8 +47,13 @@ const CONNECT: &str = "connect-lichess";
 /// but someone who installed from the Store on the reader may never have
 /// seen them. The address is short enough to type into a phone, and naming
 /// the one scope keeps the token from granting more than the Board API needs.
-const TOKEN_GUIDANCE: &str = "On a phone or computer, create a token at \
-lichess.org/account/oauth/token with only board:play. Enter it here as the account key.";
+/// It is the hint under the account key field, which keeps two lines, so it
+/// says where and which scope and nothing else.
+const TOKEN_GUIDANCE: &str = "Make one at lichess.org/account/oauth/token with only board:play.";
+/// The same form, opened from a QR code on a phone with the one scope already
+/// ticked and the token named, so nothing about it is typed at all.
+const TOKEN_PAGE: &str =
+    "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt";
 const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 4;
 
 struct HomeTile {
@@ -399,7 +404,8 @@ struct Lichess {
     summaries: Vec<GameSummary>,
     game: Option<Game>,
     challenge: Option<Challenge>,
-    challenge_keyboard: Keyboard,
+    /// The opponent's username, typed on the runtime's keyboard.
+    challenge_entry: TextEntry,
     challenge_username: String,
     challenge_preset: SeekPreset,
     challenge_side: ChallengeSide,
@@ -478,7 +484,7 @@ impl Default for Lichess {
             summaries: Vec::new(),
             game: None,
             challenge: None,
-            challenge_keyboard: Keyboard::new(),
+            challenge_entry: TextEntry::new(),
             challenge_username: String::new(),
             challenge_preset: SeekPreset::Rapid10_0,
             challenge_side: ChallengeSide::Random,
@@ -532,7 +538,12 @@ impl Default for Lichess {
             puzzles: Vec::new(),
             current_puzzle: 0,
             puzzle_wrong: 0,
-            credential: CredentialSetup::new(api::SECRET, "Lichess").with_guidance(TOKEN_GUIDANCE),
+            credential: CredentialSetup::new(api::SECRET, "Lichess")
+                .with_guidance(TOKEN_GUIDANCE)
+                .with_key_page(
+                    TOKEN_PAGE,
+                    "Opens the Lichess token page with board:play already ticked.",
+                ),
         }
     }
 }
@@ -894,13 +905,20 @@ impl Lichess {
             ),
             AccountState::Checking => screen.activity("Checking account", None),
             AccountState::Ready(account) => screen.secondary(account.username.clone()),
-            AccountState::Invalid => screen.banner(BannerLevel::Attention, "Token rejected"),
+            // The fix is on the banner that names the problem, so the screen
+            // has one way to it rather than a banner and a button apart.
+            AccountState::Invalid => screen
+                .banner(
+                    BannerLevel::Error,
+                    "Lichess rejected the saved token. Make a new one, then sign in again.",
+                )
+                .banner_action(CONNECT, "Sign in again"),
             AccountState::Failed(message) => screen.banner(BannerLevel::Attention, message),
         };
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
-        if matches!(self.account, AccountState::Missing | AccountState::Invalid) {
+        if matches!(self.account, AccountState::Missing) {
             screen = screen.primary_button(CONNECT, "Connect Lichess");
         }
         if let Some(challenge) = &self.challenge {
@@ -978,14 +996,18 @@ impl Lichess {
             .build()
     }
 
+    /// The runtime draws the username field and its keys; a name that was
+    /// refused comes back as the line under the field's prompt.
     fn challenge_player_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("lichess-challenge-player")
+        ScreenBuilder::new("lichess-challenge-player")
             .top_bar("Challenge player")
-            .typed(&self.challenge_keyboard, "Lichess username");
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
-        }
-        screen.keyboard(&self.challenge_keyboard, "Next").build()
+            .text_entry_with_hint(
+                &self.challenge_entry,
+                "Lichess username",
+                self.notice.as_deref().unwrap_or_default(),
+                "Next",
+            )
+            .build()
     }
 
     fn challenge_setup_screen(&self) -> Screen {
@@ -3767,7 +3789,7 @@ impl Lichess {
                 }
             }
             Pending::CreateChallenge { username } => {
-                self.challenge_keyboard.clear();
+                self.challenge_entry.close();
                 self.challenge_username.clear();
                 if self.route == Route::ChallengeSetup {
                     self.route = Route::Play;
@@ -4387,7 +4409,7 @@ impl Lichess {
                     id: "demo-owner".to_owned(),
                     username: "DemoOwner".to_owned(),
                 });
-                self.challenge_keyboard = Keyboard::with_text("KnightReader");
+                self.challenge_entry.open_with("KnightReader");
                 self.route = Route::ChallengePlayer;
             }
             "challenge-setup" => {
@@ -4529,7 +4551,7 @@ impl KoboApp for Lichess {
         }
         if action == ActionId::BACK {
             if self.route == Route::ChallengePlayer {
-                self.challenge_keyboard.clear();
+                self.challenge_entry.close();
             }
             if self.route == Route::Game
                 && self.game.as_ref().is_some_and(|game| !game.active())
@@ -4566,9 +4588,8 @@ impl KoboApp for Lichess {
                 };
             }
         } else if self.route == Route::ChallengePlayer {
-            match self.challenge_keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let username = self.challenge_keyboard.text().trim().to_owned();
+            match self.challenge_entry.handle(action) {
+                Some(Typing::Submitted(username)) => {
                     if api::challenge_player(
                         &username,
                         self.challenge_preset,
@@ -4581,12 +4602,16 @@ impl KoboApp for Lichess {
                         self.route = Route::ChallengeSetup;
                     } else {
                         self.notice = Some("Enter a valid Lichess username".to_owned());
+                        // The field comes back with the name in it, so a
+                        // slip is mended rather than typed again.
+                        self.challenge_entry.open_with(username);
                     }
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
+                Some(Typing::Cancelled) => {
                     self.notice = None;
+                    self.route = Route::Play;
                 }
-                None => {}
+                Some(_) | None => {}
             }
         } else if action == action_id("puzzles") {
             self.home_page = 0;
@@ -4632,7 +4657,7 @@ impl KoboApp for Lichess {
         } else if action == action_id(CONNECT) {
             self.credential.open();
         } else if action == action_id("challenge-player") {
-            self.challenge_keyboard.clear();
+            self.challenge_entry.open();
             self.challenge_username.clear();
             self.challenge_preset = SeekPreset::Rapid10_0;
             self.challenge_side = ChallengeSide::Random;
@@ -5858,8 +5883,14 @@ mod tests {
         let mut context = Context::default();
         app.on_action(&mut context, action_id("challenge-player"));
         assert_eq!(app.route, Route::ChallengePlayer);
-        app.challenge_keyboard = kobo_sdk::keyboard::Keyboard::with_text("Reader-Two");
-        app.on_action(&mut context, action_id("kb.enter"));
+        // The username is typed on the runtime's keyboard, which opens on
+        // the letters for plain text.
+        assert!(matches!(
+            kobo_sdk::keyboard::testing::asked(context.commands()),
+            Some(DeviceRequest::TypeText { prompt, kind: kobo_sdk::FieldKind::Text, submit, .. })
+                if prompt == "Lichess username" && submit == "Next"
+        ));
+        kobo_sdk::keyboard::testing::type_text(&mut app, &mut context, "Reader-Two");
         assert_eq!(app.route, Route::ChallengeSetup);
         assert_eq!(app.challenge_username, "Reader-Two");
 
@@ -6447,15 +6478,34 @@ mod tests {
     #[test]
     fn invalid_challenge_username_stays_in_the_keyboard() {
         let mut app = ready_app();
-        app.route = Route::ChallengePlayer;
-        app.challenge_keyboard = kobo_sdk::keyboard::Keyboard::with_text("../other");
+        app.route = Route::Play;
         let mut context = Context::default();
-        app.on_action(&mut context, action_id("kb.enter"));
+        app.on_action(&mut context, action_id("challenge-player"));
+        kobo_sdk::keyboard::testing::type_text(&mut app, &mut context, "../other");
         assert_eq!(app.route, Route::ChallengePlayer);
         assert_eq!(
             app.notice.as_deref(),
             Some("Enter a valid Lichess username")
         );
+        assert!(
+            matches!(
+                kobo_sdk::keyboard::testing::asked(context.commands()),
+                Some(DeviceRequest::TypeText { initial, hint, .. })
+                    if initial == "../other" && hint == "Enter a valid Lichess username"
+            ),
+            "the field comes back with the name in it and says what was wrong"
+        );
+    }
+
+    #[test]
+    fn backing_out_of_the_username_returns_to_account_games() {
+        let mut app = ready_app();
+        app.route = Route::Play;
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("challenge-player"));
+        kobo_sdk::keyboard::testing::cancel_text(&mut app, &mut context);
+        assert_eq!(app.route, Route::Play);
+        assert!(app.notice.is_none());
     }
 
     #[test]
@@ -8398,9 +8448,21 @@ mod tests {
         assert!(missing.contains("Not connected"), "{missing}");
         assert!(missing.contains("Connect Lichess"), "{missing}");
         app.account = AccountState::Invalid;
-        let rejected = format!("{:?}", app.play_screen());
-        assert!(rejected.contains("Token rejected"), "{rejected}");
-        assert!(rejected.contains("Connect Lichess"), "{rejected}");
+        let screen = app.play_screen();
+        let rejected = format!("{screen:?}");
+        assert!(rejected.contains("rejected the saved token"), "{rejected}");
+        assert!(
+            screen.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Banner { level: kobo_sdk::BannerLevel::Error, action: Some(action), .. }
+                    if action.action == action_id(CONNECT) && action.label == "Sign in again"
+            )),
+            "the rejected token's banner carries the way to replace it: {rejected}"
+        );
+        assert!(
+            !rejected.contains("Connect Lichess"),
+            "one way to sign in again, on the banner: {rejected}"
+        );
         assert!(!format!("{:?}", ready_app().play_screen()).contains("Connect Lichess"));
     }
 
@@ -8418,6 +8480,29 @@ mod tests {
         assert!(prompt.contains("board:play"), "{prompt}");
         assert!(prompt.contains("Enter account key"), "{prompt}");
         assert!(prompt.contains("Use computer"), "{prompt}");
+        assert!(prompt.contains("Use phone"), "{prompt}");
+    }
+
+    #[test]
+    fn the_phone_code_opens_the_token_form_with_the_one_scope_ticked() {
+        assert!(super::TOKEN_PAGE.len() <= kobo_sdk::MAX_CODE_BYTES);
+        let mut runner = AppRunner::new(unconnected());
+        runner.action(action_id(CONNECT));
+        let phone = painted(runner.action(action_id("credential.phone"))).expect("phone code");
+        assert!(
+            phone.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Code { payload, .. }
+                    if payload == super::TOKEN_PAGE && payload.contains("scopes[]=board:play")
+            )),
+            "{phone:?}"
+        );
+        let asked = runner.action(action_id("credential.enter"));
+        assert!(asked.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::TypeText { save_as: Some(target), .. })
+                if target.name == "lichess"
+        )));
     }
 
     #[test]

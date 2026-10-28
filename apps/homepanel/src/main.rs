@@ -4,10 +4,10 @@
 mod ha;
 
 use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, Heartbeat, KoboApp, Position, Screen,
-    ScreenBuilder, Space, StoreResult, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, FieldKind, Glyph, Heartbeat, KoboApp, Position,
+    Screen, ScreenBuilder, StoreResult, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -21,6 +21,15 @@ const ADD: &str = "add";
 const SEARCH: &str = "search";
 const BACK: &str = "back";
 const CHECK_AGAIN: &str = "check-again";
+const HOME_URL: &str = "home-url";
+const PHONE: &str = "phone";
+/// What Check again says when nothing has arrived. It is answered by checking
+/// again, so the banner that says it carries that action.
+const NO_ADDRESS_YET: &str =
+    "No address has arrived from the computer yet. Run the command, then check again.";
+/// Where a Home Assistant makes long-lived access tokens: the Security tab
+/// of the owner's profile, under their own address.
+const TOKEN_PAGE: &str = "/profile/security";
 const MAX_TILES: usize = 12;
 const EDIT_PAGE: usize = 6;
 const STALE_AFTER_MINUTES: i64 = 15;
@@ -41,6 +50,10 @@ enum View {
     Detail(String),
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the panel, not the states of one machine"
+)]
 struct HomePanel {
     view: View,
     base: String,
@@ -49,7 +62,15 @@ struct HomePanel {
     climate: Vec<(String, ha::Climate)>,
     entities: Vec<ha::Entity>,
     query: String,
-    keyboard: Keyboard,
+    /// The address, typed on the runtime's keyboard.
+    address: TextEntry,
+    /// The address shown in the setup field until it is saved.
+    draft: String,
+    /// Why the typed address was refused, said under its field.
+    address_error: Option<String>,
+    /// Whether setup is showing the code for a phone.
+    phone: bool,
+    search_entry: TextEntry,
     task: Option<(TaskId, &'static str)>,
     poll_clock: Heartbeat,
     banner: Option<String>,
@@ -74,7 +95,11 @@ impl Default for HomePanel {
             climate: Vec::new(),
             entities: Vec::new(),
             query: String::new(),
-            keyboard: Keyboard::new(),
+            address: TextEntry::new().address(),
+            draft: String::new(),
+            address_error: None,
+            phone: false,
+            search_entry: TextEntry::new(),
             task: None,
             poll_clock: Heartbeat::every(10),
             banner: None,
@@ -248,34 +273,81 @@ impl HomePanel {
             View::Climate(id) => self.climate_screen(id),
             View::Detail(id) => self.detail_screen(id),
         };
-        context.set_screen(screen.with_own_back(matches!(
-            self.view,
-            View::Settings
-                | View::Edit
-                | View::Tile(_)
-                | View::Add
-                | View::Search
-                | View::Climate(_)
-                | View::Detail(_)
-        )));
+        context.set_screen(screen.with_own_back(
+            (self.phone && self.view == View::Setup)
+                || matches!(
+                    self.view,
+                    View::Settings
+                        | View::Edit
+                        | View::Tile(_)
+                        | View::Add
+                        | View::Search
+                        | View::Climate(_)
+                        | View::Detail(_)
+                ),
+        ));
+    }
+
+    /// The profile page where the owner makes a token, on the address in
+    /// the field, while there is one that a phone can read off the panel.
+    fn token_page(&self) -> Option<String> {
+        let base = if self.draft.is_empty() {
+            &self.base
+        } else {
+            &self.draft
+        };
+        let base = base.trim().trim_end_matches('/');
+        (base.starts_with("https://") && base.len() > "https://".len())
+            .then(|| format!("{base}{TOKEN_PAGE}"))
+            .filter(|page| page.len() <= kobo_sdk::MAX_CODE_BYTES)
     }
 
     fn setup(&self) -> Screen {
+        if self.address.is_open() {
+            return ScreenBuilder::new("homepanel-setup")
+                .top_bar("Home Panel")
+                .text_entry(&self.address, "Home Assistant address", "Test connection")
+                .build();
+        }
+        if let Some(page) = self.token_page().filter(|_| self.phone) {
+            return ScreenBuilder::new("homepanel-setup")
+                .top_bar("Home Panel")
+                .code(
+                    page,
+                    "Opens your Home Assistant profile, where long-lived access tokens are made.",
+                )
+                .bottom_action(HOME_URL, "Edit address")
+                .build();
+        }
         // The token step comes first because nothing works without it, and
         // the reader has no way to make one: it used to appear only after a
         // test had already failed for want of it.
-        let mut s = ScreenBuilder::new("homepanel-setup")
-            .top_bar("Home Panel")
-            .top_bar_action(CHECK_AGAIN, "Check again")
+        let checked = self.banner.as_deref() == Some(NO_ADDRESS_YET);
+        let mut s = ScreenBuilder::new("homepanel-setup").top_bar("Home Panel");
+        // Check again sits in the bar until a check has found nothing; then
+        // it is the action of the banner that says so, and only there.
+        if !checked {
+            s = s.top_bar_action(CHECK_AGAIN, "Check again");
+        }
+        s = s
             .text("On your computer, run this and give it a long-lived access token. Home Assistant must be on HTTPS.")
             .command("kobo connect homepanel")
-            .field("home-url", self.keyboard.text(), "https://ha.example.net");
+            .field(HOME_URL, &self.draft, "https://ha.example.net")
+            .field_label("Home Assistant address")
+            .field_kind(FieldKind::Address);
+        if let Some(error) = &self.address_error {
+            s = s.field_error(error);
+        }
         if let Some(b) = &self.banner {
             s = s.banner(BannerLevel::Attention, b);
+            if checked {
+                s = s.banner_action(CHECK_AGAIN, "Check again");
+            }
         }
-        s.spacer(Space::Small)
-            .keyboard(&self.keyboard, "Test connection")
-            .build()
+        if self.token_page().is_some() {
+            s = s.button(PHONE, "Use phone");
+        }
+        s.build()
     }
 
     fn grid_prefix(&self) -> ScreenBuilder {
@@ -373,19 +445,13 @@ impl HomePanel {
             .section("Connection")
             .text(self.base.clone())
             .button("change-url", "Change address")
-            .section("Wall panel")
-            .text(if self.wall {
-                "One large tile per row. Best for a reader mounted by the door."
-            } else {
-                "Two tiles per row."
-            })
-            .button(
+            // One setting with two states, so it is a switch: the row says
+            // what it does whichever way it is set.
+            .toggle(
                 "wall",
-                if self.wall {
-                    "Use two columns"
-                } else {
-                    "Use one large column"
-                },
+                "Wall panel",
+                "One large tile per row, for a reader by the door.",
+                self.wall,
             )
             .section("Tiles")
             .text(format!("{} of {MAX_TILES}", self.tiles.len()));
@@ -580,8 +646,7 @@ impl HomePanel {
     fn search(&self) -> Screen {
         ScreenBuilder::new("homepanel-search")
             .top_bar("Search devices")
-            .typed(&self.keyboard, "Name or entity")
-            .keyboard(&self.keyboard, "Search")
+            .text_entry(&self.search_entry, "Name or entity", "Search")
             .build()
     }
 
@@ -640,6 +705,22 @@ impl HomePanel {
         }
         if let Some(id) = context.spawn(ha::poll(&self.base, &self.tiles)) {
             self.task = Some((id, "poll"));
+        }
+    }
+
+    /// Takes the address typed on setup: saved and tested when it is HTTPS,
+    /// and otherwise kept in the field with the reason under it.
+    fn submit_address(&mut self, context: &mut Context, text: String) {
+        if text.starts_with("https://") {
+            self.base = text;
+            self.draft.clone_from(&self.base);
+            self.address_error = None;
+            context.store().save(BASE, self.base.clone().into_bytes());
+            self.test(context);
+        } else {
+            self.draft = text;
+            self.address_error = Some("Use an https:// Home Assistant URL.".into());
+            self.show(context);
         }
     }
 
@@ -715,7 +796,7 @@ impl HomePanel {
                 self.load_entities(context);
             }
         } else if action == action_id(SEARCH) {
-            self.keyboard = Keyboard::with_text(&self.query);
+            self.search_entry.open_with(&self.query);
             self.view = View::Search;
             self.show(context);
         } else if action == action_id(BACK) {
@@ -727,7 +808,9 @@ impl HomePanel {
             self.show(context);
             self.fetch(context);
         } else if action == action_id("change-url") {
-            self.keyboard = Keyboard::with_text(&self.base);
+            self.draft.clone_from(&self.base);
+            self.address_error = None;
+            self.phone = false;
             self.view = View::Setup;
             self.show(context);
         } else if action == action_id("wall") {
@@ -900,10 +983,7 @@ impl KoboApp for HomePanel {
             // on screen: the panel opens without anything typed here.
             if self.base.is_empty() {
                 if std::mem::take(&mut self.checking) {
-                    self.banner = Some(
-                        "No address has arrived from the computer yet. Run the command, then check again."
-                            .into(),
-                    );
+                    self.banner = Some(NO_ADDRESS_YET.into());
                     self.show(context);
                 }
             } else {
@@ -922,7 +1002,6 @@ impl KoboApp for HomePanel {
                 return;
             }
             self.view = if self.base.is_empty() {
-                self.keyboard = Keyboard::with_text("https://");
                 View::Setup
             } else {
                 View::Grid
@@ -938,6 +1017,11 @@ impl KoboApp for HomePanel {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK && self.view == View::Setup && self.phone {
+            self.phone = false;
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK {
             self.view = match &self.view {
                 View::Search => View::Add,
@@ -954,30 +1038,51 @@ impl KoboApp for HomePanel {
             context.store().load(BASE);
             return;
         }
-        if matches!(self.view, View::Setup | View::Search) {
-            if let Some(key) = self.keyboard.press(action) {
-                if matches!(key, Pressed::Edited | Pressed::Shifted) {
+        if self.view == View::Setup {
+            if let Some(typing) = self.address.handle(action) {
+                if let Typing::Submitted(text) = typing {
+                    self.submit_address(context, text);
+                } else {
                     self.show(context);
                 }
-                if matches!(key, Pressed::Submitted) {
-                    let text = self.keyboard.text().trim().to_owned();
-                    if self.view == View::Setup {
-                        if text.starts_with("https://") {
-                            self.base = text;
-                            context.store().save(BASE, self.base.clone().into_bytes());
-                            self.test(context);
-                        } else {
-                            self.banner = Some("Use an https:// Home Assistant URL.".into());
-                            self.show(context);
-                        }
-                    } else {
-                        self.query = text;
-                        self.picker_page = 0;
-                        self.view = View::Add;
-                        self.show(context);
-                    }
-                }
                 return;
+            }
+            if action == action_id(HOME_URL) {
+                self.phone = false;
+                // An empty field opens on the scheme every address needs.
+                self.address.open_with(if self.draft.is_empty() {
+                    "https://"
+                } else {
+                    &self.draft
+                });
+                self.show(context);
+                return;
+            }
+            if action == action_id(PHONE) {
+                self.phone = true;
+                self.show(context);
+                return;
+            }
+        }
+        if self.view == View::Search {
+            match self.search_entry.handle(action) {
+                Some(Typing::Submitted(text)) => {
+                    self.query = text;
+                    self.picker_page = 0;
+                    self.view = View::Add;
+                    self.show(context);
+                    return;
+                }
+                Some(Typing::Cancelled) => {
+                    self.view = View::Add;
+                    self.show(context);
+                    return;
+                }
+                Some(_) => {
+                    self.show(context);
+                    return;
+                }
+                None => {}
             }
         }
         if action == action_id("page-previous") || action == action_id("page-next") {
@@ -1331,7 +1436,120 @@ mod large_text_tests {
                 .join(" ");
             assert!(text.contains("kobo connect homepanel"), "{text}");
             assert!(text.contains("must be on HTTPS."), "{text}");
-            assert!(layout.rect_of_action(action_id("kb.enter")).is_some());
+            assert!(layout.rect_of_action(action_id(HOME_URL)).is_some());
         }
+    }
+
+    #[test]
+    fn every_setup_state_fits_at_every_size_held_either_way() {
+        for portrait in panels() {
+            let landscape = kobo_sdk::DisplayMetrics {
+                width: portrait.height,
+                height: portrait.width,
+                ..portrait
+            };
+            // On its side the panel is checked at the default size: the
+            // setup prose and the command fill a sideways panel at the
+            // largest size, as they did when the app drew its own keys.
+            let sideways =
+                (landscape.text_scale == kobo_ui::TextScale::Default).then_some(landscape);
+            for metrics in std::iter::once(portrait).chain(sideways) {
+                let _runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
+                for (draft, error, banner, phone) in [
+                    ("https://ha.example.net", None, None, false),
+                    (
+                        "http://ha.example.net",
+                        Some("Use an https:// Home Assistant URL."),
+                        None,
+                        false,
+                    ),
+                    ("", None, Some(NO_ADDRESS_YET), false),
+                    ("https://homeassistant.local:8123", None, None, true),
+                ] {
+                    let app = HomePanel {
+                        draft: draft.into(),
+                        address_error: error.map(Into::into),
+                        banner: banner.map(Into::into),
+                        phone,
+                        ..HomePanel::default()
+                    };
+                    fits(&app.setup().with_own_back(phone), metrics);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_address_is_typed_on_the_runtime_and_a_wrong_scheme_is_said_under_the_field() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Setup,
+            ..HomePanel::default()
+        });
+        let commands = runner.action(action_id(HOME_URL));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText {
+                kind: kobo_sdk::FieldKind::Address,
+                initial,
+                submit,
+                ..
+            }) if initial == "https://" && submit == "Test connection"
+        )));
+        runner.type_text("http://ha.example.net");
+        let screen = runner.app().setup();
+        assert!(
+            screen.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Field { value, error: Some(error), .. }
+                    if value == "http://ha.example.net" && error.contains("https://")
+            )),
+            "{screen:?}"
+        );
+        assert!(
+            !format!("{screen:?}").contains("Use phone"),
+            "no code for an address the reader will not use"
+        );
+        runner.action(action_id(HOME_URL));
+        let commands = runner.type_text("https://ha.example.net/");
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == BASE
+        )));
+    }
+
+    #[test]
+    fn the_phone_code_opens_the_profile_page_where_tokens_are_made() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Setup,
+            draft: "https://ha.example.net/".into(),
+            ..HomePanel::default()
+        });
+        let commands = runner.action(action_id(PHONE));
+        let drawn = format!("{commands:?}");
+        assert!(
+            drawn.contains("payload: \"https://ha.example.net/profile/security\""),
+            "{drawn}"
+        );
+        runner.action(ActionId::BACK);
+        assert!(!runner.app().phone);
+        assert!(runner.app().view == View::Setup);
+    }
+
+    #[test]
+    fn the_wall_panel_is_a_switch_that_flips_on_a_tap() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Settings,
+            ..HomePanel::default()
+        });
+        let toggle = |screen: &Screen| {
+            screen.nodes.iter().find_map(|node| match node {
+                kobo_sdk::Node::Toggle { label, on, .. } if label == "Wall panel" => Some(*on),
+                _ => None,
+            })
+        };
+        assert_eq!(toggle(&runner.app().settings()), Some(false));
+        runner.action(action_id("wall"));
+        assert!(runner.app().wall);
+        assert_eq!(toggle(&runner.app().settings()), Some(true));
     }
 }

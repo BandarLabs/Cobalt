@@ -16,6 +16,12 @@
 //! saved to show. A blank screen after a failed refresh reads as "everything
 //! I kept is gone", which is almost never true.
 //!
+//! A banner says how bad it is with [`Problem::level`]: an account the
+//! service refused is an error, a reader that is off the Wi-Fi is only
+//! something to attend to. [`ScreenBuilder::problem_banner_with`] also puts
+//! the one control that fixes it on the banner itself, "Join Wi-Fi", "Try
+//! again" or "Sign in again", beside the words that explain it.
+//!
 //! A refusal that keeps the server's words arrives as a [`Refusal`] status
 //! envelope in the task's bytes, and [`Service::problem`] reads it. The
 //! transport can produce one today ([`kobo_net::fetch_from_with_refusals`],
@@ -95,6 +101,31 @@ impl Problem {
             self.cause,
             Cause::Rejected | Cause::Forbidden | Cause::Missing | Cause::Blocked
         )
+    }
+
+    /// How the banner for this problem is drawn.
+    ///
+    /// An error is something the service or Cobalt refused, which waiting
+    /// will not mend: a refused account, a page that is not there, a file
+    /// too large to open. Everything that may come right by itself, or by
+    /// walking back into range of the Wi-Fi, is drawn as something to attend
+    /// to, so an owner away from home is not told something is broken.
+    #[must_use]
+    pub const fn level(&self) -> BannerLevel {
+        match self.cause {
+            Cause::Rejected
+            | Cause::Forbidden
+            | Cause::Blocked
+            | Cause::NotFound
+            | Cause::OutOfCredit
+            | Cause::TooLarge => BannerLevel::Error,
+            Cause::Missing
+            | Cause::RateLimited
+            | Cause::Offline
+            | Cause::AwayFromHome
+            | Cause::Unreachable
+            | Cause::TimedOut => BannerLevel::Attention,
+        }
     }
 }
 
@@ -346,7 +377,35 @@ impl ScreenBuilder {
     /// whenever there is anything saved, and keep drawing that content below.
     #[must_use]
     pub fn problem_banner(self, problem: &Problem) -> Self {
-        self.banner(BannerLevel::Attention, &problem.message)
+        self.banner(problem.level(), &problem.message)
+    }
+
+    /// The same banner, carrying the one control that fixes the problem.
+    ///
+    /// A reader off the Wi-Fi gets Join Wi-Fi. A refused or missing account
+    /// gets `sign_in`, labelled "Sign in again" or "Sign in", when the app
+    /// has a sign-in to go to; pass `None` when the account is set up only
+    /// from a computer, because a control that leads nowhere new teaches the
+    /// owner to stop trusting controls. Anything worth asking again gets
+    /// `retry`, labelled "Try again". Whatever the banner carries, the app
+    /// does not need a second control for it elsewhere on the screen.
+    #[must_use]
+    pub fn problem_banner_with(
+        self,
+        problem: &Problem,
+        retry: impl AsRef<str>,
+        sign_in: Option<&str>,
+    ) -> Self {
+        let screen = self.problem_banner(problem);
+        match (problem.cause, sign_in) {
+            (Cause::Offline, _) => screen.banner_action(JOIN_WIFI, "Join Wi-Fi"),
+            (Cause::Rejected | Cause::Blocked, Some(sign_in)) => {
+                screen.banner_action(sign_in, "Sign in again")
+            }
+            (Cause::Missing, Some(sign_in)) => screen.banner_action(sign_in, "Sign in"),
+            _ if problem.retryable => screen.banner_action(retry, "Try again"),
+            _ => screen,
+        }
     }
 
     /// A problem's whole-screen presentation, for when nothing is saved.
@@ -502,6 +561,70 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_account_is_an_error_and_a_reader_away_from_home_is_not() {
+        use crate::BannerLevel;
+        let service = readeck("https://192.168.1.20");
+        for (error, level) in [
+            (TaskError::Unauthorized, BannerLevel::Error),
+            (TaskError::Denied, BannerLevel::Error),
+            (TaskError::NotFound, BannerLevel::Error),
+            (TaskError::TooLarge, BannerLevel::Error),
+            (TaskError::NoCredential, BannerLevel::Attention),
+            (TaskError::Offline, BannerLevel::Attention),
+            (TaskError::Unreachable, BannerLevel::Attention),
+            (TaskError::TimedOut, BannerLevel::Attention),
+            (TaskError::RateLimited(30), BannerLevel::Attention),
+        ] {
+            let problem = service.explain(error);
+            assert_eq!(problem.level(), level, "{error:?}");
+            let screen = ScreenBuilder::new("inbox").problem_banner(&problem).build();
+            assert!(
+                matches!(&screen.nodes[0], kobo_ui::Node::Banner { level: drawn, action: None, .. } if *drawn == level),
+                "{screen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_banner_carries_the_one_control_that_fixes_the_problem() {
+        let service = readeck("https://read.example");
+        let carried = |error: TaskError, sign_in: Option<&str>| {
+            let screen = ScreenBuilder::new("inbox")
+                .problem_banner_with(&service.explain(error), "refresh", sign_in)
+                .build();
+            match &screen.nodes[0] {
+                kobo_ui::Node::Banner { action, .. } => action
+                    .as_ref()
+                    .map(|action| (action.action, action.label.clone())),
+                other => panic!("a banner: {other:?}"),
+            }
+        };
+        let id = crate::action_id;
+        assert_eq!(
+            carried(TaskError::Offline, Some("sign-in")),
+            Some((id(crate::JOIN_WIFI), "Join Wi-Fi".to_owned()))
+        );
+        assert_eq!(
+            carried(TaskError::Unauthorized, Some("sign-in")),
+            Some((id("sign-in"), "Sign in again".to_owned()))
+        );
+        assert_eq!(
+            carried(TaskError::NoCredential, Some("sign-in")),
+            Some((id("sign-in"), "Sign in".to_owned()))
+        );
+        assert_eq!(
+            carried(TaskError::Unauthorized, None),
+            None,
+            "an account fixed only from a computer has nothing to tap here"
+        );
+        assert_eq!(
+            carried(TaskError::TimedOut, Some("sign-in")),
+            Some((id("refresh"), "Try again".to_owned()))
+        );
+        assert_eq!(carried(TaskError::NotFound, Some("sign-in")), None);
+    }
+
+    #[test]
     fn a_banner_keeps_the_saved_list_on_screen_and_fits_the_clara() {
         let metrics = kobo_ui::CLARA_BW_METRICS;
         #[cfg(feature = "text")]
@@ -515,7 +638,7 @@ mod tests {
             let problem = readeck("https://192.168.1.20").explain(error);
             let screen = ScreenBuilder::new("inbox")
                 .top_bar("Readeck")
-                .problem_banner(&problem)
+                .problem_banner_with(&problem, "refresh", Some("sign-in"))
                 .text("Saved article")
                 .build();
             let drawn = format!("{screen:?}");
