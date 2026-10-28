@@ -1615,6 +1615,7 @@ dependencies = [
  "kobo-flashcards-format",
  "kobo-html",
  "kobo-image",
+ "prost",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1622,6 +1623,7 @@ dependencies = [
  "tokio",
  "unicase",
  "zip 2.4.2",
+ "zstd",
 ]
 
 [[package]]

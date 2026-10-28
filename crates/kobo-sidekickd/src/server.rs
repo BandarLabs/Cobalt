@@ -42,6 +42,14 @@ const READ_PATIENCE: Duration = Duration::from_secs(10);
 /// back.
 const WRITE_PATIENCE: Duration = Duration::from_secs(30);
 
+/// How long since the reader was last in touch before it counts as gone.
+///
+/// Sidekick asks every few seconds while it is open and naps ten seconds
+/// after a failed request, so a minute of silence is a reader that is
+/// closed, asleep or out of range. A question asked then goes straight back
+/// to the terminal instead of holding the agent for five minutes.
+const READER_FRESH: Duration = Duration::from_secs(60);
+
 /// Loads the identity and serves until killed.
 ///
 /// # Errors
@@ -184,7 +192,23 @@ impl Drop for Seat {
 }
 
 /// `POST /ask` from a hook: put the question up, wait for the person.
+/// `GET /status` says whether a reader is in touch, for `kobo sidekick`.
 fn hook_route(board: &Board, request: &Request, stream: &mut (impl Read + Write)) {
+    if request.method == "GET" && request.path() == "/status" {
+        let mut reply = kobo_json::ObjectBuilder::new();
+        if let Some(quiet) = board.reader_quiet_for() {
+            reply = reply
+                .set(
+                    "reader_quiet_seconds",
+                    u32::try_from(quiet.as_secs()).unwrap_or(u32::MAX),
+                )
+                .set("reader_watching", quiet < READER_FRESH);
+        } else {
+            reply = reply.set("reader_watching", false);
+        }
+        respond_json(stream, 200, "OK", &reply.build().to_json());
+        return;
+    }
     if request.method != "POST" || request.path() != "/ask" {
         respond_json(stream, 404, "Not Found", "{}");
         return;
@@ -208,7 +232,14 @@ fn hook_route(board: &Board, request: &Request, stream: &mut (impl Read + Write)
         let multi = ask.get("multi").and_then(kobo_json::Value::as_bool) == Some(true);
         asking = asking.multiple_choice(multi);
     }
-    let reply = match board.submit(asking, state::ASK_PATIENCE) {
+    // A test from the companion waits for the owner to open Sidekick; an
+    // agent's own prompt does not, because the owner is at the terminal.
+    let waits_for_reader = ask
+        .get("wait_for_reader")
+        .and_then(kobo_json::Value::as_bool)
+        == Some(true);
+    let fresh = (!waits_for_reader).then_some(READER_FRESH);
+    let reply = match board.submit_watched(asking, state::ASK_PATIENCE, fresh) {
         Decision::Allow => plain("allow"),
         Decision::Deny => plain("deny"),
         Decision::Pass => plain("pass"),
@@ -291,6 +322,7 @@ fn reader_route_inner(
                 respond_json(stream, 403, "Forbidden", "{}");
                 return;
             }
+            board.reader_seen();
             if request.query("all") == Some("true") {
                 let (version, asks) = board.snapshot();
                 let reply = kobo_json::ObjectBuilder::new()
@@ -329,6 +361,7 @@ fn reader_route_inner(
                 respond_json(stream, 403, "Forbidden", "{}");
                 return;
             }
+            board.reader_seen();
             let id = answer.get("id").and_then(kobo_json::Value::as_i64);
             // Chosen options arrive under their own name, so a question
             // offering a choice called "allow" still means the choice.
@@ -519,6 +552,8 @@ mod tests {
     #[test]
     fn a_question_travels_from_hook_to_reader_and_the_tap_travels_back() {
         let board = Arc::new(Board::new());
+        // The reader has been polling, as an open Sidekick does.
+        board.reader_seen();
         let hook_board = Arc::clone(&board);
         let hook = std::thread::spawn(move || {
             let mut wire = Cursor::new(Vec::new());
@@ -557,6 +592,85 @@ mod tests {
             .join()
             .expect("hook")
             .contains("\"decision\":\"allow\""));
+    }
+
+    #[test]
+    fn an_agent_asking_while_no_reader_is_open_is_sent_back_to_the_terminal_at_once() {
+        let board = Board::new();
+        let started = std::time::Instant::now();
+        let mut wire = Cursor::new(Vec::new());
+        hook_route(
+            &board,
+            &post(
+                "/ask",
+                r#"{"source":"claude","tool":"Bash","detail":"cargo test"}"#,
+            ),
+            &mut wire,
+        );
+        assert!(body_of(&wire.into_inner()).contains("\"decision\":\"pass\""));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the agent was held"
+        );
+    }
+
+    #[test]
+    fn the_companion_test_waits_for_a_reader_to_open_sidekick() {
+        let board = Arc::new(Board::new());
+        let hook_board = Arc::clone(&board);
+        let hook = std::thread::spawn(move || {
+            let mut wire = Cursor::new(Vec::new());
+            hook_route(
+                &hook_board,
+                &post(
+                    "/ask",
+                    r#"{"source":"kobo sidekick test","tool":"Sample","detail":"x","wait_for_reader":true}"#,
+                ),
+                &mut wire,
+            );
+            body_of(&wire.into_inner())
+        });
+        let mut wire = Cursor::new(Vec::new());
+        reader_route(
+            &board,
+            "code",
+            &get("/pending?token=code&wait=5"),
+            &mut wire,
+        );
+        let id = id_of(&body_of(&wire.into_inner()));
+        assert!(board.answer(id, crate::board::Decision::Deny));
+        assert!(hook.join().expect("hook").contains("\"decision\":\"deny\""));
+    }
+
+    #[test]
+    fn status_says_whether_a_paired_reader_is_in_touch() {
+        let board = Board::new();
+        let mut wire = Cursor::new(Vec::new());
+        hook_route(&board, &get("/status"), &mut wire);
+        assert!(body_of(&wire.into_inner()).contains("\"reader_watching\":false"));
+        let mut wire = Cursor::new(Vec::new());
+        reader_route(
+            &board,
+            "code",
+            &get("/pending?token=wrong&wait=0"),
+            &mut wire,
+        );
+        let mut wire = Cursor::new(Vec::new());
+        hook_route(&board, &get("/status"), &mut wire);
+        assert!(
+            body_of(&wire.into_inner()).contains("\"reader_watching\":false"),
+            "a wrong code counted as a reader"
+        );
+        let mut wire = Cursor::new(Vec::new());
+        reader_route(
+            &board,
+            "code",
+            &get("/pending?token=code&all=true"),
+            &mut wire,
+        );
+        let mut wire = Cursor::new(Vec::new());
+        hook_route(&board, &get("/status"), &mut wire);
+        assert!(body_of(&wire.into_inner()).contains("\"reader_watching\":true"));
     }
 
     #[test]
@@ -694,6 +808,7 @@ confirm = true
     #[test]
     fn all_pending_is_a_versioned_snapshot_with_session_identity() {
         let board = Arc::new(Board::new());
+        board.reader_seen();
         let hook_board = Arc::clone(&board);
         let hook = std::thread::spawn(move || {
             let mut wire = Cursor::new(Vec::new());
@@ -740,6 +855,7 @@ confirm = true
     #[test]
     fn an_ignored_question_lets_the_terminal_prompt_have_it() {
         let board = Arc::new(Board::new());
+        board.reader_seen();
         let hook_board = Arc::clone(&board);
         let hook = std::thread::spawn(move || {
             let mut wire = Cursor::new(Vec::new());

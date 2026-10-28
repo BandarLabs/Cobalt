@@ -103,6 +103,20 @@ impl Keyboard {
         Self::default()
     }
 
+    /// Starts on the digits rather than the letters.
+    ///
+    /// For a field whose answer is a number, such as an account's numeric user
+    /// ID. Opening those on the letters made the reader find and tap `?123`
+    /// before the first keystroke that could mean anything, and a reader who
+    /// did not know the key was there saw no way to type a digit at all.
+    #[must_use]
+    pub fn numeric() -> Self {
+        Self {
+            layer: Layer::Symbols,
+            ..Self::default()
+        }
+    }
+
     /// Starts with text already typed, truncated to [`MAX_TEXT`].
     #[must_use]
     pub fn with_text(text: impl Into<String>) -> Self {
@@ -264,6 +278,7 @@ pub struct TextEntry {
     keyboard: Keyboard,
     open: bool,
     opens_on: Option<ActionId>,
+    numeric: bool,
 }
 
 impl TextEntry {
@@ -283,6 +298,15 @@ impl TextEntry {
         self
     }
 
+    /// Opens this field on the digits every time, for a value that is a
+    /// number. The letters stay one tap away on `abc`, because an ID pasted
+    /// from a page can still carry a stray letter the reader needs to match.
+    #[must_use]
+    pub const fn numeric(mut self) -> Self {
+        self.numeric = true;
+        self
+    }
+
     #[must_use]
     pub const fn is_open(&self) -> bool {
         self.open
@@ -298,26 +322,39 @@ impl TextEntry {
         &self.keyboard
     }
 
-    /// Opens the field with nothing in it, on the letters and unshifted.
+    /// Opens the field with nothing in it, unshifted, on the letters or, for
+    /// a [`Self::numeric`] field, on the digits.
     ///
     /// A new keyboard rather than an emptied one. Emptying kept the layer and
     /// the shift the last field was left on, so a field opened after a number
     /// had been typed into another came up on the symbols.
     pub fn open(&mut self) {
-        self.keyboard = Keyboard::new();
+        self.keyboard = self.fresh();
         self.open = true;
     }
 
     /// Opens the field with `text` already in it, for editing something.
     pub fn open_with(&mut self, text: impl Into<String>) {
-        self.keyboard = Keyboard::with_text(text);
+        let mut keyboard = self.fresh();
+        for character in text.into().chars() {
+            keyboard.push(character);
+        }
+        self.keyboard = keyboard;
         self.open = true;
     }
 
     /// Closes the field and throws away anything typed.
     pub fn close(&mut self) {
-        self.keyboard = Keyboard::new();
+        self.keyboard = self.fresh();
         self.open = false;
+    }
+
+    fn fresh(&self) -> Keyboard {
+        if self.numeric {
+            Keyboard::numeric()
+        } else {
+            Keyboard::new()
+        }
     }
 
     /// Applies `action` if it belongs to this field.
@@ -591,6 +628,27 @@ mod tests {
         entry.open();
         assert_eq!(entry.keyboard().layer(), Layer::Letters);
     }
+    #[test]
+    fn a_numeric_field_opens_on_the_digits_and_still_reaches_the_letters() {
+        // A numeric account ID used to open on the letters, so the first tap
+        // of every entry was a hunt for the key that shows the digits.
+        let mut entry = TextEntry::new().numeric();
+        entry.open();
+        assert_eq!(entry.keyboard().layer(), Layer::Symbols);
+        for name in ["kb.r0c0", "kb.r0c1", "kb.r0c2"] {
+            entry.handle(action_id(name));
+        }
+        assert_eq!(entry.text(), "123");
+        entry.handle(action_id("kb.layer"));
+        entry.handle(action_id("kb.r0c0"));
+        assert_eq!(entry.text(), "123q");
+        entry.close();
+        entry.open_with("42");
+        assert_eq!(entry.keyboard().layer(), Layer::Symbols);
+        assert_eq!(entry.text(), "42");
+        assert_eq!(Keyboard::numeric().layer(), Layer::Symbols);
+    }
+
     use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, TextScale};
 
     fn panels() -> Vec<(String, DisplayMetrics)> {

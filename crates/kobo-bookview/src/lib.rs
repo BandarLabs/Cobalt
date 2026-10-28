@@ -45,6 +45,7 @@ use std::time::{Duration, Instant};
 
 pub mod comic;
 pub mod illustrations;
+pub mod offline;
 pub mod positions;
 
 use kobo_doc::{Block, Document, FORMULA_PICTURE_EM, FORMULA_PICTURE_PREFIX};
@@ -379,6 +380,52 @@ impl BookView {
         self.open(context, document, memory);
         self.formulae_as_text = formulae_as_text;
         self.origin = Some(origin.to_owned());
+        self.wanted = self.missing_pictures().into_iter().collect();
+        self.fetch_next(context);
+        true
+    }
+
+    /// Opens a web page fetched from a link, cut to the article in it.
+    ///
+    /// For a page somebody else's site serves, where the article is a minority
+    /// of the markup: the menus, share buttons and footers are taken away
+    /// before the reader measures anything, so the first page is the first
+    /// page of the article. See [`kobo_doc::web::main_content`] for what
+    /// is cut. Pictures are fetched as [`BookView::open_html`] fetches them.
+    pub fn open_article(
+        &mut self,
+        context: &mut Context,
+        html: &str,
+        origin: &str,
+        memory: Memory,
+    ) -> bool {
+        self.open_html(context, &kobo_doc::web::main_content(html), origin, memory)
+    }
+
+    /// Opens an article kept on the device, with the pictures kept beside it.
+    ///
+    /// Nothing is asked of the network for a picture the file carries. One it
+    /// does not carry, because it did not fit or would not come when the
+    /// article was kept, is asked for the way an open page asks, and simply
+    /// stays a caption when the reader is offline.
+    pub fn open_kept(
+        &mut self,
+        context: &mut Context,
+        kept: offline::Kept,
+        memory: Memory,
+    ) -> bool {
+        let (document, formulae_as_text) =
+            kobo_doc::html::parse_noting_formula_fallback(&kept.html);
+        if document.blocks.is_empty() {
+            return false;
+        }
+        self.open(context, document, memory);
+        self.formulae_as_text = formulae_as_text;
+        for (name, bytes) in kept.pictures {
+            self.provide_picture(&name, bytes);
+        }
+        self.settle_pictures(context);
+        self.origin = Some(kept.origin);
         self.wanted = self.missing_pictures().into_iter().collect();
         self.fetch_next(context);
         true
@@ -1435,6 +1482,7 @@ mod tests {
     /// the runtime dispatching its answer, and there is no runtime here. Left
     /// on one context the pipeline stalls after four passes, which is a
     /// property of the harness and not of the view.
+    #[cfg(feature = "raster")]
     fn drain(view: &mut BookView) -> (usize, std::time::Duration) {
         let mut passes = 0;
         let mut longest = std::time::Duration::ZERO;
