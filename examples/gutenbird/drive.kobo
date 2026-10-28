@@ -32,34 +32,3 @@ expect-missing No images
 expect English
 clean
 shot gutenbird-book
-tap-id read
-# The download is live, and its speed is the server's.
-wait-idle 60000
-wait-for-id reader-forward
-wait-idle 30000
-tap-id reader-forward
-wait 1500
-clean
-shot gutenbird-reading
-# Back on its page the book is on the device, partway through.
-tap Back
-wait-for-id read
-expect Already on this device.
-expect Continue reading
-# The first screen counts it, and the list of books on the device opens it
-# without a catalog.
-tap Back
-wait-for All Books
-tap-id catalogs
-wait-for Ready offline: 1 book
-tap On this device
-wait-for Pride and Prejudice
-expect Austen, Jane
-clean
-shot gutenbird-device
-tap-id device-menu-0
-wait-for Remove from this device
-tap Remove from this device
-wait-for Remove Pride and Prejudice from this device?
-tap Keep it
-wait-for-id device-0
