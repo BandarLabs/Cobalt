@@ -4,7 +4,7 @@ expect About the questions
 clean
 shot home
 tap Rules
-expect round the table
+expect pass the reader round
 clean
 shot pubquiz-rules
 tap Done

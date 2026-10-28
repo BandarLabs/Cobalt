@@ -1906,6 +1906,10 @@ mod tests {
                     text_scale: scale,
                     ..panel
                 };
+                // A runner installs the face the runtime measures with.
+                // Without one, this test measured in the built-in fallback type
+                // whenever it ran before any other test had made one.
+                let _runner = AppRunner::with_metrics(Store::default(), metrics);
                 for entry in &entries {
                     let mut store = Store::default();
                     store.replace_entries(entries.clone());

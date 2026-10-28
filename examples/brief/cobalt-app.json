@@ -2,7 +2,7 @@
   "id": "brief",
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
-  "summary": "A daily news brief that refreshes itself each morning and keeps every story for offline reading.",
+  "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
   "version": "1.0.10",
   "glyph": "clock",
   "capabilities": [

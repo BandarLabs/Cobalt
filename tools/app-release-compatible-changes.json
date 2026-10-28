@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -428,7 +428,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -450,7 +450,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -461,7 +461,18 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f394649a66bc235232478bb20240de9596390eff",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Promoting 0.3.30 checks the lock against the stable catalog's source, 95bb2d7a, instead of beta's. Every change since was reviewed on beta against beta's base: rustls 0.23.46, rustls-webpki 0.103.16 and webpki-roots 1.0.11 for published advisories, the kobo-frame-plan and kobo-readeck path crates, and workspace version lines. Those entries name beta's lock blobs, so none of them match stable's. Without this, the four managed built-ins Daily Brief, Hacker News, Magnet and Tic-tac-toe would need new versions, and they ship in the platform package too. Both catalogs already publish the same binaries for them.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   }

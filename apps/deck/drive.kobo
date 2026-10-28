@@ -21,7 +21,7 @@ shot grid
 # the companion now takes itself.
 tap-id pair-preview
 wait-for Pair with your computer
-expect The first pairs this reader for you.
+expect If the first cannot reach this reader, enter the address and code it prints.
 expect kobo sidekick init
 expect kobo sidekick run
 expect-missing kobo trust set sidekick

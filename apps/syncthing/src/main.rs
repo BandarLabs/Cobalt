@@ -300,12 +300,15 @@ impl Sync {
                 Glyph::Refresh,
             ));
         }
+        // One line at the largest size. A second line took the room the
+        // status facts need, and with a conflict banner up they were dropped
+        // from the panel altogether.
         rows.push((
             "cadence",
             self.config.cadence.label().to_owned(),
             match self.config.cadence.seconds() {
-                Some(_) => "Syncs while Cobalt is open on Wi-Fi. Tap to change.".to_owned(),
-                None => "Syncs only when you tap Sync now. Tap to change.".to_owned(),
+                Some(_) => "Runs while Cobalt is open. Tap to change.".to_owned(),
+                None => "You start each sync. Tap to change.".to_owned(),
             },
             Glyph::Clock,
         ));

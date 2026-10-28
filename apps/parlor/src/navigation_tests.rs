@@ -38,7 +38,6 @@ fn back_from_the_record_returns_to_the_unchanged_game() {
 
 #[test]
 fn the_record_and_its_runtime_back_fit_all_interface_sizes() {
-    let _runner = kobo_sdk::AppRunner::new(Parlor::default());
     let mut app = Parlor::default();
     app.start(Title::Reversi);
     app.record.push("Black d3".into());
@@ -48,7 +47,11 @@ fn the_record_and_its_runtime_back_fit_all_interface_sizes() {
             text_scale,
             ..CLARA_BW_METRICS
         };
-        let screen = app.screen();
+        // The record is paged by the context it is built with, so it is built
+        // for the size it is measured at. A default context paged it for the
+        // default size at every size checked here.
+        let runner = kobo_sdk::AppRunner::with_metrics(Parlor::default(), metrics);
+        let screen = app.screen_for(&runner.context());
         assert!(screen
             .diagnostics(&metrics, &Chrome::measuring(true))
             .issues

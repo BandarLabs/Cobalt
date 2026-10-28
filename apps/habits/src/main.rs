@@ -1119,6 +1119,10 @@ mod tests {
                         pixels_per_inch,
                         text_scale,
                     };
+                    // A runner installs the face the runtime measures with.
+                    // Without one, this test measured in the built-in fallback
+                    // type whenever it ran before any other test had made one.
+                    let _runner = AppRunner::with_metrics(Habits::default(), metrics);
                     let chrome = kobo_ui::Chrome::measuring(true);
                     let diagnostics = screen.diagnostics(&metrics, &chrome);
                     assert!(

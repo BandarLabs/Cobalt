@@ -12,7 +12,7 @@ clean
 shot syncthing-on
 tap No schedule
 expect Every hour
-expect Syncs while Cobalt is open on Wi-Fi. Tap to change.
+expect Runs while Cobalt is open. Tap to change.
 tap Set up Sync
 expect Pair one computer folder
 expect kobo sync setup

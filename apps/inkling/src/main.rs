@@ -1595,6 +1595,12 @@ mod help_layout_tests {
                         pixels_per_inch,
                         text_scale,
                     };
+                    // A runner installs the face the runtime measures with, so
+                    // the board is fitted and checked in real type. Without
+                    // one, this test measured in the built-in fallback type
+                    // whenever it ran before any other test had made one.
+                    let _runner =
+                        kobo_sdk::AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
                     game.fit(metrics);
                     let mut screens = vec![(game.screen(), reachable)];
                     if reachable == "kb.enter" && !game.fit.keys {

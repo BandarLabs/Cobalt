@@ -1210,9 +1210,8 @@ mod tests {
     #[test]
     fn every_page_fits_its_panel_at_every_text_scale() {
         // The promise the pages make: no turn is dropped off the top of an
-        // overfull page. The fullest page is the one to check, and the
-        // estimate behind it is conservative enough that it is also the
-        // oldest page by construction.
+        // overfull page. Every page is checked, because which one is fullest
+        // depends on where the measured split falls at each size.
         let mut chat = Chat::default();
         for index in 0..24 {
             chat.conversation
@@ -1239,18 +1238,20 @@ mod tests {
                 chat.can_retry(),
                 "the worst page is the one with a way back"
             );
-            let pages = transcript_pages(chat.conversation.turns(), chat.page_budget());
-            for scale in [
-                kobo_ui::TextScale::Default,
-                kobo_ui::TextScale::Large,
-                kobo_ui::TextScale::ExtraLarge,
-            ] {
+            for scale in kobo_ui::TextScale::STEPS {
                 let mut metrics = CLARA_BW_METRICS;
                 metrics.text_scale = scale;
-                for page in 0..pages.len() {
-                    chat.pages_back = pages.len() - 1 - page;
+                // The pages are split by measuring against the context the
+                // screen is built with, so they are built for the size they
+                // are checked at. A default context split them for the
+                // default size, and the larger sizes were checked against
+                // pages nobody had split for them.
+                let context = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics).context();
+                let pages = chat.measured_pages(&context).len();
+                for page in 0..pages {
+                    chat.pages_back = pages - 1 - page;
                     let layout = chat
-                        .screen()
+                        .screen_for(&context)
                         .layout_with(&metrics, &Chrome::measuring(true));
                     for node in &layout.nodes {
                         assert!(
