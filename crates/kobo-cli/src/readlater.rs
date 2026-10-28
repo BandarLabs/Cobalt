@@ -9,7 +9,10 @@ use std::time::Duration;
 const DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/data/readlater";
 const SESSION_FILE: &str = "session.v1";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
-const USAGE: &str = "usage: kobo readlater login --server URL --client-id ID --client-secret-file PATH \\\n                     \x20      --username EMAIL [--password-env VAR | --password-file PATH] \\\n                     \x20      (--sim | --device IP)\n\
+const USAGE: &str = concat!(
+    "usage: kobo readlater login --server URL --client-id ID --client-secret-file PATH \\\n                     \x20      --username EMAIL [--password-env VAR | --password-file PATH] \\\n                     \x20      ",
+    crate::targets::target_choice!(),
+    "\n\
                      \n\
                      Signs Read Later in to a Wallabag server. The client id and\n\
                      secret come from the server's API client management page\n\
@@ -17,8 +20,11 @@ const USAGE: &str = "usage: kobo readlater login --server URL --client-id ID --c
                      from KOBO_WALLABAG_PASSWORD unless --password-env or\n\
                      --password-file names another source; it never appears on\n\
                      the command line. The reader renews the session itself\n\
-                     after login; run this again only if the grant is revoked.";
+                     after login; run this again only if the grant is revoked.\n",
+    crate::targets::saved_reader_note!(),
+);
 
+#[derive(Clone)]
 enum Target {
     Device(String),
     Sim,
@@ -43,33 +49,46 @@ struct Options {
     target: Target,
 }
 
-fn parse_options(arguments: &[String]) -> Result<Options, String> {
-    let mut server = None;
-    let mut client_id = None;
-    let mut client_secret_file = None;
-    let mut username = None;
-    let mut password_env = None;
-    let mut password_file = None;
-    let mut target = None;
+/// Every flag as typed, none of them required yet. `login` requires them
+/// all; `kobo connect readlater` asks for the ones that are missing.
+#[derive(Default)]
+struct Collected {
+    server: Option<String>,
+    client_id: Option<String>,
+    client_secret_file: Option<String>,
+    username: Option<String>,
+    password_env: Option<String>,
+    password_file: Option<String>,
+    target: Option<Target>,
+    reader: Option<String>,
+}
+
+fn collect(arguments: &[String], readers: bool) -> Result<Collected, String> {
+    let mut found = Collected::default();
     let mut rest = arguments;
     while let Some((flag, tail)) = rest.split_first() {
         let (value, tail) = match flag.as_str() {
             "--sim" => {
-                if target.is_some() {
+                if found.target.is_some() || found.reader.is_some() {
                     return Err(USAGE.to_owned());
                 }
-                target = Some(Target::Sim);
+                found.target = Some(Target::Sim);
                 (None, tail)
             }
             flag if super::is_device_flag(flag) => {
-                if target.is_some() {
+                if found.target.is_some() || found.reader.is_some() {
                     return Err(USAGE.to_owned());
                 }
                 let (ip, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
                 if !super::valid_device_host(ip) {
                     return Err("device host contains unsupported characters".to_owned());
                 }
-                target = Some(Target::Device(ip.clone()));
+                found.target = Some(Target::Device(ip.clone()));
+                (None, tail)
+            }
+            "--reader" if readers && found.target.is_none() && found.reader.is_none() => {
+                let (name, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
+                found.reader = Some(name.clone());
                 (None, tail)
             }
             "--server"
@@ -84,36 +103,113 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
             _ => return Err(USAGE.to_owned()),
         };
         if let Some(value) = value {
-            match flag.as_str() {
-                "--server" => server = Some(value.clone()),
-                "--client-id" => client_id = Some(value.clone()),
-                "--client-secret-file" => client_secret_file = Some(value.clone()),
-                "--username" => username = Some(value.clone()),
-                "--password-env" => password_env = Some(value.clone()),
-                "--password-file" => password_file = Some(value.clone()),
-                _ => unreachable!(),
-            }
+            let slot = match flag.as_str() {
+                "--server" => &mut found.server,
+                "--client-id" => &mut found.client_id,
+                "--client-secret-file" => &mut found.client_secret_file,
+                "--username" => &mut found.username,
+                "--password-env" => &mut found.password_env,
+                _ => &mut found.password_file,
+            };
+            *slot = Some(value.clone());
         }
         rest = tail;
     }
-    let target = target.ok_or_else(|| USAGE.to_owned())?;
-    let server = server.ok_or_else(|| USAGE.to_owned())?;
-    if !server.starts_with("https://") {
+    Ok(found)
+}
+
+fn checked_server(server: &str) -> Result<String, String> {
+    let server = server.trim().trim_end_matches('/');
+    if !server.starts_with("https://")
+        || !kobo_sdk::permissions::credentials::servers::valid_server(server)
+    {
         return Err("the Wallabag server must be an https:// address".to_owned());
     }
-    let client_secret_file = client_secret_file.ok_or_else(|| USAGE.to_owned())?;
+    Ok(server.to_owned())
+}
+
+fn parse_options(arguments: &[String]) -> Result<Options, String> {
+    let found = collect(arguments, false)?;
+    let target = found.target.ok_or_else(|| USAGE.to_owned())?;
+    let server = checked_server(&found.server.ok_or_else(|| USAGE.to_owned())?)?;
+    let client_secret_file = found.client_secret_file.ok_or_else(|| USAGE.to_owned())?;
     Ok(Options {
-        server: server.trim_end_matches('/').to_owned(),
-        client_id: client_id.ok_or_else(|| USAGE.to_owned())?,
+        server,
+        client_id: found.client_id.ok_or_else(|| USAGE.to_owned())?,
         client_secret: secret_file(&client_secret_file, "client secret")?,
-        username: username.ok_or_else(|| USAGE.to_owned())?,
-        password: password(password_env, password_file)?,
+        username: found.username.ok_or_else(|| USAGE.to_owned())?,
+        password: password(found.password_env, found.password_file)?,
+        target,
+    })
+}
+
+/// `kobo connect readlater`: the same sign-in, asking at the terminal for
+/// whatever was not given as a flag, and going to the saved reader when none
+/// is named.
+pub(crate) fn connect(arguments: &[String]) -> Result<(), String> {
+    if super::wants_help(arguments) && !arguments.is_empty() {
+        return super::print_command_help(USAGE);
+    }
+    let found = collect(arguments, true)?;
+    let destination = super::account::destination(
+        found.target.map(|target| match target {
+            Target::Sim => super::account::Destination::Sim,
+            Target::Device(host) => super::account::Destination::Device(host),
+        }),
+        found.reader.as_deref(),
+    )?;
+    let target = match destination {
+        super::account::Destination::Sim => Target::Sim,
+        super::account::Destination::Device(host) => Target::Device(host),
+    };
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let missing = |flag: &str| format!("Add {flag}, or run this at a terminal to be asked.");
+    let ask = |question: &str, flag: &str, given: Option<String>| match given {
+        Some(value) => Ok(value),
+        None if interactive => super::account::ask(question),
+        None => Err(missing(flag)),
+    };
+    let server = checked_server(&ask(
+        "Wallabag server address (for example https://app.wallabag.it): ",
+        "--server URL",
+        found.server,
+    )?)?;
+    let client_id = ask(
+        "API client ID (Wallabag: Settings, API clients management): ",
+        "--client-id ID",
+        found.client_id,
+    )?;
+    let client_secret = match found.client_secret_file {
+        Some(file) => secret_file(&file, "client secret")?,
+        None if interactive => super::account::hidden("API client secret: ")?
+            .trim()
+            .to_owned(),
+        None => return Err(missing("--client-secret-file PATH")),
+    };
+    let username = ask("Wallabag username: ", "--username NAME", found.username)?;
+    let password = if found.password_env.is_some() || found.password_file.is_some() || !interactive
+    {
+        password(found.password_env, found.password_file)?
+    } else {
+        super::account::hidden("Wallabag password: ")?
+            .trim_end_matches(['\r', '\n'])
+            .to_owned()
+    };
+    sign_in(Options {
+        server,
+        client_id,
+        client_secret,
+        username,
+        password,
         target,
     })
 }
 
 fn login(arguments: &[String]) -> Result<(), String> {
-    let options = parse_options(arguments)?;
+    sign_in(parse_options(arguments)?)
+}
+
+fn sign_in(options: Options) -> Result<(), String> {
     let Options {
         server,
         client_id,
@@ -123,6 +219,9 @@ fn login(arguments: &[String]) -> Result<(), String> {
         target,
     } = options;
 
+    if matches!(target, Target::Sim) {
+        super::account::prepare_sim()?;
+    }
     let body = format!(
         "grant_type=password&client_id={}&client_secret={}&username={}&password={}",
         form(&client_id),
@@ -156,7 +255,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
             fs::create_dir_all(&root).map_err(|error| format!("create {root:?}: {error}"))?;
             let path = root.join(SESSION_FILE);
             fs::write(&path, session).map_err(|error| format!("write {path:?}: {error}"))?;
-            println!("Signed in to {server}; the simulator's Read Later picks up the session on its next start.");
+            println!("Signed in to {server}. Open Read Later in the simulator, or tap Check again if it is already open.");
         }
         Target::Device(host) => {
             let encoded = super::base64_encode(session.as_bytes());
@@ -174,7 +273,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
                  sync\n"
             );
             remote(&host, &script)?;
-            println!("Signed in to {server}; Read Later on {host} picks up the session on its next start.");
+            println!("Signed in to {server}. Open Read Later on {host}, or tap Check again if it is already open.");
         }
     }
     Ok(())

@@ -5,37 +5,165 @@ pub const HELP: &str = "App setup guides
 
   kobo apps                    List bundled apps
   kobo apps search WORD        Find an app by name or purpose
-  kobo apps setup APP           Show its setup steps and capabilities
-  kobo apps connect APP         Show the safest connection path
+  kobo apps setup APP          Show its setup steps and capabilities
+  kobo apps connect APP        Show the safest connection path
+
+APP is the app's name as the Store shows it (Music Stand, Feeds), its short
+label, its id, or the kobo command that serves it (sync, stream).
 
 Examples:
   kobo apps search chess
   kobo apps setup lichess
+  kobo apps setup music stand
 
 Guides describe this CLI's bundled catalog, not what is installed on a reader.";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    if arguments
+        .iter()
+        .any(|argument| matches!(argument.as_str(), "--help" | "-h"))
+        || arguments.first().is_some_and(|first| first == "help")
+    {
+        println!("{HELP}");
+        return Ok(());
+    }
     let apps = kobo_catalog::bundled()?;
     match arguments {
         [] => print_list(&apps, ""),
-        [help] if matches!(help.as_str(), "--help" | "-h" | "help") => println!("{HELP}"),
-        [verb, query] if verb == "search" => print_list(&apps, query),
-        [verb, id] if matches!(verb.as_str(), "setup" | "connect") => {
-            let app = apps
-                .iter()
-                .find(|app| app.id.eq_ignore_ascii_case(id))
-                .ok_or_else(|| {
-                    format!("No bundled app named {id:?}. Find it with kobo apps search WORD.")
-                })?;
+        [verb, query @ ..] if verb == "search" && !query.is_empty() => {
+            print_list(&apps, &query.join(" "));
+        }
+        [verb, name @ ..] if matches!(verb.as_str(), "setup" | "connect") && !name.is_empty() => {
+            // Joined, so `kobo apps setup music stand` works unquoted. The
+            // explanation goes to stderr above a short usage line, so the
+            // owner reads the suggestion rather than "usage:" in front of it.
+            let app = find(&apps, &name.join(" ")).map_err(|why| {
+                eprintln!("{why}");
+                crate::console::usage(format!("kobo apps {verb} APP"))
+            })?;
             if verb == "connect" {
                 print!("{}", connection_card(app));
             } else {
                 print!("{}", card(app));
             }
         }
-        _ => return Err(HELP.to_owned()),
+        _ => {
+            return Err(crate::console::usage(
+                "kobo apps [search WORD | setup APP | connect APP]",
+            ))
+        }
     }
     Ok(())
+}
+
+/// Companion commands whose name is not the name of the app they serve.
+///
+/// `kobo sync` serves Sync, whose id is `syncthing`; `kobo stream` serves
+/// Paperterm; `kobo feeds` serves Feeds, whose id is `rss`. An owner who has
+/// just typed the command reaches for the same word to read its setup.
+const COMMANDS: &[(&str, &str)] = &[
+    ("feeds", "rss"),
+    ("sync", "syncthing"),
+    ("stream", "paperterm"),
+    ("library", "calibre-web"),
+    ("digest", "rss-miniflux"),
+    ("stacks", "zotero-reader"),
+];
+
+/// A name with case, spaces and punctuation taken out, so "Music Stand",
+/// "music-stand" and "musicstand" are one name.
+fn squeeze(word: &str) -> String {
+    word.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
+}
+
+/// The app an owner means by `name`.
+///
+/// Only the id used to match, so `kobo apps setup feeds`, `sync` and
+/// `library` all failed although each is the name the Store shows. The
+/// order is most exact first: the id, the Store name, the short label, then
+/// the companion command. A name two apps share is listed rather than
+/// guessed at, and a miss suggests the closest names there are.
+fn find<'a>(apps: &'a [kobo_catalog::App], name: &str) -> Result<&'a kobo_catalog::App, String> {
+    let wanted = squeeze(name);
+    let tiers: [&dyn Fn(&kobo_catalog::App) -> bool; 4] = [
+        &|app| squeeze(&app.id) == wanted,
+        &|app| squeeze(&app.title) == wanted,
+        &|app| squeeze(&app.label) == wanted,
+        &|app| {
+            COMMANDS
+                .iter()
+                .any(|(command, id)| *command == wanted && app.id == *id)
+        },
+    ];
+    for matches in tiers {
+        let found: Vec<&kobo_catalog::App> = apps.iter().filter(|app| matches(app)).collect();
+        match found.as_slice() {
+            [] => {}
+            [only] => return Ok(only),
+            several => {
+                return Err(format!(
+                    "{name:?} is the name of more than one app: {}. Name one by its id.",
+                    several
+                        .iter()
+                        .map(|app| format!("{} ({})", plain(&app.title), app.id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            }
+        }
+    }
+    let near = suggestions(apps, &wanted);
+    if near.is_empty() {
+        return Err(format!(
+            "No bundled app is called {name:?}. Find it with kobo apps search WORD."
+        ));
+    }
+    Err(format!(
+        "No bundled app is called {name:?}. Did you mean {}?",
+        near.join(" or ")
+    ))
+}
+
+/// The apps whose names are close to a miss, as `Title (kobo apps setup id)`.
+///
+/// Close means one name contains the other, or they are a couple of typing
+/// mistakes apart, which covers a plural, a dropped letter and a swapped pair.
+fn suggestions(apps: &[kobo_catalog::App], wanted: &str) -> Vec<String> {
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let close = |candidate: &str| {
+        let candidate = squeeze(candidate);
+        (wanted.len() >= 3 && (candidate.contains(wanted) || wanted.contains(&candidate)))
+            || distance(&candidate, wanted) <= 2
+    };
+    apps.iter()
+        .filter(|app| close(&app.id) || close(&app.title) || close(&app.label))
+        .take(3)
+        .map(|app| format!("{} (kobo apps setup {})", plain(&app.title), app.id))
+        .collect()
+}
+
+/// The number of single-letter edits between two names.
+fn distance(left: &str, right: &str) -> usize {
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (row, left) in left.chars().enumerate() {
+        let mut current = vec![row + 1];
+        for (column, right) in right.iter().enumerate() {
+            let substitution = previous[column] + usize::from(left != *right);
+            current.push(
+                substitution
+                    .min(previous[column + 1] + 1)
+                    .min(current[column] + 1),
+            );
+        }
+        previous = current;
+    }
+    previous[right.len()]
 }
 
 fn print_list(apps: &[kobo_catalog::App], query: &str) {
@@ -77,14 +205,10 @@ fn plain(value: &str) -> String {
 }
 
 fn capability(value: &str) -> String {
-    match value {
-        "network" => "Connects to online services".into(),
-        "hold-wifi" => "Can keep Wi-Fi connected while in use".into(),
-        "keep-awake" => "Can keep the reader awake while in use".into(),
-        "frontlight-control" => "Can adjust the frontlight".into(),
-        "scheduled-wake" => "Can request scheduled wake-ups where supported".into(),
-        other => format!("Additional capability: {}", plain(other)),
-    }
+    kobo_policy::Capability::parse(value).map_or_else(
+        || format!("Additional capability: {}", plain(value)),
+        |capability| capability.plain_wording().to_owned(),
+    )
 }
 
 fn connection_card(app: &kobo_catalog::App) -> String {
@@ -208,8 +332,9 @@ mod tests {
         assert!(lichess.contains("board:play"));
         assert!(lichess.contains("private file"));
         assert!(!lichess.contains("actual token"));
-        let panels = connection_card(apps.iter().find(|app| app.id == "panels").unwrap());
-        assert!(panels.contains("on-reader connection steps"));
+        let mut plain = apps.iter().find(|app| app.id == "panels").unwrap().clone();
+        plain.setup = None;
+        assert!(connection_card(&plain).contains("on-reader connection steps"));
     }
 
     #[test]
@@ -220,6 +345,60 @@ mod tests {
         assert!(guide.contains("kobo secret set lichess --from token.txt"));
         assert!(guide.contains("Can keep the reader awake"));
         assert!(guide.contains("does not check installation"));
+    }
+
+    #[test]
+    fn an_app_is_found_by_the_name_the_store_shows_its_label_and_its_command() {
+        let apps = kobo_catalog::bundled().unwrap();
+        for (typed, id) in [
+            ("feeds", "rss"),
+            ("Feeds", "rss"),
+            ("sync", "syncthing"),
+            ("library", "calibre-web"),
+            ("Music Stand", "musicstand"),
+            ("music-stand", "musicstand"),
+            ("music", "musicstand"),
+            ("home panel", "homepanel"),
+            ("Read Later", "readlater"),
+            ("stream", "paperterm"),
+            ("LICHESS", "lichess"),
+            ("digest", "rss-miniflux"),
+        ] {
+            assert_eq!(
+                find(&apps, typed).map(|app| app.id.as_str()),
+                Ok(id),
+                "{typed}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_near_miss_suggests_the_app_it_was_close_to() {
+        let apps = kobo_catalog::bundled().unwrap();
+        let error = find(&apps, "lichss").unwrap_err();
+        assert!(
+            error.contains("Did you mean Lichess (kobo apps setup lichess)"),
+            "{error}"
+        );
+        let error = find(&apps, "musicstands").unwrap_err();
+        assert!(error.contains("kobo apps setup musicstand"), "{error}");
+        let error = find(&apps, "zzzzzz").unwrap_err();
+        assert!(error.contains("kobo apps search WORD"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_name_is_a_usage_mistake_for_scripts() {
+        let error = command(&["setup".to_owned(), "lichss".to_owned()]).unwrap_err();
+        assert_eq!(
+            crate::console::category_of(&error),
+            crate::console::EXIT_USAGE
+        );
+    }
+
+    #[test]
+    fn help_is_answered_after_any_verb() {
+        command(&["setup".to_owned(), "--help".to_owned()]).expect("help");
+        command(&["--help".to_owned()]).expect("help");
     }
 
     #[test]

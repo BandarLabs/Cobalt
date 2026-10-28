@@ -501,12 +501,12 @@ fn a_screen_that_barely_appeared_is_still_held_long_enough_to_see() {
 
 use super::package;
 use super::{
-    build_executables, canonical, configured_target_directory, is_device_flag, manifest_uses_sdk,
-    normalise_secret_value, parse_deploy, parse_devices, parse_logs, parse_touch_probe,
-    unreachable_device, valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
-    workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
-    DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
-    TOUCH_PROBE_MAXIMUM_SECONDS,
+    build_executables, canonical, configured_target_directory, dev_session_root, is_device_flag,
+    manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
+    parse_touch_probe, parser_shelf_summary, unreachable_device, valid_device_host, valid_slug,
+    verify_arm_elf, wait_for_remote_child, workspace_doctor_binary, DevSessionGuard,
+    RemoteArtifact, SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
+    TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
 };
 #[cfg(feature = "device-write")]
 use super::{
@@ -869,7 +869,6 @@ fn exit_categories_hold_for_the_families_of_failure() {
         crate::console::EXIT_USAGE
     );
     for args in [
-        vec!["wait"],
         vec!["wait", "--device"],
         vec!["wait", "--sim"],
         vec!["doctor", "--sim"],
@@ -1301,6 +1300,34 @@ fn dev_session_guard_removes_private_artifacts() {
     fs::write(&guard.socket, b"socket").expect("write socket fixture");
     drop(guard);
     assert!(!root.exists());
+}
+
+#[test]
+fn a_parser_push_names_every_story_left_on_the_reader() {
+    let shelf = [
+        "zork.z3".to_owned(),
+        ".lamplight.z5.12.writing".to_owned(),
+        "lamplight.z5".to_owned(),
+    ];
+    assert_eq!(
+        parser_shelf_summary(&shelf),
+        "Parser now holds 2 stories: lamplight, zork."
+    );
+    assert_eq!(
+        parser_shelf_summary(&shelf[..1]),
+        "Parser now holds 1 story: zork."
+    );
+    assert_eq!(parser_shelf_summary(&[]), "Parser has no stories yet.");
+}
+
+#[test]
+fn a_dev_session_under_a_deep_temporary_folder_keeps_its_socket_short_enough_to_bind() {
+    let shallow = dev_session_root(std::path::Path::new("/tmp/cb"), "kobo-dev-1-2");
+    assert_eq!(shallow, PathBuf::from("/tmp/cb/kobo-dev-1-2"));
+    let deep = std::path::Path::new("/private/tmp").join("a-folder-name-long-enough".repeat(4));
+    let root = dev_session_root(&deep, "kobo-dev-1-2");
+    assert_eq!(root, PathBuf::from("/tmp/kobo-dev-1-2"));
+    assert!(root.join("app.sock").as_os_str().len() <= 100);
 }
 
 #[test]
@@ -1946,9 +1973,9 @@ mod simulating {
 
 mod preparing {
     use super::super::{
-        choose_reader_list, confirmation_answer, dry_run_plan, gzip,
+        choose_reader_list, confirmation_answer, connect, dry_run_plan, gzip,
         load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-        undo_setup, SetupMode, SetupPayload,
+        undo_setup, SetupMode, SetupPayload, SETUP_HELP,
     };
     use std::path::PathBuf;
 
@@ -2023,7 +2050,8 @@ mod preparing {
         assert!(parsed.eject);
         assert!(parsed.wait);
         assert!(!parsed.dry_run);
-        assert!(!parsed.enable_ssh);
+        assert!(parsed.enable_ssh, "SSH is part of a normal setup now");
+        assert!(parsed.authorize_key);
         assert!(!parsed.yes);
         assert!(!parsed.non_interactive);
     }
@@ -2266,8 +2294,13 @@ mod preparing {
         let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
         let plan = dry_run_plan(&parsed, &fresh_reader().0);
         assert!(plan.contains("would install"));
-        assert!(plan.contains("leave the firmware's SSH server disabled"));
-        assert!(plan.contains("stop after ejecting"));
+        assert!(
+            plan.contains("enable the firmware's root SSH server"),
+            "{plan}"
+        );
+        assert!(plan.contains("save it the way"), "{plan}");
+        assert!(plan.contains("kobo pair does"), "{plan}");
+        assert!(plan.contains("close password login for root"), "{plan}");
         for (section, key, value) in setup::SETTINGS_APPLIED {
             assert!(plan.contains(&format!("{section}/{key}={value}")), "{plan}");
         }
@@ -2291,13 +2324,94 @@ mod preparing {
     }
 
     #[test]
-    fn root_ssh_requires_an_explicit_opt_in() {
-        let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
-        assert!(parsed.enable_ssh);
+    fn ssh_is_on_by_default_and_the_old_opt_in_still_parses() {
+        for words in [&["--dry-run"][..], &["--enable-ssh", "--dry-run"][..]] {
+            let parsed = parse_setup(&arguments(words)).expect("parse");
+            assert!(parsed.enable_ssh, "{words:?}");
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains(setup::SSH_DISABLED), "{plan}");
+            assert!(plan.contains("root SSH"), "{plan}");
+            assert!(plan.contains("wait for the restarted reader"), "{plan}");
+        }
+    }
+
+    #[test]
+    fn no_ssh_leaves_the_server_off_and_says_why_nothing_waits() {
+        let parsed = parse_setup(&arguments(&["--no-ssh", "--dry-run"])).expect("parse");
+        assert!(!parsed.enable_ssh);
         let plan = dry_run_plan(&parsed, &fresh_reader().0);
-        assert!(plan.contains(setup::SSH_DISABLED), "{plan}");
-        assert!(plan.contains("root SSH"), "{plan}");
-        assert!(plan.contains("wait for the restarted reader"), "{plan}");
+        assert!(plan.contains("--no-ssh was given"), "{plan}");
+        assert!(plan.contains("stop after ejecting"), "{plan}");
+        assert!(!plan.contains("authorized_keys"), "{plan}");
+    }
+
+    #[test]
+    fn a_key_given_by_hand_leaves_password_login_alone_and_says_so() {
+        let parsed = parse_setup(&arguments(&["--no-key", "--dry-run"])).expect("parse");
+        let plan = dry_run_plan(&parsed, &fresh_reader().0);
+        assert!(plan.contains("leaving"), "{plan}");
+        assert!(
+            plan.contains("password login as the firmware has it"),
+            "{plan}"
+        );
+        assert!(!plan.contains("close password login"), "{plan}");
+    }
+
+    #[test]
+    fn setup_help_answers_wherever_it_is_asked_and_names_the_opt_out() {
+        assert!(SETUP_HELP.contains("--no-ssh"));
+        assert!(!SETUP_HELP.contains("--enable-ssh"));
+        assert!(SETUP_HELP.contains("saves it"));
+        super::super::setup_device(&arguments(&["--yes", "--help"])).expect("help, not a run");
+    }
+
+    #[test]
+    fn a_reader_set_up_again_keeps_its_name_and_a_new_one_gets_a_free_one() {
+        let mut store = crate::readers::Store::default();
+        assert_eq!(
+            super::super::setup_reader_name(&store, "N365410043013"),
+            "kobo"
+        );
+        store
+            .name("N365410043013", "192.0.2.4", "study")
+            .expect("a free name");
+        assert_eq!(
+            super::super::setup_reader_name(&store, "N365410043013"),
+            "study",
+            "running setup again to update Cobalt must not rename the reader"
+        );
+        store
+            .name("N418000000001", "192.0.2.5", "kobo")
+            .expect("a free name");
+        assert_eq!(
+            super::super::setup_reader_name(&store, "N500000000002"),
+            "kobo-2"
+        );
+    }
+
+    #[test]
+    fn only_the_reader_on_the_cable_is_taken_for_the_one_coming_back() {
+        let ours = connect::Identity {
+            serial: "N365410043013".into(),
+            ..connect::Identity::default()
+        };
+        let neighbour = connect::Identity {
+            serial: "N418999999999".into(),
+            ..connect::Identity::default()
+        };
+        let laptop = connect::Identity::default();
+        assert_eq!(
+            setup::verdict_for(&ours, "N365410043013"),
+            setup::Verdict::Reader
+        );
+        assert_eq!(
+            setup::verdict_for(&neighbour, "N365410043013"),
+            setup::Verdict::Other
+        );
+        assert_eq!(
+            setup::verdict_for(&laptop, "N365410043013"),
+            setup::Verdict::Other
+        );
     }
 
     #[test]
@@ -2332,7 +2446,7 @@ mod preparing {
 
     #[test]
     fn without_ssh_there_is_no_key_to_install() {
-        let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
+        let parsed = parse_setup(&arguments(&["--no-ssh", "--dry-run"])).expect("parse");
         let plan = dry_run_plan(&parsed, &fresh_reader().0);
         assert!(plan.contains("no SSH server to use it"), "{plan}");
     }
@@ -2347,7 +2461,10 @@ mod preparing {
         assert!(plan.contains("stage NickelMenu"), "{plan}");
         assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
         assert!(
-            plan.contains("NickelMenu's own two files and one authorized_keys"),
+            plan.contains(
+                "NickelMenu's own two files, one authorized_keys and the firmware's \
+                 first-login marker"
+            ),
             "{plan}"
         );
     }

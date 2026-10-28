@@ -5,8 +5,8 @@
 //! here exports them back.
 
 use kobo_vault_host::{
-    digest, links_for, plan_prefixed, tags_for, title_for, ImportFailure, IncomingNote, Manifest,
-    Push, MANIFEST, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
+    digest, links_for, plan_adding, plan_prefixed, tags_for, title_for, ImportFailure,
+    IncomingNote, Manifest, Push, MANIFEST, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
 };
 use std::fmt::Write as _;
 use std::fs;
@@ -17,22 +17,37 @@ const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/vault";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_INPUT_BYTES: u64 = 512 * 1024;
 const SKIP_DIRS: &[&str] = &[".obsidian", ".trash", ".git", "node_modules"];
-const USAGE: &str = "usage: kobo vault init (--sim | --device IP)\n\
-                     \x20      kobo vault push VAULT_DIR [--exclude TEXT]... (--sim | --device IP)\n\
-                     \x20      kobo vault plan VAULT_DIR [--exclude TEXT]... (--sim | --device IP)\n\
-                     \x20      kobo vault ingest SYNCED_DIR [--exclude TEXT]... (--sim | --device IP)\n\
+const USAGE: &str = concat!(
+    "usage: kobo vault init ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo vault push VAULT_DIR [--exclude TEXT]... [--replace] ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo vault plan VAULT_DIR [--exclude TEXT]... [--replace] ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo vault ingest SYNCED_DIR [--exclude TEXT]... ",
+    crate::targets::target_choice!(),
+    "\n\
                      \x20      kobo vault preview NOTE.md\n\
-                     \x20      kobo vault ls (--sim | --device IP)\n\
-                     \x20      kobo vault rm ID (--sim | --device IP)\n\
+                     \x20      kobo vault ls ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo vault rm ID ",
+    crate::targets::target_choice!(),
+    "\n\
                      \n\
-                     The host folder is the source of truth: push mirrors it onto the\n\
-                     shelf. Notes the folder no longer offers leave the shelf, and a\n\
-                     renamed note keeps its place without a second transfer. Vault\n\
-                     reads Markdown; edits made on the reader are not exported.\n\
+                     push adds the folder's notes to the reader and updates the ones\n\
+                     that changed; push again whenever your notes change. Only changed\n\
+                     notes are sent, and a renamed note keeps its place. --replace\n\
+                     makes the reader hold exactly this folder and removes every other\n\
+                     pushed note.\n\
                      \n\
-                     ingest packs a folder Sync has delivered (pair it with\n\
-                     kobo sync setup <dir> --folder vault for ongoing delivery) onto\n\
-                     the synced shelf; push and ingest never overwrite each other.";
+                     ingest packs a folder that another tool delivered onto a separate\n\
+                     shelf; push and ingest never overwrite each other.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Target {
@@ -278,7 +293,7 @@ const LEGACY_MAX_INDEX: usize = 256 * 1024;
 const LEGACY_DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state/vault";
 
 fn legacy_sim_root() -> PathBuf {
-    std::env::temp_dir().join("cobalt-sim-state").join("vault")
+    kobo_sim::simulated_state_root("vault")
 }
 
 fn legacy_pack(notes: &[(String, String)]) -> Option<String> {
@@ -432,7 +447,8 @@ pub(crate) fn print_plan(push: &Push, walk: &Walk) {
 }
 
 fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
-    let (folder, excludes, target) = parse_push(arguments)?;
+    let (arguments, replace) = without_replace(arguments);
+    let (folder, excludes, target) = parse_push(&arguments)?;
     let mut walk = walk(Path::new(&folder), &excludes)?;
     let existing = match &target {
         Target::Device(host) => read_manifest(host)?,
@@ -440,7 +456,11 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     };
     let failures = std::mem::take(&mut walk.failures);
     let offered = std::mem::take(&mut walk.offered);
-    let push = plan_prefixed(&existing, offered, failures, "note-")?;
+    let push = if replace {
+        plan_prefixed(&existing, offered, failures, "note-")?
+    } else {
+        plan_adding(&existing, offered, failures, "note-")?
+    };
     print_plan(&push, &walk);
     if push.manifest.notes.len() > MAX_NOTES {
         return Err(format!("Vault holds at most {MAX_NOTES} notes"));
@@ -461,10 +481,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
                 "Transferred {} note file(s); the reader's shelf now matches the plan.",
                 push.notes.len()
             );
-            println!("Vault indexes the shelf when it next opens.");
-            println!(
-                "To keep this folder current without re-pushing: kobo sync setup {folder} --folder vault --device {host}"
-            );
+            print!("{}", on_the_reader(&push.manifest));
         }
         Target::Sim => {
             publish_local(&push)?;
@@ -479,10 +496,45 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
                 "Transferred {} note file(s); the simulator shelf now matches the plan.",
                 push.notes.len()
             );
-            println!("Vault indexes the shelf when it next opens.");
+            print!("{}", on_the_reader(&push.manifest));
         }
     }
     Ok(())
+}
+
+/// Takes `--replace` out of a push's arguments. Only push and plan know it,
+/// and the shared parser stays the one ingest uses.
+fn without_replace(arguments: &[String]) -> (Vec<String>, bool) {
+    let replace = arguments.iter().any(|argument| argument == "--replace");
+    let rest = arguments
+        .iter()
+        .filter(|argument| *argument != "--replace")
+        .cloned()
+        .collect();
+    (rest, replace)
+}
+
+/// What the reader holds after a push, by top-level folder, and when the
+/// app will show it, so the push ends with the one next step.
+fn on_the_reader(manifest: &Manifest) -> String {
+    let mut folders: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for note in &manifest.notes {
+        let folder = note
+            .path
+            .split_once('/')
+            .map_or("(top level)", |(folder, _)| folder);
+        *folders.entry(folder).or_default() += 1;
+    }
+    let count = manifest.notes.len();
+    let mut text = format!(
+        "Now on the reader: {count} note{}.\n",
+        if count == 1 { "" } else { "s" }
+    );
+    for (folder, notes) in folders {
+        let _ = writeln!(text, "  {folder}: {notes}");
+    }
+    text.push_str("Vault shows them the next time you come back to it. Push again whenever your notes change.\n");
+    text
 }
 
 fn list(arguments: &[String]) -> Result<(), String> {
@@ -606,9 +658,9 @@ fn remove(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Show how a note paginates at the reader's dimensions: the rendered text is
-/// measured against the panel the same way the app measures it, so the page
-/// count and the closing line are what the reader will see.
+/// Show roughly how a note paginates at the reader's dimensions. The rendered
+/// text is measured against the panel at body size; the app sets headings
+/// larger, so a note with many headings can run a page or two longer there.
 fn preview(arguments: &[String]) -> Result<(), String> {
     let [path] = arguments else {
         return Err(USAGE.to_owned());
@@ -735,6 +787,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_push_adds_unless_it_is_asked_to_replace() {
+        let arguments = ["notes", "--replace", "--sim"].map(str::to_owned).to_vec();
+        let (rest, replace) = without_replace(&arguments);
+        assert!(replace);
+        assert_eq!(rest, ["notes", "--sim"]);
+        assert!(!without_replace(&rest).1);
+    }
+
+    #[test]
+    fn a_push_ends_by_counting_the_notes_on_the_reader_by_folder() {
+        let note = |path: &str| kobo_vault_host::NoteEntry {
+            id: format!("note-{path}"),
+            path: path.to_owned(),
+            title: path.to_owned(),
+            tags: Vec::new(),
+            links: Vec::new(),
+            digest: "d".to_owned(),
+            bytes: 1,
+            added: 1,
+        };
+        let manifest = Manifest {
+            notes: vec![
+                note("Welcome.md"),
+                note("Projects/A.md"),
+                note("Projects/B.md"),
+            ],
+            failures: Vec::new(),
+        };
+        let text = on_the_reader(&manifest);
+        assert!(text.starts_with("Now on the reader: 3 notes.\n  (top level): 1\n  Projects: 2\n"));
+        assert!(!text.contains("kobo sync"));
     }
 
     #[test]
