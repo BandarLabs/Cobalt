@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Opens already paired after kobo stream init, says Not connected yet instead of Connection lost before the first connection, and shows one set of setup steps.",
   "setup": {
     "steps": [
       {

@@ -3,12 +3,12 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo. Needs your computer.",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "release_notes": "Opens already paired after kobo sidekick init, and says Connecting, Watching or Not connected with the reason, instead of Watching while the computer is away.",
   "setup": {
     "steps": [
       {

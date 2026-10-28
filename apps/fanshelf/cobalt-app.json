@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add AO3 works to a shelf, download them as EPUB and read them offline on your Kobo. Check works in progress for new chapters and follow tags. Fanshelf is unofficial and not affiliated with the Organization for Transformative Works.",
-  "version": "0.3.5",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.3.6",
+  "release_notes": "Checking a work now downloads its new chapters in the same tap, the work page shows the author's summary, and the shelf says how many works are ready offline. Reopens a document on the page you left.",
   "glyph": "book",
   "capabilities": [
     "network"

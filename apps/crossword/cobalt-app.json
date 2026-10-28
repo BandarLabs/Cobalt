@@ -5,8 +5,8 @@
   "summary": "Sixty-one offline crosswords with clue navigation and saved progress.",
   "page_description": "Solve sixty-one original 5 by 5 and 7 by 7 crosswords offline. Tap a square or a clue, type an answer, and check or reveal letters when you want help. Undo is always under the grid, and each puzzle keeps its own progress.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.9",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.10",
+  "release_notes": "Sixty-one crosswords, including larger 7 by 7 grids, with Undo always under the grid and Rules one tap away in the top bar.",
   "glyph": "grid",
   "capabilities": []
 }

@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Keep your favorite Home Assistant controls on a simple, low-power panel. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/homepanel.png">
 <meta name="twitter:image:alt" content="Home Panel tile grid on a Kobo showing four Home Assistant tiles with the last refresh time.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-d8MVf1iJ6UMMilWalpIgqnftT4wFWzLI9DCq/Lr9fWs='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-CiXW4+quPHJrJd0VEW3N0dcb+XOSf2Z2tx+rzZsS9hs='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.2.6",
+      "softwareVersion": "0.2.7",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Home Panel</h1>
       <p class="summary">Keep your favorite Home Assistant controls on a simple, low-power panel.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.2.6</dd></div>
+        <div><dt>Version</dt><dd>0.2.7</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -119,19 +119,19 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.2.6</h2>
-    <p>The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } &lt; &gt; \ | ~ and the backtick.</p>
+    <h2>New in 0.2.7</h2>
+    <p>Shows the computer command and the HTTPS requirement on the first screen, with Check again to pick up a connection made on your computer.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Expose Home Assistant through HTTPS, using Nabu Casa or a reverse proxy with a trusted certificate.</li>
-      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
-        <code class="setup-command">kobo pair</code></li>
-      <li>Create a Home Assistant long-lived access token and install it under the exact name homeassistant.
-        <code class="setup-command">kobo secret set homeassistant</code></li>
-      <li>For a private certificate authority, install its root on the Kobo, from the authority's PEM file.
+      <li>Set up the reader once over USB, if you have not already. Home Assistant must be reachable over HTTPS (Nabu Casa or a reverse proxy with a trusted certificate). Plain http:// addresses do not work.
+        <code class="setup-command">kobo setup</code></li>
+      <li>Create a long-lived access token on your Home Assistant profile page.</li>
+      <li>Connect Home Panel from your computer. It asks for the address and the token, checks them, and sets the panel up. Open Home Panel, or tap Check again.
+        <code class="setup-command">kobo connect homepanel</code></li>
+      <li>For a private certificate authority, install its root on the reader. Pass the same file to kobo connect with --ca.
         <code class="setup-command">kobo trust set homeassistant --from root-ca.pem</code></li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:

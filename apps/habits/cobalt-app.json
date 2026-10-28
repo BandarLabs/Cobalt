@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
-  "version": "0.1.10",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.11",
+  "release_notes": "Days now turn over at your own midnight, and a Yesterday switch on Today marks a habit you did late or forgot to tick.",
   "glyph": "check",
   "capabilities": []
 }

@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sidekick: answer coding-agent prompts on Kobo | Cobalt</title>
-<meta name="description" content="Answer coding-agent permission prompts from your Kobo. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Answer coding-agent permission prompts from your Kobo. Needs your computer. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/sidekick/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Sidekick: answer coding-agent prompts on Kobo | Cobalt">
-<meta property="og:description" content="Answer coding-agent permission prompts from your Kobo. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Answer coding-agent permission prompts from your Kobo. Needs your computer. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/sidekick/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sidekick.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Sidekick showing several coding-agent sessions and their pending approvals.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Sidekick: answer coding-agent prompts on Kobo | Cobalt">
-<meta name="twitter:description" content="Answer coding-agent permission prompts from your Kobo. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Answer coding-agent permission prompts from your Kobo. Needs your computer. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sidekick.png">
 <meta name="twitter:image:alt" content="Sidekick showing several coding-agent sessions and their pending approvals.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-tuUnGp9GUIncBXFagyp665Vx1btVuZOq2rPalIDU7ws='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-52lKWJHjxKBdTMGZO9AFsfHULDrJQ7YDvRoviylh8Nc='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Sidekick",
-      "description": "Answer coding-agent permission prompts from your Kobo.",
+      "description": "Answer coding-agent permission prompts from your Kobo. Needs your computer.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/sidekick/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.13",
+      "softwareVersion": "1.0.14",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -97,9 +97,9 @@
     <div class="app-copy">
       <p class="eyebrow">Developer</p>
       <h1>Sidekick</h1>
-      <p class="summary">Answer coding-agent permission prompts from your Kobo.</p>
+      <p class="summary">Answer coding-agent permission prompts from your Kobo. Needs your computer.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.13</dd></div>
+        <div><dt>Version</dt><dd>1.0.14</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -119,8 +119,24 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 1.0.13</h2>
-    <p>The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } &lt; &gt; \ | ~ and the backtick.</p>
+    <h2>New in 1.0.14</h2>
+    <p>Opens already paired after kobo sidekick init, and says Connecting, Watching or Not connected with the reason, instead of Watching while the computer is away.</p>
+  </section>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>Set up the reader once over USB, if you have not already.
+        <code class="setup-command">kobo setup</code></li>
+      <li>Pair this computer with the reader. It writes the pairing for Sidekick, Deck and Paperterm onto the reader, so there is nothing to type there. The first time, close Cobalt and open it again afterwards.
+        <code class="setup-command">kobo sidekick init</code></li>
+      <li>Let Claude Code ask through Sidekick. Use codex instead of claude for Codex.
+        <code class="setup-command">kobo sidekick setup claude</code></li>
+      <li>Start the helper and leave it running, then open Sidekick on the reader.
+        <code class="setup-command">kobo sidekick run</code></li>
+    </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.0",
-  "release_notes": "Initial token-based reader with library search, reading positions, images and article actions.",
+  "version": "0.1.1",
+  "release_notes": "Connects from your computer with kobo connect readeck, keeps the articles you open for reading offline, and says why a refresh failed instead of showing an empty inbox. Reopens a document on the page you left.",
   "minimum_cobalt_version": "0.3.25",
   "glyph": "bookmark",
   "capabilities": [

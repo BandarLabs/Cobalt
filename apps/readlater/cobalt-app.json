@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere. Needs an account.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.6",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.2.7",
+  "release_notes": "Picks up a sign-in from your computer without restarting, and says why a sync failed instead of Off the air.",
   "glyph": "bookmark",
   "capabilities": [
     "network"

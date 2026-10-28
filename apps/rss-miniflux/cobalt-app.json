@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere. Needs an account.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.6",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.7",
+  "release_notes": "Says why a sync failed and how to fix it, keeps the fresh Unread list when Starred or History is refused, and no longer asks for a credential name. Reopens a document on the page you left.",
   "glyph": "rss",
   "capabilities": [
     "network"

@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sync: Syncthing folder sync on Kobo | Cobalt</title>
-<meta name="description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/syncthing/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Sync: Syncthing folder sync on Kobo | Cobalt">
-<meta property="og:description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/syncthing/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Sync folders: vault, frame and books receive, out sends.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Sync: Syncthing folder sync on Kobo | Cobalt">
-<meta name="twitter:description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
 <meta name="twitter:image:alt" content="Sync folders: vault, frame and books receive, out sends.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-BKZu+fHArbYL5lIbl8cYMvMHl3wZDXtOTaoouoUVtV0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-397eVa0BAbfrbRZxvxRzwo8B47D+iWwxFPEhHfQepNA='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Sync",
-      "description": "Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.",
+      "description": "Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/syncthing/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.3.4",
+      "softwareVersion": "0.3.5",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -97,9 +97,9 @@
     <div class="app-copy">
       <p class="eyebrow">Devices</p>
       <h1>Sync</h1>
-      <p class="summary">Sync notes, photos and books from your computer to your Kobo with Syncthing, and choose when the Kobo wakes to sync so Wi-Fi does not drain the battery.</p>
+      <p class="summary">Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.3.4</dd></div>
+        <div><dt>Version</dt><dd>0.3.5</dd></div>
         <div><dt>Permissions</dt><dd>scheduled-wake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -118,20 +118,20 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.3.4</h2>
-    <p>Rebuilt with the current Cobalt SDK.</p>
+    <h2>New in 0.3.5</h2>
+    <p>Adds Sync now, follows a sync as it runs, and says in plain words why a sync did not finish.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>The first time Sync runs it downloads its engine over Wi-Fi, so the reader needs to be online once. This computer needs a package-manager-installed Syncthing.</li>
-      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
-        <code class="setup-command">kobo pair</code></li>
-      <li>Pair one folder on this computer with a fixed folder on the reader.
+      <li>Set up the reader once over USB, if you have not already. Sync also needs Syncthing on this computer, installed with its package manager.
+        <code class="setup-command">kobo setup</code></li>
+      <li>With the reader awake on Wi-Fi, pair one folder on this computer with a folder on the reader. The first time, the reader downloads the Syncthing engine.
         <code class="setup-command">kobo sync setup ~/Documents/notes --folder vault</code></li>
-      <li>Resume Sync on the reader, then start this computer's private peer.
+      <li>Start this computer's side of Sync and leave it running.
         <code class="setup-command">kobo sync run</code></li>
+      <li>On the reader, open Sync and tap Turn on Sync. The first sync starts at once and takes up to five minutes.</li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
       <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>

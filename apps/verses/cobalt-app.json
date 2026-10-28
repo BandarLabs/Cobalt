@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.10",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.11",
+  "release_notes": "Sonnets and short poems now sit whole on one page, longer poems turn between stanzas, and 41 poems are ready when you are offline.",
   "glyph": "note",
   "capabilities": [
     "network"

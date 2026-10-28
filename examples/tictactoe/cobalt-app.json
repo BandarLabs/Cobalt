@@ -3,8 +3,8 @@
   "display_name": "Tic-tac-toe",
   "short_label": "Tic-tac-toe",
   "summary": "Play tic-tac-toe together on one Kobo.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "glyph": "grid",
   "capabilities": [],
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for."
+  "release_notes": "Rules and New game sit in the top bar where every game keeps them, and a finished game offers Next game at the foot."
 }

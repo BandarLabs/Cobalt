@@ -4,8 +4,8 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.14",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.15",
+  "release_notes": "Hundreds of new built-in questions, rounds that pick up where you left off after the reader sleeps, and Rules and New game in the same place as in the other games.",
   "glyph": "chat",
   "capabilities": [
     "network"

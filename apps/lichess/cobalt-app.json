@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.17",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "1.0.18",
+  "release_notes": "Play casual games as well as rated ones, play the computer as Black or White with or without a clock, and see the last move outlined on the board.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

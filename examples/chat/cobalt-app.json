@@ -3,13 +3,13 @@
   "display_name": "AI Command Center",
   "short_label": "AI Chat",
   "summary": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "minimum_cobalt_version": "0.3.4",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "release_notes": "Anthropic answers again on its current model, the first screen says which key to add, and a long answer that stops early offers Continue.",
   "setup": {
     "steps": [
       {

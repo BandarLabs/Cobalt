@@ -5,8 +5,8 @@
   "summary": "Play four familiar logic games offline.",
   "page_description": "Four hundred and twenty offline puzzles across four logic games, graded from Starter to Hard, with the same controls in every game, separate progress and undo.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.8",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.9",
+  "release_notes": "420 puzzles graded Starter to Hard, a puzzle list you can filter by grade, Minesweeper fields you can clear without guessing, and Rules, Undo and New game in the same place in every game.",
   "glyph": "grid",
   "capabilities": []
 }

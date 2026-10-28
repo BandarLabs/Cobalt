@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.6",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.2.7",
+  "release_notes": "Shows the computer command and the HTTPS requirement on the first screen, with Check again to pick up a connection made on your computer.",
   "glyph": "light",
   "capabilities": [
     "network"

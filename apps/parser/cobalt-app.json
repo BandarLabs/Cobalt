@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.14",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.15",
+  "release_notes": "Verbs like Open and Read ask which thing you mean, and stories you push appear by title without a refresh.",
   "glyph": "book",
   "capabilities": [],
   "setup": {
