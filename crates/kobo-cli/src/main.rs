@@ -6390,7 +6390,7 @@ fn find_rust_lld() -> Result<PathBuf, String> {
     // rust-lld is part of the rustc component, so a rustup toolchain always
     // carries it; a from-source or repackaged rustc may not.
     Err(format!(
-        "rust-lld was not found in the active Rust toolchain under {}; a          rustup-managed toolchain carries it in the rustc component",
+        "rust-lld was not found in the active Rust toolchain under {}; a rustup-managed toolchain carries it in the rustc component",
         root.display()
     ))
 }

@@ -277,12 +277,6 @@ pub fn mount_roots() -> Vec<PathBuf> {
     }
 }
 
-/// Every volume worth checking for a reader, one per mount point.
-///
-/// On Unix the mount points are the children of [`mount_roots`]. Windows has
-/// no shared parent directory: each volume is its own drive-letter root, so
-/// the letters themselves are the candidates. Probing a letter with no drive
-/// behind it, or a drive with no card in it, fails fast and silently.
 /// Every drive-letter root, `A:\` through `Z:\`.
 fn drive_letter_roots() -> Vec<PathBuf> {
     (b'A'..=b'Z')
@@ -290,6 +284,12 @@ fn drive_letter_roots() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Every volume worth checking for a reader, one per mount point.
+///
+/// On Unix the mount points are the children of [`mount_roots`]. Windows has
+/// no shared parent directory: each volume is its own drive-letter root, so
+/// the letters themselves are the candidates. Probing a letter with no drive
+/// behind it fails fast and silently.
 fn candidates() -> Vec<PathBuf> {
     if cfg!(windows) {
         return drive_letter_roots();
