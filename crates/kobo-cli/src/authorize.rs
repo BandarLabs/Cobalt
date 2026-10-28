@@ -71,8 +71,8 @@ pub enum Staged {
 /// The private key path on this machine.
 #[must_use]
 pub fn key_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".ssh").join(KEY_NAME))
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".ssh").join(KEY_NAME))
 }
 
 /// Returns this machine's public key, creating the pair if it has none.

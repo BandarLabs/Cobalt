@@ -133,9 +133,7 @@ impl Agent {
 
 /// The home directory.
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "no HOME in the environment".to_owned())
+    kobo_abi::home_directory().ok_or_else(|| "no HOME in the environment".to_owned())
 }
 
 /// Whether `name` is an executable somewhere on `PATH`.

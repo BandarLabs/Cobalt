@@ -58,6 +58,16 @@ Unsupported on Windows by design:
   `kobo-tap`/`kobo-guard`/`kobo-handoff`/`kobo-smoke` binaries) are ARM
   Linux device software; they are not built for Windows at all.
 
+### Where the host tools keep their files
+
+Keys, saved readers, receipts, the Sync home and the trust roots live under
+the home directory, exactly as on Unix. Windows shells do not set `HOME`, so
+`kobo_abi::home_directory` reads `HOME` when it is set and `USERPROFILE`
+otherwise. The files therefore land under the account's profile, whose ACL
+is what keeps them private on Windows. Pointing `HOME`, `KOBO_CONFIG_DIR` or
+`KOBO_SYNC_HOME` outside the profile gives up that protection, because
+nothing on Windows narrows the inherited ACL the way `0600` does on Unix.
+
 ### Known boundary: the simulator channel on Windows
 
 On Unix the local app channel is a Unix-domain socket with owner-only mode

@@ -529,10 +529,10 @@ fn config_dir(home: Option<&str>) -> Result<PathBuf, String> {
     if let Some(home) = home {
         return Ok(PathBuf::from(home));
     }
-    let Some(user) = env::var_os("HOME") else {
+    let Some(user) = kobo_abi::home_directory() else {
         return Err(format!("no HOME to look in; pass --home DIR\n{USAGE}"));
     };
-    Ok(PathBuf::from(user).join(".config/kobo/sidekick"))
+    Ok(user.join(".config/kobo/sidekick"))
 }
 
 fn config_path(home: Option<&str>) -> Result<PathBuf, String> {

@@ -16,7 +16,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Opens an existing file for reading without following a final symlink.
 ///
@@ -74,6 +74,62 @@ pub fn set_nonblocking(fd: &impl AsRawFd) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// The account's home directory, where the host tools keep keys, readers and
+/// configuration.
+///
+/// Every Unix shell exports `HOME`, and on Unix this is that variable and
+/// nothing more. Windows does not set it: a Command Prompt, `PowerShell`, and
+/// any program a desktop application starts carry `USERPROFILE` instead, and
+/// `HOME` appears only under Git Bash or Cygwin. Reading `HOME` alone there
+/// refused every command that needs a key or a saved reader, and where a
+/// caller treated the missing variable as an empty path it wrote the owner's
+/// files into whatever directory the command happened to start in. An
+/// explicit `HOME` still wins on Windows, so a shell that sets one, and a
+/// test that points it at a scratch directory, behave as they do on Unix.
+#[must_use]
+pub fn home_directory() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        ["HOME", "USERPROFILE"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .find(|value| !value.is_empty())
+            .map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use std::path::PathBuf;
+
+    /// The only test in this crate that touches `HOME`, so changing it here
+    /// cannot race another test reading it.
+    #[test]
+    fn the_home_directory_is_home_when_set_and_the_profile_on_windows_when_not() {
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/explicit/home");
+        assert_eq!(
+            super::home_directory(),
+            Some(PathBuf::from("/explicit/home"))
+        );
+        std::env::remove_var("HOME");
+        #[cfg(windows)]
+        assert_eq!(
+            super::home_directory(),
+            std::env::var_os("USERPROFILE").map(PathBuf::from)
+        );
+        #[cfg(not(windows))]
+        assert_eq!(super::home_directory(), None);
+        if let Some(home) = saved {
+            std::env::set_var("HOME", home);
+        }
+    }
 }
 
 /// How many bytes are still free on the filesystem `path` lives on.

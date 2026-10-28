@@ -1534,8 +1534,8 @@ fn stream_authority() -> Result<PathBuf, String> {
     let root = if let Some(value) = std::env::var_os("KOBO_STREAM_CONFIG_DIR") {
         PathBuf::from(value)
     } else {
-        let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-        PathBuf::from(home).join(".config").join("kobo")
+        let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+        home.join(".config").join("kobo")
     };
     stream_authority_in(&root)
 }
@@ -1771,7 +1771,7 @@ fn parse_host_update(arguments: &[String]) -> Result<HostUpdateChannel, String> 
 
 fn update_host(arguments: &[String]) -> Result<(), String> {
     let channel = parse_host_update(arguments)?;
-    let home = env::var_os("HOME").ok_or("HOME is not set")?;
+    let home = kobo_abi::home_directory().ok_or("HOME is not set")?;
     let data = env::var_os("XDG_DATA_HOME")
         .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
     let root = data.join("kobo");
@@ -4428,8 +4428,8 @@ fn remote_session_failure(
 pub const DEVICE_KEY_NAME: &str = "kobo_cobalt";
 
 fn default_device_key_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".ssh").join(DEVICE_KEY_NAME))
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".ssh").join(DEVICE_KEY_NAME))
 }
 
 /// The dedicated key used for reader connections, when it exists.
@@ -5139,7 +5139,7 @@ fn load_release_package_from_manifest(
 }
 
 fn managed_release_directory() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
+    let home = kobo_abi::home_directory()?;
     let data = env::var_os("XDG_DATA_HOME")
         .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
     let state = fs::read_to_string(data.join("kobo/install-state")).ok()?;
@@ -7250,8 +7250,7 @@ fn secret_source_candidates(name: &str) -> Vec<PathBuf> {
     if let Some(directory) = std::env::var_os("KOBO_SECRETS_DIR") {
         candidates.push(PathBuf::from(directory).join(name));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    if let Some(home) = kobo_abi::home_directory() {
         candidates.push(
             home.join(".config")
                 .join("cobalt")
@@ -7893,12 +7892,12 @@ fn parse_trust(arguments: &[String]) -> Result<(SecretAction, SecretTarget), Str
 /// trust directory every host runtime already reads, which is where
 /// `kobo-sidekick init` writes its certificate.
 fn trust_source(name: &str) -> Result<PathBuf, String> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some(home) = kobo_abi::home_directory() else {
         return Err(format!(
             "no HOME to look in; pass --from PATH\n{TRUST_USAGE}"
         ));
     };
-    let candidate = PathBuf::from(home)
+    let candidate = home
         .join(".config")
         .join("kobo")
         .join("trust")

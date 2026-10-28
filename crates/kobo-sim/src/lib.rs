@@ -3671,14 +3671,9 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
     TRUST.call_once(|| {
         let directory = std::env::var_os("KOBO_SIM_TRUST_DIR").map_or_else(
             || {
-                std::env::var_os("HOME").map_or_else(
+                kobo_abi::home_directory().map_or_else(
                     || std::path::PathBuf::from(".kobo-trust"),
-                    |home| {
-                        std::path::PathBuf::from(home)
-                            .join(".config")
-                            .join("kobo")
-                            .join("trust")
-                    },
+                    |home| home.join(".config").join("kobo").join("trust"),
                 )
             },
             std::path::PathBuf::from,

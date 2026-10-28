@@ -373,7 +373,7 @@ fn locate() -> Result<PathBuf, String> {
 }
 
 fn config() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_owned())?;
+    let home = kobo_abi::home_directory().ok_or_else(|| "HOME is not set".to_owned())?;
     Ok(Path::new(&home).join(".config/kobo/sidekick"))
 }
 

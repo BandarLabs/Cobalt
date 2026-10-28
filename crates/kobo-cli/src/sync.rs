@@ -606,11 +606,8 @@ fn host_home() -> Result<PathBuf, String> {
         }
         return Ok(root);
     }
-    let home = env::var_os("HOME").ok_or("HOME is not set")?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("syncthing"))
+    let home = kobo_abi::home_directory().ok_or("HOME is not set")?;
+    Ok(home.join(".config").join("kobo").join("syncthing"))
 }
 
 fn protect_home(home: &Path) -> Result<(), String> {

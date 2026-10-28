@@ -532,13 +532,8 @@ pub fn host_trust_names() -> Vec<String> {
 
 /// Where this machine keeps the trust roots its own tooling made.
 fn host_trust_directory() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("kobo")
-            .join("trust"),
-    )
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".config").join("kobo").join("trust"))
 }
 
 /// The testable inside of [`carry_trust_roots`]: everything but where home is.

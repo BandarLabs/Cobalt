@@ -748,26 +748,16 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
 /// host-side credentials, so `kobo-sidekick init` can drop a certificate in
 /// and every host runtime finds it without being told.
 fn host_trust_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-trust"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("trust")
-        },
+        |home| home.join(".config").join("kobo").join("trust"),
     )
 }
 
 fn host_dictionary_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-dictionaries"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("dictionaries")
-        },
+        |home| home.join(".config").join("kobo").join("dictionaries"),
     )
 }
 

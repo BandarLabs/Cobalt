@@ -933,8 +933,8 @@ fn config_dir() -> Result<PathBuf, String> {
         }
         return Ok(root);
     }
-    let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-    Ok(PathBuf::from(home).join(".config").join("kobo"))
+    let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+    Ok(home.join(".config").join("kobo"))
 }
 fn identity_dir() -> Result<PathBuf, String> {
     Ok(config_dir()?.join("stream"))
