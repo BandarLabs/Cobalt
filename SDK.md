@@ -1415,7 +1415,7 @@ player.start(context);
 
 // In on_action:
 if player.press(context, action) {
-    context.set_screen(player.screen());
+    context.set_screen(player.screen_for(context));
 }
 
 // Forward on_device_result and on_task in the same way. The latter owns only
@@ -1439,6 +1439,13 @@ tapping a book is a one way door. With it the application receives
 
 The author is the hero's byline and is stated exactly once. It is
 not repeated as a fact row two lines below.
+
+`screen_for(context)` shapes the player for the panel and text size. Where the
+full player would run off the panel, the cover gives way first, then the
+volume buttons join the transport row and the level becomes a fact, and held
+sideways the book and its controls stand side by side. Every control stays.
+The headphones/speaker picker pages its devices by what the panel holds.
+`screen()` draws the full player and is only right where it is known to fit.
 
 ---
 

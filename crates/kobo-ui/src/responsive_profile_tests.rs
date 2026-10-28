@@ -407,7 +407,7 @@ fn legacy_flow_keeps_the_uncapped_panel_width() {
 #[test]
 fn square_boards_keep_their_geometry_and_trailing_controls_at_larger_sizes() {
     for (name, base) in panels() {
-        for text_scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+        for text_scale in TextScale::STEPS {
             let metrics = DisplayMetrics { text_scale, ..base };
             let screen = Screen::new(
                 1,

@@ -88,6 +88,10 @@ impl Control {
     /// shortened to fit -- "Return to Kobo reader" becomes "Return to Kobo…"
     /// on a narrow panel, and a script that had to know which panel it was
     /// running on would be a script nobody kept up to date.
+    ///
+    /// A line that ends on a word's own hyphen ("calibre-" over "web") is
+    /// joined to the next without a space, because the wrap broke the word
+    /// where it was allowed to, and a reader still reads "calibre-web".
     fn says(&self, needle: &str) -> bool {
         let normalize = |text: &str| {
             text.split_whitespace()
@@ -95,7 +99,20 @@ impl Control {
                 .join(" ")
                 .to_lowercase()
         };
-        normalize(&self.lines.join(" ")).contains(&normalize(needle))
+        let mut joined = String::new();
+        for line in &self.lines {
+            let broken_at_hyphen = joined.ends_with('-')
+                && joined
+                    .chars()
+                    .rev()
+                    .nth(1)
+                    .is_some_and(char::is_alphanumeric);
+            if !joined.is_empty() && !broken_at_hyphen {
+                joined.push(' ');
+            }
+            joined.push_str(line.trim());
+        }
+        normalize(&joined).contains(&normalize(needle))
     }
 
     /// Whether one of this node's lines is exactly `needle`.
@@ -314,6 +331,10 @@ impl Driver {
     /// declared page-turn zones, taps the forward zone -- the empty right
     /// edge of the content, where a reader's thumb goes -- and looks
     /// again. The bound keeps a genuinely absent label a failure.
+    ///
+    /// A list whose rows run the full width of the content leaves no empty
+    /// spot in that zone, at the largest text size especially, so there the
+    /// reader's page key turns the page instead, as an owner would.
     fn tap_paged(&mut self, label: &str) -> Result<(), String> {
         const MAX_PAGES: u32 = 8;
         for page in 0..=MAX_PAGES {
@@ -329,9 +350,10 @@ impl Driver {
             if !paging.has_next {
                 break;
             }
-            let (x, y) = forward_point(&controls, paging.content)
-                .ok_or("no empty spot in the forward page-turn zone")?;
-            self.touch(x, y)?;
+            match forward_point(&controls, paging.content) {
+                Some((x, y)) => self.touch(x, y)?,
+                None => self.post_and_settle("/input", "page next")?,
+            }
         }
         Err(format!(
             "{label:?} never appeared within {MAX_PAGES} page turns"
@@ -1739,6 +1761,25 @@ mod tests {
         assert!(text.says("CHECK\nfree  space"));
         assert!(!text.says("try again"));
         assert!(!text.says("finish Check"));
+    }
+
+    #[test]
+    fn a_word_broken_at_its_own_hyphen_is_read_as_one_word() {
+        let text = super::Control {
+            kind: "Paragraph".into(),
+            rect: (0, 0, 0, 0),
+            centre: (50, 100),
+            action: None,
+            lines: vec![
+                "Run kobo connect calibre-".into(),
+                "web on your computer, or a -".into(),
+                "list".into(),
+            ],
+        };
+        assert!(text.says("kobo connect calibre-web on your computer"));
+        assert!(!text.says("calibre- web"));
+        // A dash standing alone is not a broken word.
+        assert!(text.says("or a - list"));
     }
 
     #[test]

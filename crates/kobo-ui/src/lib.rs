@@ -9262,9 +9262,10 @@ fn layout_selection_bar(
 /// A function of the panel and the text size alone, so an application can
 /// work out which page holds its answer, and which page is the last, before
 /// it builds a screen. Counted for the worst screen an option list is put on:
-/// the status band, a top bar, a one line prompt, the pager and a bottom bar,
-/// so a list that fits there fits everywhere, and a screen without a bottom
-/// bar has the bar's height left over for a line of its own.
+/// the status band, a top bar and its rule, a one line prompt, the pager and a
+/// bottom bar or bottom action, so a list that fits there fits everywhere, and
+/// a screen without a bottom bar has the bar's height left over for a line of
+/// its own.
 #[must_use]
 pub fn options_per_page(metrics: &DisplayMetrics, summaries: bool) -> usize {
     with_text_scale(metrics.text_scale, || {
@@ -9279,9 +9280,14 @@ pub fn options_per_page(metrics: &DisplayMetrics, summaries: bool) -> usize {
 fn options_per_page_at_current_scale(metrics: &DisplayMetrics, summaries: bool) -> usize {
     {
         let gap = metrics.space(Space::Tight);
+        // The top bar is drawn with a rule under it, and content starts below
+        // the rule. Leaving the rule out counted a few pixels the panel does
+        // not have, which on the odd panel and size was the difference
+        // between the pager and the bottom action sharing a line.
         let chrome = metrics
             .status_band_height()
             .saturating_add(metrics.top_bar_height())
+            .saturating_add(metrics.rule_thickness())
             .saturating_add(gap)
             .saturating_add(metrics.nav_bar_height());
         let prompt = FontSize::Body

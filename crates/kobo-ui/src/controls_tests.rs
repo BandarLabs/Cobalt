@@ -339,6 +339,92 @@ fn a_list_that_fits_one_page_has_no_pager() {
     );
 }
 
+/// Lays out the middle page of an option list three pages long, under a top
+/// bar and over a bottom action, measured with the status band a reader draws,
+/// and says what went wrong, if anything.
+fn option_list_over_a_bottom_action(metrics: &DisplayMetrics, summaries: bool) -> Option<String> {
+    let count = options_per_page(metrics, summaries) * 2 + 1;
+    let rows = (0..count).map(|index| {
+        OptionRow::new(
+            ActionId(100 + index as u32),
+            format!("Zone {index}"),
+            if summaries {
+                format!("UTC+{index}")
+            } else {
+                String::new()
+            },
+        )
+    });
+    let screen = screen(vec![Node::Options {
+        id: NodeId(1),
+        prompt: "Time zone".to_owned(),
+        options: rows.collect(),
+        selected: Some(0),
+        page: 1,
+        previous: ActionId(60),
+        next: ActionId(61),
+    }])
+    .with_bottom_action(BottomAction::new(
+        NodeId(91),
+        BarAction::new(ActionId(70), "Done"),
+    ));
+    let diagnostics = screen.diagnostics(metrics, &Chrome::measuring(true));
+    if !diagnostics.issues.is_empty() {
+        return Some(format!("{:?}", diagnostics.issues));
+    }
+    let pager = kinds(&diagnostics.layout, |kind| {
+        matches!(kind, LayoutKind::PagePosition)
+    })[0]
+        .rect;
+    let done = diagnostics.layout.rect_of_action(ActionId(70))?;
+    (pager.y + pager.height > done.y).then(|| format!("the pager {pager:?} runs into {done:?}"))
+}
+
+#[test]
+fn an_option_list_leaves_room_for_a_bottom_action_on_every_panel_at_every_size_held_either_way() {
+    for (name, panel) in PANELS {
+        for text_scale in TextScale::STEPS {
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..panel
+                }
+                .oriented(orientation);
+                for summaries in [false, true] {
+                    if let Some(problem) = option_list_over_a_bottom_action(&metrics, summaries) {
+                        panic!("{name} {text_scale:?} {orientation:?} summaries {summaries}: {problem}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The rows a page holds change by one every row's height of panel, so a
+/// count that forgets a few pixels of chrome is right on most panels and
+/// wrong on the few whose spare room is smaller than what it forgot. Every
+/// height across more than a row's pitch finds those few, whatever the type
+/// measures; held sideways, a Clara at Larger was one of them, and its pager
+/// ran two pixels under the bottom action.
+#[test]
+fn an_option_list_with_a_bottom_action_fits_a_panel_of_any_height() {
+    for text_scale in [TextScale::Default, TextScale::Larger, TextScale::Largest] {
+        for height in 1000..1200 {
+            let metrics = DisplayMetrics {
+                width: 1448,
+                height,
+                pixels_per_inch: 300,
+                text_scale,
+            };
+            for summaries in [false, true] {
+                if let Some(problem) = option_list_over_a_bottom_action(&metrics, summaries) {
+                    panic!("{height} px high, {text_scale:?}, summaries {summaries}: {problem}");
+                }
+            }
+        }
+    }
+}
+
 fn field(label: Option<&str>, hint: Option<&str>, error: Option<&str>, kind: FieldKind) -> Screen {
     screen(vec![
         Node::Field {
