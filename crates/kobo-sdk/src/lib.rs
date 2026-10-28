@@ -9,6 +9,8 @@
 mod callback_scale_tests;
 pub mod collections;
 #[cfg(test)]
+mod controls_fit_tests;
+#[cfg(test)]
 mod load_result_tests;
 #[cfg(test)]
 mod segmented_tests;
@@ -27,6 +29,7 @@ pub use kobo_protocol::{
     MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
     MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
+pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
@@ -39,6 +42,12 @@ pub use kobo_ui::{
     TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
     MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
     MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+};
+/// The runtime-drawn controls of protocol 16, and the limits that fix their
+/// footprints.
+pub use kobo_ui::{
+    options_pages, options_per_page, FieldKind, OptionRow, MAX_CODE_BYTES, MAX_OPTIONS,
+    MAX_OPTIONS_PER_PAGE, MAX_SELECTION_ACTIONS, MAX_STEPS,
 };
 pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 use std::collections::BTreeMap;
@@ -1305,6 +1314,12 @@ impl Context {
                     );
                 }
             }
+        }
+        // A text field drawn open on this screen is asked for ahead of it, so
+        // the runtime puts its keyboard up without first painting the screen
+        // underneath that the keyboard is about to cover.
+        if let Some(request) = keyboard::runtime::take_drawn() {
+            self.commands.push(Command::Device(request));
         }
         self.commands.push(Command::SetScreen(screen));
     }
@@ -2779,6 +2794,10 @@ pub struct AppRunner<A> {
     metrics: DisplayMetrics,
     started: bool,
     pending: VecDeque<DeviceRequest>,
+    /// Text fields the runtime is holding open for this application. Kept
+    /// out of `pending` because their answers do not arrive in turn: see
+    /// [`Self::device_result`].
+    pending_text: usize,
     /// Store requests sent but not yet answered. Every request is answered
     /// exactly once, in request order. Save keys are retained because denied
     /// results carry no key. Payloads are never copied into this queue.
@@ -2838,6 +2857,7 @@ impl<A: KoboApp> AppRunner<A> {
             metrics: DisplayMetrics::default(),
             started: false,
             pending: VecDeque::new(),
+            pending_text: 0,
             pending_stores: VecDeque::new(),
             next_task: 0,
             in_flight: 0,
@@ -2952,10 +2972,68 @@ impl<A: KoboApp> AppRunner<A> {
     /// Answers arrive in request order on a single ordered stream. An answer
     /// with nothing outstanding is ignored rather than mismatched.
     pub fn device_result(&mut self, result: DeviceResult) -> Vec<Command> {
+        // A text field's answer is matched by its shape, not its place in the
+        // queue: the field stays open for as long as the owner takes, and the
+        // answers to everything asked meanwhile arrive before it.
+        if let DeviceResult::Text(outcome) = result {
+            if self.pending_text == 0 {
+                return Vec::new();
+            }
+            self.pending_text -= 1;
+            keyboard::runtime::answer(outcome);
+            // The runtime was showing its field, not this application's
+            // screen, so the next screen is sent even if it is the same one.
+            self.displayed = None;
+            return self.dispatch(|app, context| app.on_action(context, keyboard::answered()));
+        }
         let Some(request) = self.pending.pop_front() else {
             return Vec::new();
         };
         self.dispatch(|app, context| app.on_device_result(context, request, result))
+    }
+
+    /// Answers the text field the application has open, as if the owner had
+    /// typed `text` on the runtime's keyboard and submitted it.
+    ///
+    /// For an application's tests, which have no runtime to draw the field.
+    /// See [`keyboard::testing`] for one that drives the application
+    /// directly rather than through a runner.
+    ///
+    /// # Panics
+    ///
+    /// When the application has no field open.
+    pub fn type_text(&mut self, text: &str) -> Vec<Command> {
+        self.answer_text(kobo_protocol::TextOutcome::Typed(text.to_owned()))
+    }
+
+    /// Backs out of the text field the application has open, as if the owner
+    /// had tapped Back on the runtime's keyboard.
+    ///
+    /// # Panics
+    ///
+    /// When the application has no field open.
+    pub fn cancel_text(&mut self) -> Vec<Command> {
+        self.answer_text(kobo_protocol::TextOutcome::Cancelled)
+    }
+
+    /// Answers the newest text field the application has open with
+    /// `outcome`, cancelling any older one first, which is the order the
+    /// runtime answers in.
+    ///
+    /// # Panics
+    ///
+    /// When the application has no field open, which is a test that typed
+    /// before tapping whatever opens one.
+    pub fn answer_text(&mut self, outcome: kobo_protocol::TextOutcome) -> Vec<Command> {
+        assert!(self.pending_text > 0, "no text field is open to answer");
+        let mut commands = Vec::new();
+        for _ in 1..self.pending_text {
+            commands.extend(
+                self.device_result(DeviceResult::Text(kobo_protocol::TextOutcome::Cancelled)),
+            );
+        }
+        commands.extend(self.device_result(DeviceResult::Text(outcome)));
+        commands
     }
 
     /// Delivers the outcome of one task.
@@ -3069,7 +3147,7 @@ impl<A: KoboApp> AppRunner<A> {
     /// The device requests still awaiting an answer, oldest first.
     #[must_use]
     pub fn outstanding_requests(&self) -> usize {
-        self.pending.len()
+        self.pending.len() + self.pending_text
     }
 
     /// Every answer the runtime still owes this application.
@@ -3079,7 +3157,7 @@ impl<A: KoboApp> AppRunner<A> {
     /// the runtime rather than the clean shutdown it looks like from here.
     #[must_use]
     pub fn outstanding_answers(&self) -> usize {
-        self.pending.len() + self.pending_stores.len()
+        self.pending.len() + self.pending_text + self.pending_stores.len()
     }
 
     #[must_use]
@@ -3153,6 +3231,7 @@ impl<A: KoboApp> AppRunner<A> {
         });
         for command in &commands {
             match command {
+                Command::Device(DeviceRequest::TypeText { .. }) => self.pending_text += 1,
                 Command::Device(request) => self.pending.push_back(request.clone()),
                 Command::Store(request) => {
                     self.pending_stores.push_back(match request {

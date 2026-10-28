@@ -390,9 +390,10 @@ impl Driver {
         self.touch(x, y)
     }
 
-    /// Types through visible touch targets. Standard SDK key identities take
+    /// Types through visible touch targets. Standard key identities, which
+    /// the runtime's keyboard and the keys an application draws share, take
     /// precedence over matching letters in a crossword or document. Custom
-    /// keyboards retain label matching when no SDK keyboard is present.
+    /// keyboards retain label matching when no standard keyboard is present.
     fn type_text(&mut self, text: &str) -> Result<(), String> {
         for character in text.chars() {
             let label = match character {
@@ -408,9 +409,11 @@ impl Driver {
     ///
     /// A pairing code such as `dr2q29` mixes letters and digits, and an owner
     /// taps the layer key to reach each digit. Refusing every character not on
-    /// the page showing made a script spell that out key by key. The SDK
-    /// keyboard has four pages, letters, symbols and the shifted form of each,
-    /// and the two toggles visit all of them before coming back.
+    /// the page showing made a script spell that out key by key. The
+    /// keyboard, whether the runtime draws it for a text field or an
+    /// application draws it for a terminal, has four pages, letters, symbols
+    /// and the shifted form of each, and the two toggles visit all of them
+    /// before coming back.
     fn press_key(&mut self, label: &str) -> Result<(), String> {
         let layer = parse_action_id("kb.layer").expect("fixed key");
         let shift = parse_action_id("kb.shift").expect("fixed key");
@@ -1393,7 +1396,16 @@ fn keyboard_key<'a>(controls: &'a [Control], label: &str) -> Option<&'a Control>
         .flat_map(|row| (0..10).map(move |column| format!("kb.r{row}c{column}")))
         .filter_map(|name| parse_action_id(&name).ok())
         .collect::<Vec<_>>();
-    keys.push(parse_action_id("kb.space").expect("fixed key"));
+    // The space bar, and the three keys an address keyboard has in its
+    // place, are on the bottom row of every page.
+    for name in [
+        kobo_ui::keyboard::SPACE,
+        kobo_ui::keyboard::AT,
+        kobo_ui::keyboard::SLASH,
+        kobo_ui::keyboard::DOT,
+    ] {
+        keys.push(parse_action_id(name).expect("fixed key"));
+    }
     let is_key = |control: &Control| control.action.is_some_and(|action| keys.contains(&action));
     let standard = controls.iter().any(is_key);
     controls.iter().find(|control| {
@@ -1527,6 +1539,31 @@ mod tests {
             super::keyboard_key(&cells[..1], "n").unwrap().action,
             cells[0].action
         );
+    }
+
+    #[test]
+    fn typing_an_address_finds_the_marks_the_runtime_keyboard_has_beside_its_letters() {
+        let control = |name: &str, label: &str| super::Control {
+            kind: "Cell".into(),
+            rect: (0, 0, 0, 0),
+            centre: (1, 1),
+            lines: vec![label.into()],
+            action: Some(super::parse_action_id(name).unwrap()),
+        };
+        let cells = [
+            control("entry-3", "@"),
+            control("kb.r0c0", "q"),
+            control("kb.at", "@"),
+            control("kb.slash", "/"),
+            control("kb.dot", "."),
+        ];
+        for (label, at) in [("@", 2), ("/", 3), (".", 4)] {
+            assert_eq!(
+                super::keyboard_key(&cells, label).unwrap().action,
+                cells[at].action,
+                "{label}"
+            );
+        }
     }
 
     #[test]

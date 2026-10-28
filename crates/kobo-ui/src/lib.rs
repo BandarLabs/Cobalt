@@ -12,6 +12,7 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 mod board;
+pub mod keyboard;
 mod pencil;
 pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
 pub use pencil::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
@@ -3228,6 +3229,19 @@ pub enum Node {
         placeholder: String,
         /// The cross that empties it. Absent when there is nothing to empty.
         clear: Option<ActionId>,
+        /// What the field is for, set on one line above it.
+        ///
+        /// On the field rather than in a heading beside it, because every
+        /// application laid that heading out differently and none of them
+        /// could say which field it named once two were stacked.
+        label: Option<String>,
+        /// How to fill it in, set below it in the muted tone.
+        hint: Option<String>,
+        /// Why what was typed was refused. Drawn in the hint's place rather
+        /// than under it, so a field that fails does not push everything
+        /// below it down the panel.
+        error: Option<String>,
+        kind: FieldKind,
     },
     /// A wrapping run of short tappable labels: facets, subjects, filters.
     ///
@@ -3457,6 +3471,10 @@ pub enum Node {
         id: NodeId,
         level: BannerLevel,
         text: String,
+        /// The one thing to do about it: "Check again", "Retry", "Sign in
+        /// again". Set on a line of its own under the words, against the
+        /// trailing edge, so the words keep the banner's whole measure.
+        action: Option<BarAction>,
     },
     /// A mark, a name and a sentence, centred in whatever room is left.
     ///
@@ -3578,7 +3596,158 @@ pub enum Node {
         /// Where the block cursor sits, when it is showing.
         cursor: Option<Caret>,
     },
+    /// A setting that is either on or off, and says so with a switch.
+    ///
+    /// Settings used to write "On" or "Off" as a row's value, which tells the
+    /// reader the state and nothing about the fact that tapping the row
+    /// changes it. The whole row is the target, as a phone's settings rows
+    /// are, and the tap is only reported: the application decides what on
+    /// means and sends the screen back with the new state.
+    ///
+    /// Exactly one row high whatever it says. The label and the summary are
+    /// one line each, so a long setting name is ellipsised rather than
+    /// allowed to grow the row, and a list of toggles keeps one pitch.
+    Toggle {
+        id: NodeId,
+        action: ActionId,
+        label: String,
+        /// What being on does, set under the label in the muted tone. Empty
+        /// for a setting whose name already says it.
+        summary: String,
+        on: bool,
+        /// A setting that cannot change right now is drawn muted and answers
+        /// nothing, rather than disappearing and moving the rows under it.
+        state: ControlState,
+    },
+    /// How many rows are ticked, and what can be done to all of them at once.
+    ///
+    /// Multi-select is row state plus this bar rather than a list in a
+    /// select mode, so the rows stay ordinary rows and an application that
+    /// only wants ticks never has to draw a bar. One bar high, with the
+    /// count at the leading edge and up to [`MAX_SELECTION_ACTIONS`] verbs
+    /// against the trailing one.
+    SelectionBar {
+        id: NodeId,
+        count: u32,
+        /// Entries past [`MAX_SELECTION_ACTIONS`] are dropped and reported.
+        actions: Vec<BarAction>,
+    },
+    /// One answer from a list too long for [`Self::Choice`]: a time zone, a
+    /// network, a category.
+    ///
+    /// Paged rather than scrolled, a page of rows at a time with a pager
+    /// under them. How many rows a page holds depends only on the panel and
+    /// the text size, never on the words, so an application can ask
+    /// [`options_per_page`] which page its answer is on before it draws
+    /// anything.
+    Options {
+        id: NodeId,
+        /// The question, on one line above the rows.
+        prompt: String,
+        /// Entries past [`MAX_OPTIONS`] are dropped and reported.
+        options: Vec<OptionRow>,
+        /// Which option is already the answer, counted across the whole
+        /// list rather than the page.
+        selected: Option<u16>,
+        /// Which page is showing, counting from zero. Past the last page is
+        /// drawn as the last page.
+        page: u16,
+        /// What the pager's two chevrons send. Each is drawn only where there
+        /// is a page on that side.
+        previous: ActionId,
+        next: ActionId,
+    },
+    /// Text a phone can read off the panel: an address to sign in at, a link
+    /// to install from, an article to finish somewhere else.
+    ///
+    /// Drawn by the runtime as a QR code, so an application sends the text
+    /// and never a picture of modules. Square and centred, as wide as the
+    /// column up to [`CODE_SIDE_TENTH_MM`], with the caption set under it.
+    Code {
+        id: NodeId,
+        /// At most [`MAX_CODE_BYTES`] bytes.
+        payload: String,
+        caption: String,
+    },
+    /// Where the reader is in a short sequence: "Step 2 of 4".
+    ///
+    /// One line. The application says which step and how many, and the
+    /// runtime writes the words and draws a mark per step, so setup flows
+    /// stop spelling their position out in prose of their own.
+    Steps {
+        id: NodeId,
+        /// The step the reader is on, counting from zero.
+        current: u8,
+        /// How many there are, from one to [`MAX_STEPS`].
+        total: u8,
+        /// A name for each step, in order. Empty, or one per step.
+        labels: Vec<String>,
+    },
 }
+
+/// One answer in a [`Node::Options`] list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OptionRow {
+    pub action: ActionId,
+    pub label: String,
+    /// A line under the label in the muted tone. When any option in a list
+    /// has one, every row of that list leaves room for one, so the pages of
+    /// a list all have the same pitch.
+    pub summary: String,
+}
+
+impl OptionRow {
+    #[must_use]
+    pub fn new(action: ActionId, label: impl Into<String>, summary: impl Into<String>) -> Self {
+        Self {
+            action,
+            label: label.into(),
+            summary: summary.into(),
+        }
+    }
+}
+
+/// The most verbs a [`Node::SelectionBar`] draws. Three is what a bar the
+/// width of a six inch panel can carry with the count beside them and every
+/// label still a word rather than an ellipsis.
+pub const MAX_SELECTION_ACTIONS: usize = 3;
+
+/// The most answers one [`Node::Options`] list may carry. Enough for every
+/// time zone a reader could be in, which is the longest list it was made for.
+pub const MAX_OPTIONS: usize = 1024;
+
+/// The most rows one page of a [`Node::Options`] list shows, however much room
+/// the panel has. Past eight a page is a column to search rather than a
+/// handful to choose from.
+pub const MAX_OPTIONS_PER_PAGE: usize = 8;
+
+/// The most steps a [`Node::Steps`] indicator counts. A sequence longer than
+/// this is a document, not a setup flow.
+pub const MAX_STEPS: usize = 8;
+
+/// The most text a [`Node::Code`] may carry, in bytes.
+///
+/// The capacity of a version 10 QR code at the medium error correction level
+/// in byte mode. Version 10 is 57 modules a side, 65 with the quiet zone, so
+/// in the fifty millimetre square the runtime draws each module is nine
+/// pixels on a 300 ppi panel (0.76 mm) and six on a 212 ppi one (0.72 mm).
+/// Modules that size read at arm's length off a reflective panel whose
+/// black is a dark grey and whose white is a light one, under a lamp, with a
+/// little ghosting left from the last page. A longer payload needs a denser
+/// version with modules nearer half a millimetre, which is where phone
+/// cameras start to need a steady hand and good light. A sign-in address or
+/// an install link fits with room to spare; a link carrying tracking
+/// parameters should lose them first.
+pub const MAX_CODE_BYTES: usize = 213;
+
+/// The largest side a [`Node::Code`] is drawn at, in tenths of a millimetre.
+///
+/// Fifty millimetres, which is narrower than a portrait column on every
+/// panel. It is the widest square that still fits a landscape screen with a
+/// top bar, a bottom bar and a two line caption at the largest text size,
+/// and a code is no easier to scan for being larger once its modules are
+/// this size.
+pub const CODE_SIDE_TENTH_MM: i32 = 500;
 
 /// The position of a terminal's block cursor, in grid cells.
 ///
@@ -4014,6 +4183,19 @@ pub struct Row {
     /// is deliberately one action rather than a menu, because what opens is
     /// the application's business: a popover, a confirmation, another screen.
     pub menu: Option<ActionId>,
+    /// A verb the row offers beside opening it: Install, Open, Update.
+    ///
+    /// Drawn as a small outlined button against the trailing edge and hit
+    /// tested ahead of the row, like the overflow mark. The label is one line
+    /// and never wider than a third of the row, so a long verb is ellipsised
+    /// rather than squeezing the title to nothing.
+    pub button: Option<BarAction>,
+    /// A count against the trailing edge: updates waiting, messages unread.
+    ///
+    /// The badge takes the width of "999+" whatever the count, so the title
+    /// beside it is wrapped the same way when the count goes from nine to
+    /// ten, and a list does not reflow because one more message arrived.
+    pub badge: Option<u32>,
 }
 
 impl Row {
@@ -4032,6 +4214,8 @@ impl Row {
             state: RowState::Open,
             trailing: None,
             menu: None,
+            button: None,
+            badge: None,
         }
     }
 
@@ -4056,6 +4240,31 @@ impl Row {
     #[must_use]
     pub fn done(mut self, done: bool) -> Self {
         self.state = if done { RowState::Done } else { RowState::Open };
+        self
+    }
+
+    /// The same row, ticked or not, with a box in its lead column.
+    #[must_use]
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.state = if checked {
+            RowState::Checked
+        } else {
+            RowState::Unchecked
+        };
+        self
+    }
+
+    /// The same, with a small button against the trailing edge.
+    #[must_use]
+    pub fn with_button(mut self, action: ActionId, label: impl Into<String>) -> Self {
+        self.button = Some(BarAction::new(action, label));
+        self
+    }
+
+    /// The same, with a count against the trailing edge.
+    #[must_use]
+    pub const fn with_badge(mut self, count: u32) -> Self {
+        self.badge = Some(count);
         self
     }
 }
@@ -4123,6 +4332,22 @@ pub enum RowState {
     #[default]
     Open,
     Done,
+    /// Ticked. A box drawn in the lead column takes the lead's place, so a
+    /// row that can be ticked is exactly as tall and as wide as one that
+    /// cannot, and turning select mode on moves nothing.
+    Checked,
+    /// Offered for ticking and not ticked: an empty box.
+    Unchecked,
+    /// A group some of whose members are ticked: a box with a bar across it.
+    Mixed,
+}
+
+impl RowState {
+    /// Whether this state draws a box rather than the row's lead.
+    #[must_use]
+    pub const fn is_check(self) -> bool {
+        matches!(self, Self::Checked | Self::Unchecked | Self::Mixed)
+    }
 }
 
 /// The free-text row that may follow a [`Node::Choice`].
@@ -4142,6 +4367,25 @@ impl Freeform {
     }
 }
 
+/// What a [`Node::Field`] holds, and so which keys the runtime offers for it.
+///
+/// Carried on the field rather than chosen by the keyboard, because the field
+/// is where the application knows what it is asking for. A secret is drawn as
+/// dots so a token is never left on the panel for the next person to read, and
+/// the runtime's text entry uses the same value to open on digits or on the
+/// characters an address needs rather than on letters.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum FieldKind {
+    #[default]
+    Text,
+    /// A password or token. Drawn masked and never echoed back in the clear.
+    Secret,
+    Number,
+    /// A web or mail address, where a space is never wanted and `/`, `.` and
+    /// `@` are.
+    Address,
+}
+
 /// How loudly a [`Node::Banner`] speaks.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum BannerLevel {
@@ -4150,6 +4394,11 @@ pub enum BannerLevel {
     /// Drawn inverted. On a panel with two usable tones, inversion is the
     /// loudest signal available, and it costs one small refresh.
     Attention,
+    /// Something finished as the reader hoped: saved, signed in, sent.
+    Success,
+    /// Something failed and the reader has to act: a token refused, a
+    /// download that stopped.
+    Error,
 }
 
 /// The built-in icon set.
@@ -4453,7 +4702,12 @@ impl Node {
             | Self::Skeleton { id, .. }
             | Self::Picture { id, .. }
             | Self::Activity { id, .. }
-            | Self::Terminal { id, .. } => *id,
+            | Self::Terminal { id, .. }
+            | Self::Toggle { id, .. }
+            | Self::SelectionBar { id, .. }
+            | Self::Options { id, .. }
+            | Self::Code { id, .. }
+            | Self::Steps { id, .. } => *id,
         }
     }
 }
@@ -4792,6 +5046,48 @@ pub enum LayoutKind {
     /// One inverted cell. `text_lines` holds the single character underneath
     /// it, so the cursor can be repainted alone without the row it sits in.
     TerminalCursor,
+    /// A toggle's tap target: the whole row. Draws nothing itself.
+    Toggle(ActionId, ControlState),
+    /// A toggle's name, muted when the setting cannot change.
+    ToggleLabel(ControlState),
+    /// The switch at a toggle's trailing edge: whether it is on, and whether
+    /// it can change.
+    ToggleSwitch(bool, ControlState),
+    /// The box a row in a check state draws in its lead column, in place of
+    /// the lead.
+    RowCheck(RowState),
+    /// A row's own button, hit-tested ahead of the row it sits in.
+    RowButton(ActionId),
+    /// A row's count, in a chip of fixed width.
+    RowBadge,
+    /// The name of a field, on the line above it.
+    FieldLabel,
+    /// The line under a field: the hint, or the error in its place. The bool
+    /// says which, because an error is drawn in ink and a hint is not.
+    FieldNote(bool),
+    /// What is in a secret field, drawn as one dot per character rather than
+    /// as the characters. Carries how many dots fit.
+    FieldSecret(u16),
+    /// A banner's one action, on its own line under the words.
+    BannerAction(ActionId),
+    /// The selection bar's band and its count, which `text_lines` carries.
+    SelectionBar,
+    /// One verb on the selection bar.
+    SelectionAction(ActionId),
+    /// One answer in an option list: the whole row, and the mark that says
+    /// whether it is the answer already given.
+    OptionRow(ActionId, bool),
+    /// An option's name.
+    OptionLabel,
+    /// A code's square. `text_lines` holds the payload, which is encoded
+    /// when it is drawn rather than when it is laid out, so a layout pass
+    /// never pays for it.
+    Code,
+    /// The words under a code.
+    CodeCaption,
+    /// A step indicator: which step and how many, with the words in
+    /// `text_lines`.
+    Steps(u8, u8),
 }
 
 impl LayoutKind {
@@ -4829,7 +5125,12 @@ impl LayoutKind {
             | Self::PagePrevious(action)
             | Self::InlineLink(action)
             | Self::SectionLink(action)
-            | Self::PageNext(action) => Some(action),
+            | Self::PageNext(action)
+            | Self::Toggle(action, ControlState::Enabled)
+            | Self::RowButton(action)
+            | Self::BannerAction(action)
+            | Self::SelectionAction(action)
+            | Self::OptionRow(action, _) => Some(action),
             Self::Back | Self::OverlayClose => Some(ActionId::BACK),
             _ => None,
         }
@@ -4905,6 +5206,10 @@ pub enum LayoutIssueKind {
     EmptyChoice,
     InvalidPictureSource,
     InvalidBoard,
+    /// A code whose text is empty or longer than [`MAX_CODE_BYTES`], so the
+    /// runtime would draw an empty square where the reader was told to point
+    /// a phone.
+    CodeUnreadable,
     /// A bar of destinations with nothing marked as current.
     ///
     /// A warning rather than an error, and deliberately so. `selected: None`
@@ -5019,6 +5324,10 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::InvalidBoard => {
                 formatter.write_str("Board viewport has invalid dimensions, marks or clues.")
             }
+            LayoutIssueKind::CodeUnreadable => write!(
+                formatter,
+                "{node}: code text is empty or longer than {MAX_CODE_BYTES} bytes"
+            ),
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
@@ -5113,6 +5422,11 @@ impl Layout {
                         | LayoutKind::ChoiceOption(_, _)
                         | LayoutKind::StepperControl(_, ControlState::Enabled, _)
                         | LayoutKind::ChoiceFreeform(_)
+                        | LayoutKind::Toggle(_, ControlState::Enabled)
+                        | LayoutKind::RowButton(_)
+                        | LayoutKind::BannerAction(_)
+                        | LayoutKind::SelectionAction(_)
+                        | LayoutKind::OptionRow(..)
                 )
             })
             .min_by_key(|node| {
@@ -5255,6 +5569,7 @@ impl Layout {
                 node.kind,
                 LayoutKind::Button(_, ControlState::Disabled, _)
                     | LayoutKind::Tile(_, ControlState::Disabled)
+                    | LayoutKind::Toggle(_, ControlState::Disabled)
                     | LayoutKind::Scrim { .. }
             ) {
                 return true;
@@ -5437,6 +5752,16 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
                 if row.menu.is_some() {
                     text = text.saturating_add(metrics.touch_target_default());
                 }
+                if let Some(button) = &row.button {
+                    text = text
+                        .saturating_add(measure_text(&button.label, FontSize::Body).0)
+                        .saturating_add(3 * metrics.space(Space::Small));
+                }
+                if row.badge.is_some() {
+                    text = text
+                        .saturating_add(row_badge_width(metrics))
+                        .saturating_add(metrics.space(Space::Small));
+                }
                 text.saturating_add(row_mark_column(metrics))
                     .saturating_add(2 * metrics.space(Space::Small))
             })
@@ -5513,6 +5838,11 @@ fn row_lead_column(metrics: &DisplayMetrics, rows: &[Row]) -> i32 {
                 RowLead::Number(number) => row_rank_column(metrics, number),
             },
         );
+        // A box needs a mark's column even in a ranked list, whose digits
+        // would otherwise leave it too narrow to hold one.
+        if row.state.is_check() {
+            column = max(column, row_mark_column(metrics));
+        }
     }
     if column == 0 {
         row_mark_column(metrics)
@@ -5705,7 +6035,12 @@ fn layout_flow_node(
             | Node::Band { .. }
             | Node::Rows { .. }
             | Node::Progress { .. }
-            | Node::Stepper { .. } => width.min(metrics.control_width()),
+            | Node::Stepper { .. }
+            | Node::Toggle { .. }
+            | Node::SelectionBar { .. }
+            | Node::Options { .. } => width.min(metrics.control_width()),
+            Node::Steps { .. } => width.min(metrics.readable_width()),
+            Node::Code { .. } => width,
             Node::Card { .. }
             | Node::Divider { .. }
             | Node::Spacer { .. }
@@ -6349,12 +6684,33 @@ fn layout_node(
             value,
             placeholder,
             clear,
+            label,
+            hint,
+            error,
+            kind,
         } => {
             let height = max(
                 metrics.touch_target_minimum(),
                 metrics.touch_target_default(),
             );
             let inset = metrics.space(Space::Small);
+            let caption = FontSize::Caption.line_height();
+            let tight = metrics.space(Space::Tight);
+            let mut y = y;
+            if let Some(label) = label.as_deref().filter(|label| !label.is_empty()) {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y,
+                        width,
+                        height: caption,
+                    },
+                    kind: LayoutKind::FieldLabel,
+                    text_lines: vec![one_line(label, width, FontSize::Caption)],
+                });
+                y = y.saturating_add(caption).saturating_add(tight);
+            }
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -6374,17 +6730,36 @@ fn layout_node(
             let empty = value.is_empty();
             let shown = if empty { placeholder } else { value };
             let line = FontSize::Body.line_height();
-            layout.nodes.push(LayoutNode {
-                id: *id,
-                rect: Rect {
-                    x: x + inset,
-                    y: y + (height - line) / 2,
-                    width: text_width,
-                    height: line,
-                },
-                kind: LayoutKind::FieldValue(empty),
-                text_lines: vec![one_line(shown, text_width, FontSize::Body)],
-            });
+            let value_rect = Rect {
+                x: x + inset,
+                y: y + (height - line) / 2,
+                width: text_width,
+                height: line,
+            };
+            if *kind == FieldKind::Secret && !empty {
+                // Dots rather than the characters, and only as many as fit,
+                // so the length of a token shows without the token. Drawn as
+                // marks rather than set as a bullet character, so the mask
+                // does not depend on what the installed face happens to hold.
+                let fits = text_width / secret_dot_pitch(metrics).max(1);
+                let dots = value
+                    .chars()
+                    .count()
+                    .min(usize::try_from(fits).unwrap_or(0));
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: value_rect,
+                    kind: LayoutKind::FieldSecret(u16::try_from(dots).unwrap_or(u16::MAX)),
+                    text_lines: Vec::new(),
+                });
+            } else {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: value_rect,
+                    kind: LayoutKind::FieldValue(empty),
+                    text_lines: vec![one_line(shown, text_width, FontSize::Body)],
+                });
+            }
             if let Some(clear) = clear {
                 layout.nodes.push(LayoutNode {
                     id: *id,
@@ -6398,7 +6773,48 @@ fn layout_node(
                     text_lines: Vec::new(),
                 });
             }
-            y.saturating_add(height)
+            let mut y = y.saturating_add(height);
+            let shown_note = error
+                .as_deref()
+                .filter(|error| !error.is_empty())
+                .map(|error| (error, true))
+                .or_else(|| {
+                    hint.as_deref()
+                        .filter(|hint| !hint.is_empty())
+                        .map(|hint| (hint, false))
+                });
+            let lines = field_note_lines(hint.as_deref(), error.as_deref(), width);
+            if lines > 0 {
+                let (text, is_error) = shown_note.unwrap_or_default();
+                y = y.saturating_add(tight);
+                let height = i32::try_from(lines).unwrap_or(1) * caption;
+                let wrapped = wrap_text(text, width, FontSize::Caption);
+                let text_lines = if wrapped.len() <= lines {
+                    wrapped
+                } else {
+                    wrap_text(
+                        &clamp_lines(text, width, FontSize::Caption, lines),
+                        width,
+                        FontSize::Caption,
+                    )
+                    .into_iter()
+                    .take(lines)
+                    .collect()
+                };
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                    kind: LayoutKind::FieldNote(is_error),
+                    text_lines,
+                });
+                y = y.saturating_add(height);
+            }
+            y
         }
         Node::Chips { id, chips } => {
             let gap = metrics.space(Space::Tight);
@@ -7465,7 +7881,7 @@ fn layout_node(
             let text_width = max(1, width - icon - padding * 2);
             let mut cursor = y;
             for (position, row) in rows.iter().take(MAX_ROWS).enumerate() {
-                if layout.nodes.len() + 6 > MAX_LAYOUT_NODES {
+                if layout.nodes.len() + 9 > MAX_LAYOUT_NODES {
                     break;
                 }
                 // Separators go between rows, never after the last one. A
@@ -7503,6 +7919,25 @@ fn layout_node(
                     0
                 };
                 let text_width = max(1, text_width - menu_column);
+                // The button and the badge are measured next, for the same
+                // reason: each has a width the title must not run under.
+                let button = row.button.as_ref().map(|button| {
+                    let label = one_line(&button.label, max(1, width / 3), FontSize::Body);
+                    let wide = measure_text(&label, FontSize::Body)
+                        .0
+                        .saturating_add(2 * padding)
+                        .max(metrics.touch_target_minimum());
+                    (button.action, label, wide)
+                });
+                let button_column = button
+                    .as_ref()
+                    .map_or(0, |(_, _, wide)| wide.saturating_add(padding));
+                let badge_column = if row.badge.is_some() {
+                    row_badge_width(metrics).saturating_add(padding)
+                } else {
+                    0
+                };
+                let text_width = max(1, text_width - button_column - badge_column);
                 // Measured before the title is wrapped, so the value keeps its
                 // room and the title gives up its own instead.
                 let trailing =
@@ -7556,12 +7991,31 @@ fn layout_node(
                     ));
                 }
                 let text_y = cursor.saturating_add((height - content) / 2);
-                layout.nodes.push(LayoutNode {
-                    id: *id,
-                    rect: lead_rect(metrics, row.lead, x, cursor, icon, height, text_y),
-                    kind: LayoutKind::RowLead(row.lead),
-                    text_lines: Vec::new(),
-                });
+                if row.state.is_check() {
+                    // The box stands where an icon would, and at an icon's
+                    // size, so it marks the title rather than the row.
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: lead_rect(
+                            metrics,
+                            RowLead::Icon(Glyph::Check),
+                            x,
+                            cursor,
+                            icon,
+                            height,
+                            text_y,
+                        ),
+                        kind: LayoutKind::RowCheck(row.state),
+                        text_lines: Vec::new(),
+                    });
+                } else {
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: lead_rect(metrics, row.lead, x, cursor, icon, height, text_y),
+                        kind: LayoutKind::RowLead(row.lead),
+                        text_lines: Vec::new(),
+                    });
+                }
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -7571,8 +8025,11 @@ fn layout_node(
                         height: title_height,
                     },
                     kind: match row.state {
-                        RowState::Open => LayoutKind::RowTitle,
                         RowState::Done => LayoutKind::RowTitleDone,
+                        RowState::Open
+                        | RowState::Checked
+                        | RowState::Unchecked
+                        | RowState::Mixed => LayoutKind::RowTitle,
                     },
                     text_lines: title_lines,
                 });
@@ -7598,6 +8055,8 @@ fn layout_node(
                             x: x.saturating_add(width)
                                 .saturating_sub(padding)
                                 .saturating_sub(menu_column)
+                                .saturating_sub(button_column)
+                                .saturating_sub(badge_column)
                                 .saturating_sub(measured),
                             y: text_y,
                             width: measured,
@@ -7605,6 +8064,44 @@ fn layout_node(
                         },
                         kind: LayoutKind::RowTrailing,
                         text_lines: vec![value],
+                    });
+                }
+                if let Some(count) = row.badge {
+                    let badge = row_badge_width(metrics);
+                    let line = FontSize::Caption.line_height();
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: x.saturating_add(width)
+                                .saturating_sub(padding)
+                                .saturating_sub(menu_column)
+                                .saturating_sub(button_column)
+                                .saturating_sub(badge),
+                            y: cursor.saturating_add((height - line) / 2),
+                            width: badge,
+                            height: line,
+                        },
+                        kind: LayoutKind::RowBadge,
+                        text_lines: vec![badge_text(count)],
+                    });
+                }
+                if let Some((action, label, wide)) = button {
+                    // The whole height of the row is the target, as the
+                    // overflow mark's is; the outline drawn inside it is only
+                    // as tall as a line of type and its air.
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: x.saturating_add(width)
+                                .saturating_sub(padding)
+                                .saturating_sub(menu_column)
+                                .saturating_sub(wide),
+                            y: cursor,
+                            width: wide,
+                            height,
+                        },
+                        kind: LayoutKind::RowButton(action),
+                        text_lines: vec![label],
                     });
                 }
                 if let Some(action) = row.menu {
@@ -8145,10 +8642,36 @@ fn layout_node(
             }
             cursor.saturating_sub(gap)
         }
-        Node::Banner { id, level, text } => {
+        Node::Banner {
+            id,
+            level,
+            text,
+            action,
+        } => {
             let padding = metrics.space(Space::Small);
-            let lines = wrap_text(text, width - 2 * padding, FontSize::Body);
-            let height = banner_height_for_lines(lines.len(), metrics);
+            let mark = banner_mark_column(*level, metrics);
+            let lines = wrap_text(text, width - 2 * padding - mark, FontSize::Body);
+            let words = banner_height_for_lines(lines.len(), metrics);
+            // The action is a line of its own rather than a button beside the
+            // words, so the words keep the banner's whole measure. Beside
+            // them, "Sign in again" at the largest text size left the reason
+            // three words a line.
+            let button = action.as_ref().map(|action| {
+                let finger = banner_action_height(metrics);
+                let inner = max(1, width - 2 * padding);
+                let label = one_line(&action.label, max(1, inner - 2 * padding), FontSize::Body);
+                let wide = measure_text(&label, FontSize::Body)
+                    .0
+                    .saturating_add(2 * padding)
+                    .max(metrics.touch_target_minimum())
+                    .min(inner);
+                (action.action, label, wide, finger)
+            });
+            let height = button.as_ref().map_or(words, |(.., finger)| {
+                words
+                    .saturating_add(*finger)
+                    .saturating_add(metrics.space(Space::Tight))
+            });
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -8160,6 +8683,21 @@ fn layout_node(
                 kind: LayoutKind::Banner(*level),
                 text_lines: lines,
             });
+            if let Some((action, label, wide, finger)) = button {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: x.saturating_add(width).saturating_sub(padding + wide),
+                        y: y.saturating_add(height)
+                            .saturating_sub(padding)
+                            .saturating_sub(finger),
+                        width: wide,
+                        height: finger,
+                    },
+                    kind: LayoutKind::BannerAction(action),
+                    text_lines: vec![label],
+                });
+            }
             y.saturating_add(height)
         }
         Node::Splash {
@@ -8409,6 +8947,646 @@ fn layout_node(
             }
             y.saturating_add(height)
         }
+        Node::Toggle {
+            id,
+            action,
+            label,
+            summary,
+            on,
+            state,
+        } => layout_toggle(
+            *id,
+            *action,
+            (label, summary),
+            *on,
+            *state,
+            Rect {
+                x,
+                y,
+                width,
+                height: 0,
+            },
+            metrics,
+            layout,
+        ),
+        Node::SelectionBar { id, count, actions } => {
+            layout_selection_bar(*id, *count, actions, x, y, width, metrics, layout)
+        }
+        Node::Options {
+            id,
+            prompt,
+            options,
+            selected,
+            page,
+            previous,
+            next,
+        } => layout_options(
+            *id,
+            prompt,
+            options,
+            (*selected, *page),
+            (*previous, *next),
+            Rect {
+                x,
+                y,
+                width,
+                height: 0,
+            },
+            metrics,
+            layout,
+        ),
+        Node::Code {
+            id,
+            payload,
+            caption,
+        } => {
+            let side = code_side(width, metrics);
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: x.saturating_add((width - side) / 2),
+                    y,
+                    width: side,
+                    height: side,
+                },
+                kind: LayoutKind::Code,
+                text_lines: vec![payload.clone()],
+            });
+            let mut cursor = y.saturating_add(side);
+            let lines = code_caption_lines(caption, width);
+            if !lines.is_empty() {
+                cursor = cursor.saturating_add(metrics.space(Space::Tight));
+                let height =
+                    i32::try_from(lines.len()).unwrap_or(1) * FontSize::Caption.line_height();
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y: cursor,
+                        width,
+                        height,
+                    },
+                    kind: LayoutKind::CodeCaption,
+                    text_lines: lines,
+                });
+                cursor = cursor.saturating_add(height);
+            }
+            cursor
+        }
+        Node::Steps {
+            id,
+            current,
+            total,
+            labels,
+        } => {
+            let total = (*total).clamp(1, MAX_STEPS as u8);
+            let current = (*current).min(total - 1);
+            let line = FontSize::Caption.line_height();
+            let marks = steps_marks_width(total, metrics);
+            let text = one_line(
+                &steps_text(current, total, labels),
+                max(1, width - marks - metrics.space(Space::Small)),
+                FontSize::Caption,
+            );
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height: line,
+                },
+                kind: LayoutKind::Steps(current, total),
+                text_lines: vec![text],
+            });
+            y.saturating_add(line)
+        }
+    }
+}
+
+/// How tall a row of one line of label and, when there is one, one line of
+/// summary is: the pitch a toggle and an option keep whatever their words.
+///
+/// The `Node::Rows` arithmetic for a row whose title and summary each fit on a
+/// line, so a toggle set between two rows is the height of either of them.
+#[must_use]
+pub fn one_line_row_height(metrics: &DisplayMetrics, summary: bool) -> i32 {
+    let content = FontSize::Body.line_height().saturating_add(if summary {
+        FontSize::Caption.line_height()
+    } else {
+        0
+    });
+    max(
+        metrics.touch_target_default(),
+        content.saturating_add(metrics.space(Space::Small) * 2),
+    )
+}
+
+/// The column the switch takes at a toggle's trailing edge: a finger wide,
+/// whatever the text size, because the switch is a control and not type.
+fn toggle_switch_column(metrics: &DisplayMetrics) -> i32 {
+    metrics.touch_target_default()
+}
+
+/// The track a toggle's switch is drawn in, inside its column: nine
+/// millimetres by five, set against the trailing edge and centred on the row.
+fn toggle_track(column: Rect, metrics: &DisplayMetrics) -> Rect {
+    let width = metrics.tenth_mm(90).min(column.width);
+    let height = metrics.tenth_mm(50).min(column.height);
+    Rect {
+        x: column.x + column.width - width,
+        y: column.y + (column.height - height) / 2,
+        width,
+        height,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_toggle(
+    id: NodeId,
+    action: ActionId,
+    (label, summary): (&str, &str),
+    on: bool,
+    state: ControlState,
+    at: Rect,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let Rect { x, y, width, .. } = at;
+    let has_summary = !summary.is_empty();
+    let height = one_line_row_height(metrics, has_summary);
+    let switch = toggle_switch_column(metrics);
+    let text_width = max(1, width - switch - metrics.space(Space::Small));
+    let title = FontSize::Body.line_height();
+    let under = if has_summary {
+        FontSize::Caption.line_height()
+    } else {
+        0
+    };
+    let text_y = y + (height - title - under) / 2;
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x,
+            y,
+            width,
+            height,
+        },
+        kind: LayoutKind::Toggle(action, state),
+        text_lines: Vec::new(),
+    });
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x,
+            y: text_y,
+            width: text_width,
+            height: title,
+        },
+        kind: LayoutKind::ToggleLabel(state),
+        text_lines: vec![one_line(label, text_width, FontSize::Body)],
+    });
+    if has_summary {
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                x,
+                y: text_y + title,
+                width: text_width,
+                height: under,
+            },
+            kind: LayoutKind::RowSummary,
+            text_lines: vec![one_line(summary, text_width, FontSize::Caption)],
+        });
+    }
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: x + width - switch,
+            y,
+            width: switch,
+            height,
+        },
+        kind: LayoutKind::ToggleSwitch(on, state),
+        text_lines: Vec::new(),
+    });
+    y.saturating_add(height)
+}
+
+/// How tall the selection bar is: a finger, or a line of type and its air
+/// when that is more.
+#[must_use]
+pub fn selection_bar_height(metrics: &DisplayMetrics) -> i32 {
+    max(
+        metrics.touch_target_default(),
+        FontSize::Body
+            .line_height()
+            .saturating_add(metrics.space(Space::Small) * 2),
+    )
+}
+
+/// What the selection bar says about its count.
+fn selection_count_text(count: u32) -> String {
+    if count == 0 {
+        "None selected".to_owned()
+    } else {
+        format!("{count} selected")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_selection_bar(
+    id: NodeId,
+    count: u32,
+    actions: &[BarAction],
+    x: i32,
+    y: i32,
+    width: i32,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let padding = metrics.space(Space::Small);
+    let height = selection_bar_height(metrics);
+    let actions = &actions[..actions.len().min(MAX_SELECTION_ACTIONS)];
+    // The count is measured first and given at most half the bar, and the
+    // verbs share what is left equally, so a long verb is ellipsised in its
+    // own share rather than taking a neighbour's.
+    let count_text = one_line(
+        &selection_count_text(count),
+        max(1, width / 2 - padding * 2),
+        FontSize::Body,
+    );
+    let count_width = measure_text(&count_text, FontSize::Body)
+        .0
+        .saturating_add(padding * 2);
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x,
+            y,
+            width,
+            height,
+        },
+        kind: LayoutKind::SelectionBar,
+        text_lines: vec![count_text],
+    });
+    let shown = i32::try_from(actions.len()).unwrap_or(1).max(1);
+    let share = max(1, (width - count_width) / shown);
+    let mut right = x.saturating_add(width);
+    for action in actions.iter().rev() {
+        let label = one_line(&action.label, max(1, share - padding * 2), FontSize::Body);
+        let wide = measure_text(&label, FontSize::Body)
+            .0
+            .saturating_add(padding * 2)
+            .max(metrics.touch_target_minimum())
+            .min(share);
+        right = right.saturating_sub(wide);
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                x: right,
+                y,
+                width: wide,
+                height,
+            },
+            kind: LayoutKind::SelectionAction(action.action),
+            text_lines: vec![label],
+        });
+    }
+    y.saturating_add(height)
+}
+
+/// How many rows one page of an option list holds on this panel at this text
+/// size.
+///
+/// A function of the panel and the text size alone, so an application can
+/// work out which page holds its answer, and which page is the last, before
+/// it builds a screen. Counted for the worst screen an option list is put on:
+/// the status band, a top bar, a one line prompt, the pager and a bottom bar,
+/// so a list that fits there fits everywhere, and a screen without a bottom
+/// bar has the bar's height left over for a line of its own.
+#[must_use]
+pub fn options_per_page(metrics: &DisplayMetrics, summaries: bool) -> usize {
+    with_text_scale(metrics.text_scale, || {
+        options_per_page_at_current_scale(metrics, summaries)
+    })
+}
+
+/// The same count, at whatever text size is in force. Layout calls this
+/// rather than [`options_per_page`], because a screen may set a text size of
+/// its own in place of the reader's, and the rows have to be counted at the
+/// size they are drawn at.
+fn options_per_page_at_current_scale(metrics: &DisplayMetrics, summaries: bool) -> usize {
+    {
+        let gap = metrics.space(Space::Tight);
+        let chrome = metrics
+            .status_band_height()
+            .saturating_add(metrics.top_bar_height())
+            .saturating_add(gap)
+            .saturating_add(metrics.nav_bar_height());
+        let prompt = FontSize::Body
+            .line_height()
+            .saturating_add(metrics.space(Space::Small));
+        let pager = options_pager_height(metrics).saturating_add(gap);
+        let room = metrics
+            .height
+            .saturating_sub(chrome)
+            .saturating_sub(prompt)
+            .saturating_sub(pager);
+        let pitch = one_line_row_height(metrics, summaries).saturating_add(gap * 2);
+        let rows = room.saturating_add(gap * 2) / pitch.max(1);
+        usize::try_from(rows)
+            .unwrap_or(1)
+            .clamp(1, MAX_OPTIONS_PER_PAGE)
+    }
+}
+
+/// How many pages an option list of `count` answers takes on this panel.
+#[must_use]
+pub fn options_pages(count: usize, metrics: &DisplayMetrics, summaries: bool) -> usize {
+    count
+        .min(MAX_OPTIONS)
+        .div_ceil(options_per_page(metrics, summaries))
+        .max(1)
+}
+
+/// The band under an option list's rows that turns its pages.
+fn options_pager_height(metrics: &DisplayMetrics) -> i32 {
+    max(
+        metrics.touch_target_default(),
+        FontSize::Caption.line_height(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_options(
+    id: NodeId,
+    prompt: &str,
+    options: &[OptionRow],
+    (selected, page): (Option<u16>, u16),
+    (previous, next): (ActionId, ActionId),
+    at: Rect,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let Rect { x, y, width, .. } = at;
+    let gap = metrics.space(Space::Tight);
+    let padding = metrics.space(Space::Small);
+    let options = &options[..options.len().min(MAX_OPTIONS)];
+    let summaries = options.iter().any(|option| !option.summary.is_empty());
+    let per_page = options_per_page_at_current_scale(metrics, summaries);
+    let pages = options.len().div_ceil(per_page).max(1);
+    let page = usize::from(page).min(pages - 1);
+    let mut cursor = y;
+    if !prompt.is_empty() {
+        let line = FontSize::Body.line_height();
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                x,
+                y: cursor,
+                width,
+                height: line,
+            },
+            kind: LayoutKind::ChoicePrompt,
+            text_lines: vec![one_line(prompt, width, FontSize::Body)],
+        });
+        cursor = cursor.saturating_add(line).saturating_add(padding);
+    }
+    let height = one_line_row_height(metrics, summaries);
+    let mark = row_mark_column(metrics);
+    let text_x = x.saturating_add(mark).saturating_add(padding);
+    let text_width = max(1, width - mark - padding * 2);
+    let title = FontSize::Body.line_height();
+    let under = if summaries {
+        FontSize::Caption.line_height()
+    } else {
+        0
+    };
+    let first = page * per_page;
+    let top = cursor;
+    for (index, option) in options.iter().enumerate().skip(first).take(per_page) {
+        if layout.nodes.len() + 8 > MAX_LAYOUT_NODES {
+            break;
+        }
+        if index > first {
+            layout.nodes.push(LayoutNode {
+                id,
+                rect: Rect {
+                    x: text_x,
+                    y: cursor,
+                    width: max(1, width - mark - padding),
+                    height: metrics.rule_thickness(),
+                },
+                kind: LayoutKind::RowRule,
+                text_lines: Vec::new(),
+            });
+            cursor = cursor.saturating_add(gap);
+        }
+        let chosen = selected.is_some_and(|selected| usize::from(selected) == index);
+        let text_y = cursor + (height - title - under) / 2;
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                x,
+                y: cursor,
+                width,
+                height,
+            },
+            kind: LayoutKind::OptionRow(option.action, chosen),
+            text_lines: Vec::new(),
+        });
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                x: text_x,
+                y: text_y,
+                width: text_width,
+                height: title,
+            },
+            kind: LayoutKind::OptionLabel,
+            text_lines: vec![one_line(&option.label, text_width, FontSize::Body)],
+        });
+        if !option.summary.is_empty() {
+            layout.nodes.push(LayoutNode {
+                id,
+                rect: Rect {
+                    x: text_x,
+                    y: text_y + title,
+                    width: text_width,
+                    height: under,
+                },
+                kind: LayoutKind::RowSummary,
+                text_lines: vec![one_line(&option.summary, text_width, FontSize::Caption)],
+            });
+        }
+        cursor = cursor.saturating_add(height).saturating_add(gap);
+    }
+    if pages == 1 {
+        return cursor.saturating_sub(gap).max(top);
+    }
+    // A short last page keeps the room of a full one, so the pager stays
+    // under the finger that turned to it instead of rising to meet the rows.
+    let pitch = height.saturating_add(gap * 2);
+    let rows = i32::try_from(per_page).unwrap_or(1);
+    let band_y = top
+        .saturating_add(pitch.saturating_mul(rows))
+        .saturating_sub(gap);
+    let band = Rect {
+        x,
+        y: band_y,
+        width,
+        height: options_pager_height(metrics),
+    };
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: band,
+        kind: LayoutKind::PagePosition,
+        text_lines: vec![format!("{} of {pages}", page + 1)],
+    });
+    let side = min(metrics.touch_target_default(), width / 3);
+    if page > 0 {
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                width: side,
+                ..band
+            },
+            kind: LayoutKind::PagePrevious(previous),
+            text_lines: Vec::new(),
+        });
+    }
+    if page + 1 < pages {
+        layout.nodes.push(LayoutNode {
+            id,
+            rect: Rect {
+                x: band.x + band.width - side,
+                width: side,
+                ..band
+            },
+            kind: LayoutKind::PageNext(next),
+            text_lines: Vec::new(),
+        });
+    }
+    band_y.saturating_add(band.height)
+}
+
+/// The side of the square a code is drawn in: the column, up to
+/// [`CODE_SIDE_TENTH_MM`].
+#[must_use]
+pub fn code_side(width: i32, metrics: &DisplayMetrics) -> i32 {
+    max(0, width.min(metrics.tenth_mm(CODE_SIDE_TENTH_MM)))
+}
+
+/// A code's caption, wrapped to the column and cut at two lines.
+fn code_caption_lines(caption: &str, width: i32) -> Vec<String> {
+    if caption.is_empty() {
+        return Vec::new();
+    }
+    let lines = wrap_text(caption, width, FontSize::Caption);
+    if lines.len() <= 2 {
+        return lines;
+    }
+    wrap_text(
+        &clamp_lines(caption, width, FontSize::Caption, 2),
+        width,
+        FontSize::Caption,
+    )
+    .into_iter()
+    .take(2)
+    .collect()
+}
+
+/// The words a step indicator sets: "Step 2 of 4", and the step's name after
+/// a colon when it has one.
+fn steps_text(current: u8, total: u8, labels: &[String]) -> String {
+    let position = format!("Step {} of {total}", u16::from(current) + 1);
+    match labels
+        .get(usize::from(current))
+        .filter(|label| !label.is_empty())
+    {
+        Some(label) if labels.len() == usize::from(total) => format!("{position}: {label}"),
+        _ => position,
+    }
+}
+
+/// One step's mark, and the gap after it, in pixels. Physical rather than
+/// scaled with the type, like every other mark that is not a letter.
+fn steps_mark(metrics: &DisplayMetrics) -> (i32, i32) {
+    (metrics.tenth_mm(16).max(2), metrics.tenth_mm(12).max(1))
+}
+
+/// The run of marks at a step indicator's trailing edge.
+fn steps_marks_width(total: u8, metrics: &DisplayMetrics) -> i32 {
+    let (mark, gap) = steps_mark(metrics);
+    let total = i32::from(total);
+    mark.saturating_mul(total)
+        .saturating_add(gap.saturating_mul(total.saturating_sub(1)))
+}
+
+/// The width a row's badge takes whatever it says: the width of "999+" in
+/// the caption figures, with air either side.
+#[must_use]
+pub fn row_badge_width(metrics: &DisplayMetrics) -> i32 {
+    figures_width("999+", FontSize::Caption, Face::Text)
+        .saturating_add(metrics.space(Space::Tight) * 2)
+}
+
+/// What a badge says. Past 999 the number stops being read and starts being
+/// counted, so it stops there.
+fn badge_text(count: u32) -> String {
+    if count > 999 {
+        "999+".to_owned()
+    } else {
+        count.to_string()
+    }
+}
+
+/// The distance from one secret dot to the next.
+fn secret_dot_pitch(metrics: &DisplayMetrics) -> i32 {
+    let (dot, gap) = secret_dot(metrics);
+    dot.saturating_add(gap)
+}
+
+/// A secret dot's diameter and the gap after it: a third of the body em, and
+/// a little less again between them.
+fn secret_dot(metrics: &DisplayMetrics) -> (i32, i32) {
+    let em = FontSize::Body.em_in(Face::Text);
+    let _ = metrics;
+    (max(2, em / 3), max(1, em / 4))
+}
+
+/// How many caption lines the note under a field takes: the longer of the
+/// hint and the error, and never more than two.
+///
+/// Measured across both rather than across whichever is showing, so an error
+/// arriving in place of a hint of the same length moves nothing on the panel.
+fn field_note_lines(hint: Option<&str>, error: Option<&str>, width: i32) -> usize {
+    [hint, error]
+        .into_iter()
+        .flatten()
+        .filter(|text| !text.is_empty())
+        .map(|text| wrap_text(text, width, FontSize::Caption).len().max(1))
+        .max()
+        .unwrap_or(0)
+        .min(2)
+}
+
+/// The height a banner's action takes: a finger, or a line of type when that
+/// is taller.
+fn banner_action_height(metrics: &DisplayMetrics) -> i32 {
+    max(metrics.touch_target_default(), FontSize::Body.line_height())
+}
+
+/// The column a success or an error banner gives its mark ahead of the words.
+/// Info and attention give none, so their banners are laid out exactly as
+/// they always were.
+fn banner_mark_column(level: BannerLevel, metrics: &DisplayMetrics) -> i32 {
+    match level {
+        BannerLevel::Info | BannerLevel::Attention => 0,
+        BannerLevel::Success | BannerLevel::Error => FontSize::Body
+            .line_height()
+            .saturating_add(metrics.space(Space::Tight)),
     }
 }
 
@@ -11499,8 +12677,13 @@ fn tones_used(layout: &Layout) -> usize {
             | LayoutKind::FactLabel
             | LayoutKind::PagePosition
             | LayoutKind::ActivityBytes
-            | LayoutKind::ActivityFailure => muted = true,
-            LayoutKind::Card | LayoutKind::Tile(..) | LayoutKind::Overlay => surface = true,
+            | LayoutKind::ActivityFailure
+            | LayoutKind::FieldNote(false) => muted = true,
+            LayoutKind::Card
+            | LayoutKind::Tile(..)
+            | LayoutKind::Overlay
+            | LayoutKind::SelectionBar => surface = true,
+            LayoutKind::Toggle(..) => {}
             LayoutKind::Banner(BannerLevel::Attention)
             | LayoutKind::NavDestinationSelected(..)
             | LayoutKind::Chip(_, true)
@@ -11596,8 +12779,14 @@ fn validate_node(
         Node::Text { text, .. } | Node::RichText { text, .. } | Node::Quote { text, .. } => {
             check_text_coverage(id, text, prose_face, issues);
         }
-        Node::Heading { text, .. } | Node::Secondary { text, .. } | Node::Banner { text, .. } => {
+        Node::Heading { text, .. } | Node::Secondary { text, .. } => {
             check_text_coverage(id, text, Face::Text, issues);
+        }
+        Node::Banner { text, action, .. } => {
+            check_text_coverage(id, text, Face::Text, issues);
+            if let Some(action) = action {
+                check_text_coverage(id, &action.label, Face::Text, issues);
+            }
         }
         Node::Section {
             title, value, link, ..
@@ -11612,10 +12801,23 @@ fn validate_node(
         }
         Node::Button { label, .. } => check_text_coverage(id, label, Face::Text, issues),
         Node::Field {
-            value, placeholder, ..
+            value,
+            placeholder,
+            label,
+            hint,
+            error,
+            kind,
+            ..
         } => {
-            check_text_coverage(id, value, Face::Text, issues);
+            // A secret is drawn as dots, so what it holds never has to be
+            // drawable, and is never named in a report either.
+            if *kind != FieldKind::Secret {
+                check_text_coverage(id, value, Face::Text, issues);
+            }
             check_text_coverage(id, placeholder, Face::Text, issues);
+            for text in [label, hint, error].into_iter().flatten() {
+                check_text_coverage(id, text, Face::Text, issues);
+            }
         }
         Node::Chips { chips, .. } => {
             if chips.len() > MAX_CHIPS {
@@ -11712,6 +12914,72 @@ fn validate_node(
             for row in rows {
                 check_text_coverage(id, &row.title, prose_face, issues);
                 check_text_coverage(id, &row.summary, Face::Text, issues);
+                if let Some(button) = &row.button {
+                    check_text_coverage(id, &button.label, Face::Text, issues);
+                }
+            }
+        }
+        Node::Toggle { label, summary, .. } => {
+            check_text_coverage(id, label, Face::Text, issues);
+            check_text_coverage(id, summary, Face::Text, issues);
+        }
+        Node::SelectionBar { actions, .. } => {
+            if actions.len() > MAX_SELECTION_ACTIONS {
+                issues.push(limit_issue(
+                    id,
+                    "selection actions",
+                    actions.len(),
+                    MAX_SELECTION_ACTIONS,
+                ));
+            }
+            for action in actions.iter().take(MAX_SELECTION_ACTIONS) {
+                check_text_coverage(id, &action.label, Face::Text, issues);
+            }
+        }
+        Node::Options {
+            prompt, options, ..
+        } => {
+            check_text_coverage(id, prompt, Face::Text, issues);
+            if options.is_empty() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::EmptyChoice,
+                    rect: None,
+                });
+            }
+            if options.len() > MAX_OPTIONS {
+                issues.push(limit_issue(id, "options", options.len(), MAX_OPTIONS));
+            }
+            for option in options.iter().take(MAX_OPTIONS) {
+                check_text_coverage(id, &option.label, Face::Text, issues);
+                check_text_coverage(id, &option.summary, Face::Text, issues);
+            }
+        }
+        Node::Code {
+            payload, caption, ..
+        } => {
+            check_text_coverage(id, caption, Face::Text, issues);
+            // A code that cannot be drawn is an empty square where the reader
+            // was told to point a phone, so it is an error, not a warning.
+            // Judged by length rather than by encoding it, so an application
+            // checking its own screens never links the encoder: every payload
+            // within the limit fits version 10 even in byte mode.
+            if payload.is_empty() || payload.len() > MAX_CODE_BYTES {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::CodeUnreadable,
+                    rect: None,
+                });
+            }
+        }
+        Node::Steps { total, labels, .. } => {
+            if usize::from(*total) > MAX_STEPS {
+                issues.push(limit_issue(id, "steps", usize::from(*total), MAX_STEPS));
+            }
+            for label in labels.iter().take(MAX_STEPS) {
+                check_text_coverage(id, label, Face::Text, issues);
             }
         }
         Node::TileGrid { tiles, .. } => {
@@ -12057,8 +13325,15 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         }
         Node::Rows { rows, .. } => rows
             .iter()
-            .map(|row| 1 + usize::from(row.menu.is_some()))
+            .map(|row| 1 + usize::from(row.menu.is_some()) + usize::from(row.button.is_some()))
             .sum(),
+        Node::Toggle { state, .. } => usize::from(state.is_enabled()),
+        Node::SelectionBar { actions, .. } => actions.len().min(MAX_SELECTION_ACTIONS),
+        // At least the one row the page is sure to show. How many more, and
+        // whether the pager draws a chevron, depends on the panel, which this
+        // count is not given.
+        Node::Options { options, .. } => usize::from(!options.is_empty()),
+        Node::Banner { action, .. } => usize::from(action.is_some()),
         Node::TileGrid { tiles, .. } => tiles
             .iter()
             .filter(|tile| tile.state != TileState::Unavailable)
@@ -12082,11 +13357,12 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         | Node::PagedList { .. }
         | Node::Table { .. }
         | Node::PageRail { .. }
-        | Node::Banner { .. }
         | Node::Splash { .. }
         | Node::Skeleton { .. }
         | Node::Picture { .. }
-        | Node::Terminal { .. } => 0,
+        | Node::Terminal { .. }
+        | Node::Code { .. }
+        | Node::Steps { .. } => 0,
     }
 }
 
@@ -12097,6 +13373,7 @@ const fn is_enabled_interactive(kind: LayoutKind) -> bool {
             LayoutKind::Button(_, ControlState::Disabled, _)
                 | LayoutKind::Tile(_, ControlState::Disabled)
                 | LayoutKind::StepperControl(_, ControlState::Disabled, _)
+                | LayoutKind::Toggle(_, ControlState::Disabled)
         )
 }
 
@@ -12207,6 +13484,11 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::ChoiceFreeform(_)
             | LayoutKind::PagePrevious(_)
             | LayoutKind::PageNext(_)
+            | LayoutKind::Toggle(_, ControlState::Enabled)
+            | LayoutKind::RowButton(_)
+            | LayoutKind::BannerAction(_)
+            | LayoutKind::SelectionAction(_)
+            | LayoutKind::OptionRow(..)
     )
 }
 
@@ -12323,7 +13605,12 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::ActivityBytes
         | LayoutKind::ActivityFailure
         | LayoutKind::NavDestination(..)
-        | LayoutKind::NavDestinationSelected(..) => FontSize::Caption,
+        | LayoutKind::NavDestinationSelected(..)
+        | LayoutKind::RowBadge
+        | LayoutKind::FieldLabel
+        | LayoutKind::FieldNote(_)
+        | LayoutKind::CodeCaption
+        | LayoutKind::Steps(..) => FontSize::Caption,
         LayoutKind::Text
         | LayoutKind::FieldValue(_)
         | LayoutKind::TableCell
@@ -12338,7 +13625,13 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::StepperValue
         | LayoutKind::ChoiceFreeform(_)
         | LayoutKind::Banner(_)
-        | LayoutKind::ActivityLabel => FontSize::Body,
+        | LayoutKind::ActivityLabel
+        | LayoutKind::ToggleLabel(_)
+        | LayoutKind::RowButton(_)
+        | LayoutKind::BannerAction(_)
+        | LayoutKind::SelectionBar
+        | LayoutKind::SelectionAction(_)
+        | LayoutKind::OptionLabel => FontSize::Body,
         LayoutKind::TerminalGrid | LayoutKind::TerminalCursor => {
             return Some((TERMINAL_SIZE, Face::Mono));
         }
@@ -14135,6 +15428,34 @@ fn render_all_with_selected_font(
                 // paragraph, readable at a glance and cheap to draw.
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 let mut text_x = node.rect.x + padding;
+                // A success and an error carry a mark ahead of the words, in a
+                // column the layout set aside for it, so the level can be told
+                // without reading. An error is also ruled round in ink: it is
+                // the one banner that asks the reader to do something.
+                let mark = banner_mark_column(level, metrics);
+                if mark > 0 {
+                    let side = FontSize::Body.line_height();
+                    draw_glyph_icon_in(
+                        surface,
+                        if level == BannerLevel::Error {
+                            Glyph::Close
+                        } else {
+                            Glyph::Check
+                        },
+                        Rect {
+                            x: text_x,
+                            y: node.rect.y + padding,
+                            width: side,
+                            height: side,
+                        },
+                        clip,
+                        tone::INK,
+                    );
+                    text_x = text_x.saturating_add(mark);
+                }
+                if level == BannerLevel::Error {
+                    stroke_clipped(surface, node.rect, tone::INK, metrics.button_border(), clip);
+                }
                 if level == BannerLevel::Attention {
                     let bar = metrics.rule_thickness() * 3;
                     fill_clipped(
@@ -14287,7 +15608,490 @@ fn render_all_with_selected_font(
                     );
                 }
             }
+            // Nothing. The row is the target; its words and its switch are
+            // the nodes that follow it.
+            LayoutKind::Toggle(..) => {}
+            LayoutKind::ToggleLabel(state) => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                if state.is_enabled() {
+                    tone::INK
+                } else {
+                    tone::MUTED
+                },
+                clip,
+            ),
+            LayoutKind::ToggleSwitch(on, state) => {
+                draw_toggle_switch(
+                    surface,
+                    toggle_track(node.rect, metrics),
+                    on,
+                    state,
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::RowCheck(state) => draw_check_box(surface, node.rect, state, metrics, clip),
+            // An outline the height of a line of type and its air, centred in
+            // the finger-high target, so the row keeps one quiet button rather
+            // than a slab as tall as the row.
+            LayoutKind::RowButton(_) => {
+                let line = FontSize::Body.line_height();
+                let tight = metrics.space(Space::Tight);
+                let height = min(node.rect.height, line + tight * 2);
+                let outline = Rect {
+                    y: node.rect.y + (node.rect.height - height) / 2,
+                    height,
+                    ..node.rect
+                };
+                stroke_rounded_clipped(
+                    surface,
+                    outline,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::INK,
+                    metrics.button_border(),
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    outline,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            // Reversed out of ink: the one small thing on a row that has to
+            // be seen before the row is read, and small enough that inverting
+            // it costs a refresh the size of a fingernail.
+            LayoutKind::RowBadge => {
+                fill_rounded_clipped(surface, node.rect, node.rect.height / 2, tone::INK, clip);
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Caption,
+                    tone::PAPER,
+                    clip,
+                );
+            }
+            LayoutKind::FieldLabel => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Caption,
+                tone::INK,
+                clip,
+            ),
+            // A hint is muted, an error is ink: the same line, saying
+            // something the reader has to act on.
+            LayoutKind::FieldNote(error) => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Caption,
+                if error { tone::INK } else { tone::MUTED },
+                clip,
+            ),
+            LayoutKind::FieldSecret(count) => {
+                let (dot, gap) = secret_dot(metrics);
+                let top = node.rect.y + (node.rect.height - dot) / 2;
+                for index in 0..i32::from(count) {
+                    fill_rounded_clipped(
+                        surface,
+                        Rect {
+                            x: node.rect.x + index * (dot + gap),
+                            y: top,
+                            width: dot,
+                            height: dot,
+                        },
+                        dot / 2,
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            // Paper inside an ink outline, so on the banner's grey it reads as
+            // a button laid on the banner rather than a hole in it.
+            LayoutKind::BannerAction(_) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.button_border(),
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            // The quiet surface the banner uses, so the bar reads as a strip
+            // of tools laid over the list rather than one more row of it.
+            LayoutKind::SelectionBar => {
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::SURFACE,
+                    clip,
+                );
+                draw_lines(
+                    surface,
+                    &node.text_lines,
+                    node.rect.x + metrics.space(Space::Small),
+                    node.rect.y + (node.rect.height - FontSize::Body.line_height()) / 2,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            // A hairline before each verb, inset from the bar's edges, which
+            // is all it takes to show where one target ends and the next
+            // begins without boxing each of them.
+            LayoutKind::SelectionAction(_) => {
+                let inset = metrics.space(Space::Small);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: node.rect.x,
+                        y: node.rect.y + inset,
+                        width: metrics.rule_thickness(),
+                        height: max(1, node.rect.height - inset * 2),
+                    },
+                    tone::RULE,
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            // A ring in the lead column, filled when the option is the answer
+            // already given. The ring is drawn on every row, so the list says
+            // it is one choice among many before anything is chosen.
+            LayoutKind::OptionRow(_, chosen) => {
+                let column = row_mark_column(metrics);
+                let side = min(column, FontSize::Body.em_in(Face::Text));
+                let ring = Rect {
+                    x: node.rect.x + (column - side) / 2,
+                    y: node.rect.y + (node.rect.height - side) / 2,
+                    width: side,
+                    height: side,
+                };
+                stroke_rounded_clipped(
+                    surface,
+                    ring,
+                    side / 2,
+                    tone::INK,
+                    metrics.button_border(),
+                    clip,
+                );
+                if chosen {
+                    let inner = side / 2;
+                    fill_rounded_clipped(
+                        surface,
+                        Rect {
+                            x: ring.x + (side - inner) / 2,
+                            y: ring.y + (side - inner) / 2,
+                            width: inner,
+                            height: inner,
+                        },
+                        inner / 2,
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::OptionLabel => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                tone::INK,
+                clip,
+            ),
+            LayoutKind::Code => {
+                let payload = node.text_lines.first().map_or("", String::as_str);
+                draw_code(surface, node.rect, payload, clip);
+            }
+            LayoutKind::CodeCaption => {
+                let line = FontSize::Caption.line_height();
+                for (index, text) in node.text_lines.iter().enumerate() {
+                    let width = measure_text(text, FontSize::Caption).0;
+                    draw_text(
+                        surface,
+                        text,
+                        node.rect.x + max(0, (node.rect.width - width) / 2),
+                        node.rect.y + i32::try_from(index).unwrap_or(0) * line,
+                        FontSize::Caption,
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::Steps(current, total) => {
+                draw_lines(
+                    surface,
+                    &node.text_lines,
+                    node.rect.x,
+                    node.rect.y,
+                    FontSize::Caption,
+                    tone::INK,
+                    clip,
+                );
+                draw_step_marks(surface, node.rect, current, total, metrics, clip);
+            }
         }
+    }
+}
+
+/// The switch at a toggle's edge, in ink and paper only so that turning it
+/// over is a two-level change the panel can make with its fast waveform.
+///
+/// On is a filled track with the knob at the trailing end, off an outlined
+/// track with the knob at the leading end: position and fill both say which,
+/// so neither has to be read on its own. A switch that cannot change is drawn
+/// in the rule's grey instead of ink.
+fn draw_toggle_switch(
+    surface: &mut Surface,
+    track: Rect,
+    on: bool,
+    state: ControlState,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let ink = if state.is_enabled() {
+        tone::INK
+    } else {
+        tone::RULE
+    };
+    let radius = track.height / 2;
+    let border = metrics.button_border();
+    let inset = border * 2;
+    let knob = max(1, track.height - inset * 2);
+    let knob_x = if on {
+        track.x + track.width - inset - knob
+    } else {
+        track.x + inset
+    };
+    let knob = Rect {
+        x: knob_x,
+        y: track.y + inset,
+        width: knob,
+        height: knob,
+    };
+    if on {
+        fill_rounded_clipped(surface, track, radius, ink, clip);
+        fill_rounded_clipped(surface, knob, knob.height / 2, tone::PAPER, clip);
+    } else {
+        stroke_rounded_clipped(surface, track, radius, ink, border, clip);
+        fill_rounded_clipped(surface, knob, knob.height / 2, ink, clip);
+    }
+}
+
+/// The box a row in a check state carries in place of its lead.
+///
+/// Ticked is a filled box with the tick reversed out of it, unticked an empty
+/// one, and mixed an empty one with a bar across it: three shapes that differ
+/// in outline as well as fill, which is what survives a panel that has not
+/// been cleaned for a while.
+fn draw_check_box(
+    surface: &mut Surface,
+    rect: Rect,
+    state: RowState,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let side = min(rect.width, rect.height);
+    let side = side - side / 6;
+    let rect = Rect {
+        x: rect.x + (rect.width - side) / 2,
+        y: rect.y + (rect.height - side) / 2,
+        width: side,
+        height: side,
+    };
+    let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM).min(side / 4);
+    match state {
+        RowState::Checked => {
+            fill_rounded_clipped(surface, rect, radius, tone::INK, clip);
+            // Whole pixels of paper rather than a blended tick, so the box
+            // turning over is a two-level change the panel's fast waveform
+            // can make.
+            let inset = side / 6;
+            blit_vector_crisp_in(
+                surface,
+                &vector::shapes(Glyph::Check),
+                max(1, side - inset * 2),
+                rect,
+                clip,
+                tone::PAPER,
+            );
+        }
+        RowState::Mixed => {
+            stroke_rounded_clipped(
+                surface,
+                rect,
+                radius,
+                tone::INK,
+                metrics.button_border(),
+                clip,
+            );
+            let bar = max(2, metrics.button_border() * 2);
+            let inset = side / 4;
+            fill_clipped(
+                surface,
+                Rect {
+                    x: rect.x + inset,
+                    y: rect.y + (side - bar) / 2,
+                    width: max(1, side - inset * 2),
+                    height: bar,
+                },
+                tone::INK,
+                clip,
+            );
+        }
+        RowState::Unchecked | RowState::Open | RowState::Done => {
+            stroke_rounded_clipped(
+                surface,
+                rect,
+                radius,
+                tone::INK,
+                metrics.button_border(),
+                clip,
+            );
+        }
+    }
+}
+
+/// The quiet zone a QR code needs around it, in modules, by the standard.
+const CODE_QUIET_MODULES: i32 = 4;
+
+/// The QR code for `payload`, at medium error correction and no larger than
+/// version 10, or nothing when the payload is empty or does not fit.
+///
+/// Medium rather than low, because a reader's panel keeps a little ghosting
+/// from the last page and the modules are not as black as print. The
+/// correction is raised past medium when the payload fits the same version
+/// anyway, so a short address gets the sturdiest code its size allows.
+fn encode_code(payload: &str) -> Option<qrcodegen::QrCode> {
+    if payload.is_empty() || payload.len() > MAX_CODE_BYTES {
+        return None;
+    }
+    let segments = qrcodegen::QrSegment::make_segments(payload);
+    qrcodegen::QrCode::encode_segments_advanced(
+        &segments,
+        qrcodegen::QrCodeEcc::Medium,
+        qrcodegen::Version::MIN,
+        qrcodegen::Version::new(10),
+        None,
+        true,
+    )
+    .ok()
+}
+
+/// Draws a code into its square: paper, then whole-pixel modules of ink.
+///
+/// Each module is the same whole number of pixels, and the code is centred in
+/// whatever that leaves over. Modules of uneven width, or edges blended into
+/// grey, are what make a camera misjudge where one module ends, and a code of
+/// pure ink and paper is also one the panel can draw with its fast waveform.
+fn draw_code(surface: &mut Surface, rect: Rect, payload: &str, clip: Rect) {
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    let Some(code) = encode_code(payload) else {
+        return;
+    };
+    let size = code.size();
+    let total = size + CODE_QUIET_MODULES * 2;
+    let module = min(rect.width, rect.height) / total.max(1);
+    if module < 1 {
+        return;
+    }
+    let drawn = module * total;
+    let left = rect.x + (rect.width - drawn) / 2 + CODE_QUIET_MODULES * module;
+    let top = rect.y + (rect.height - drawn) / 2 + CODE_QUIET_MODULES * module;
+    for row in 0..size {
+        let mut column = 0;
+        while column < size {
+            if !code.get_module(column, row) {
+                column += 1;
+                continue;
+            }
+            // A run of dark modules is one rectangle, which is a fifth of
+            // the fills on a typical code.
+            let start = column;
+            while column < size && code.get_module(column, row) {
+                column += 1;
+            }
+            fill_clipped(
+                surface,
+                Rect {
+                    x: left + start * module,
+                    y: top + row * module,
+                    width: (column - start) * module,
+                    height: module,
+                },
+                tone::INK,
+                clip,
+            );
+        }
+    }
+}
+
+/// The marks at a step indicator's trailing edge: filled for the steps done,
+/// a heavy ring for the one the reader is on, and a light ring for the rest.
+fn draw_step_marks(
+    surface: &mut Surface,
+    rect: Rect,
+    current: u8,
+    total: u8,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let (mark, gap) = steps_mark(metrics);
+    let mut x = rect.x + rect.width - steps_marks_width(total, metrics);
+    let y = rect.y + (rect.height - mark) / 2;
+    for step in 0..total {
+        let dot = Rect {
+            x,
+            y,
+            width: mark,
+            height: mark,
+        };
+        match step.cmp(&current) {
+            std::cmp::Ordering::Less => {
+                fill_rounded_clipped(surface, dot, mark / 2, tone::INK, clip);
+            }
+            std::cmp::Ordering::Equal => {
+                stroke_rounded_clipped(surface, dot, mark / 2, tone::INK, max(2, mark / 4), clip);
+            }
+            std::cmp::Ordering::Greater => stroke_rounded_clipped(
+                surface,
+                dot,
+                mark / 2,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
+        }
+        x += mark + gap;
     }
 }
 
@@ -14691,6 +16495,19 @@ fn blit_vector_crisp(
     rect: Rect,
     clip: Rect,
 ) {
+    blit_vector_crisp_in(surface, shapes, size, rect, clip, tone::INK);
+}
+
+/// The same, in a tone of the caller's choosing: paper for a mark reversed
+/// out of an ink box, so ticking a row is a change of ink and paper alone.
+fn blit_vector_crisp_in(
+    surface: &mut Surface,
+    shapes: &[vector::Shape],
+    size: i32,
+    rect: Rect,
+    clip: Rect,
+    tone: u8,
+) {
     if size <= 0 {
         return;
     }
@@ -14706,7 +16523,7 @@ fn blit_vector_crisp(
             if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
                 continue;
             }
-            surface.blend(x, y, tone::INK, 255);
+            surface.blend(x, y, tone, 255);
         }
     }
 }
@@ -15512,6 +17329,9 @@ mod chrome_tests;
 
 #[cfg(test)]
 mod row_tests;
+
+#[cfg(test)]
+mod controls_tests;
 
 #[cfg(test)]
 mod tile_tests;

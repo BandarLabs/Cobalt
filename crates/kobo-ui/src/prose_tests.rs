@@ -794,6 +794,7 @@ fn an_attention_banner_marks_its_edge_rather_than_blacking_out_the_panel() {
             id: NodeId(1),
             level: BannerLevel::Attention,
             text: "The network went away.".to_owned(),
+            action: None,
         }],
     );
     let rect = screen
@@ -1740,6 +1741,8 @@ fn with_a_menu(items: &[&str]) -> Screen {
                 state: RowState::Open,
                 trailing: None,
                 menu: None,
+                button: None,
+                badge: None,
             })
             .collect(),
     }];
@@ -1771,6 +1774,8 @@ fn row_with(lead: RowLead) -> Screen {
                 state: RowState::Open,
                 trailing: None,
                 menu: None,
+                button: None,
+                badge: None,
             }],
         }],
     )
@@ -1794,6 +1799,8 @@ fn row_with_wrapping_summary(lead: RowLead) -> Screen {
                 state: RowState::Open,
                 trailing: None,
                 menu: None,
+                button: None,
+                badge: None,
             }],
         }],
     )
@@ -2941,6 +2948,10 @@ fn an_empty_field_shows_its_placeholder_muted_and_a_filled_one_shows_ink() {
                 value: value.into(),
                 placeholder: "Search the library".into(),
                 clear: None,
+                label: None,
+                hint: None,
+                error: None,
+                kind: FieldKind::Text,
             }],
         )
         .layout()
@@ -2971,6 +2982,10 @@ fn a_field_cross_never_overlaps_the_text_it_would_clear() {
             value: "a query long enough to run the whole width of the panel".into(),
             placeholder: String::new(),
             clear: Some(ActionId(2)),
+            label: None,
+            hint: None,
+            error: None,
+            kind: FieldKind::Text,
         }],
     )
     .layout();

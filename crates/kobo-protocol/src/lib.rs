@@ -6,7 +6,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
+    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, FieldKind,
     FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
     PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
     TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
@@ -62,6 +62,10 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
 /// Beta tag 34 adds bounded pencil-puzzle marks and orthogonal strokes.
 /// Beta task tag 4 adds explicit PUT/PATCH updates; older task tags are unchanged.
+/// Version 16 adds the controls the runtime draws, on node tags 35 to 39 and on
+/// bytes after everything tags 11, 14 and 24 already carried; see
+/// [`CONTROLS_VERSION`]. Version 15 remains readable and is written exactly as
+/// it was.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -79,7 +83,27 @@ pub const PICTURE_BLEED_VERSION: u8 = 15;
 
 pub const AUTO_HIDDEN_TOP_BAR_VERSION: u8 = 15;
 
-pub const VERSION: u8 = 15;
+/// The protocol a screen must be encoded at to carry the runtime-drawn
+/// controls: toggles, checked rows, the selection bar, option lists, field
+/// labels and kinds, banner actions, row buttons and badges, codes and step
+/// indicators.
+///
+/// Each arrives on a tag or a trailing byte that an older runtime has no
+/// reading for, so an application built against an earlier protocol cannot
+/// send one, and a frame at an earlier protocol that names one is refused
+/// rather than drawn as something else. Every node an older protocol could
+/// already carry is encoded at that protocol exactly as it was.
+pub const CONTROLS_VERSION: u8 = 16;
+
+/// The protocol an application must speak to ask the runtime for typed text,
+/// with [`DeviceRequest::TypeText`], and to be answered with
+/// [`DeviceResult::Text`].
+///
+/// Both travel on tags an older runtime has no reading for, so a frame naming
+/// either at an earlier protocol is refused rather than misread.
+pub const TEXT_ENTRY_VERSION: u8 = 16;
+
+pub const VERSION: u8 = 16;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -120,12 +144,14 @@ const PRE_FOLIO_VERSIONS: [u8; 2] = [DICTIONARY_VERSION, LEGACY_VERSION];
 /// application can still be speaking it. A test holds it to the release
 /// registry's `tools/protocol-minimums.json`, so removing one is a visible
 /// decision rather than a side effect.
-pub const ACCEPTED_VERSIONS: [u8; 6] = [
+pub const ACCEPTED_VERSIONS: [u8; 7] = [
     DICTIONARY_VERSION,
     LEGACY_VERSION,
     FOLIO_VERSION,
     SELECTED_GRID_VERSION,
     SUSPEND_VERSION,
+    // Fifteen, named by what it added now that it is no longer the newest.
+    PICTURE_BLEED_VERSION,
     VERSION,
 ];
 
@@ -1351,6 +1377,161 @@ pub enum DeviceRequest {
     /// Additive on a new tag: older sides refuse the frame rather than
     /// misreading it.
     CheckSecrets { names: Vec<String> },
+    /// Ask the owner to type something, on a keyboard the runtime draws.
+    ///
+    /// The runtime takes the panel, draws the field and the keys with its own
+    /// fonts, reads the taps itself and answers once, with
+    /// [`DeviceResult::Text`], when the owner submits or backs out. Before
+    /// this, every application drew the keys out of grid cells, so a missing
+    /// key was fixed one Store release at a time and every password passed
+    /// through the application that drew the field.
+    ///
+    /// `prompt` says what is being asked for, `hint` is one optional line
+    /// under it, `initial` is text already in the field and `submit` labels
+    /// the key that accepts it. `kind` chooses the keys the field opens on.
+    ///
+    /// A [`kobo_ui::FieldKind::Secret`] field names `save_as`, and the runtime
+    /// writes what was typed into the calling application's own secret
+    /// namespace exactly as [`DeviceRequest::SetSecret`] would, then answers
+    /// [`TextOutcome::Saved`]. The application never receives the value, so
+    /// it starts empty and cannot be given one. Every other kind leaves
+    /// `save_as` empty and is answered with the text.
+    ///
+    /// Requires [`TEXT_ENTRY_VERSION`].
+    TypeText {
+        prompt: String,
+        hint: String,
+        initial: String,
+        submit: String,
+        kind: kobo_ui::FieldKind,
+        save_as: Option<SecretTarget>,
+    },
+}
+
+/// Where the runtime keeps a secret typed into a [`DeviceRequest::TypeText`]
+/// field.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecretTarget {
+    /// The secret's name in the calling application's namespace, held to the
+    /// same review as [`DeviceRequest::SetSecret`].
+    pub name: String,
+    /// The HTTPS server an account is bound to, kept in one record with it as
+    /// [`DeviceRequest::SetServerSecret`] does.
+    pub server: Option<String>,
+    /// For an HTTP Basic account, the username typed on the screen before.
+    ///
+    /// The runtime stores `username:password`, the shape a Basic credential
+    /// has always been stored in, so the password is the only part that has
+    /// to stay out of the application. A username is shown on screen anyway.
+    pub username: Option<String>,
+}
+
+impl SecretTarget {
+    /// A plain secret, such as an access token, under `name`.
+    #[must_use]
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            server: None,
+            username: None,
+        }
+    }
+
+    /// The device request that would store `value` here, which is how the
+    /// runtime stores a typed secret: one validation and one write path for
+    /// a secret whether it was typed on the reader or handed over.
+    #[must_use]
+    pub fn install(&self, value: &str) -> DeviceRequest {
+        let value = match &self.username {
+            Some(username) => SecretValue::new(format!("{username}:{value}")),
+            None => SecretValue::new(value),
+        };
+        match &self.server {
+            Some(server) => DeviceRequest::SetServerSecret {
+                name: self.name.clone(),
+                server: server.clone(),
+                value,
+            },
+            None => DeviceRequest::SetSecret {
+                name: self.name.clone(),
+                value,
+            },
+        }
+    }
+}
+
+/// How a [`DeviceRequest::TypeText`] field ended.
+///
+/// Every answer to that request is one of these, refusals included, rather
+/// than the general [`DeviceResult::Denied`] and [`DeviceResult::Failed`].
+/// A field stays open for as long as the owner takes, and other requests are
+/// answered while it does, so the application has to be able to tell this
+/// answer from theirs by its shape alone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TextOutcome {
+    /// What the owner typed and accepted. Never a secret.
+    Typed(String),
+    /// A secret was typed and written to the application's namespace. The
+    /// value itself stays with the runtime.
+    Saved,
+    /// The owner backed out. Nothing was typed into anything.
+    Cancelled,
+    /// The runtime would not open the field, with the reason.
+    Denied(DenyReason),
+    /// The field was answered but the secret could not be written.
+    Failed(DeviceError),
+}
+
+/// The longest prompt a text field may carry, in bytes.
+pub const MAX_TEXT_PROMPT_LEN: usize = 256;
+/// The longest line of guidance under a prompt, in bytes.
+pub const MAX_TEXT_HINT_LEN: usize = 512;
+/// The longest label for the key that accepts a field, in bytes.
+pub const MAX_TEXT_SUBMIT_LEN: usize = 32;
+/// The most a field may hold, in bytes: the keyboard's character limit at the
+/// widest a character can be encoded.
+pub const MAX_TYPED_LEN: usize = 4 * kobo_ui::keyboard::MAX_TEXT;
+
+/// Whether `text` is something the keyboard could have typed into a field.
+fn valid_typed(text: &str) -> bool {
+    text.len() <= MAX_TYPED_LEN
+        && text.chars().count() <= kobo_ui::keyboard::MAX_TEXT
+        && !text.chars().any(char::is_control)
+}
+
+fn valid_label(text: &str, limit: usize, required: bool) -> bool {
+    (!required || !text.trim().is_empty())
+        && text.len() <= limit
+        && !text.chars().any(char::is_control)
+}
+
+/// Checked at both ends of the wire, so a runtime is never asked to draw a
+/// field it cannot honour and an application is never told it was.
+fn valid_text_request(
+    prompt: &str,
+    hint: &str,
+    initial: &str,
+    submit: &str,
+    kind: kobo_ui::FieldKind,
+    save_as: Option<&SecretTarget>,
+) -> bool {
+    let secret = kind == kobo_ui::FieldKind::Secret;
+    valid_label(prompt, MAX_TEXT_PROMPT_LEN, true)
+        && valid_label(hint, MAX_TEXT_HINT_LEN, false)
+        && valid_label(submit, MAX_TEXT_SUBMIT_LEN, true)
+        && valid_typed(initial)
+        && secret == save_as.is_some()
+        && (!secret || initial.is_empty())
+        && save_as.is_none_or(|target| {
+            valid_app_id(&target.name)
+                && target.server.as_deref().is_none_or(valid_secret_server)
+                && target.username.as_deref().is_none_or(|username| {
+                    !username.is_empty()
+                        && username.len() <= MAX_APP_SECRET_BYTES
+                        && !username.contains(':')
+                        && !username.chars().any(char::is_control)
+                })
+        })
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1638,6 +1819,9 @@ pub enum DeviceResult {
     /// installed on this reader. Names only: a stored value never
     /// leaves the runtime, and an absent name says so by omission.
     Secrets { present: Vec<String> },
+    /// How a [`DeviceRequest::TypeText`] field ended. Requires
+    /// [`TEXT_ENTRY_VERSION`].
+    Text(TextOutcome),
 }
 
 /// The largest library listing one result may carry.
@@ -2072,7 +2256,9 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::DeviceRequest(request) => {
             encode_device_request(&mut payload, request, frame.version)?;
         }
-        Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
+        Message::DeviceResult(result) => {
+            encode_device_result(&mut payload, result, frame.version)?;
+        }
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
         }
@@ -2690,7 +2876,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             Ok((12, length))
         }
         Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
-        Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
+        Message::DeviceResult(result) => Ok((8, device_result_len(result, version)?)),
         Message::Spawn { work, .. } => {
             if matches!(work, Task::Update { .. }) && version < UPDATE_TASK_VERSION {
                 return Err(ProtocolError::UnsupportedVersion(version));
@@ -3000,6 +3186,35 @@ fn encode_device_request(
         DeviceRequest::CheckSecrets { .. } => {
             return Err(ProtocolError::InvalidValue("secret names"));
         }
+        DeviceRequest::TypeText { .. } if version < TEXT_ENTRY_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::TypeText {
+            prompt,
+            hint,
+            initial,
+            submit,
+            kind,
+            save_as,
+        } => {
+            if !valid_text_request(prompt, hint, initial, submit, *kind, save_as.as_ref()) {
+                return Err(ProtocolError::InvalidValue("text field"));
+            }
+            output.push(52);
+            for text in [prompt, hint, initial, submit] {
+                push_string(output, text)?;
+            }
+            output.push(encode_field_kind(*kind));
+            match save_as {
+                Some(target) => {
+                    output.push(1);
+                    push_string(output, &target.name)?;
+                    push_optional_string(output, target.server.as_deref())?;
+                    push_optional_string(output, target.username.as_deref())?;
+                }
+                None => output.push(0),
+            }
+        }
     }
     Ok(())
 }
@@ -3067,9 +3282,9 @@ fn device_request_len(request: &DeviceRequest, version: u8) -> Result<usize, Pro
     Ok(encoded.len())
 }
 
-fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
+fn device_result_len(result: &DeviceResult, version: u8) -> Result<usize, ProtocolError> {
     let mut encoded = Vec::new();
-    encode_device_result(&mut encoded, result)?;
+    encode_device_result(&mut encoded, result, version)?;
     Ok(encoded.len())
 }
 
@@ -3385,8 +3600,54 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::ReadLibrary { id })
         }
+        52 if version >= TEXT_ENTRY_VERSION => decode_text_request(reader),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
+}
+
+fn decode_text_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
+    let prompt = reader.string()?;
+    let hint = reader.string()?;
+    let initial = reader.string()?;
+    let submit = reader.string()?;
+    let kind = decode_field_kind(reader.u8()?)?;
+    let save_as = match reader.u8()? {
+        0 => None,
+        1 => Some(SecretTarget {
+            name: reader.string()?,
+            server: reader.optional_string()?,
+            username: reader.optional_string()?,
+        }),
+        _ => return Err(ProtocolError::InvalidValue("text field")),
+    };
+    if !valid_text_request(&prompt, &hint, &initial, &submit, kind, save_as.as_ref()) {
+        return Err(ProtocolError::InvalidValue("text field"));
+    }
+    Ok(DeviceRequest::TypeText {
+        prompt,
+        hint,
+        initial,
+        submit,
+        kind,
+        save_as,
+    })
+}
+
+fn decode_text_outcome(reader: &mut Reader<'_>) -> Result<TextOutcome, ProtocolError> {
+    Ok(match reader.u8()? {
+        1 => {
+            let text = reader.string()?;
+            if !valid_typed(&text) {
+                return Err(ProtocolError::InvalidValue("typed text"));
+            }
+            TextOutcome::Typed(text)
+        }
+        2 => TextOutcome::Saved,
+        3 => TextOutcome::Cancelled,
+        4 => TextOutcome::Denied(DenyReason::try_from(reader.u8()?)?),
+        5 => TextOutcome::Failed(DeviceError::try_from(reader.u8()?)?),
+        _ => return Err(ProtocolError::InvalidValue("text outcome")),
+    })
 }
 
 /// Both fields are checked here as well as at the encoder, so a peer that
@@ -3430,7 +3691,11 @@ fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), Protocol
     clippy::too_many_lines,
     reason = "one explicit bounded result tag table"
 )]
-fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
+fn encode_device_result(
+    output: &mut Vec<u8>,
+    result: &DeviceResult,
+    version: u8,
+) -> Result<(), ProtocolError> {
     match result {
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
@@ -3608,6 +3873,23 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
         DeviceResult::Secrets { .. } => {
             return Err(ProtocolError::InvalidValue("secret names"));
         }
+        DeviceResult::Text(_) if version < TEXT_ENTRY_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceResult::Text(outcome) => {
+            output.push(22);
+            match outcome {
+                TextOutcome::Typed(text) if valid_typed(text) => {
+                    output.push(1);
+                    push_string(output, text)?;
+                }
+                TextOutcome::Typed(_) => return Err(ProtocolError::InvalidValue("typed text")),
+                TextOutcome::Saved => output.push(2),
+                TextOutcome::Cancelled => output.push(3),
+                TextOutcome::Denied(reason) => output.extend_from_slice(&[4, *reason as u8]),
+                TextOutcome::Failed(error) => output.extend_from_slice(&[5, *error as u8]),
+            }
+        }
     }
     Ok(())
 }
@@ -3750,8 +4032,12 @@ fn valid_cobalt_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+fn decode_device_result(
+    reader: &mut Reader<'_>,
+    version: u8,
+) -> Result<DeviceResult, ProtocolError> {
     match reader.u8()? {
+        22 if version >= TEXT_ENTRY_VERSION => decode_text_outcome(reader).map(DeviceResult::Text),
         1 => Ok(DeviceResult::Done),
         2 => Ok(DeviceResult::Granted {
             seconds: reader.u32()?,
@@ -4345,6 +4631,10 @@ fn encoded_node_len(
             value,
             placeholder,
             clear,
+            label,
+            hint,
+            error,
+            kind,
             ..
         } => {
             // id, the action, the clear flag, then the two strings. A clear
@@ -4354,6 +4644,18 @@ fn encoded_node_len(
             add_encoded_len(&mut length, encoded_string_len(placeholder)?)?;
             if clear.is_some() {
                 add_encoded_len(&mut length, 4)?;
+            }
+            // Protocol 16 adds the kind and three flagged strings.
+            if version < CONTROLS_VERSION {
+                if label.is_some() || hint.is_some() || error.is_some() || *kind != FieldKind::Text
+                {
+                    return Err(ProtocolError::InvalidValue("protocol 16 field"));
+                }
+            } else {
+                add_encoded_len(&mut length, 4)?;
+                for text in [label, hint, error].into_iter().flatten() {
+                    add_encoded_len(&mut length, encoded_string_len(text)?)?;
+                }
             }
             length
         }
@@ -4470,6 +4772,20 @@ fn encoded_node_len(
                 if row.menu.is_some() {
                     add_encoded_len(&mut length, 4)?;
                 }
+                // Protocol 16 adds a flagged button and a flagged badge.
+                if version < CONTROLS_VERSION {
+                    if row.button.is_some() || row.badge.is_some() || row.state.is_check() {
+                        return Err(ProtocolError::InvalidValue("protocol 16 row"));
+                    }
+                } else {
+                    add_encoded_len(&mut length, 2)?;
+                    if let Some(button) = &row.button {
+                        add_encoded_len(&mut length, encoded_bar_action_len(button)?)?;
+                    }
+                    if row.badge.is_some() {
+                        add_encoded_len(&mut length, 4)?;
+                    }
+                }
             }
             length
         }
@@ -4557,9 +4873,25 @@ fn encoded_node_len(
             }
             length
         }
-        Node::Banner { text, .. } => {
+        Node::Banner {
+            text,
+            level,
+            action,
+            ..
+        } => {
             let mut length = 6;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            // Protocol 16 adds two levels and a flagged action.
+            if version < CONTROLS_VERSION {
+                if action.is_some() || matches!(level, BannerLevel::Success | BannerLevel::Error) {
+                    return Err(ProtocolError::InvalidValue("protocol 16 banner"));
+                }
+            } else {
+                add_encoded_len(&mut length, 1)?;
+                if let Some(action) = action {
+                    add_encoded_len(&mut length, encoded_bar_action_len(action)?)?;
+                }
+            }
             length
         }
         Node::Skeleton { .. } => 6,
@@ -4622,6 +4954,71 @@ fn encoded_node_len(
             add_encoded_len(&mut length, 1)?;
             if cursor.is_some() {
                 add_encoded_len(&mut length, 4)?;
+            }
+            length
+        }
+        Node::Toggle { .. }
+        | Node::SelectionBar { .. }
+        | Node::Options { .. }
+        | Node::Code { .. }
+        | Node::Steps { .. }
+            if version < CONTROLS_VERSION =>
+        {
+            return Err(ProtocolError::InvalidValue("protocol 16 control"));
+        }
+        Node::Toggle { label, summary, .. } => {
+            // Tag, id, action, a flag byte, then the two strings.
+            let mut length = 10;
+            add_encoded_len(&mut length, encoded_string_len(label)?)?;
+            add_encoded_len(&mut length, encoded_string_len(summary)?)?;
+            length
+        }
+        Node::SelectionBar { actions, .. } => {
+            // Tag, id, the count, how many verbs, then each verb.
+            let mut length = 10;
+            for action in actions.iter().take(kobo_ui::MAX_SELECTION_ACTIONS) {
+                add_encoded_len(&mut length, encoded_bar_action_len(action)?)?;
+            }
+            length
+        }
+        Node::Options {
+            prompt, options, ..
+        } => {
+            // Tag, id, the prompt, how many options, then an action and two
+            // strings each, then the selection, the page and the two pager
+            // actions.
+            let mut length = 7;
+            add_encoded_len(&mut length, encoded_string_len(prompt)?)?;
+            for option in options.iter().take(kobo_ui::MAX_OPTIONS) {
+                add_encoded_len(&mut length, 4)?;
+                add_encoded_len(&mut length, encoded_string_len(&option.label)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&option.summary)?)?;
+            }
+            add_encoded_len(&mut length, 12)?;
+            length
+        }
+        Node::Code {
+            payload, caption, ..
+        } => {
+            if payload.len() > kobo_ui::MAX_CODE_BYTES {
+                return Err(ProtocolError::InvalidValue("code payload"));
+            }
+            let mut length = 5;
+            add_encoded_len(&mut length, encoded_string_len(payload)?)?;
+            add_encoded_len(&mut length, encoded_string_len(caption)?)?;
+            length
+        }
+        Node::Steps { total, labels, .. } => {
+            if *total == 0
+                || usize::from(*total) > kobo_ui::MAX_STEPS
+                || !(labels.is_empty() || labels.len() == usize::from(*total))
+            {
+                return Err(ProtocolError::InvalidValue("steps"));
+            }
+            // Tag, id, the step, the total, how many labels, then each one.
+            let mut length = 8;
+            for label in labels {
+                add_encoded_len(&mut length, encoded_string_len(label)?)?;
             }
             length
         }
@@ -4731,7 +5128,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             name: reader.string()?,
         },
         7 => Message::DeviceRequest(decode_device_request(&mut reader, version)?),
-        8 => Message::DeviceResult(decode_device_result(&mut reader)?),
+        8 => Message::DeviceResult(decode_device_result(&mut reader, version)?),
         9 => {
             let task = TaskId(reader.u32()?);
             let work = match reader.u8()? {
@@ -5632,6 +6029,10 @@ fn encode_node(
             value,
             placeholder,
             clear,
+            label,
+            hint,
+            error,
+            kind,
         } => {
             output.push(24);
             push_u32(output, id.0);
@@ -5644,6 +6045,19 @@ fn encode_node(
                     push_u32(output, clear.0);
                 }
                 None => output.push(0),
+            }
+            // After everything protocol 15 wrote, so a field that uses none
+            // of it is still the bytes it always was up to this point.
+            if version < CONTROLS_VERSION {
+                if label.is_some() || hint.is_some() || error.is_some() || *kind != FieldKind::Text
+                {
+                    return Err(ProtocolError::InvalidValue("protocol 16 field"));
+                }
+            } else {
+                output.push(encode_field_kind(*kind));
+                push_optional_string(output, label.as_deref())?;
+                push_optional_string(output, hint.as_deref())?;
+                push_optional_string(output, error.as_deref())?;
             }
         }
         Node::Chips { id, chips } => {
@@ -5811,6 +6225,26 @@ fn encode_node(
                 if let Some(menu) = row.menu {
                     push_u32(output, menu.0);
                 }
+                if version < CONTROLS_VERSION {
+                    if row.button.is_some() || row.badge.is_some() || row.state.is_check() {
+                        return Err(ProtocolError::InvalidValue("protocol 16 row"));
+                    }
+                } else {
+                    match &row.button {
+                        Some(button) => {
+                            output.push(1);
+                            encode_bar_action(output, button)?;
+                        }
+                        None => output.push(0),
+                    }
+                    match row.badge {
+                        Some(count) => {
+                            output.push(1);
+                            push_u32(output, count);
+                        }
+                        None => output.push(0),
+                    }
+                }
             }
         }
         Node::TileGrid { id, tiles, shape } => {
@@ -5967,14 +6401,35 @@ fn encode_node(
                 }
             }
         }
-        Node::Banner { id, level, text } => {
+        Node::Banner {
+            id,
+            level,
+            text,
+            action,
+        } => {
+            if version < CONTROLS_VERSION
+                && (action.is_some() || matches!(level, BannerLevel::Success | BannerLevel::Error))
+            {
+                return Err(ProtocolError::InvalidValue("protocol 16 banner"));
+            }
             output.push(11);
             push_u32(output, id.0);
             output.push(match level {
                 BannerLevel::Info => 0,
                 BannerLevel::Attention => 1,
+                BannerLevel::Success => 2,
+                BannerLevel::Error => 3,
             });
             push_string(output, text)?;
+            if version >= CONTROLS_VERSION {
+                match action {
+                    Some(action) => {
+                        output.push(1);
+                        encode_bar_action(output, action)?;
+                    }
+                    None => output.push(0),
+                }
+            }
         }
         Node::Skeleton { id, lines } => {
             output.push(12);
@@ -6069,6 +6524,108 @@ fn encode_node(
                 }
             }
         }
+        Node::Toggle { .. }
+        | Node::SelectionBar { .. }
+        | Node::Options { .. }
+        | Node::Code { .. }
+        | Node::Steps { .. }
+            if version < CONTROLS_VERSION =>
+        {
+            return Err(ProtocolError::InvalidValue("protocol 16 control"));
+        }
+        Node::Toggle {
+            id,
+            action,
+            label,
+            summary,
+            on,
+            state,
+        } => {
+            output.push(35);
+            push_u32(output, id.0);
+            push_u32(output, action.0);
+            output.push(u8::from(*on) | (u8::from(!state.is_enabled()) << 1));
+            push_string(output, label)?;
+            push_string(output, summary)?;
+        }
+        Node::SelectionBar { id, count, actions } => {
+            let actions = &actions[..actions.len().min(kobo_ui::MAX_SELECTION_ACTIONS)];
+            output.push(36);
+            push_u32(output, id.0);
+            push_u32(output, *count);
+            output.push(u8::try_from(actions.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for action in actions {
+                encode_bar_action(output, action)?;
+            }
+        }
+        Node::Options {
+            id,
+            prompt,
+            options,
+            selected,
+            page,
+            previous,
+            next,
+        } => {
+            let options = &options[..options.len().min(kobo_ui::MAX_OPTIONS)];
+            output.push(37);
+            push_u32(output, id.0);
+            push_string(output, prompt)?;
+            push_u16(
+                output,
+                u16::try_from(options.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+            );
+            for option in options {
+                push_u32(output, option.action.0);
+                push_string(output, &option.label)?;
+                push_string(output, &option.summary)?;
+            }
+            // One past the index, so "no answer yet" is zero, as on a choice.
+            push_u16(
+                output,
+                match selected {
+                    Some(index) if usize::from(*index) < options.len() => index.saturating_add(1),
+                    _ => 0,
+                },
+            );
+            push_u16(output, *page);
+            push_u32(output, previous.0);
+            push_u32(output, next.0);
+        }
+        Node::Code {
+            id,
+            payload,
+            caption,
+        } => {
+            if payload.len() > kobo_ui::MAX_CODE_BYTES {
+                return Err(ProtocolError::InvalidValue("code payload"));
+            }
+            output.push(38);
+            push_u32(output, id.0);
+            push_string(output, payload)?;
+            push_string(output, caption)?;
+        }
+        Node::Steps {
+            id,
+            current,
+            total,
+            labels,
+        } => {
+            if *total == 0
+                || usize::from(*total) > kobo_ui::MAX_STEPS
+                || !(labels.is_empty() || labels.len() == usize::from(*total))
+            {
+                return Err(ProtocolError::InvalidValue("steps"));
+            }
+            output.push(39);
+            push_u32(output, id.0);
+            output.push((*current).min(*total - 1));
+            output.push(*total);
+            output.push(u8::try_from(labels.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for label in labels {
+                push_string(output, label)?;
+            }
+        }
     }
     Ok(())
 }
@@ -6077,17 +6634,56 @@ const fn encode_row_state(state: RowState) -> u8 {
     match state {
         RowState::Open => 0,
         RowState::Done => 1,
+        RowState::Checked => 2,
+        RowState::Unchecked => 3,
+        RowState::Mixed => 4,
     }
 }
 
 // Rejected rather than defaulted. A state nobody defined is a sender this
 // receiver does not understand, and guessing "not done" for it would quietly
-// show a finished task as outstanding.
-const fn decode_row_state(tag: u8) -> Option<RowState> {
+// show a finished task as outstanding. The check states exist from protocol
+// 16, so an older frame naming one is refused rather than drawn as a box its
+// sender never asked for.
+const fn decode_row_state(tag: u8, version: u8) -> Option<RowState> {
     Some(match tag {
         0 => RowState::Open,
         1 => RowState::Done,
+        2 if version >= CONTROLS_VERSION => RowState::Checked,
+        3 if version >= CONTROLS_VERSION => RowState::Unchecked,
+        4 if version >= CONTROLS_VERSION => RowState::Mixed,
         _ => return None,
+    })
+}
+
+/// The byte a [`FieldKind`] travels as, on a field and on any request that
+/// asks the runtime for text of that kind.
+#[must_use]
+pub const fn encode_field_kind(kind: FieldKind) -> u8 {
+    match kind {
+        FieldKind::Text => 0,
+        FieldKind::Secret => 1,
+        FieldKind::Number => 2,
+        FieldKind::Address => 3,
+    }
+}
+
+/// The [`FieldKind`] a byte names.
+///
+/// Refused rather than read as plain text, because the kind that would be
+/// lost is the one that matters: a secret drawn in the clear is on the panel
+/// for the next person to read.
+///
+/// # Errors
+///
+/// Returns an error for a byte that names no kind.
+pub const fn decode_field_kind(tag: u8) -> Result<FieldKind, ProtocolError> {
+    Ok(match tag {
+        0 => FieldKind::Text,
+        1 => FieldKind::Secret,
+        2 => FieldKind::Number,
+        3 => FieldKind::Address,
+        _ => return Err(ProtocolError::InvalidValue("field kind")),
     })
 }
 
@@ -6778,12 +7374,26 @@ fn decode_node(
                 }
                 _ => return Err(ProtocolError::InvalidValue("field clear flag")),
             };
+            let (kind, label, hint, error) = if version < CONTROLS_VERSION {
+                (FieldKind::Text, None, None, None)
+            } else {
+                (
+                    decode_field_kind(reader.u8()?)?,
+                    reader.optional_string()?,
+                    reader.optional_string()?,
+                    reader.optional_string()?,
+                )
+            };
             Ok(Node::Field {
                 id,
                 action,
                 value,
                 placeholder,
                 clear,
+                label,
+                hint,
+                error,
+                kind,
             })
         }
         25 => {
@@ -7086,12 +7696,132 @@ fn decode_node(
             let level = match reader.u8()? {
                 0 => BannerLevel::Info,
                 1 => BannerLevel::Attention,
+                2 if version >= CONTROLS_VERSION => BannerLevel::Success,
+                3 if version >= CONTROLS_VERSION => BannerLevel::Error,
                 _ => return Err(ProtocolError::InvalidValue("banner level")),
+            };
+            let text = reader.string()?;
+            let action = if version < CONTROLS_VERSION {
+                None
+            } else {
+                match reader.u8()? {
+                    0 => None,
+                    1 => Some(decode_bar_action(reader)?),
+                    _ => return Err(ProtocolError::InvalidValue("banner action flag")),
+                }
             };
             Ok(Node::Banner {
                 id,
                 level,
-                text: reader.string()?,
+                text,
+                action,
+            })
+        }
+        35 if version >= CONTROLS_VERSION => {
+            let action = ActionId(reader.u32()?);
+            if action.is_reserved() {
+                return Err(ProtocolError::InvalidValue("reserved action id"));
+            }
+            let flags = reader.u8()?;
+            if flags & !0b11 != 0 {
+                return Err(ProtocolError::InvalidValue("toggle flags"));
+            }
+            Ok(Node::Toggle {
+                id,
+                action,
+                on: flags & 0b1 != 0,
+                state: if flags & 0b10 == 0 {
+                    ControlState::Enabled
+                } else {
+                    ControlState::Disabled
+                },
+                label: reader.string()?,
+                summary: reader.string()?,
+            })
+        }
+        36 if version >= CONTROLS_VERSION => {
+            let count = reader.u32()?;
+            let shown = usize::from(reader.u8()?);
+            if shown > kobo_ui::MAX_SELECTION_ACTIONS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut actions = Vec::with_capacity(shown);
+            for _ in 0..shown {
+                actions.push(decode_bar_action(reader)?);
+            }
+            Ok(Node::SelectionBar { id, count, actions })
+        }
+        37 if version >= CONTROLS_VERSION => {
+            let prompt = reader.string()?;
+            let count = usize::from(reader.u16()?);
+            if count > kobo_ui::MAX_OPTIONS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut options = Vec::with_capacity(count);
+            for _ in 0..count {
+                let action = ActionId(reader.u32()?);
+                if action.is_reserved() {
+                    return Err(ProtocolError::InvalidValue("reserved action id"));
+                }
+                options.push(kobo_ui::OptionRow {
+                    action,
+                    label: reader.string()?,
+                    summary: reader.string()?,
+                });
+            }
+            // Clamped rather than refused, for the reason a choice gives.
+            let selected = match reader.u16()? {
+                0 => None,
+                marked if usize::from(marked) <= options.len() => Some(marked - 1),
+                _ => None,
+            };
+            let page = reader.u16()?;
+            let previous = ActionId(reader.u32()?);
+            let next = ActionId(reader.u32()?);
+            if previous.is_reserved() || next.is_reserved() {
+                return Err(ProtocolError::InvalidValue("reserved action id"));
+            }
+            Ok(Node::Options {
+                id,
+                prompt,
+                options,
+                selected,
+                page,
+                previous,
+                next,
+            })
+        }
+        38 if version >= CONTROLS_VERSION => {
+            let payload = reader.string()?;
+            if payload.len() > kobo_ui::MAX_CODE_BYTES {
+                return Err(ProtocolError::InvalidValue("code payload"));
+            }
+            Ok(Node::Code {
+                id,
+                payload,
+                caption: reader.string()?,
+            })
+        }
+        39 if version >= CONTROLS_VERSION => {
+            let current = reader.u8()?;
+            let total = reader.u8()?;
+            if total == 0 || usize::from(total) > kobo_ui::MAX_STEPS {
+                return Err(ProtocolError::InvalidValue("step count"));
+            }
+            let named = usize::from(reader.u8()?);
+            if named != 0 && named != usize::from(total) {
+                return Err(ProtocolError::InvalidValue("step labels"));
+            }
+            let mut labels = Vec::with_capacity(named);
+            for _ in 0..named {
+                labels.push(reader.string()?);
+            }
+            Ok(Node::Steps {
+                id,
+                // Clamped rather than refused, as a tab's selection is.
+                current: current.min(total - 1),
+                total,
+                labels,
             })
         }
         12 => Ok(Node::Skeleton {
@@ -7253,7 +7983,7 @@ fn decode_node(
                 let title = reader.string()?;
                 let summary = reader.string()?;
                 let lead = read_row_lead(reader)?;
-                let state = decode_row_state(reader.u8()?)
+                let state = decode_row_state(reader.u8()?, version)
                     .ok_or(ProtocolError::InvalidValue("row state"))?;
                 let trailing = if reader.u8()? == 0 {
                     None
@@ -7269,6 +7999,21 @@ fn decode_node(
                     }
                     Some(menu)
                 };
+                let (button, badge) = if version < CONTROLS_VERSION {
+                    (None, None)
+                } else {
+                    let button = match reader.u8()? {
+                        0 => None,
+                        1 => Some(decode_bar_action(reader)?),
+                        _ => return Err(ProtocolError::InvalidValue("row button flag")),
+                    };
+                    let badge = match reader.u8()? {
+                        0 => None,
+                        1 => Some(reader.u32()?),
+                        _ => return Err(ProtocolError::InvalidValue("row badge flag")),
+                    };
+                    (button, badge)
+                };
                 rows.push(Row {
                     action,
                     title,
@@ -7277,6 +8022,8 @@ fn decode_node(
                     state,
                     trailing,
                     menu,
+                    button,
+                    badge,
                 });
             }
             Ok(Node::Rows { id, rows })
@@ -7516,6 +8263,9 @@ mod tests;
 mod node_coverage_tests;
 
 #[cfg(test)]
+mod controls_wire_tests;
+
+#[cfg(test)]
 mod store_tests;
 
 fn encode_task_error(payload: &mut Vec<u8>, error: TaskError) {
@@ -7572,3 +8322,6 @@ mod suspend_tests;
 
 #[cfg(test)]
 mod update_task_tests;
+
+#[cfg(test)]
+mod text_entry_tests;

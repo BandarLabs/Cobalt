@@ -1283,14 +1283,18 @@ test("a toolchain pin rebuilds every app unless its exact content was reviewed",
 
 test("the reviewed toolchain pin is the file in the tree, and only that file", () => {
   const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
-  const file = manifest.changes
-    .flatMap(change => change.files)
-    .find(entry => entry.path === "rust-toolchain.toml");
-  assert.ok(file);
+  const change = manifest.changes.find(entry =>
+    entry.files.some(file => file.path === "rust-toolchain.toml")
+  );
+  assert.ok(change);
+  const file = change.files.find(entry => entry.path === "rust-toolchain.toml");
   assert.equal(file.base_blob, null);
   const inTree = execFileSync("git", ["hash-object", "rust-toolchain.toml"], { encoding: "utf8" }).trim();
   assert.equal(file.compatible_blob, inTree);
-  const protocol = currentProtocolVersion();
+  // The protocol the pin was reviewed under, not the newest one: a review
+  // answers for the protocol it names, and a protocol bump rebuilds every
+  // app anyway.
+  const protocol = change.protocol_version;
   assert.deepEqual(
     compatibleChangePaths(manifest, protocol, [file.path], () => null, () => file.compatible_blob),
     new Set([file.path])

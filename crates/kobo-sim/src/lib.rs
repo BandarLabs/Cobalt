@@ -1138,6 +1138,12 @@ struct AppState {
     /// them on each press, so a test can stand in for either kind of reader
     /// while the process runs the default profile.
     page_keys: bool,
+    /// The text field the simulated runtime is holding open for the
+    /// application, and the id of the request it will answer.
+    ///
+    /// The same field the device draws, from the same module, so a script
+    /// that types here taps the keys a reader would.
+    typing: Option<(u32, kobod::text_entry::Field)>,
 }
 
 impl Default for AppState {
@@ -1197,6 +1203,7 @@ impl AppState {
             scheduled_wake: None,
             terminal_open: false,
             page_keys: profile_facts().page_keys,
+            typing: None,
         }
     }
 }
@@ -1547,19 +1554,43 @@ impl AppState {
             signal,
             true,
         );
-        self.chrome =
-            kobo_ui::Chrome::for_screen(&self.screen, self.app_name == "launcher", Some(status));
+        self.chrome = kobo_ui::Chrome::for_screen(
+            &self.base_screen(),
+            self.app_name == "launcher",
+            Some(status),
+        );
+    }
+
+    /// What the shell draws its chrome around: the open text field, if the
+    /// application asked for one, or else the screen it drew.
+    fn base_screen(&self) -> Screen {
+        match &self.typing {
+            Some((_, field)) => field.screen(
+                Some(&self.drawn_screen),
+                &profile_metrics().oriented(self.orientation),
+            ),
+            None => self.drawn_screen.clone(),
+        }
     }
 
     /// Rebuilds the displayed screen from the one the application drew, for
     /// the bar state the shell is currently in.
     fn compose_chrome(&mut self) {
         self.screen = kobo_ui::ensure_way_back_revealed(
-            self.drawn_screen.clone(),
+            self.base_screen(),
             &self.chrome,
             &self.app_name,
             self.top_bar,
         );
+    }
+
+    /// Draws the text field again, or the application's screen once it
+    /// has closed, as a paint a driver can wait for.
+    fn repaint_field(&mut self) {
+        self.update_chrome();
+        self.compose_chrome();
+        self.paints = self.paints.saturating_add(1);
+        self.commit_frame();
     }
 
     /// Notes a page press on a reader that has no page-turn buttons.
@@ -1693,7 +1724,9 @@ impl AppSession {
     ///
     /// Returns an error if the SDK connection is closed or its writer is poisoned.
     pub fn send_action(&self, action: ActionId) -> io::Result<()> {
-        if !self.route_input(&Message::Action { action })? {
+        if self.type_into(&Message::Action { action })?
+            || !self.route_input(&Message::Action { action })?
+        {
             return Ok(());
         }
         self.state
@@ -1816,7 +1849,7 @@ impl AppSession {
             messages
         };
         for message in messages {
-            if !self.route_input(&message)? {
+            if self.type_into(&message)? || !self.route_input(&message)? {
                 continue;
             }
             write_shared(
@@ -1829,6 +1862,70 @@ impl AppSession {
             )?;
         }
         Ok(())
+    }
+
+    /// Gives `message` to the open text field, if there is one.
+    ///
+    /// True when the field took it. While a field is open it takes every
+    /// input, because nothing the application drew is on the panel to be
+    /// pressed, held or paged.
+    fn type_into(&self, message: &Message) -> io::Result<bool> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?;
+        // A field held for an application behind another is not on the
+        // panel, so input is not its to take.
+        if state.runtime_navigation && state.lifecycle == Lifecycle::Background {
+            return Ok(false);
+        }
+        let Some((request_id, mut field)) = state.typing.take() else {
+            return Ok(false);
+        };
+        let step = match message {
+            Message::Action { action } => field.press(*action),
+            _ => None,
+        };
+        let finished = match step {
+            None => {
+                state.typing = Some((request_id, field));
+                return Ok(true);
+            }
+            Some(kobod::text_entry::Step::Redraw) => {
+                state.typing = Some((request_id, field));
+                state.repaint_field();
+                return Ok(true);
+            }
+            Some(kobod::text_entry::Step::Finished(finished)) => finished,
+        };
+        let caller = state.app_name.clone();
+        let scenario = state.scenario;
+        drop(state);
+        let result = kobod::text_entry::answer(finished, |install| {
+            simulated_credential_request(&self.state, &caller, scenario, install)
+                .ok()
+                .flatten()
+                .unwrap_or(kobo_protocol::DeviceResult::Failed(
+                    kobo_protocol::DeviceError::Backend,
+                ))
+        });
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            state.record(format!("device: text field -> {}", described(&result)));
+            state.repaint_field();
+        }
+        write_shared(
+            &self.writer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id,
+                message: Message::DeviceResult(result),
+            },
+        )?;
+        Ok(true)
     }
 
     fn change_hardware(&self, command: &str) -> io::Result<()> {
@@ -3222,6 +3319,9 @@ fn read_app_messages(
                     .callback_complete();
             }
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
+            Message::DeviceRequest(request @ kobo_protocol::DeviceRequest::TypeText { .. }) => {
+                open_text_field(state, writer, name, request_id, &request)?;
+            }
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
                 let result = if let Some(result) =
@@ -3441,6 +3541,59 @@ fn scenario_refuses_store(scenario: Scenario, request: &kobo_protocol::StoreRequ
             kobo_protocol::StoreRequest::Save { .. }
                 | kobo_protocol::StoreRequest::ShelfWrite { .. }
         )
+}
+
+/// Opens the simulated runtime's text field for `caller`, or answers why it
+/// will not, exactly as the device host does.
+fn open_text_field(
+    state: &Arc<Mutex<AppState>>,
+    writer: &Arc<AppWriter>,
+    caller: &str,
+    request_id: u32,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<()> {
+    let mut answers = Vec::new();
+    {
+        let mut state = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?;
+        match kobod::text_entry::Field::open(caller, request) {
+            Some(Ok(field)) => {
+                state.record(format!("device: {request:?} -> keyboard"));
+                if let Some((previous, _)) = state.typing.take() {
+                    answers.push((previous, kobod::text_entry::superseded()));
+                }
+                state.typing = Some((request_id, field));
+                state.repaint_field();
+            }
+            Some(Err(refusal)) => {
+                state.record(format!("device: {request:?} -> {refusal:?}"));
+                answers.push((request_id, refusal));
+            }
+            None => {}
+        }
+    }
+    for (request_id, result) in answers {
+        write_shared(
+            writer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id,
+                message: Message::DeviceResult(result),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// How a field ended, for the session log, and never what was typed in it.
+fn described(result: &kobo_protocol::DeviceResult) -> String {
+    match result {
+        kobo_protocol::DeviceResult::Text(kobo_protocol::TextOutcome::Typed(text)) => {
+            format!("typed {} characters", text.chars().count())
+        }
+        other => format!("{other:?}"),
+    }
 }
 
 fn simulated_platform_request_allowed(
@@ -6088,3 +6241,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod text_entry_tests;

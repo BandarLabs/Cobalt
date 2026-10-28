@@ -72,6 +72,10 @@ fn showcase() -> Screen {
                     value: "Search Kobo".into(),
                     placeholder: "Search".into(),
                     clear: Some(ActionId(6)),
+                    label: None,
+                    hint: None,
+                    error: None,
+                    kind: FieldKind::Text,
                 },
                 Node::Button {
                     id: NodeId(6),

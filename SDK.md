@@ -323,14 +323,19 @@ the actual E Ink renderer and is the quickest visual reference.
 | `button_with_state(name, label, state)` | A button with explicit semantic enabled state. |
 | `field(name, value, placeholder)` | A tappable field showing its current value; the app routes it to a keyboard screen. |
 | `field_clear(name)` | Adds a clear control to the field just declared when it has a value. |
+| `field_label(label)` / `field_hint(hint)` / `field_error(error)` | Protocol 16. A name on one line above the field just declared, and a hint on up to two lines under it, with the error drawn in the hint's place. |
+| `field_kind(kind)` | Protocol 16. `Text`, `Secret`, `Number` or `Address`. A secret is drawn as one dot per character. |
+| `toggle(name, label, summary, on)` | Protocol 16. A setting drawn as a row with a switch; the whole row is the target and the app applies the change on the tap. One row high. |
+| `toggle_with_state(name, label, summary, on, state)` | The same, for a setting that may not be able to change right now. |
+| `option_list(prompt, page, previous, next, [(name, label, summary), ...])` | Protocol 16. One answer from a long list, a page of rows at a time with its own pager. `options_per_page(metrics, summaries)` says how many rows a page holds. |
 | `chips([(name, label, selected), ...])` | Wrapping filters, tags or recent searches with selected state. |
 | `choose(prompt, [(name, label), ...])` | A question with tappable answers. |
-| `chosen(index)` | Marks which answer of the preceding `choose` is already given. |
+| `chosen(index)` | Marks which answer of the preceding `choose` or `option_list` is already given. |
 | `or_type(name, placeholder)` | A freeform row on the end of a `choose`. |
 | `stepper(label, less, less_glyph, more, more_glyph)` | A setting that moves one notch at a time. |
 | `stepper_ends(less, more)` / `stepper_track(percent)` | Configures enabled ends and the optional position track of the preceding stepper. |
-| `keyboard(&keyboard, submit)` | The on-screen text keyboard, pinned under the thumbs. |
-| `text_entry(&entry, prompt, submit)` | A complete prompt, typed value, keyboard and cancel action. |
+| `keyboard(&keyboard, submit)` | Keys drawn by the app itself, pinned under the thumbs, for a terminal or keypad that needs every key. |
+| `text_entry(&entry, prompt, submit)` | Asks the runtime's keyboard for an open `TextEntry`; draws the prompt under it. `text_entry_with_hint` adds one line of guidance. |
 | `typed(&keyboard, placeholder)` | The text accumulated by a keyboard, or its placeholder. |
 
 ### Collections, grids and media
@@ -341,6 +346,9 @@ the actual E Ink renderer and is the quickest visual reference.
 | `checklist([(name, title, summary, done), ...])` | The same list, where a finished row is struck through. |
 | `rows_with_menu([(name, title, summary, glyph, menu), ...])` | The same list, where each row carries an overflow mark naming an action of its own. |
 | `rows_with_trailing([(name, title, summary, lead, value), ...])` | Rows with a short score, date, size or count at the trailing edge. |
+| `checked_rows([(name, title, summary, lead, state), ...])` | Protocol 16. Rows that can be ticked: `Checked`, `Unchecked` or `Mixed`, drawn as a box in place of the lead. |
+| `selection_bar(count, [(name, label), ...])` | Protocol 16. How many rows are ticked and up to three verbs for all of them, one bar high. |
+| `row_button(row, name, label)` / `row_badge(row, count)` | Protocol 16. A small button, or a count of fixed width, against the trailing edge of a row in the list just added. |
 | `row_overflow(anchor, open, [(name, label, glyph), ...])` | The menu behind that mark. |
 | `paged_list(page, items)` | A pre-paged list of plain strings. |
 | `tiles([(name, label, glyph), ...])` | A grid of square destinations. |
@@ -356,7 +364,10 @@ the actual E Ink renderer and is the quickest visual reference.
 
 | Method | What it is |
 |---|---|
-| `banner(level, text)` | `Info` or `Attention`. Attention is drawn inverted. |
+| `banner(level, text)` | `Info` or `Attention`, and from protocol 16 `Success` or `Error`, which carry a mark ahead of the words. |
+| `banner_action(name, label)` | Protocol 16. The one action a banner may carry, on a line of its own under the words. |
+| `steps(current, total, labels)` | Protocol 16. "Step 2 of 4" and a mark per step, on one line. |
+| `code(payload, caption)` | Protocol 16. Text drawn by the runtime as a QR code, up to `MAX_CODE_BYTES` (213) bytes, in a square up to 50 mm wide. |
 | `progress(percent)` | A determinate bar. |
 | `activity(label, progress)` | Work in flight, indeterminate with `None` or coarse determinate progress with `Some(percent)`. |
 | `cancellable(name, label)` | Adds a cancel control to the preceding activity. |
@@ -1076,19 +1087,38 @@ command is rarely needed by hand: `kobo setup` carries everything in
 ## 6. Typing, where it is unavoidable
 
 Tapping beats typing on this panel, so a screen asks a question with `choose`
-wherever it can. When words are required, the keyboard is a composite
-rather than a node: rows of ordinary tappable cells and a small state machine.
+wherever it can. When words are required, the runtime draws the keyboard
+(protocol 16 and later). A `TextEntry` that is open when its screen is drawn
+with `text_entry` asks for it with `DeviceRequest::TypeText`; the runtime takes
+the panel, keeps the app's top bar title, draws the prompt, the field and the
+keys in its own type, and answers once. The answer comes back through
+`TextEntry::handle`, which an app already calls for every action:
 
 ```rust
 use kobo_sdk::keyboard::{TextEntry, Typing};
 
 match self.entry.handle(action) {
-    Some(Typing::Changed)      => self.show(context), // repaint the field
     Some(Typing::Submitted(s)) => self.search(&s, context),
-    Some(Typing::Cancelled)    => self.show(context),
-    None => {}                                        // not a keyboard tap
+    Some(_)                    => self.show(context), // opened, or backed out
+    None => {}                                        // not this field's
 }
 ```
+
+`TextEntry::numeric` opens on the digits and `TextEntry::address` puts `@`, `/`
+and `.` where the space bar would be. A field made with
+`TextEntry::saved_as(SecretTarget::named("lichess"))` is a secret: the runtime
+writes what is typed into the app's own secret namespace and answers
+`Typing::Saved`, so the app never holds the value. `CredentialSetup` does this
+for account keys and passwords. A keyboard fix now ships with the platform, not
+with each app.
+
+Tests answer the field without a runtime: `AppRunner::type_text` and
+`cancel_text`, or `kobo_sdk::keyboard::testing::type_text` for a test that calls
+the app directly.
+
+Only a screen that must see every key as it is tapped draws its own:
+`ScreenBuilder::keyboard` with a `Keyboard`, as the terminal and game keypads
+do. Those keys come from the same rows the runtime uses.
 
 Keys are addressed **positionally**: `kb.r1c2` is the third key of the middle
 row, whatever it currently says. Shift and the symbol layer change every label
@@ -1099,8 +1129,8 @@ Shift works on the symbol layer as it does on a computer: shift then 5 types
 `%`. The shifted page also holds `$ ^ * [ ] { } < > \ | ~` and the backtick, so
 every printable ASCII character can be typed, which a Wi-Fi password or a shell
 command may need. An app that arranges its own keys reads the current rows
-from `Keyboard::rows` instead of copying them. `TextEntry::open` always starts
-on the letters, unshifted.
+from `Keyboard::rows` instead of copying them. A field always opens unshifted,
+on the page its kind starts on.
 
 ---
 
@@ -1767,10 +1797,10 @@ existing grid label is interpreted as an embedded numbering format.
 Short keyboard labels fit their physical key rectangles, including compact
 landscape rows at large text settings. Top-bar text actions use caption size
 when body text cannot fit the bar's height; measurement and drawing agree.
-Touch targets are not reduced. `kobo drive` typing first resolves visible SDK
-keyboard actions, preventing an existing crossword letter from stealing a tap.
-It still taps actual screen coordinates, and custom keyboards retain label
-matching when no SDK keyboard is present.
+Touch targets are not reduced. `kobo drive` typing first resolves visible
+standard keyboard actions, the runtime's or an app's, preventing an existing
+crossword letter from stealing a tap. It still taps actual screen coordinates,
+and custom keyboards retain label matching when no standard keyboard is present.
 
 ### Root-relative article images
 

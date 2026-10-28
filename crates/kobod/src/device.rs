@@ -1774,6 +1774,51 @@ struct Hosted {
     started: Instant,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
+    /// The text field the runtime is drawing for this application, if any.
+    ///
+    /// Held per application rather than once for the panel, because a field
+    /// belongs to the application that asked for it: leaving and coming back
+    /// finds it where the owner left it, half typed.
+    typing: Option<TextField>,
+}
+
+/// A text field the runtime holds for one application. See
+/// [`kobod::text_entry`].
+enum TextField {
+    /// Open, answering the request with this id when the owner is done, and
+    /// the screen it is drawn as.
+    ///
+    /// Drawn once per change rather than once per touch. Fitting the field
+    /// to the panel is the costliest thing a keystroke does, and a finger
+    /// sliding across the keys sends a stream of moves, each of which asks
+    /// what is on the panel.
+    Open(u32, kobod::text_entry::Field, Screen),
+    /// Answered, and left on the panel until the application draws what
+    /// comes next. Painting the application's last screen in between would
+    /// spend a refresh on a screen it is about to replace.
+    Answered(Screen),
+}
+
+/// What is on the panel for `app`: its open text field, the field it has
+/// just answered, or else the screen it drew.
+///
+/// Every place that draws an application or resolves a tap on it asks this,
+/// so what is hit-tested is always what was drawn.
+fn visible(app: &Hosted) -> Option<Screen> {
+    match &app.typing {
+        Some(TextField::Open(_, _, drawn) | TextField::Answered(drawn)) => Some(drawn.clone()),
+        None => app.screen.clone(),
+    }
+}
+
+/// Fits `app`'s open text field to the panel again, after something it is
+/// drawn from changed: a key, the application's title, or the way the
+/// reader is held.
+fn redraw_field(app: &mut Hosted) {
+    let metrics = crate::device_metrics().oriented(app.orientation);
+    if let Some(TextField::Open(_, field, drawn)) = &mut app.typing {
+        *drawn = field.screen(app.screen.as_ref(), &metrics);
+    }
 }
 
 /// An application process plus the legacy-kernel supervisor, when one is
@@ -2381,7 +2426,12 @@ fn host_applications(
                                 continue;
                             }
                             let forward = (button == gpio::Button::Page194) == forward_is_194;
-                            if let Some(index) = index_of(&apps, front) {
+                            // A page key means nothing to a text field, and
+                            // the application's page is not on the panel to
+                            // be turned.
+                            if let Some(index) =
+                                index_of(&apps, front).filter(|index| apps[*index].typing.is_none())
+                            {
                                 let at_home = apps[index].path == home;
                                 let message = match apps[index].screen.as_ref() {
                                     Some(current) => {
@@ -2504,7 +2554,7 @@ fn host_applications(
                         return Ok(finish(&apps, &visited, "nothing is on the panel"));
                     };
                     let at_home = apps[index].path == home;
-                    let screen = apps[index].screen.clone();
+                    let screen = visible(&apps[index]);
                     // The chrome the frame was drawn with, band and all: the
                     // band shifts everything below it down by its own height,
                     // so laying a tap out against chrome without one puts every
@@ -2639,19 +2689,44 @@ fn host_applications(
                     let orientation = apps[index].orientation;
                     let protocol = apps[index].protocol;
                     let top_bar = apps[index].top_bar;
-                    let disposition = deliver_touch(
-                        &mut apps[index].stream,
-                        event,
-                        screen.as_ref(),
-                        &chrome,
-                        held,
-                        orientation,
-                        landscape_turn,
-                        protocol,
-                        top_bar,
-                    )?;
+                    let disposition = if apps[index].typing.is_some() {
+                        type_into(
+                            &mut apps[index],
+                            event,
+                            screen.as_ref(),
+                            &chrome,
+                            landscape_turn,
+                        )?
+                    } else {
+                        deliver_touch(
+                            &mut apps[index].stream,
+                            event,
+                            screen.as_ref(),
+                            &chrome,
+                            held,
+                            orientation,
+                            landscape_turn,
+                            protocol,
+                            top_bar,
+                        )?
+                    };
                     match disposition {
                         Tap::Handled => {}
+                        Tap::Redraw => {
+                            // The key that was pressed is drawn released in
+                            // the same update as what it typed.
+                            release_due = None;
+                            repaint(
+                                &mut apps,
+                                front,
+                                display,
+                                whole_screen,
+                                &mut surface,
+                                &mut panel,
+                                &home,
+                                &mut status,
+                            )?;
+                        }
                         Tap::TopBar(state) => {
                             // Answered here and nowhere else: the application
                             // is not told, and the panel is redrawn from the
@@ -2696,7 +2771,7 @@ fn host_applications(
                         }
                     }
                     if let Some((class, damage)) = released {
-                        release_due = (disposition != Tap::Leave)
+                        release_due = (!matches!(disposition, Tap::Leave | Tap::Redraw))
                             .then(|| (Instant::now() + release_grace(class), damage));
                     }
                 }
@@ -2727,13 +2802,20 @@ fn host_applications(
                             // the application has drawn, which is all the
                             // runtime asked of it.
                             back_offered.answer(id);
-                            let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
                             // A newly drawn screen starts with its bar hidden
                             // if it asked to hide it: carrying the shown state
                             // over would leave the bar up over art the reader
                             // had already dismissed it from.
                             apps[index].top_bar = kobo_ui::TopBarState::Hidden;
                             apps[index].screen = Some(screen.clone());
+                            // This is the screen an answered field was left up
+                            // for. An open one stays, under the title just sent.
+                            if matches!(apps[index].typing, Some(TextField::Answered(_))) {
+                                apps[index].typing = None;
+                            }
+                            redraw_field(&mut apps[index]);
+                            let screen = visible(&apps[index]).unwrap_or(screen);
+                            let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
                             let screen = shown_screen(&apps[index], screen, &chrome);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
@@ -2777,8 +2859,9 @@ fn host_applications(
                         }
                         Message::SetOrientation(orientation) => {
                             apps[index].orientation = orientation;
+                            redraw_field(&mut apps[index]);
                             if id == front {
-                                if let Some(screen) = apps[index].screen.clone() {
+                                if let Some(screen) = visible(&apps[index]) {
                                     let chrome =
                                         chrome_for(&screen, apps[index].path == home, &mut status);
                                     let screen = shown_screen(&apps[index], screen, &chrome);
@@ -2869,6 +2952,25 @@ fn host_applications(
                                 apps[index].name,
                                 message.replace(['\r', '\n'], " ")
                             ));
+                        }
+                        Message::DeviceRequest(request)
+                            if matches!(request, kobo_protocol::DeviceRequest::TypeText { .. }) =>
+                        {
+                            open_text_field(&mut apps[index], frame.request_id, &request)?;
+                            if id == front {
+                                pressed = None;
+                                release_due = None;
+                                repaint(
+                                    &mut apps,
+                                    front,
+                                    display,
+                                    whole_screen,
+                                    &mut surface,
+                                    &mut panel,
+                                    &home,
+                                    &mut status,
+                                )?;
+                            }
                         }
                         Message::DeviceRequest(request) => {
                             let not_declared = !system_request_allowed(&apps[index].name, &request)
@@ -3711,6 +3813,12 @@ fn switch_to(
         // A lifecycle notification starts the callback asynchronously. It is
         // not an acknowledgement that the application's saves have finished.
         apps[previous].send(Message::Lifecycle(Lifecycle::Background))?;
+        // A field still waiting for its application to draw is done waiting:
+        // coming back shows whatever the application drew since. One that is
+        // open stays open, half typed, for when the owner returns.
+        if matches!(apps[previous].typing, Some(TextField::Answered(_))) {
+            apps[previous].typing = None;
+        }
     }
     apps[index].used = Instant::now();
     apps[index].send(Message::Lifecycle(Lifecycle::Foreground))?;
@@ -3765,7 +3873,7 @@ fn repaint(
     let Some(index) = index_of(apps, id) else {
         return Ok(());
     };
-    let Some(screen) = apps[index].screen.clone() else {
+    let Some(screen) = visible(&apps[index]) else {
         return Ok(());
     };
     let chrome = chrome_for(&screen, apps[index].path == home, status);
@@ -4257,6 +4365,7 @@ fn start_application(
         painted: 0,
         started: opening,
         used: Instant::now(),
+        typing: None,
     });
     Ok(id)
 }
@@ -4885,6 +4994,124 @@ enum Tap {
     /// Nothing is sent to the application: the shell repaints what it already
     /// holds, so this answers even while the application is busy or stuck.
     TopBar(kobo_ui::TopBarState),
+    /// A key on a text field the runtime holds was pressed. Nothing is sent
+    /// to the application; the field is drawn again as it now stands.
+    Redraw,
+}
+
+/// Opens the runtime's text field for `app`, or answers why it will not.
+///
+/// A field already open for the same application is answered as cancelled
+/// first, so each request is still answered once and in order.
+fn open_text_field(
+    app: &mut Hosted,
+    request_id: u32,
+    request: &kobo_protocol::DeviceRequest,
+) -> Result<(), String> {
+    match kobod::text_entry::Field::open(&app.name, request) {
+        Some(Ok(field)) => {
+            trace(&format!("{} asked for text: {field:?}", app.name));
+            if let Some(TextField::Open(previous, ..)) = app.typing.take() {
+                reply(
+                    app,
+                    previous,
+                    Message::DeviceResult(kobod::text_entry::superseded()),
+                )?;
+            }
+            app.typing = Some(TextField::Open(
+                request_id,
+                field,
+                Screen::new(0, Vec::new()),
+            ));
+            redraw_field(app);
+            Ok(())
+        }
+        Some(Err(refusal)) => {
+            trace(&format!(
+                "{} was refused a text field: {refusal:?}",
+                app.name
+            ));
+            reply(app, request_id, Message::DeviceResult(refusal))
+        }
+        None => Ok(()),
+    }
+}
+
+/// Routes one touch on a text field the runtime is holding for `app`.
+///
+/// Resolved here rather than by [`action_for_oriented`], which writes the
+/// action every tap lands on to the session log. On a keyboard that is a log
+/// of what was typed, password and all.
+fn type_into(
+    app: &mut Hosted,
+    event: TouchEvent,
+    screen: Option<&Screen>,
+    chrome: &Chrome,
+    landscape_turn: kobo_ui::LandscapeTurn,
+) -> Result<Tap, String> {
+    let (TouchEvent::Up { x, y }, Some(screen)) = (event, screen) else {
+        return Ok(Tap::Handled);
+    };
+    let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
+        return Ok(Tap::Handled);
+    };
+    let physical = crate::device_metrics();
+    let (x, y) = kobo_ui::logical_point_with_turn(
+        app.orientation,
+        landscape_turn,
+        physical.width,
+        physical.height,
+        x,
+        y,
+    );
+    let action = screen
+        .layout_with(&metrics_for(screen).oriented(app.orientation), chrome)
+        .hit_test(x, y);
+    match app.typing.take() {
+        Some(TextField::Open(request_id, mut field, drawn)) => {
+            match action.and_then(|action| field.press(action)) {
+                None => {
+                    app.typing = Some(TextField::Open(request_id, field, drawn));
+                    Ok(Tap::Handled)
+                }
+                Some(kobod::text_entry::Step::Redraw) => {
+                    app.typing = Some(TextField::Open(request_id, field, drawn));
+                    redraw_field(app);
+                    Ok(Tap::Redraw)
+                }
+                Some(kobod::text_entry::Step::Finished(finished)) => {
+                    let name = app.name.clone();
+                    let result = kobod::text_entry::answer(finished, |install| {
+                        kobo_policy::credentials::handle_install(Path::new(SECRETS), &name, install)
+                            .unwrap_or(kobo_protocol::DeviceResult::Failed(
+                                kobo_protocol::DeviceError::Backend,
+                            ))
+                    });
+                    // How it ended and nothing of what was in it.
+                    trace(&format!(
+                        "{name} text field answered: {}",
+                        match &result {
+                            kobo_protocol::DeviceResult::Text(
+                                kobo_protocol::TextOutcome::Typed(_),
+                            ) => "typed".to_owned(),
+                            other => format!("{other:?}"),
+                        }
+                    ));
+                    app.typing = Some(TextField::Answered(screen.clone()));
+                    reply(app, request_id, Message::DeviceResult(result))?;
+                    Ok(Tap::Handled)
+                }
+            }
+        }
+        // The application has not drawn since its field was answered. A tap
+        // is the owner asking for the panel back, so it gets what the
+        // application last drew.
+        Some(TextField::Answered(_)) if action.is_some() => Ok(Tap::Redraw),
+        held => {
+            app.typing = held;
+            Ok(Tap::Handled)
+        }
+    }
 }
 
 /// Routes one tap. Reports what the runtime has to do about it.
@@ -5348,3 +5575,6 @@ mod tests;
 
 #[cfg(test)]
 mod hosting_tests;
+
+#[cfg(test)]
+mod text_field_tests;

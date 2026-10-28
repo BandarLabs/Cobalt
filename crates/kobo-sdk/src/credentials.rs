@@ -1,13 +1,22 @@
 //! Consistent owner onboarding for runtime-held application credentials.
+//!
+//! The account key or password is typed on the runtime's keyboard, and the
+//! runtime writes it into this application's own secret namespace. The flow
+//! hears that it was saved and never what it was, so a Lichess token or a
+//! server password passes through nothing but the runtime that keeps it. A
+//! username is typed here like any other text, because it is shown on screen
+//! anyway and the runtime stores it in front of the password.
 
 use crate::keyboard::{TextEntry, Typing};
-use crate::{action_id, ActionId, Context, DeviceRequest, DeviceResult, Screen, ScreenBuilder};
+use crate::{
+    action_id, ActionId, Context, DeviceError, DeviceRequest, DeviceResult, Screen, ScreenBuilder,
+};
+use kobo_protocol::SecretTarget;
 use std::fmt;
 
 const ENTER: &str = "credential.enter";
 const CLI: &str = "credential.cli";
 const CHECK: &str = "credential.check";
-const REVEAL: &str = "credential.reveal";
 
 /// Whether a presence check is out, and who wanted it.
 ///
@@ -20,16 +29,23 @@ enum Checking {
     Idle,
     Quiet,
     Asked,
+    /// The runtime said it saved what the owner typed, and this check carries
+    /// that news to [`CredentialSetup::on_device_result`].
+    Saved,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Closed,
     Prompt,
+    /// The runtime's secret field is up for an account key.
     Entry,
     Username,
+    /// The runtime's secret field is up for the password that goes with the
+    /// username typed before it.
     Password,
     Cli,
+    /// Saved by the runtime, and waiting for the check that says so.
     Saving,
 }
 
@@ -58,7 +74,6 @@ pub struct CredentialSetup {
     server: Option<String>,
     guidance: Option<String>,
     computer: Option<String>,
-    revealed: bool,
     checking: Checking,
 }
 
@@ -94,7 +109,6 @@ impl CredentialSetup {
             server: None,
             guidance: None,
             computer: None,
-            revealed: false,
             checking: Checking::Idle,
         }
     }
@@ -117,7 +131,8 @@ impl CredentialSetup {
     /// "Add the account key for this service" is enough when the owner already
     /// holds one. A token that has to be created on the provider's site first
     /// needs that said on the screen that asks for it, because the reader has
-    /// no browser to look it up in.
+    /// no browser to look it up in. The same line stays under the field while
+    /// the key is typed.
     #[must_use]
     pub fn with_guidance(mut self, guidance: impl Into<String>) -> Self {
         self.guidance = Some(guidance.into());
@@ -135,9 +150,10 @@ impl CredentialSetup {
     /// Bind subsequent account entry to an owner-selected server.
     ///
     /// # Errors
-    /// Refuses malformed addresses or changes while a save is pending.
+    /// Refuses malformed addresses, and changes while the runtime's field is
+    /// up: the field was asked for with the server it will save to.
     pub fn bind_server(&mut self, server: &str) -> Result<(), String> {
-        if self.view == View::Saving || !kobo_protocol::valid_secret_server(server) {
+        if self.typing_secret() || !kobo_protocol::valid_secret_server(server) {
             return Err("Add a valid HTTPS server address first.".into());
         }
         self.close();
@@ -145,24 +161,25 @@ impl CredentialSetup {
         Ok(())
     }
 
-    fn submit(&mut self, context: &mut Context, value: String) {
-        self.username.clear();
+    const fn typing_secret(&self) -> bool {
+        matches!(self.view, View::Entry | View::Password | View::Saving)
+    }
+
+    /// Where the runtime keeps what the owner types for this account.
+    fn target(&self) -> SecretTarget {
+        SecretTarget {
+            name: self.name.clone(),
+            server: self.server.clone(),
+            username: self.basic.then(|| self.username.clone()),
+        }
+    }
+
+    /// Puts the runtime's field up for the secret itself.
+    fn ask_for_secret(&mut self, view: View) {
         self.entry.close();
-        self.revealed = false;
-        if value.is_empty()
-            || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
-            || value.chars().any(char::is_control)
-        {
-            self.problem = Some("These account details are too long or contain a line break. Check them and try again.".into());
-            self.view = View::Prompt;
-            return;
-        }
-        if let Some(server) = &self.server {
-            context.secrets().set_server(&self.name, server, value);
-        } else {
-            context.secrets().set(&self.name, value);
-        }
-        self.view = View::Saving;
+        self.entry.set_target(self.target());
+        self.entry.open();
+        self.view = view;
     }
 
     #[must_use]
@@ -179,9 +196,15 @@ impl CredentialSetup {
         self.entry.close();
         self.username.clear();
         self.problem = None;
-        self.revealed = false;
         self.checking = Checking::Idle;
         self.view = View::Closed;
+    }
+
+    /// Back to the prompt, with nothing half entered kept.
+    fn back_to_prompt(&mut self) {
+        self.entry.close();
+        self.username.clear();
+        self.view = View::Prompt;
     }
 
     /// Ask the runtime whether the account arrived from somewhere else.
@@ -204,6 +227,15 @@ impl CredentialSetup {
             (None, None) => Some(format!("kobo secret set {}", self.name)),
             (None, Some(_)) => None,
         }
+    }
+
+    /// The server a field saves to, as a line under its prompt, so an owner
+    /// with two libraries can see which one they are signing in to.
+    fn server_line(&self) -> String {
+        self.server
+            .as_ref()
+            .map(|server| format!("For {server}"))
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -242,14 +274,29 @@ impl CredentialSetup {
                 }
                 screen.build()
             }
+            // The runtime draws these three. What is built here is this
+            // application's screen under its field, whose title the runtime
+            // keeps in its top bar while the owner types.
             View::Username => ScreenBuilder::new("account-username")
-                .top_bar("Username")
+                .top_bar(app_title)
                 .owns_back(true)
-                .typed(self.entry.keyboard(), "Type your username")
-                .keyboard(self.entry.keyboard(), "Next")
+                .text_entry_with_hint(&self.entry, "Username", &self.server_line(), "Next")
                 .build(),
-            View::Password => self.private_entry("Password", "Type your password"),
-            View::Entry => self.private_entry("Account key", "Type your account key"),
+            View::Password => ScreenBuilder::new("account-private-entry")
+                .top_bar(app_title)
+                .owns_back(true)
+                .text_entry_with_hint(&self.entry, "Password", &self.server_line(), "Save")
+                .build(),
+            View::Entry => ScreenBuilder::new("account-private-entry")
+                .top_bar(app_title)
+                .owns_back(true)
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Account key",
+                    self.guidance.as_deref().unwrap_or_default(),
+                    "Save",
+                )
+                .build(),
             // The top bar's back returns to the prompt. A second Back button
             // beside it would leave two controls that look alike and go to
             // different places when an app owns back for the whole flow.
@@ -275,101 +322,18 @@ impl CredentialSetup {
         }
     }
 
-    /// The typed value stays off the panel unless the owner asks for it, and
-    /// its length is always shown.
-    ///
-    /// Typing blind with no count meant a 24-character token copied by eye
-    /// from a phone failed on one mis-tap with nothing on screen to say which.
-    /// The count catches a dropped or doubled key against the length the
-    /// service printed, and Show lets the owner read it back once, somewhere
-    /// nobody is looking over their shoulder.
-    fn private_entry(&self, title: &str, empty: &str) -> Screen {
-        let typed = self.entry.text();
-        let count = typed.chars().count();
-        let length = if count == 1 {
-            "1 character entered".to_owned()
-        } else {
-            format!("{count} characters entered")
-        };
-        let screen = ScreenBuilder::new("account-private-entry")
-            .top_bar(title)
-            .top_bar_action(REVEAL, if self.revealed { "Hide" } else { "Show" })
-            .owns_back(true);
-        let screen = if typed.is_empty() {
-            screen.text(empty)
-        } else if self.revealed {
-            screen.text(typed).secondary(length)
-        } else {
-            screen.text(length)
-        };
-        screen.keyboard(self.entry.keyboard(), "Save").build()
-    }
-
     pub fn on_action(
         &mut self,
         context: &mut Context,
         action: ActionId,
     ) -> Option<CredentialEvent> {
-        if matches!(self.view, View::Password | View::Entry) && action == action_id(REVEAL) {
-            self.revealed = !self.revealed;
-            return Some(CredentialEvent::Changed);
-        }
-        if matches!(self.view, View::Username | View::Password) {
+        if matches!(self.view, View::Username | View::Password | View::Entry) {
             if action == ActionId::BACK {
-                self.entry.close();
-                self.username.clear();
-                self.revealed = false;
-                self.view = View::Prompt;
+                self.back_to_prompt();
                 return Some(CredentialEvent::Changed);
             }
-            let typing = if self.view == View::Password {
-                self.entry.handle_verbatim(action)
-            } else {
-                self.entry.handle(action)
-            }?;
-            match typing {
-                Typing::Submitted(value) if self.view == View::Username => {
-                    if value.contains(':') || value.chars().any(char::is_control) {
-                        self.problem =
-                            Some("Enter a username without a colon or line break.".into());
-                        self.view = View::Prompt;
-                    } else {
-                        self.username = value;
-                        self.entry.open();
-                        self.view = View::Password;
-                    }
-                }
-                Typing::Submitted(password) => {
-                    self.submit(context, format!("{}:{password}", self.username));
-                }
-                Typing::Cancelled => {
-                    self.revealed = false;
-                    self.view = View::Prompt;
-                }
-                Typing::Changed => {}
-            }
-            return Some(CredentialEvent::Changed);
-        }
-        if self.view == View::Entry {
-            if action == ActionId::BACK {
-                self.entry.close();
-                self.revealed = false;
-                self.view = View::Prompt;
-                return Some(CredentialEvent::Changed);
-            }
-            return match self.entry.handle_verbatim(action) {
-                Some(Typing::Submitted(value)) => {
-                    self.submit(context, value);
-                    Some(CredentialEvent::Changed)
-                }
-                Some(Typing::Cancelled) => {
-                    self.revealed = false;
-                    self.view = View::Prompt;
-                    Some(CredentialEvent::Changed)
-                }
-                Some(Typing::Changed) => Some(CredentialEvent::Changed),
-                None => None,
-            };
+            let typing = self.entry.handle_verbatim(action)?;
+            return Some(self.typed(context, typing));
         }
         if self.view == View::Saving {
             return Some(CredentialEvent::Changed);
@@ -385,12 +349,14 @@ impl CredentialSetup {
         match (self.view, action) {
             (View::Prompt, value) if value == action_id(ENTER) => {
                 self.problem = None;
-                self.entry.open();
-                self.view = if self.basic {
-                    View::Username
+                if self.basic {
+                    self.entry.close();
+                    self.entry = TextEntry::new();
+                    self.entry.open();
+                    self.view = View::Username;
                 } else {
-                    View::Entry
-                };
+                    self.ask_for_secret(View::Entry);
+                }
                 Some(CredentialEvent::Changed)
             }
             (View::Prompt, value)
@@ -412,8 +378,68 @@ impl CredentialSetup {
         }
     }
 
+    /// What the runtime's field said, for whichever of the three is up.
+    fn typed(&mut self, context: &mut Context, typing: Typing) -> CredentialEvent {
+        match typing {
+            Typing::Submitted(value) if self.view == View::Username => {
+                if value.contains(':') || value.chars().any(char::is_control) {
+                    self.problem = Some("Enter a username without a colon or line break.".into());
+                    self.back_to_prompt();
+                } else {
+                    self.username = value;
+                    self.ask_for_secret(View::Password);
+                }
+                CredentialEvent::Changed
+            }
+            // Reported through `on_device_result`, as a saved account always
+            // has been, so an application written when the flow sent the
+            // secret itself goes on connecting with no change. The check
+            // that carries the news is a real one, and costs one answer.
+            Typing::Saved => {
+                self.entry.close();
+                self.username.clear();
+                self.view = View::Saving;
+                self.checking = Checking::Saved;
+                context.secrets().check(&[&self.name]);
+                CredentialEvent::Changed
+            }
+            Typing::Refused(result) => {
+                self.problem = Some(
+                    match result {
+                        DeviceResult::Denied(_) => {
+                            "This app cannot save this account. Update Cobalt and try again."
+                        }
+                        DeviceResult::Failed(DeviceError::InvalidInput) => {
+                            "These account details are too long or contain a line break. Check them and try again."
+                        }
+                        DeviceResult::Failed(_) => {
+                            "Account details were not saved. Check the reader\u{2019}s free space and try again."
+                        }
+                        _ => "Saving could not be confirmed. Try again.",
+                    }
+                    .to_owned(),
+                );
+                self.back_to_prompt();
+                CredentialEvent::Changed
+            }
+            Typing::Cancelled => {
+                self.back_to_prompt();
+                CredentialEvent::Changed
+            }
+            // A secret is never handed back, so a submitted value here is not
+            // one this flow asked for.
+            Typing::Submitted(_) | Typing::Changed => CredentialEvent::Changed,
+        }
+    }
+
     /// The answer to [`Self::recheck`] or to a Check again tap.
     fn on_checked(&mut self, result: &DeviceResult) -> Option<CredentialEvent> {
+        // The runtime already said this one was saved. Whatever the check
+        // found, the account went where the runtime keeps it.
+        if self.checking == Checking::Saved && self.view == View::Saving {
+            self.close();
+            return Some(CredentialEvent::Saved);
+        }
         let asked = self.checking == Checking::Asked;
         self.checking = Checking::Idle;
         if !matches!(self.view, View::Prompt | View::Cli) {
@@ -443,54 +469,20 @@ impl CredentialSetup {
         }
     }
 
+    /// Takes the answer to a presence check this flow sent, including the
+    /// one that reports an account typed on the reader as saved.
     pub fn on_device_result(
         &mut self,
         request: &DeviceRequest,
         result: &DeviceResult,
     ) -> Option<CredentialEvent> {
-        if let DeviceRequest::CheckSecrets { names } = request {
-            return if self.checking != Checking::Idle && names.len() == 1 && names[0] == self.name {
-                self.on_checked(result)
-            } else {
-                None
-            };
-        }
-        let name = match request {
-            DeviceRequest::SetSecret { name, .. } if self.server.is_none() => name,
-            DeviceRequest::SetServerSecret { name, server, .. }
-                if self.server.as_ref() == Some(server) =>
-            {
-                name
-            }
-            _ => return None,
-        };
-        if name != &self.name || self.view != View::Saving {
+        let DeviceRequest::CheckSecrets { names } = request else {
             return None;
-        }
-        match result {
-            DeviceResult::Done => {
-                self.close();
-                Some(CredentialEvent::Saved)
-            }
-            DeviceResult::Denied(_) => {
-                self.problem =
-                    Some("This app cannot save this account. Update Cobalt and try again.".into());
-                self.view = View::Prompt;
-                Some(CredentialEvent::Changed)
-            }
-            DeviceResult::Failed(_) => {
-                self.problem = Some(
-                    "Account details were not saved. Check the reader’s free space and try again."
-                        .into(),
-                );
-                self.view = View::Prompt;
-                Some(CredentialEvent::Changed)
-            }
-            _ => {
-                self.problem = Some("Saving could not be confirmed. Try again.".to_owned());
-                self.view = View::Prompt;
-                Some(CredentialEvent::Changed)
-            }
+        };
+        if self.checking != Checking::Idle && names.len() == 1 && names[0] == self.name {
+            self.on_checked(result)
+        } else {
+            None
         }
     }
 }
@@ -498,78 +490,201 @@ impl CredentialSetup {
 #[cfg(test)]
 mod tests {
     use super::{CredentialEvent, CredentialSetup};
+    use crate::keyboard::testing;
     use crate::{action_id, Command, Context, DeviceRequest, DeviceResult};
+    use kobo_protocol::{DenyReason, DeviceError, SecretTarget, TextOutcome};
+    use kobo_ui::FieldKind;
+
+    /// Sends the flow's screen, as an application does after every event,
+    /// and returns the text field that screen asked the runtime for.
+    fn asked(setup: &CredentialSetup, context: &mut Context) -> Option<DeviceRequest> {
+        context.set_screen(setup.screen("Komga"));
+        testing::asked(&context.take_commands()).cloned()
+    }
+
+    /// Answers the runtime's field as the runtime would.
+    fn answer(
+        setup: &mut CredentialSetup,
+        context: &mut Context,
+        outcome: TextOutcome,
+    ) -> Option<CredentialEvent> {
+        crate::keyboard::runtime::answer_newest(outcome);
+        setup.on_action(context, crate::keyboard::answered())
+    }
+
+    /// The presence check a saved field sends, answered as the runtime
+    /// would, and what the flow made of it.
+    fn confirm(setup: &mut CredentialSetup, context: &mut Context) -> Option<CredentialEvent> {
+        let commands = context.take_commands();
+        let Some(Command::Device(request @ DeviceRequest::CheckSecrets { names })) = commands
+            .iter()
+            .find(|command| matches!(command, Command::Device(DeviceRequest::CheckSecrets { .. })))
+        else {
+            panic!("a saved account is confirmed: {commands:?}")
+        };
+        setup.on_device_result(
+            request,
+            &DeviceResult::Secrets {
+                present: names.clone(),
+            },
+        )
+    }
+
+    fn secret_of(request: Option<&DeviceRequest>) -> Option<SecretTarget> {
+        match request {
+            Some(DeviceRequest::TypeText {
+                kind: FieldKind::Secret,
+                save_as,
+                initial,
+                ..
+            }) => {
+                assert!(initial.is_empty(), "a secret field opens empty");
+                save_as.clone()
+            }
+            _ => None,
+        }
+    }
 
     #[test]
-    fn server_account_waits_for_matching_ack_and_refuses_oversized_pairs() {
+    fn an_account_key_is_typed_on_the_runtime_and_saved_without_reaching_the_app() {
+        let mut setup = CredentialSetup::new("zotero", "Zotero")
+            .with_guidance("Create a key at zotero.org/settings/keys first.");
+        let mut context = Context::default();
+        setup.open();
+        setup.on_action(&mut context, action_id("credential.enter"));
+        let request = asked(&setup, &mut context);
+        assert_eq!(
+            secret_of(request.as_ref()),
+            Some(SecretTarget::named("zotero"))
+        );
+        let Some(DeviceRequest::TypeText { hint, .. }) = &request else {
+            unreachable!()
+        };
+        assert!(hint.contains("zotero.org/settings/keys"), "{hint}");
+        assert!(
+            asked(&setup, &mut context).is_none(),
+            "a screen drawn again does not ask again"
+        );
+        assert_eq!(
+            answer(&mut setup, &mut context, TextOutcome::Saved),
+            Some(CredentialEvent::Changed)
+        );
+        assert!(format!("{:?}", setup.screen("Zotero")).contains("Saving account details"));
+        assert!(
+            context.commands().iter().all(|command| !matches!(
+                command,
+                Command::Device(DeviceRequest::SetSecret { .. })
+            )),
+            "the runtime saved it, so the app sends nothing to save"
+        );
+        assert_eq!(
+            setup.on_action(&mut context, action_id("credential.enter")),
+            Some(CredentialEvent::Changed),
+            "nothing starts again while the save is being confirmed"
+        );
+        assert_eq!(
+            confirm(&mut setup, &mut context),
+            Some(CredentialEvent::Saved),
+            "saved is heard where applications have always listened for it"
+        );
+        assert!(!setup.is_open());
+    }
+
+    #[test]
+    fn a_basic_account_types_its_username_here_and_its_password_on_the_runtime() {
         let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
         let mut context = Context::default();
         setup.bind_server("https://books.example").unwrap();
         setup.open();
         setup.on_action(&mut context, action_id("credential.enter"));
-        setup.entry.open_with("reader");
-        setup.on_action(&mut context, action_id("kb.enter"));
-        setup.entry.open_with("  private  ");
-        setup.on_action(&mut context, action_id("kb.enter"));
-        let commands = context.take_commands();
-        let [Command::Device(
-            request @ DeviceRequest::SetServerSecret {
-                name,
-                server,
-                value,
-            },
-        )] = commands.as_slice()
-        else {
-            panic!("missing bound save")
-        };
-        assert_eq!(name, "komga");
-        assert_eq!(server, "https://books.example");
-        assert_eq!(value.as_str(), "reader:  private  ");
-        setup.on_action(&mut context, crate::ActionId::BACK);
-        assert_eq!(setup.view, super::View::Saving);
-        assert!(setup.bind_server("https://another.example").is_err());
-        assert_eq!(
-            setup.on_device_result(
-                &DeviceRequest::SetSecret {
-                    name: "komga".into(),
-                    value: kobo_protocol::SecretValue::new("x")
-                },
-                &DeviceResult::Done
-            ),
-            None
+        let username = asked(&setup, &mut context);
+        assert!(
+            matches!(&username, Some(DeviceRequest::TypeText { kind: FieldKind::Text, save_as: None, hint, .. }) if hint == "For https://books.example"),
+            "{username:?}"
         );
         assert_eq!(
-            setup.on_device_result(request, &DeviceResult::Done),
+            answer(
+                &mut setup,
+                &mut context,
+                TextOutcome::Typed("reader".into())
+            ),
+            Some(CredentialEvent::Changed)
+        );
+        assert_eq!(
+            secret_of(asked(&setup, &mut context).as_ref()),
+            Some(SecretTarget {
+                name: "komga".into(),
+                server: Some("https://books.example".into()),
+                username: Some("reader".into()),
+            })
+        );
+        assert!(
+            setup.bind_server("https://another.example").is_err(),
+            "the field was asked for with the server it saves to"
+        );
+        assert_eq!(
+            answer(&mut setup, &mut context, TextOutcome::Saved),
+            Some(CredentialEvent::Changed)
+        );
+        assert!(setup.username.is_empty());
+        assert_eq!(
+            confirm(&mut setup, &mut context),
             Some(CredentialEvent::Saved)
         );
-        setup.open();
-        setup.on_action(&mut context, action_id("credential.enter"));
-        setup.entry.open_with("u".repeat(300));
-        setup.on_action(&mut context, action_id("kb.enter"));
-        setup.entry.open_with("p".repeat(300));
-        setup.on_action(&mut context, action_id("kb.enter"));
-        assert!(context.take_commands().is_empty());
-        assert_eq!(setup.view, super::View::Prompt);
-        assert!(setup.problem.is_some());
     }
 
     #[test]
-    fn entered_secret_is_sent_to_the_runtime_and_never_drawn() {
-        let mut setup = CredentialSetup::new("zotero", "Zotero");
+    fn invalid_usernames_and_cancelled_passwords_never_save_an_account() {
+        let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
         let mut context = Context::default();
         setup.open();
         setup.on_action(&mut context, action_id("credential.enter"));
-        setup.entry.open_with("visible-secret");
-        let screen = setup.screen("Zotero Reader");
-        assert!(!format!("{screen:?}").contains("visible-secret"));
-        assert!(!format!("{setup:?}").contains("visible-secret"));
-        setup.on_action(&mut context, action_id("kb.enter"));
-        let commands = context.take_commands();
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            Command::Device(DeviceRequest::SetSecret { name, value })
-                if name == "zotero" && value.as_str() == "visible-secret"
-        )));
+        asked(&setup, &mut context);
+        answer(
+            &mut setup,
+            &mut context,
+            TextOutcome::Typed("user:password".into()),
+        );
+        assert!(setup.problem.is_some());
+        assert_eq!(setup.view, super::View::Prompt);
+        assert!(secret_of(asked(&setup, &mut context).as_ref()).is_none());
+
+        setup.on_action(&mut context, action_id("credential.enter"));
+        asked(&setup, &mut context);
+        answer(
+            &mut setup,
+            &mut context,
+            TextOutcome::Typed("reader".into()),
+        );
+        asked(&setup, &mut context);
+        answer(&mut setup, &mut context, TextOutcome::Cancelled);
+        assert_eq!(setup.view, super::View::Prompt);
+        assert!(setup.username.is_empty());
+    }
+
+    #[test]
+    fn a_save_the_runtime_refuses_says_why_and_offers_the_field_again() {
+        for (refusal, says) in [
+            (
+                TextOutcome::Denied(DenyReason::NotDeclared),
+                "This app cannot save this account",
+            ),
+            (TextOutcome::Failed(DeviceError::Backend), "free space"),
+            (TextOutcome::Failed(DeviceError::InvalidInput), "too long"),
+        ] {
+            let mut setup = CredentialSetup::new("zotero", "Zotero");
+            let mut context = Context::default();
+            setup.open();
+            setup.on_action(&mut context, action_id("credential.enter"));
+            asked(&setup, &mut context);
+            assert_eq!(
+                answer(&mut setup, &mut context, refusal),
+                Some(CredentialEvent::Changed)
+            );
+            let drawn = format!("{:?}", setup.screen("Zotero"));
+            assert!(drawn.contains(says), "{drawn}");
+            assert!(drawn.contains("Enter account key"), "{drawn}");
+        }
     }
 
     #[test]
@@ -608,51 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_account_fields_preserve_password_spaces_without_showing_them() {
-        for password in ["  private pass  ", " "] {
-            let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
-            let mut context = Context::default();
-            setup.open();
-            setup.on_action(&mut context, action_id("credential.enter"));
-            setup.entry.open_with("reader");
-            setup.on_action(&mut context, action_id("kb.enter"));
-            assert_eq!(setup.view, super::View::Password);
-            setup.entry.open_with(password);
-            assert!(!format!("{:?}", setup.screen("Komga")).contains("private pass"));
-            assert!(!format!("{setup:?}").contains("reader"));
-            setup.on_action(&mut context, action_id("kb.enter"));
-            let expected = format!("reader:{password}");
-            assert!(
-                matches!(context.take_commands().as_slice(), [Command::Device(DeviceRequest::SetSecret { name, value })] if name == "komga" && value.as_str() == expected)
-            );
-            assert!(setup.username.is_empty());
-            assert!(setup.entry.text().is_empty());
-        }
-    }
-
-    #[test]
-    fn invalid_usernames_and_cancelled_passwords_never_save_an_account() {
-        let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
-        let mut context = Context::default();
-        setup.open();
-        setup.on_action(&mut context, action_id("credential.enter"));
-        setup.entry.open_with("user:password");
-        setup.on_action(&mut context, action_id("kb.enter"));
-        assert!(context.take_commands().is_empty());
-        assert!(setup.problem.is_some());
-        setup.on_action(&mut context, action_id("credential.enter"));
-        setup.entry.open_with("reader");
-        setup.on_action(&mut context, action_id("kb.enter"));
-        setup.entry.open_with("private password");
-        setup.on_action(&mut context, crate::ActionId::BACK);
-        setup.close();
-        assert!(setup.entry.text().is_empty());
-        assert!(setup.username.is_empty());
-        assert!(context.take_commands().is_empty());
-    }
-
-    #[test]
-    fn account_fields_and_save_feedback_fit_all_interface_sizes() {
+    fn account_fields_and_their_prompts_fit_all_interface_sizes() {
         let panels =
             [kobo_ui::CLARA_BW_METRICS]
                 .into_iter()
@@ -676,20 +747,18 @@ mod tests {
                 #[cfg(feature = "text")]
                 kobo_text::install(metrics).unwrap();
                 let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
+                setup.bind_server("https://books.example").unwrap();
                 setup.problem = Some("No Komga account is on this reader yet.".into());
-                for (view, revealed) in [
-                    (super::View::Prompt, false),
-                    (super::View::Username, false),
-                    (super::View::Password, false),
-                    (super::View::Password, true),
-                    (super::View::Entry, false),
-                    (super::View::Entry, true),
-                    (super::View::Cli, false),
-                    (super::View::Saving, false),
+                for view in [
+                    super::View::Prompt,
+                    super::View::Username,
+                    super::View::Password,
+                    super::View::Entry,
+                    super::View::Cli,
+                    super::View::Saving,
                 ] {
                     setup.view = view;
-                    setup.revealed = revealed;
-                    setup.entry.open_with("fake-token-abcdefghijklm");
+                    setup.entry.open();
                     let screen = setup.screen("Komga").with_own_back(true);
                     let chrome = kobo_ui::Chrome::for_screen(&screen, false, None);
                     let errors = screen
@@ -698,69 +767,10 @@ mod tests {
                         .into_iter()
                         .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
                         .collect::<Vec<_>>();
-                    assert!(
-                        errors.is_empty(),
-                        "{metrics:?} {view:?} shown {revealed}: {errors:?}"
-                    );
+                    assert!(errors.is_empty(), "{metrics:?} {view:?}: {errors:?}");
                 }
             }
         }
-    }
-
-    fn drawn(setup: &CredentialSetup) -> String {
-        format!("{:?}", setup.screen("Lichess"))
-    }
-
-    #[test]
-    fn a_typed_key_shows_its_length_and_shows_itself_only_when_asked() {
-        let mut setup = CredentialSetup::new("lichess", "Lichess");
-        let mut context = Context::default();
-        setup.open();
-        setup.on_action(&mut context, action_id("credential.enter"));
-        assert!(drawn(&setup).contains("Type your account key"));
-        setup.entry.open_with("fake-token-abcdefghijklm");
-        let hidden = drawn(&setup);
-        assert!(hidden.contains("24 characters entered"), "{hidden}");
-        assert!(hidden.contains("Show"), "{hidden}");
-        assert!(!hidden.contains("fake-token-abcdefghijklm"), "{hidden}");
-
-        setup.on_action(&mut context, action_id("credential.reveal"));
-        let shown = drawn(&setup);
-        assert!(shown.contains("fake-token-abcdefghijklm"), "{shown}");
-        assert!(shown.contains("Hide"), "{shown}");
-        assert!(context.take_commands().is_empty(), "showing saves nothing");
-
-        setup.on_action(&mut context, action_id("credential.reveal"));
-        assert!(!drawn(&setup).contains("fake-token-abcdefghijklm"));
-
-        setup.on_action(&mut context, action_id("credential.reveal"));
-        setup.on_action(&mut context, crate::ActionId::BACK);
-        setup.on_action(&mut context, action_id("credential.enter"));
-        setup.entry.open_with("x");
-        let reopened = drawn(&setup);
-        assert!(reopened.contains("1 character entered"), "{reopened}");
-        assert!(
-            !reopened.contains("text: \"x\""),
-            "a key shown once is hidden again on the next entry: {reopened}"
-        );
-    }
-
-    #[test]
-    fn a_password_can_be_shown_but_a_username_screen_has_no_reveal_to_press() {
-        let mut setup = CredentialSetup::new("calibre", "calibre-web").with_basic();
-        let mut context = Context::default();
-        setup.open();
-        setup.on_action(&mut context, action_id("credential.enter"));
-        assert_eq!(
-            setup.on_action(&mut context, action_id("credential.reveal")),
-            None
-        );
-        setup.entry.open_with("reader");
-        setup.on_action(&mut context, action_id("kb.enter"));
-        setup.entry.open_with("open sesame");
-        assert!(drawn(&setup).contains("11 characters entered"));
-        setup.on_action(&mut context, action_id("credential.reveal"));
-        assert!(drawn(&setup).contains("open sesame"));
     }
 
     #[test]
@@ -769,7 +779,7 @@ mod tests {
         let mut context = Context::default();
         setup.open();
         setup.on_action(&mut context, action_id("credential.cli"));
-        let route = drawn(&setup);
+        let route = format!("{:?}", setup.screen("Zotero"));
         assert!(route.contains("kobo secret set zotero"), "{route}");
         assert!(!route.contains("<address>"), "{route}");
         assert!(route.contains("Check again"), "{route}");
@@ -792,10 +802,10 @@ mod tests {
             ),
             Some(CredentialEvent::Changed)
         );
+        let drawn = format!("{:?}", setup.screen("Zotero"));
         assert!(
-            drawn(&setup).contains("No Zotero account is on this reader yet"),
-            "{}",
-            drawn(&setup)
+            drawn.contains("No Zotero account is on this reader yet"),
+            "{drawn}"
         );
 
         setup.on_action(&mut context, action_id("credential.check"));
@@ -868,7 +878,8 @@ mod tests {
                 present: Vec::new(),
             },
         );
-        assert!(!drawn(&setup).contains("No Zotero account is on this reader yet"));
+        assert!(!format!("{:?}", setup.screen("Zotero"))
+            .contains("No Zotero account is on this reader yet"));
         setup.recheck(&mut context);
         let commands = context.take_commands();
         let Command::Device(request) = &commands[0] else {
@@ -899,8 +910,8 @@ mod tests {
         let mut context = Context::default();
         bare.bind_server("https://read.example").unwrap();
         bare.open();
-        assert!(!drawn(&bare).contains("Use computer"));
-        assert!(drawn(&bare).contains("Check again"));
+        assert!(!format!("{:?}", bare.screen("Readeck")).contains("Use computer"));
+        assert!(format!("{:?}", bare.screen("Readeck")).contains("Check again"));
         assert_eq!(
             bare.on_action(&mut context, action_id("credential.cli")),
             None
@@ -911,24 +922,6 @@ mod tests {
         guided.bind_server("https://read.example").unwrap();
         guided.open();
         guided.on_action(&mut context, action_id("credential.cli"));
-        assert!(drawn(&guided).contains("kobo connect readeck"));
-    }
-
-    #[test]
-    fn successful_install_closes_the_flow() {
-        let mut setup = CredentialSetup::new("zotero", "Zotero");
-        setup.open();
-        setup.view = super::View::Saving;
-        assert_eq!(
-            setup.on_device_result(
-                &DeviceRequest::SetSecret {
-                    name: "zotero".to_owned(),
-                    value: kobo_protocol::SecretValue::new("hidden"),
-                },
-                &DeviceResult::Done,
-            ),
-            Some(CredentialEvent::Saved)
-        );
-        assert!(!setup.is_open());
+        assert!(format!("{:?}", guided.screen("Readeck")).contains("kobo connect readeck"));
     }
 }
