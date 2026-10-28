@@ -43,7 +43,9 @@
 //! assert!(problem.message.contains("kobo connect readeck"));
 //! ```
 
-use crate::{BannerLevel, ScreenBuilder, StandardState, TaskError, TaskOutcome, JOIN_WIFI};
+use crate::{
+    BannerLevel, BannerShape, ScreenBuilder, StandardState, TaskError, TaskOutcome, JOIN_WIFI,
+};
 
 pub use kobo_net::refusal::MAX_EXCERPT;
 pub use kobo_net::Refusal;
@@ -127,6 +129,44 @@ impl Problem {
             | Cause::TimedOut => BannerLevel::Attention,
         }
     }
+
+    /// The banner [`ScreenBuilder::problem_banner_with`] draws for this
+    /// problem, as a paginator measures it.
+    ///
+    /// Pass `sign_in` as true when the screen passes a sign-in action. Join
+    /// Wi-Fi, Sign in and Try again each take a line under the words, and a
+    /// list paged without that line puts its last row under the bar.
+    #[must_use]
+    pub fn banner_shape(&self, sign_in: bool) -> BannerShape<'_> {
+        let shape = BannerShape::new(self.level(), &self.message);
+        if self.banner_action(sign_in).is_some() {
+            shape.with_action()
+        } else {
+            shape
+        }
+    }
+
+    /// The control a banner for this problem carries, if any: Join Wi-Fi
+    /// offline, the app's sign-in for an account it can mend, and Try again
+    /// for anything worth asking again.
+    const fn banner_action(&self, sign_in: bool) -> Option<BannerFix> {
+        match (self.cause, sign_in) {
+            (Cause::Offline, _) => Some(BannerFix::JoinWifi),
+            (Cause::Rejected | Cause::Blocked, true) => Some(BannerFix::SignInAgain),
+            (Cause::Missing, true) => Some(BannerFix::SignIn),
+            _ if self.retryable => Some(BannerFix::TryAgain),
+            _ => None,
+        }
+    }
+}
+
+/// The one control a problem's banner carries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BannerFix {
+    JoinWifi,
+    SignInAgain,
+    SignIn,
+    TryAgain,
 }
 
 /// Whether the server's words say the account has run out of credit.
@@ -397,13 +437,15 @@ impl ScreenBuilder {
         sign_in: Option<&str>,
     ) -> Self {
         let screen = self.problem_banner(problem);
-        match (problem.cause, sign_in) {
-            (Cause::Offline, _) => screen.banner_action(JOIN_WIFI, "Join Wi-Fi"),
-            (Cause::Rejected | Cause::Blocked, Some(sign_in)) => {
+        // One decision, shared with `Problem::banner_shape`, so the page a
+        // list is measured for is the page it is drawn on.
+        match (problem.banner_action(sign_in.is_some()), sign_in) {
+            (Some(BannerFix::JoinWifi), _) => screen.banner_action(JOIN_WIFI, "Join Wi-Fi"),
+            (Some(BannerFix::SignInAgain), Some(sign_in)) => {
                 screen.banner_action(sign_in, "Sign in again")
             }
-            (Cause::Missing, Some(sign_in)) => screen.banner_action(sign_in, "Sign in"),
-            _ if problem.retryable => screen.banner_action(retry, "Try again"),
+            (Some(BannerFix::SignIn), Some(sign_in)) => screen.banner_action(sign_in, "Sign in"),
+            (Some(BannerFix::TryAgain), _) => screen.banner_action(retry, "Try again"),
             _ => screen,
         }
     }
@@ -436,6 +478,41 @@ mod tests {
 
     fn readeck(server: &str) -> Service<'_> {
         Service::new("Readeck").at(server).fixed_by(FIX)
+    }
+
+    #[test]
+    fn a_problems_banner_shape_carries_an_action_exactly_when_its_banner_draws_one() {
+        use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
+        let errors = [
+            TaskError::Unauthorized,
+            TaskError::NoCredential,
+            TaskError::Denied,
+            TaskError::NotFound,
+            TaskError::RateLimited(30),
+            TaskError::Offline,
+            TaskError::Unreachable,
+            TaskError::TimedOut,
+            TaskError::TooLarge,
+        ];
+        for server in ["https://readeck.example.net", "http://192.168.1.20:8000"] {
+            for error in errors {
+                let problem = readeck(server).explain(error);
+                for sign_in in [None, Some("sign-in")] {
+                    let screen = ScreenBuilder::new("shape")
+                        .problem_banner_with(&problem, "retry", sign_in)
+                        .build();
+                    let drawn = screen
+                        .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+                        .nodes
+                        .iter()
+                        .any(|node| matches!(node.kind, LayoutKind::BannerAction(_)));
+                    let shape = problem.banner_shape(sign_in.is_some());
+                    assert_eq!(shape.action, drawn, "{error:?} {sign_in:?}");
+                    assert_eq!(shape.level, problem.level(), "{error:?}");
+                    assert_eq!(shape.text, problem.message, "{error:?}");
+                }
+            }
+        }
     }
 
     #[test]

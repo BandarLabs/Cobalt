@@ -10962,18 +10962,44 @@ pub fn section_height(metrics: &DisplayMetrics) -> i32 {
 /// result before their rows. `width` is the content width, including padding.
 #[must_use]
 pub fn banner_height(text: &str, width: i32, metrics: &DisplayMetrics) -> i32 {
+    banner_height_with(text, BannerLevel::Info, false, width, metrics)
+}
+
+/// The same, for a banner of any level and with or without its action.
+///
+/// A success or an error banner gives a column to its mark, so its words wrap
+/// narrower than an info banner's, and an action takes a line of its own
+/// under the words. A paginator that measured only the words reserved a line
+/// too little for each, and the last row of the page went under the bar,
+/// which is why retries were kept off the banners they answer.
+#[must_use]
+pub fn banner_height_with(
+    text: &str,
+    level: BannerLevel,
+    action: bool,
+    width: i32,
+    metrics: &DisplayMetrics,
+) -> i32 {
     with_text_scale(metrics.text_scale, || {
         let width = if legacy_typography() {
             width
         } else {
             width.min(metrics.readable_width())
         };
+        let padding = metrics.space(Space::Small);
         let lines = wrap_text(
             text,
-            width - 2 * metrics.space(Space::Small),
+            width - 2 * padding - banner_mark_column(level, metrics),
             FontSize::Body,
         );
-        banner_height_for_lines(lines.len(), metrics)
+        let words = banner_height_for_lines(lines.len(), metrics);
+        if action {
+            words
+                .saturating_add(banner_action_height(metrics))
+                .saturating_add(metrics.space(Space::Tight))
+        } else {
+            words
+        }
     })
 }
 
@@ -11069,18 +11095,148 @@ fn row_title_width_beside(
     menu: bool,
     lead: i32,
 ) -> i32 {
+    let edge = RowEdge {
+        trailing,
+        menu,
+        button: None,
+        badge: false,
+    };
+    row_title_width_at_edge_beside(metrics, area, edge, lead)
+}
+
+/// Everything that shares a row's right edge with its words.
+///
+/// The layout engine measures each of these before the title and gives the
+/// title what is left: the overflow mark, then a row button, then a badge,
+/// then a trailing value. A paginator or a clamp that leaves one of them out
+/// measures a width the row will never have, so a title it counted as one
+/// line is drawn on two and the last row of the page falls under the bar.
+/// Describe each row the way it is built.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RowEdge<'a> {
+    /// A short value against the edge, as `rows_with_trailing` sets it. Empty
+    /// for none.
+    pub trailing: &'a str,
+    /// Whether the row carries an overflow mark.
+    pub menu: bool,
+    /// The label of the row's button, if it has one.
+    pub button: Option<&'a str>,
+    /// Whether the row carries a count. A badge keeps the same width whatever
+    /// it says, so the count itself is not needed to measure it.
+    pub badge: bool,
+}
+
+impl<'a> RowEdge<'a> {
+    /// Nothing at the edge: the row's words have its whole width.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            trailing: "",
+            menu: false,
+            button: None,
+            badge: false,
+        }
+    }
+
+    /// The same edge, with an overflow mark.
+    #[must_use]
+    pub const fn with_menu(mut self) -> Self {
+        self.menu = true;
+        self
+    }
+
+    /// The same edge, with a button labelled `label`.
+    #[must_use]
+    pub const fn with_button(mut self, label: &'a str) -> Self {
+        self.button = Some(label);
+        self
+    }
+
+    /// The same edge, with a count badge.
+    #[must_use]
+    pub const fn with_badge(mut self) -> Self {
+        self.badge = true;
+        self
+    }
+
+    /// The same edge, with a trailing value.
+    #[must_use]
+    pub const fn with_trailing(mut self, value: &'a str) -> Self {
+        self.trailing = value;
+        self
+    }
+}
+
+/// How wide a row's title really is beside everything at its right edge.
+///
+/// The width [`row_title_width`] gives, once a row button and a badge are
+/// paid for as well, so a title clamped with it is clamped at the width it
+/// is drawn at.
+#[must_use]
+pub fn row_title_width_at_edge(metrics: &DisplayMetrics, area: ProseArea, edge: RowEdge) -> i32 {
+    row_title_width_at_edge_beside(metrics, area, edge, row_mark_column(metrics))
+}
+
+/// The same, for a list whose lead column is not a mark's. The arithmetic is
+/// the `Node::Rows` arm's, in its order, and if that changes this must.
+fn row_title_width_at_edge_beside(
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    edge: RowEdge,
+    lead: i32,
+) -> i32 {
+    let padding = metrics.space(Space::Small);
     let mut width = row_text_width_beside(metrics, area, lead);
-    if menu {
+    if edge.menu {
         width = max(1, width - metrics.touch_target_default());
     }
-    if trailing.is_empty() {
+    if let Some(label) = edge.button {
+        // The engine lets a button have a third of the row, and a list's row
+        // spans the content width, which on a wide panel is more than the
+        // readable measure a paginator is handed. Capped at a third of the
+        // measure instead, a label that fits the row's third but not the
+        // measure's was counted cut short and drawn whole, and the title
+        // beside it took a line more than it was clamped to. The wider cap
+        // only ever measures the title narrower than it is drawn.
+        let row = max(area.width, metrics.content_width());
+        let label = one_line(label, max(1, row / 3), FontSize::Body);
+        let wide = measure_text(&label, FontSize::Body)
+            .0
+            .saturating_add(2 * padding)
+            .max(metrics.touch_target_minimum());
+        width = max(1, width - wide.saturating_add(padding));
+    }
+    if edge.badge {
+        width = max(1, width - row_badge_width(metrics).saturating_add(padding));
+    }
+    if edge.trailing.is_empty() {
         return width;
     }
-    let value = one_line(trailing, width, FontSize::Caption);
+    let value = one_line(edge.trailing, width, FontSize::Caption);
     max(
         1,
-        width - measure_text(&value, FontSize::Caption).0 - metrics.space(Space::Small),
+        width - measure_text(&value, FontSize::Caption).0 - padding,
     )
+}
+
+/// Breaks a list of rows into pages, measuring each row with what stands at
+/// its right edge.
+///
+/// For a list where some rows carry a button or a count and others do not,
+/// or where a row carries an overflow mark as well: each row is measured at
+/// the width its own title will have. Returns row indices per page, as
+/// [`paginate_rows_with_trailing`] does, with one empty page for no rows.
+#[must_use]
+pub fn paginate_rows_with_edges(
+    rows: &[(&str, &str, RowEdge)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    let lead = row_mark_column(metrics);
+    let heights = rows.iter().map(|(title, summary, edge)| {
+        measured_row_height_at_edge(metrics, area, title, summary, *edge, lead)
+    });
+    paginate_row_heights(heights, area)
 }
 
 /// Breaks a list of rows into pages that fit, returning the row indices on each.
@@ -11180,8 +11336,26 @@ fn measured_row_height(
     menu: bool,
     lead: i32,
 ) -> i32 {
+    let edge = RowEdge {
+        trailing,
+        menu,
+        button: None,
+        badge: false,
+    };
+    measured_row_height_at_edge(metrics, area, title, summary, edge, lead)
+}
+
+/// The same, with a row button and a badge paid for as well.
+fn measured_row_height_at_edge(
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    title: &str,
+    summary: &str,
+    edge: RowEdge,
+    lead: i32,
+) -> i32 {
     let padding = metrics.space(Space::Small);
-    let text_width = row_title_width_beside(metrics, area, trailing, menu, lead);
+    let text_width = row_title_width_at_edge_beside(metrics, area, edge, lead);
     let title_height =
         wrap_text(title, text_width, FontSize::Body).len() as i32 * FontSize::Body.line_height();
     let summary_height = if summary.is_empty() {
@@ -11271,6 +11445,15 @@ fn paginate_rows_measured(
     menu: bool,
     lead: i32,
 ) -> Vec<Vec<usize>> {
+    let heights = rows.iter().map(|(title, summary, trailing)| {
+        measured_row_height(metrics, area, title, summary, trailing, menu, lead)
+    });
+    paginate_row_heights(heights, area)
+}
+
+/// Packs rows of known heights into pages of `area`, returning the indices on
+/// each, and one empty page for no rows.
+fn paginate_row_heights(heights: impl Iterator<Item = i32>, area: ProseArea) -> Vec<Vec<usize>> {
     // A gap, the divider drawn inside it, then another gap: the engine
     // advances by the row's height and a gap, then leaves a second gap after
     // the rule it draws before the next row. The rule's own thickness is not
@@ -11281,8 +11464,7 @@ fn paginate_rows_measured(
     let mut pages: Vec<Vec<usize>> = Vec::new();
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
-    for (index, (title, summary, trailing)) in rows.iter().enumerate() {
-        let height = measured_row_height(metrics, area, title, summary, trailing, menu, lead);
+    for (index, height) in heights.enumerate() {
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));

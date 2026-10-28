@@ -328,6 +328,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `toggle(name, label, summary, on)` | Protocol 16. A setting drawn as a row with a switch; the whole row is the target and the app applies the change on the tap. One row high. |
 | `toggle_with_state(name, label, summary, on, state)` | The same, for a setting that may not be able to change right now. |
 | `option_list(prompt, page, previous, next, [(name, label, summary), ...])` | Protocol 16. One answer from a long list, a page of rows at a time with its own pager. `options_per_page(metrics, summaries)` says how many rows a page holds. |
+| `segmented(selected, [(name, label), ...])` | Two to five values of one setting side by side, the current one filled. Each value is its own action. Falls back to wrapping chips when a label will not fit its share. |
 | `chips([(name, label, selected), ...])` | Wrapping filters, tags or recent searches with selected state. |
 | `choose(prompt, [(name, label), ...])` | A question with tappable answers. |
 | `chosen(index)` | Marks which answer of the preceding `choose` or `option_list` is already given. |
@@ -364,7 +365,8 @@ the actual E Ink renderer and is the quickest visual reference.
 
 | Method | What it is |
 |---|---|
-| `banner(level, text)` | `Info` or `Attention`, and from protocol 16 `Success` or `Error`, which carry a mark ahead of the words. |
+| `banner(level, text)` | `Info` or `Attention`, and from protocol 16 `Success` or `Error`, which carry a mark ahead of the words. Pick the level by meaning; see *Banners: which level, and where the retry goes*. |
+| `problem_banner_with(&problem, retry, sign_in)` | A task failure from `kobo_sdk::failure` at its own level, carrying Join Wi-Fi, Sign in or Try again as its action. |
 | `banner_action(name, label)` | Protocol 16. The one action a banner may carry, on a line of its own under the words. |
 | `steps(current, total, labels)` | Protocol 16. "Step 2 of 4" and a mark per step, on one line. |
 | `code(payload, caption)` | Protocol 16. Text drawn by the runtime as a QR code, up to `MAX_CODE_BYTES` (213) bytes, in a square up to 50 mm wide. |
@@ -548,6 +550,61 @@ panel that takes a second to turn, the reader has a whole second to look at it.
 A screen that also offers "Back to the results" has three controls
 meaning one thing and no way for the reader to tell which is which.
 
+### Choosing a control for a setting
+
+One kind of choice, one control, in every app, so an owner reads the shape
+before the words:
+
+- **`toggle`** for something on or off that applies on the tap. Its summary
+  says what is true now ("Wakes when the cover opens"), not what a tap will do.
+  A choice that waits for a Start or Save button is not a toggle.
+- **`segmented`** for two to five short values of one setting, all worth seeing
+  at once: a difficulty, a side, a clock.
+- **`option_list`** plus `chosen` when the list is long, pages, or each answer
+  needs a sentence. **`choose`** plus `chosen` for a short question on a screen
+  of its own.
+- **`chips`** only for filters, tags and suggestions, where several can be on
+  at once or none. A lone chip used as a switch reads as a tag.
+- **A button that cycles** only where the order is the meaning, such as a sweep
+  round the edges of a panel. Otherwise an overshoot means going all the way
+  round again.
+
+Where a switch cannot go, in a bar or a menu, a two-state label names what the
+tap does: "Turn light off", "Show mistakes". "Light: on" reads as an order as
+easily as a report.
+
+### Banners: which level, and where the retry goes
+
+A banner's level says what happened, so an owner can tell a save from a
+failure before reading a word:
+
+- **`Success`**: something the owner asked for finished. Saved, sent, signed in.
+- **`Error`**: something failed and the owner has to act. A refused key, a write
+  that did not happen, a file that could not be opened.
+- **`Attention`**: something that may come right by itself, or by walking back
+  into Wi-Fi. Offline, a server not answering, a write that is tried again.
+- **`Info`**: neutral news and nudges. "Last page.", "3 new questions."
+
+Carry the level with the notice, rather than keeping one string drawn at one
+level. For a task's failure use `Problem::level`, which `problem_banner` and
+`problem_banner_with` already do.
+
+**The retry sits on the banner it answers.** `banner_action(name, label)` puts
+it on a line under the words; a loose button further down, a bottom action, a
+glyph in the top bar or a row in a menu makes the owner find the fix somewhere
+the reason is not. Then drop the other control, since the banner now carries it.
+Use one label per job: "Try again" for something fetched, "Retry saving" for
+something written. The action line costs a line of the page, so a list under
+the banner pages with `paginate_rows_below_banner` or the `_under` helpers (see
+*Clamped labels*).
+
+A connect screen follows the same order: the banner first, under the top bar;
+then what to run and the `command`; then `primary_button("check-again", "Check
+again")` directly under the command. Once a check has found nothing, Check
+again is that banner's action instead. A screen that waits for something pushed
+from a computer is a `splash`, `section("On your computer")`, the `command`, and
+its Check button directly under it.
+
 ### The words
 
 The type is set for you. The words are not, and they are most of what a screen
@@ -715,6 +772,26 @@ draw rather than against a list of things to subtract:
 the built screen that precedes the list and reserve exactly its measured height.
 Build that prefix with the same function the screen itself uses, and leave the
 list and the page-position strip out of it.
+
+A banner is taller than its words when it carries a mark or an action: a
+`Success` or `Error` banner sets a mark ahead of the words, so they wrap
+narrower, and `banner_action` adds a line under them. Describe it with a
+`BannerShape` and page with `paginate_rows_below_banner(rows, nav_bar,
+Some(BannerShape::new(level, &text).with_action()))`, or
+`paginate_rows_with_menu_below_banner(…)` for rows with a mark. For a task's
+failure, `problem.banner_shape(sign_in)` is the shape `problem_banner_with`
+draws. The older `paginate_rows_below_notice(rows, nav_bar, Some(text))`
+measures a plain banner with no action, as it always has.
+
+A `row_button` or a `row_badge` keeps a column of its own at the row's edge,
+beside the mark and any trailing value. Describe each row's edge the way the row
+is built, `RowEdge::new().with_menu().with_badge()` or
+`RowEdge::new().with_button("Install")`, and measure with
+`clamped_row_with_edge(text, lines, nav_bar, edge)` and
+`paginate_rows_with_edges_below_banner(&[(title, summary, edge), …], nav_bar,
+banner)`, or `paginate_rows_with_edges_under(…, &prefix)`. A badge is the same
+width whatever count it shows, so a row's edge does not change when the count
+does.
 
 Two other things a page's measure has to be told, because both cost whole rows
 rather than a few pixels:
@@ -1828,6 +1905,8 @@ For lists with a recovery notice, use
 `Context::paginate_rows_below_notice(rows, bottom_action_present, notice)` and
 render the same notice text. It reserves the banner's measured height and the
 fixed bottom action, preventing long lists from clipping rows during failures.
+A banner with an action or a mark is taller than its words: use
+`paginate_rows_below_banner` with a `BannerShape` for it.
 
 Reader quotes use the reading face and scale for both layout and rendering,
 including when the interface text is larger. `Reader::report` reserves space
@@ -1837,7 +1916,8 @@ the warning restores the available reading area.
 For rows with overflow menus, `Context::clamped_row_with_menu(text, lines,
 nav_bar)` measures the width left by the menu. Use
 `paginate_rows_with_menu_below_notice(rows, nav_bar, notice)` when the same list
-has a banner; it reserves both the menu column and the measured banner height.
+has a banner; it reserves both the menu column and the measured banner height,
+or `paginate_rows_with_menu_below_banner` when that banner carries an action.
 
 ### Verified offline snapshots
 

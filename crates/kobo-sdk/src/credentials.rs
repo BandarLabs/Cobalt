@@ -428,22 +428,28 @@ impl CredentialSetup {
             // The top bar's back returns to the prompt. A second Back button
             // beside it would leave two controls that look alike and go to
             // different places when an app owns back for the whole flow.
+            //
+            // Laid out as every connect screen is: what the last check found
+            // first, under the top bar, then what to do and the command, and
+            // Check again directly under the command until a check has found
+            // nothing. After that Check again is the banner's action, beside
+            // the words it answers, rather than a second button further down.
             View::Cli => {
                 let screen = ScreenBuilder::new("credential-cli")
                     .top_bar(app_title)
-                    .owns_back(true)
-                    .heading("Set it from a computer");
-                // Once a check has found nothing, Check again is the banner's
-                // action, beside the words it answers, rather than a second
-                // button further down.
+                    .owns_back(true);
                 let screen = match &self.check {
                     Some(check) => screen
                         .banner(BannerLevel::Attention, check)
                         .banner_action(CHECK, "Check again"),
                     None => screen,
                 }
-                .text(command.unwrap_or_default())
-                .secondary("Run this on your computer, then tap Check again.");
+                // A section rather than a heading: the top bar already names
+                // the app, and a line of display type was what pushed Check
+                // again off a small panel held on its side.
+                .section("Set it from a computer")
+                .secondary("Run this on your computer, then tap Check again.")
+                .command(command.unwrap_or_default());
                 if self.check.is_some() {
                     screen.build()
                 } else {
@@ -933,16 +939,22 @@ mod tests {
                     (super::View::Username, None, None),
                     (super::View::Password, None, None),
                     (super::View::Entry, None, None),
+                    (super::View::Cli, None, None),
                     (super::View::Cli, None, Some(missing)),
                     (super::View::Phone, None, None),
                     (super::View::Saving, None, None),
                 ] {
-                    // Held on its side, the prompt and the phone code are
-                    // checked: they are what this flow draws with the new
-                    // controls. The typing screens are the runtime's, and
-                    // the computer route is unchanged prose.
+                    // Held on its side, the prompt, the computer route and
+                    // the phone code are checked: they are what this flow
+                    // draws with the new controls. The typing screens are
+                    // the runtime's.
                     let sideways = metrics.width > metrics.height;
-                    if sideways && !matches!(view, super::View::Prompt | super::View::Phone) {
+                    if sideways
+                        && !matches!(
+                            view,
+                            super::View::Prompt | super::View::Cli | super::View::Phone
+                        )
+                    {
                         continue;
                     }
                     setup.view = view;

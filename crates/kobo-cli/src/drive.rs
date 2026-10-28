@@ -93,8 +93,14 @@ impl Control {
     /// joined to the next without a space, because the wrap broke the word
     /// where it was allowed to, and a reader still reads "calibre-web".
     fn says(&self, needle: &str) -> bool {
+        // A command is drawn with its hyphens made unbreakable and a joiner
+        // after each slash, so a flag or a path is never split across two
+        // lines. A route names the command as it is typed, so both are read
+        // as the characters they stand for.
         let normalize = |text: &str| {
-            text.split_whitespace()
+            text.replace('\u{2011}', "-")
+                .replace('\u{2060}', "")
+                .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
                 .to_lowercase()
@@ -1780,6 +1786,18 @@ mod tests {
         assert!(!text.says("calibre- web"));
         // A dash standing alone is not a broken word.
         assert!(text.says("or a - list"));
+    }
+
+    #[test]
+    fn a_command_is_read_as_it_is_typed_though_its_hyphens_cannot_break() {
+        let command = super::Control {
+            kind: "Quote".into(),
+            rect: (0, 0, 0, 0),
+            centre: (50, 100),
+            action: None,
+            lines: vec!["kobo connect zotero\u{2011}reader ~/\u{2060}Notes".into()],
+        };
+        assert!(command.says("kobo connect zotero-reader ~/Notes"));
     }
 
     #[test]

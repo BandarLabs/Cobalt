@@ -778,3 +778,211 @@ fn flipping_a_switch_or_ticking_a_box_is_a_fast_two_level_refresh() {
         PanelWaveform::Du
     );
 }
+
+#[test]
+fn a_banner_is_measured_at_the_height_it_is_drawn_whatever_its_level_and_action() {
+    for (name, metrics) in PANELS {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..metrics
+            };
+            for level in [
+                BannerLevel::Info,
+                BannerLevel::Attention,
+                BannerLevel::Success,
+                BannerLevel::Error,
+            ] {
+                for action in [false, true] {
+                    let layout = banner(level, action).layout_for(&metrics);
+                    let rect = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].rect;
+                    assert_eq!(
+                        rect.height,
+                        banner_height_with(
+                            "Lichess did not answer. Your games are still on the reader.",
+                            level,
+                            action,
+                            rect.width,
+                            &metrics
+                        ),
+                        "{name} {text_scale:?} {level:?} action {action}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A row with something at its edge, built the way `row_button`,
+/// `row_badge`, `rows_with_menu` and `rows_with_trailing` build it.
+fn edged_row(title: &str, edge: RowEdge) -> Row {
+    let mut row = Row::new(ActionId(1), title, "Updated at 10:40", Glyph::Book);
+    if edge.menu {
+        row = row.with_menu(ActionId(2));
+    }
+    if let Some(label) = edge.button {
+        row.button = Some(BarAction::new(ActionId(3), label));
+    }
+    if edge.badge {
+        row.badge = Some(12);
+    }
+    if !edge.trailing.is_empty() {
+        row = row.with_trailing(edge.trailing);
+    }
+    row
+}
+
+#[test]
+fn a_row_title_is_measured_at_the_width_it_is_drawn_beside_a_button_a_badge_a_menu_and_a_value() {
+    let edges = [
+        RowEdge::new(),
+        RowEdge::new().with_menu(),
+        RowEdge::new().with_badge(),
+        RowEdge::new().with_button("Install"),
+        RowEdge::new().with_menu().with_badge(),
+        RowEdge::new()
+            .with_button("Update")
+            .with_badge()
+            .with_trailing("2.1 MB"),
+        RowEdge::new()
+            .with_menu()
+            .with_button("Open")
+            .with_badge()
+            .with_trailing("10:40"),
+    ];
+    for (name, metrics) in PANELS {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..metrics
+            };
+            for edge in edges {
+                let layout = screen(vec![Node::Rows {
+                    id: NodeId(1),
+                    rows: vec![edged_row("The Wren, the Robin and the Long Winter", edge)],
+                }])
+                .layout_for(&metrics);
+                let title = kinds(&layout, |kind| matches!(kind, LayoutKind::RowTitle))[0].rect;
+                // Measured against the row as wide as it was drawn. The
+                // paginators measure against the readable measure, which on
+                // a wide panel is narrower than the row and so errs towards
+                // a line too many, never a line too few.
+                let row = kinds(&layout, |kind| matches!(kind, LayoutKind::Row(_)))[0].rect;
+                let area = ProseArea {
+                    width: row.width,
+                    ..metrics.prose_area(true, false)
+                };
+                assert_eq!(
+                    title.width,
+                    with_text_scale(text_scale, || row_title_width_at_edge(&metrics, area, edge)),
+                    "{name} {text_scale:?} {edge:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn rows_with_buttons_and_badges_are_paged_so_that_every_page_is_drawn_whole() {
+    let titles = [
+        "Feeds",
+        "The Wren, the Robin and the Long Winter: notes from a garden",
+        "Hacker News",
+        "A very long subscription title that wraps onto a second line beside a badge",
+        "Short",
+        "Another feed with a title long enough to wrap when a button sits beside it",
+    ];
+    for (name, metrics) in PANELS {
+        for text_scale in [TextScale::Default, TextScale::Larger, TextScale::Largest] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..metrics
+            };
+            let rows: Vec<(&str, &str, RowEdge)> = (0..30)
+                .map(|index| {
+                    let edge = match index % 3 {
+                        0 => RowEdge::new().with_menu().with_badge(),
+                        1 => RowEdge::new().with_button("Install"),
+                        _ => RowEdge::new(),
+                    };
+                    (titles[index % titles.len()], "Updated at 10:40", edge)
+                })
+                .collect();
+            let area = metrics.prose_area(true, false);
+            let pages = with_text_scale(text_scale, || {
+                paginate_rows_with_edges(&rows, &metrics, area)
+            });
+            let mut seen = Vec::new();
+            for page in &pages {
+                let built = screen(vec![Node::Rows {
+                    id: NodeId(1),
+                    rows: page
+                        .iter()
+                        .map(|&index| edged_row(rows[index].0, rows[index].2))
+                        .collect(),
+                }]);
+                let layout = built.layout_for(&metrics);
+                let drawn = kinds(&layout, |kind| matches!(kind, LayoutKind::Row(_)));
+                let top = drawn.iter().map(|node| node.rect.y).min().unwrap_or(0);
+                let bottom = drawn
+                    .iter()
+                    .map(|node| node.rect.y + node.rect.height)
+                    .max()
+                    .unwrap_or(0);
+                assert_eq!(drawn.len(), page.len(), "{name} {text_scale:?}: {page:?}");
+                assert!(
+                    bottom - top <= area.height,
+                    "{name} {text_scale:?}: page {page:?} runs {} px past the area",
+                    bottom - top - area.height
+                );
+                seen.extend(page.iter().copied());
+            }
+            assert_eq!(
+                seen,
+                (0..rows.len()).collect::<Vec<_>>(),
+                "{name} {text_scale:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rows_measured_without_their_buttons_and_badges_run_past_the_page_somewhere() {
+    // Why `paginate_rows_with_edges` exists: the same rows paged as though
+    // only the menu stood at their edge overflow on at least one panel.
+    let title = "A subscription title long enough to wrap once a badge and a button sit beside it";
+    let mut overflowed = false;
+    for (_, metrics) in PANELS {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..metrics
+            };
+            let edge = RowEdge::new()
+                .with_menu()
+                .with_button("Install")
+                .with_badge();
+            let rows: Vec<(&str, &str)> = (0..30).map(|_| (title, "Updated at 10:40")).collect();
+            let area = metrics.prose_area(true, false);
+            let pages = with_text_scale(text_scale, || {
+                paginate_rows_with_menu(&rows, &metrics, area)
+            });
+            for page in &pages {
+                let layout = screen(vec![Node::Rows {
+                    id: NodeId(1),
+                    rows: page.iter().map(|_| edged_row(title, edge)).collect(),
+                }])
+                .layout_for(&metrics);
+                let drawn = kinds(&layout, |kind| matches!(kind, LayoutKind::Row(_)));
+                let top = drawn.iter().map(|node| node.rect.y).min().unwrap_or(0);
+                let bottom = drawn
+                    .iter()
+                    .map(|node| node.rect.y + node.rect.height)
+                    .max()
+                    .unwrap_or(0);
+                overflowed |= drawn.len() < page.len() || bottom - top > area.height;
+            }
+        }
+    }
+    assert!(overflowed);
+}

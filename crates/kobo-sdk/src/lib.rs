@@ -6,6 +6,8 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 #[cfg(test)]
+mod banner_pagination_tests;
+#[cfg(test)]
 mod callback_scale_tests;
 pub mod collections;
 #[cfg(test)]
@@ -46,7 +48,7 @@ pub use kobo_ui::{
 /// The runtime-drawn controls of protocol 16, and the limits that fix their
 /// footprints.
 pub use kobo_ui::{
-    options_pages, options_per_page, FieldKind, OptionRow, MAX_CODE_BYTES, MAX_OPTIONS,
+    options_pages, options_per_page, FieldKind, OptionRow, RowEdge, MAX_CODE_BYTES, MAX_OPTIONS,
     MAX_OPTIONS_PER_PAGE, MAX_SELECTION_ACTIONS, MAX_STEPS,
 };
 pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
@@ -856,6 +858,10 @@ impl Context {
 
     /// Paginates rows below an attention banner, reserving its measured height.
     /// Use `nav_bar` when a fixed bottom action is also present.
+    ///
+    /// Measures the words of an info or attention banner. A banner with an
+    /// action, or a success or error banner with its mark, is taller: use
+    /// [`Self::paginate_rows_below_banner`] for those.
     #[must_use]
     pub fn paginate_rows_below_notice(
         &self,
@@ -863,20 +869,13 @@ impl Context {
         nav_bar: bool,
         notice: Option<&str>,
     ) -> Vec<Vec<usize>> {
-        kobo_ui::with_text_scale(self.metrics.text_scale, || {
-            let mut area = self.paged_area(nav_bar);
-            if let Some(notice) = notice {
-                area.height = area
-                    .height
-                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
-                    .saturating_sub(area.gap)
-                    .max(1);
-            }
-            kobo_ui::paginate_rows(rows, &self.metrics, area)
-        })
+        self.paginate_rows_below_banner(rows, nav_bar, notice.map(BannerShape::from))
     }
 
     /// Paginates rows with overflow menus beneath a measured notice.
+    ///
+    /// As [`Self::paginate_rows_below_notice`]; for a banner with an action
+    /// or a mark use [`Self::paginate_rows_with_menu_below_banner`].
     #[must_use]
     pub fn paginate_rows_with_menu_below_notice(
         &self,
@@ -884,17 +883,116 @@ impl Context {
         nav_bar: bool,
         notice: Option<&str>,
     ) -> Vec<Vec<usize>> {
+        self.paginate_rows_with_menu_below_banner(rows, nav_bar, notice.map(BannerShape::from))
+    }
+
+    /// Paginates rows below a banner, reserving all of its height: the words,
+    /// the mark a success or an error banner sets ahead of them, and the line
+    /// its action takes. Use `nav_bar` when a fixed bottom action is also
+    /// present.
+    ///
+    /// This is what lets a retry sit on the banner that explains the failure
+    /// over a list that pages.
+    #[must_use]
+    pub fn paginate_rows_below_banner(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        banner: Option<BannerShape<'_>>,
+    ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
-            let mut area = self.paged_area(nav_bar);
-            if let Some(notice) = notice {
-                area.height = area
-                    .height
-                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
-                    .saturating_sub(area.gap)
-                    .max(1);
-            }
-            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, area)
+            kobo_ui::paginate_rows(rows, &self.metrics, self.area_below(nav_bar, banner))
         })
+    }
+
+    /// The same, for rows that carry an overflow mark.
+    #[must_use]
+    pub fn paginate_rows_with_menu_below_banner(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        banner: Option<BannerShape<'_>>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, self.area_below(nav_bar, banner))
+        })
+    }
+
+    /// The same, for rows that carry a button, a count, a menu or a value at
+    /// their right edge, each described by its own [`RowEdge`].
+    ///
+    /// A row button and a badge each keep a column the title cannot use, so a
+    /// list measured as though they were not there packs a row too many and
+    /// draws it under the bar. Rows without anything at the edge pass
+    /// `RowEdge::new()`.
+    #[must_use]
+    pub fn paginate_rows_with_edges_below_banner(
+        &self,
+        rows: &[(&str, &str, RowEdge<'_>)],
+        nav_bar: bool,
+        banner: Option<BannerShape<'_>>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_with_edges(rows, &self.metrics, self.area_below(nav_bar, banner))
+        })
+    }
+
+    /// The same, under a built prefix rather than a banner, as
+    /// [`Self::paginate_rows_under`] measures it.
+    #[must_use]
+    pub fn paginate_rows_with_edges_under(
+        &self,
+        rows: &[(&str, &str, RowEdge<'_>)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows_with_edges(rows, &self.metrics, area)
+        })
+    }
+
+    /// `text` cut to at most `lines` lines of a row with `edge` at its right
+    /// edge, measured at the width the title will really have there.
+    #[must_use]
+    pub fn clamped_row_with_edge(
+        &self,
+        text: &str,
+        lines: usize,
+        nav_bar: bool,
+        edge: RowEdge<'_>,
+    ) -> String {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let area = self.metrics.prose_area(true, nav_bar);
+            kobo_ui::clamp_lines(
+                text,
+                kobo_ui::row_title_width_at_edge(&self.metrics, area, edge),
+                kobo_ui::FontSize::Body,
+                lines,
+            )
+        })
+    }
+
+    /// The page a list gets under `banner`, less the banner and the gap after
+    /// it.
+    fn area_below(&self, nav_bar: bool, banner: Option<BannerShape<'_>>) -> ProseArea {
+        let mut area = self.paged_area(nav_bar);
+        if let Some(banner) = banner {
+            area.height = area
+                .height
+                .saturating_sub(banner.height(area.width, &self.metrics))
+                .saturating_sub(area.gap)
+                .max(1);
+        }
+        area
     }
 
     /// The content area a screen that pages actually gets.
@@ -1936,6 +2034,57 @@ pub enum Position {
     AtTheFoot,
     /// Anywhere but there, so no strip is reserved.
     Elsewhere,
+}
+
+/// A banner as the paginators measure it: its level, its words, and whether
+/// it carries an action.
+///
+/// The height of a banner is more than its words. A success or an error
+/// banner sets a mark ahead of them, so they wrap narrower, and an action
+/// from [`ScreenBuilder::banner_action`] takes a line of its own underneath.
+/// A list paged under the words alone came out a line too long for each, and
+/// its last row went under the bar, which is why retries were left off the
+/// banners that explain them. Describe the banner the way the screen builds
+/// it, and pass the same words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BannerShape<'a> {
+    level: BannerLevel,
+    text: &'a str,
+    action: bool,
+}
+
+impl<'a> BannerShape<'a> {
+    /// A banner of `level` saying `text`, with no action.
+    #[must_use]
+    pub const fn new(level: BannerLevel, text: &'a str) -> Self {
+        Self {
+            level,
+            text,
+            action: false,
+        }
+    }
+
+    /// The same banner, carrying an action on the line under its words.
+    ///
+    /// The label is not needed: the line is a finger high whatever it says.
+    #[must_use]
+    pub const fn with_action(mut self) -> Self {
+        self.action = true;
+        self
+    }
+
+    /// The height this banner takes on a page `width` wide.
+    fn height(&self, width: i32, metrics: &DisplayMetrics) -> i32 {
+        kobo_ui::banner_height_with(self.text, self.level, self.action, width, metrics)
+    }
+}
+
+/// Plain words, measured as the `_below_notice` paginators always measured
+/// them: an info or attention banner with no action.
+impl<'a> From<&'a str> for BannerShape<'a> {
+    fn from(text: &'a str) -> Self {
+        Self::new(BannerLevel::Info, text)
+    }
 }
 
 /// Written out rather than derived, because a derived one would tick every
