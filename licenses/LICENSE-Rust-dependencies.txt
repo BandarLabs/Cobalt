@@ -245,7 +245,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ===============================================================================
-pulldown-cmark 0.13.4 — MIT
+pulldown-cmark 0.13.5 — MIT
 ===============================================================================
 
 The MIT License
