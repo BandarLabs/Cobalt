@@ -630,11 +630,11 @@ impl AppServer {
         // file inherits the user profile ACL, which is the same account
         // boundary by the platform's own mechanism.
         let app = channel::Listener::bind(&socket_path)?;
-        let identity = match (|| {
-            #[cfg(unix)]
-            fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
-            app.identity()
-        })() {
+        #[cfg(unix)]
+        let protected = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600));
+        #[cfg(not(unix))]
+        let protected: io::Result<()> = Ok(());
+        let identity = match protected.and_then(|()| app.identity()) {
             Ok(identity) => identity,
             Err(error) => {
                 drop(app);

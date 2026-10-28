@@ -1418,6 +1418,7 @@ fn remove_state_file(root: &Path, name: &str) -> Result<(), DeviceError> {
 /// Mode bits are the Unix mechanism; a Windows directory under the user
 /// profile is already scoped to the owning account by its ACL, so there is
 /// nothing to set. The daemon's on-device behaviour is unchanged.
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 fn set_mode(path: &Path, mode: u32) -> Result<(), DeviceError> {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(mode))

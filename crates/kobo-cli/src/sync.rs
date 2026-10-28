@@ -1839,13 +1839,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn simplify_verbatim_strips_drive_letter_prefixes_only() {
-        let bs = char::from(0x5c);
-        let verbatim = PathBuf::from(format!("{0}{0}?{0}D:{0}a{0}b", bs));
-        assert_eq!(
-            super::simplify_verbatim(verbatim),
-            PathBuf::from(format!("D:{0}a{0}b", bs))
-        );
-        let unc = PathBuf::from(format!("{0}{0}?{0}UNC{0}server{0}share", bs));
+        let verbatim = PathBuf::from(r"\\?\D:\a\b");
+        assert_eq!(super::simplify_verbatim(verbatim), PathBuf::from(r"D:\a\b"));
+        let unc = PathBuf::from(r"\\?\UNC\server\share");
         assert_eq!(super::simplify_verbatim(unc.clone()), unc);
     }
 

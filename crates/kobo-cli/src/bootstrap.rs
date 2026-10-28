@@ -304,7 +304,10 @@ fn set_executable(path: &Path) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
 }
 
+/// Windows has no executable bit; the reader applies the mode recorded for
+/// the file, and the signature matches the Unix arm so callers read the same.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }

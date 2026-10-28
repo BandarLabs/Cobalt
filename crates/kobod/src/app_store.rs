@@ -1335,7 +1335,10 @@ fn set_executable(path: &Path) -> Result<(), DeviceError> {
     fs::set_permissions(path, permissions).map_err(|_| DeviceError::Backend)
 }
 
+/// Windows has no executable bit to set. The signature matches the Unix arm
+/// so the one caller reads the same on both.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable(_path: &Path) -> Result<(), DeviceError> {
     Ok(())
 }

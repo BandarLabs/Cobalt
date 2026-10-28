@@ -505,6 +505,7 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
 /// Windows has no mode bits; packaged files keep the directory's default
 /// ACLs, which match the account boundary mode bits express on Unix.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_mode(_path: &Path, _mode: u32) -> Result<(), String> {
     Ok(())
 }

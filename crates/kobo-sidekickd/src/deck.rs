@@ -567,7 +567,7 @@ fn group_running(id: u32) -> bool {
     true
 }
 
-/// Windows has no process group to probe by id. readers_finished still waits
+/// Windows has no process group to probe by id. `readers_finished` still waits
 /// for every handle on the command's pipes, so a descendant holding them keeps
 /// the command open; one that let go of them is not waited for, as nothing
 /// was before the Unix probe existed.

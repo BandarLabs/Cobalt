@@ -32,7 +32,7 @@ use std::sync::mpsc::TryRecvError;
 #[cfg(unix)]
 const PROGRAM: &str = "/bin/sh";
 /// On Windows the stock shell is cmd: the one every installation carries
-/// and the one ConPTY hosts without extra flags.
+/// and the one `ConPTY` hosts without extra flags.
 #[cfg(windows)]
 const PROGRAM: &str = "cmd.exe";
 
@@ -56,7 +56,7 @@ const ENVIRONMENT: [(&str, &str); 5] = [
     ("PS1", "$ "),
 ];
 /// On Windows the shell inherits the runtime's environment instead of a
-/// built one: cmd cannot start without SystemRoot, and a terminal taking
+/// built one: cmd cannot start without `SystemRoot`, and a terminal taking
 /// its launcher's environment is the platform's normal contract. An empty
 /// list makes `Pty` pass a null pointer, which is exactly inheritance.
 #[cfg(windows)]
@@ -256,7 +256,7 @@ mod tests {
         Shells::new(&[Capability::Shell])
     }
 
-    /// The byte that submits a line: a carriage return into ConPTY, a
+    /// The byte that submits a line: a carriage return into `ConPTY`, a
     /// newline into a Unix PTY.
     #[cfg(windows)]
     const SUBMIT: &[u8] = b"\r";

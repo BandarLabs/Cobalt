@@ -797,7 +797,10 @@ fn set_file_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
+/// Windows has no mode bits; the signature matches the Unix arm so callers
+/// read the same on both.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_file_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
     Ok(())
 }
@@ -924,7 +927,7 @@ fn set_mode(path: &Path, field: &[u8]) {
         let _ignored = fs::set_permissions(path, fs::Permissions::from_mode(mode));
     }
     #[cfg(not(unix))]
-    let _ignored = (path, field);
+    let _ = (path, field);
 }
 
 fn verify_checksum(block: &[u8]) -> Result<(), DeviceError> {
@@ -1477,6 +1480,7 @@ mod tests {
     }
 
     #[cfg(not(unix))]
+    #[allow(clippy::unnecessary_wraps)]
     fn set_test_executable(_path: &std::path::Path) -> std::io::Result<()> {
         Ok(())
     }

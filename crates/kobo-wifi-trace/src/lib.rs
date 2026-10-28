@@ -44,9 +44,11 @@ fn metadata_mtime(metadata: &fs::Metadata) -> (i64, i64) {
 #[cfg(windows)]
 fn metadata_mtime(metadata: &fs::Metadata) -> (i64, i64) {
     let ticks = metadata.last_write_time();
+    // Both quotients fit an i64 for any u64 tick count: the seconds stay
+    // below 2^41 and the nanoseconds below a billion.
     (
-        (ticks / 10_000_000) as i64 - 11_644_473_600,
-        ((ticks % 10_000_000) * 100) as i64,
+        i64::try_from(ticks / 10_000_000).unwrap_or(i64::MAX) - 11_644_473_600,
+        i64::try_from((ticks % 10_000_000) * 100).unwrap_or_default(),
     )
 }
 

@@ -42,6 +42,11 @@ pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
 /// reader's files sit next to ours; a Windows host running the CLI against a
 /// mounted device accepts the smaller window rather than faking the atomic
 /// guarantee.
+///
+/// # Errors
+///
+/// Returns the operating system error when the path cannot be inspected or
+/// opened, and `PermissionDenied` when its final component is a symbolic link.
 #[cfg(windows)]
 pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
     if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
@@ -2803,7 +2808,7 @@ pub mod pty {
     }
 }
 
-/// A pseudo-terminal on Windows is a ConPTY pair: two anonymous pipes joined
+/// A pseudo-terminal on Windows is a `ConPTY` pair: two anonymous pipes joined
 /// by `CreatePseudoConsole`, the child started through an extended startup
 /// info whose attribute list names the console. Built on the documented
 /// kernel32 surface with the same shape as the Unix arm; runtime-verified by
@@ -2842,6 +2847,19 @@ pub mod pty {
     struct Coord {
         x: i16,
         y: i16,
+    }
+
+    impl Coord {
+        /// A console grid is counted in signed 16-bit cells. A terminal wider
+        /// or taller than that does not exist, but a caller's `u16` could
+        /// still name one, and a wrapped negative size would make the console
+        /// call fail rather than draw at the largest size it can.
+        fn grid(columns: u16, rows: u16) -> Self {
+            Self {
+                x: i16::try_from(columns).unwrap_or(i16::MAX),
+                y: i16::try_from(rows).unwrap_or(i16::MAX),
+            }
+        }
     }
 
     #[repr(C)]
@@ -2896,6 +2914,16 @@ pub mod pty {
         base: StartupInfoW,
         attribute_list: *mut c_void,
     }
+
+    /// `cb` for the extended startup info. The structure is about a hundred
+    /// bytes, so the narrowing cannot lose anything, and the assertion makes
+    /// that a compile-time fact rather than an assumption.
+    #[allow(clippy::cast_possible_truncation)]
+    const STARTUP_INFO_SIZE: Dword = {
+        let size = size_of::<StartupInfoExW>();
+        assert!(size <= Dword::MAX as usize);
+        size as Dword
+    };
 
     #[repr(C)]
     struct ProcessInformation {
@@ -2977,7 +3005,7 @@ pub mod pty {
         input: File,
         /// The pseudo-console, shared with the waiter thread that closes it
         /// when the child exits on its own: that is the event that makes a
-        /// Unix PTY report end of file, and the only one that makes a ConPTY
+        /// Unix PTY report end of file, and the only one that makes a `ConPTY`
         /// output pipe report one.
         console: Arc<ConsoleCell>,
         /// The child's process handle, nulled once closed.
@@ -3075,6 +3103,9 @@ pub mod pty {
         /// # Errors
         ///
         /// As [`Pty::spawn`].
+        // One FFI sequence: every early return closes exactly what the steps
+        // before it opened, which is easier to audit in one place than split.
+        #[allow(clippy::too_many_lines)]
         pub fn spawn_with_wake(
             program: &str,
             arguments: &[&str],
@@ -3099,10 +3130,7 @@ pub mod pty {
                 close_handle(in_write);
                 return Err(error);
             }
-            let grid = Coord {
-                x: columns as i16,
-                y: rows as i16,
-            };
+            let grid = Coord::grid(columns, rows);
             let mut console: Handle = ptr::null_mut();
             // SAFETY: both pipe ends are live handles we own; the console
             // out-pointer is a live local.
@@ -3132,7 +3160,7 @@ pub mod pty {
             }
             let mut startup = StartupInfoExW {
                 base: StartupInfoW {
-                    cb: size_of::<StartupInfoExW>() as Dword,
+                    cb: STARTUP_INFO_SIZE,
                     // With the parent's std handles redirected (a test harness
                     // or CI runner is exactly that), a child created without
                     // STARTF_USESTDHANDLES attaches to the inherited console
@@ -3326,11 +3354,14 @@ pub mod pty {
         ///
         /// Returns the HRESULT from `ResizePseudoConsole`.
         pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
-            let grid = Coord {
-                x: columns as i16,
-                y: rows as i16,
-            };
-            let console = self.console.0.lock().expect("console lock");
+            let grid = Coord::grid(columns, rows);
+            // A poisoned lock still guards a live or nulled handle; the
+            // nulling discipline, not the poison flag, says which.
+            let console = self
+                .console
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if console.is_null() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotConnected,
@@ -3362,7 +3393,9 @@ pub mod pty {
             if unsafe { GetExitCodeProcess(self.process, &mut code) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(Some(code as i32))
+            // The same reinterpretation std's ExitStatus::code makes on
+            // Windows: an NTSTATUS crash code reads as a negative number.
+            Ok(Some(i32::from_ne_bytes(code.to_ne_bytes())))
         }
 
         /// Stops the program and reaps it.
@@ -3424,7 +3457,7 @@ pub mod pty {
     }
 
     /// The double-NUL-terminated Unicode environment block, sorted as
-    /// CreateProcessW expects.
+    /// `CreateProcessW` expects.
     fn environment_block(environment: &[(&str, &str)]) -> Vec<u16> {
         let mut pairs: Vec<String> = environment
             .iter()

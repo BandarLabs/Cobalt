@@ -27,8 +27,7 @@ pub fn random_bytes(bytes: &mut [u8]) -> io::Result<()> {
 /// seed.
 #[cfg(windows)]
 pub fn random_bytes(bytes: &mut [u8]) -> io::Result<()> {
-    #[allow(non_snake_case)]
-    type NTSTATUS = i32;
+    type NtStatus = i32;
     const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
     #[link(name = "bcrypt")]
     extern "system" {
@@ -37,7 +36,7 @@ pub fn random_bytes(bytes: &mut [u8]) -> io::Result<()> {
             buffer: *mut u8,
             length: u32,
             flags: u32,
-        ) -> NTSTATUS;
+        ) -> NtStatus;
     }
     let length = u32::try_from(bytes.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "entropy request too large"))?;
