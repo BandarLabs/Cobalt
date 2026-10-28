@@ -19,11 +19,13 @@ that is not listed as verified is not claimed to work.
 
 ## Windows host (x86_64-pc-windows-msvc, windows-2022 runner)
 
-Verified in CI (native `cargo test --workspace --all-targets`, plus a
-built `kobo.exe` artifact that is executed for `--version`):
+Verified in CI (native `cargo test --workspace --all-targets`, clippy with
+warnings denied, plus a built `kobo.exe` artifact that is executed for
+`--version`):
 
-- The `kobo` CLI build, package, and deploy flows, and every workspace unit
-  test that is not Unix-specific. Windows ships no `gzip`, so the package is
+- The `kobo` CLI build and package flows, and every workspace unit test
+  that is not Unix-specific. Deploying reaches a reader over ssh, which no
+  CI job has, so it is listed under UNVERIFIED below. Windows ships no `gzip`, so the package is
   compressed and given the device's integrity check in-process there; macOS
   and Linux still use the system `gzip`. The runner itself carries Git for
   Windows' `gzip`, which is why CI alone could not show the difference.
@@ -42,8 +44,10 @@ built `kobo.exe` artifact that is executed for `--version`):
   startup info), runtime-verified on the windows-2022 runner by the
   `conpty_carries_output_status_and_shutdown` test, which spawns cmd.exe,
   reads its output over the channel, checks its exit status and closes the
-  console. Interactive use against a real device is UNVERIFIED until run
-  from a physical Windows machine.
+  console. That test inherits the whole parent environment; `kobo stream`
+  passes an allow-list instead, whose Windows additions are unit-tested
+  but have not run a real command. Interactive use against a real device
+  is UNVERIFIED until run from a physical Windows machine.
 
 UNVERIFIED on Windows (compile clean, unit-tested where noted, but not yet
 run end-to-end on a real Windows machine):
@@ -52,6 +56,16 @@ run end-to-end on a real Windows machine):
   a full sync against a device has not been run from Windows.
 - Device communication (ssh/scp to a reader) from Windows: expected to
   work with an installed OpenSSH client, not yet exercised.
+- `kobo setup` end to end on a reader: one tester installed from Windows
+  and the menu entry did nothing when tapped, before the launch bootstrap
+  was normalized to LF. The fix has not been re-run on a reader.
+
+Not done on Windows yet:
+
+- Ejecting the reader. `kobo setup` writes everything and then asks the
+  owner to eject it from File Explorer, as it does under WSL.
+- Raw keyboard mode for `kobo stream` on the local console: it is set with
+  `stty`, which Windows lacks, so typed input stays line-buffered there.
 
 Unsupported on Windows by design:
 
