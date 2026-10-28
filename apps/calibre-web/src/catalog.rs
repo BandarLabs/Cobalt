@@ -108,10 +108,6 @@ pub fn problem(url: &str, error: TaskError) -> kobo_sdk::failure::Problem {
         .explain(error)
 }
 
-pub fn failure(url: &str, error: TaskError) -> String {
-    problem(url, error).message
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

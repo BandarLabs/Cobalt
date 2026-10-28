@@ -650,7 +650,6 @@ fn a_server_written_from_the_computer_is_picked_up_on_return_without_a_restart()
         value: None,
     });
     assert!(format!("{:?}", last_screen(&commands)).contains("No server has arrived"));
-    runner.action(action_id("dismiss"));
 
     runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
     let commands = runner.store_result(StoreResult::Loaded {
@@ -758,4 +757,137 @@ fn backing_out_of_a_search_returns_to_the_inbox() {
     no_spawn(&commands);
     assert_eq!(runner.app_mut().view, View::Inbox);
     assert!(runner.app_mut().search.is_none());
+}
+
+/// The first connect step reads in the order every connect screen does: a
+/// banner first, then the command, then Check again directly under it. Once
+/// a check has found nothing, Check again is the action of the banner that
+/// says so, and nowhere else; it is never in the top bar. Every size, held
+/// either way, keeps the command, Check again, the field and Use saved token
+/// on the panel.
+#[test]
+fn the_connect_step_puts_check_again_under_the_command_then_on_the_banner_at_every_size() {
+    use kobo_sdk::{Chrome, DisplayMetrics, Orientation};
+    use kobo_ui::TextScale;
+    for text_scale in TextScale::STEPS {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let runner = AppRunner::with_metrics(Readeck::default(), metrics);
+            for (checked, refused) in [(false, false), (true, false), (true, true)] {
+                let app = Readeck {
+                    view: View::Server,
+                    server_check: if checked {
+                        ServerCheck::FoundNothing
+                    } else {
+                        ServerCheck::Unchecked
+                    },
+                    draft: if refused {
+                        "http://read.example".to_owned()
+                    } else {
+                        String::new()
+                    },
+                    address_error: refused.then(|| "Use an https address.".to_owned()),
+                    ..Readeck::default()
+                };
+                let at =
+                    format!("{text_scale:?} {orientation:?} checked {checked} refused {refused}");
+                let screen = app.server_screen(&runner.context());
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{at}: {:?}",
+                    diagnostics.issues
+                );
+                for action in ["check-again", "server-address", "saved-token"] {
+                    assert!(
+                        diagnostics
+                            .layout
+                            .rect_of_action(action_id(action))
+                            .is_some(),
+                        "{at}: {action}"
+                    );
+                }
+                let offered = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind.acts_on() == Some(action_id("check-again")))
+                    .count();
+                assert_eq!(offered, 1, "{at}");
+                assert!(
+                    screen
+                        .top_bar
+                        .as_ref()
+                        .is_none_or(|bar| bar.actions.is_empty()),
+                    "{at}"
+                );
+                let command = screen
+                    .nodes
+                    .iter()
+                    .position(|node| format!("{node:?}").contains("kobo connect readeck"))
+                    .unwrap_or_else(|| panic!("{at}: no command"));
+                let on_banner = matches!(
+                    screen.nodes.first(),
+                    Some(Node::Banner { action: Some(action), .. })
+                        if action.action == action_id("check-again")
+                );
+                assert_eq!(on_banner, checked, "{at}");
+                if !checked {
+                    assert!(
+                        matches!(
+                            screen.nodes.get(command + 1),
+                            Some(Node::Button { action, .. }) if *action == action_id("check-again")
+                        ),
+                        "{at}: Check again is not directly under the command"
+                    );
+                }
+                if refused {
+                    assert!(
+                        format!("{screen:?}").contains("Use an https address."),
+                        "{at}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A check that finds no server says so on a banner over the connect step,
+/// rather than on a screen of its own the owner has to dismiss before trying
+/// again.
+#[test]
+fn a_check_that_finds_no_server_keeps_the_connect_step_under_its_banner() {
+    let mut runner = AppRunner::new(Readeck::default());
+    runner.start();
+    runner.store_result(StoreResult::Loaded {
+        key: SERVER.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: SCALE.into(),
+        value: None,
+    });
+    runner.action(action_id("check-again"));
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: SERVER.into(),
+        value: None,
+    });
+    let screen = last_screen(&commands);
+    assert!(runner.app_mut().problem.is_none());
+    assert!(
+        matches!(
+            screen.nodes.first(),
+            Some(Node::Banner { text, action: Some(action), .. })
+                if text == NO_SERVER_YET && action.action == action_id("check-again")
+        ),
+        "{screen:?}"
+    );
+    assert!(screen.nodes.iter().any(|node| matches!(
+        node,
+        Node::Field { action, .. } if *action == action_id("server-address")
+    )));
 }

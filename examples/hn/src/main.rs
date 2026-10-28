@@ -35,9 +35,10 @@ mod model;
 use kobo_bookview::offline::{Heard, Keeper};
 use kobo_bookview::positions::{self, Progress};
 use kobo_bookview::BookView;
+use kobo_sdk::failure::{Problem, Service};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Position, QuoteRole,
-    RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, BannerShape, Context, Failure, Glyph, KoboApp, Position,
+    QuoteRole, RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::BTreeMap;
@@ -133,6 +134,13 @@ const SKELETON_ROWS: u8 = 3;
 /// and written when it changes, and a reader with three hundred read stories
 /// still costs one read and one write.
 const MARKS: &str = "hn-marks";
+
+/// Asks for the list of kept articles again, from the banner that says it
+/// could not be read or written.
+const SAVED_RETRY: &str = "saved-retry";
+
+/// Asks for a discussion again, from the banner that says why it is missing.
+const THREAD_RETRY: &str = "thread-retry";
 
 /// The bottom bar. Fixed, in this order, on every screen that has a list.
 ///
@@ -345,8 +353,10 @@ struct Hn {
     ///
     /// Kept apart from `problem` because an empty thread on a train is not a
     /// thread with no comments, and saying "No comments yet" about one is
-    /// wrong in a way an owner can see.
-    thread_trouble: Option<Failure>,
+    /// wrong in a way an owner can see. Kept as the error rather than its
+    /// wording, so the banner can carry the fix that error has: Join Wi-Fi
+    /// offline, Try again where asking again can help.
+    thread_trouble: Option<TaskError>,
 }
 
 impl Hn {
@@ -384,10 +394,10 @@ impl Hn {
     /// The story list for the tab that is showing.
     fn list(&self) -> Screen {
         let mut screen = ScreenBuilder::new("hn").top_bar(self.list_title());
-        if let Some(problem) = &self.problem {
+        if self.tab == Tab::Saved && !self.stories.is_empty() {
+            screen = self.saved_banner(screen);
+        } else if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
-        } else if self.tab == Tab::Saved && !self.stories.is_empty() {
-            screen = screen.banner(BannerLevel::Info, self.offline_line());
         }
         if self.tab == Tab::Saved && self.stories.is_empty() {
             return self.nothing_saved(screen);
@@ -416,16 +426,20 @@ impl Hn {
                     .failure_state(failure, "retry");
                 return self.with_tabs(screen).build();
             }
-            return self
-                .with_tabs(
-                    screen
-                        .text(
-                            "Nothing came back for this tab. That is usually the network \
-                             rather than Hacker News.",
-                        )
-                        .primary_button("retry", "Try again"),
-                )
-                .build();
+            // The same shape, for a tab that answered with nothing: the
+            // reason once, as the screen, with Try again under it. It was a
+            // banner, a paragraph saying the same thing, and the button two
+            // blocks down from the words it answered.
+            let said = self.problem.clone().unwrap_or_else(|| {
+                "Nothing came back for this tab. That is usually the network rather than \
+                 Hacker News."
+                    .to_owned()
+            });
+            let screen = ScreenBuilder::new("hn")
+                .top_bar(self.list_title())
+                .error_state(said)
+                .primary_button("retry", "Try again");
+            return self.with_tabs(screen).build();
         };
         if self.tab == Tab::Saved {
             return self.saved_list(screen, indices);
@@ -508,10 +522,47 @@ impl Hn {
         let line = self.keeper.summary("article", "articles");
         if self.keeper.is_busy() {
             format!("{line}. Saving more now.")
-        } else if self.keeper.failed {
-            format!("{line}. The list of saved articles could not be written.")
         } else {
             line
+        }
+    }
+
+    /// The one banner over the saved list: what it says, how loudly, and
+    /// the control that answers it.
+    ///
+    /// A list of kept articles that could not be read or written is the
+    /// thing to act on, so it comes first and carries its own retry. It was
+    /// an Info line ending "could not be written" whose only fix was a row
+    /// menu entry shown on stories whose article was missing, so with every
+    /// article kept there was none.
+    fn saved_notice(&self) -> (BannerLevel, String, Option<(&'static str, &'static str)>) {
+        if self.keeper.failed {
+            if self.keeper.is_loaded() {
+                (
+                    BannerLevel::Error,
+                    "The list of saved articles could not be written.".to_owned(),
+                    Some((SAVED_RETRY, "Retry saving")),
+                )
+            } else {
+                (
+                    BannerLevel::Error,
+                    "The list of saved articles could not be read.".to_owned(),
+                    Some((SAVED_RETRY, "Try again")),
+                )
+            }
+        } else if let Some(problem) = &self.problem {
+            (BannerLevel::Attention, problem.clone(), None)
+        } else {
+            (BannerLevel::Info, self.offline_line(), None)
+        }
+    }
+
+    fn saved_banner(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let (level, said, action) = self.saved_notice();
+        let screen = screen.banner(level, said);
+        match action {
+            Some((name, label)) => screen.banner_action(name, label),
+            None => screen,
         }
     }
 
@@ -644,7 +695,7 @@ impl Hn {
         // exactly this block, so what is drawn here is room the comments
         // never had rather than room taken from them.
         if self.thread_page == 0 {
-            screen = screen.facts(story_facts(story, self.now));
+            screen = self.above_the_discussion(screen, story);
         }
         // A byline is only made foldable once, on the page where its comment
         // begins. The copy repeated at the top of a continuation is a
@@ -675,12 +726,10 @@ impl Hn {
                 _ => screen = screen.quote_as(*depth, *role, paragraph.clone()),
             }
         }
-        // No banner, and no bottom bar. A banner is chrome the paginator
-        // never measured: on a full page at the larger text settings the
-        // renderer refused the whole screen rather than draw it through the
-        // panel edge, and a reader who turned the type up got nothing at all.
-        // Everything this screen has to say is said inside the flow, which is
-        // what was measured, so it has somewhere to be.
+        // No banner below the first page's head. A banner the paginator never
+        // measured was refused whole by the renderer on a full page at the
+        // larger text settings, so the only banner here is the failed
+        // discussion's, inside the block the first page is measured under.
         // No bottom bar. It said "Back / Stories / Next", of which Stories is
         // the chevron already in the top bar and the other two are the page
         // turns the position strip draws for a third of the room. The bar was
@@ -704,9 +753,28 @@ impl Hn {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return ScreenBuilder::new("hn-facts").build();
         };
-        ScreenBuilder::new("hn-facts")
-            .facts(story_facts(story, self.now))
+        self.above_the_discussion(ScreenBuilder::new("hn-facts"), story)
             .build()
+    }
+
+    /// The facts, and under them, when the discussion could not be fetched,
+    /// the reason with its fix on it: Join Wi-Fi offline, Try again where
+    /// asking again can help. Drawn on the first page and measured as the
+    /// block that page is paged under, so the banner and its action line are
+    /// room the paragraphs never had.
+    fn above_the_discussion(&self, screen: ScreenBuilder, story: &Story) -> ScreenBuilder {
+        let screen = screen.facts(story_facts(story, self.now));
+        match self.discussion_problem() {
+            Some(problem) => screen.problem_banner_with(&problem, THREAD_RETRY, None),
+            None => screen,
+        }
+    }
+
+    /// Why the discussion is not on the page, when it could not be fetched
+    /// and nothing of it arrived.
+    fn discussion_problem(&self) -> Option<Problem> {
+        let error = self.thread_trouble.filter(|_| self.comments.is_empty())?;
+        Some(Service::new("Hacker News").explain(error))
     }
 
     /// Everything the thread screen draws, as paragraphs carrying their depth.
@@ -734,19 +802,21 @@ impl Hn {
             paragraphs.push((0, 0, QuoteRole::Body, body.clone()));
         }
         if self.comments.is_empty() {
+            // The reason the discussion is missing is the banner over this,
+            // with its fix. What is left to say is what still works.
             let said = match self.thread_trouble {
                 // The discussion is not kept on the device, only the article,
                 // so a saved story opened offline has no comments to show.
                 // Saying there are none would be untrue.
-                Some(failure) if self.keeper.is_kept(&story.id) => format!(
-                    "{} The article is saved on this reader, and the book at the top opens \
-                     it now.",
-                    failure.advice
+                Some(_) if self.keeper.is_kept(&story.id) => Some(
+                    "The article is saved on this reader, and the book at the top opens it now.",
                 ),
-                Some(failure) => format!("{} The discussion needs a connection.", failure.advice),
-                None => "No comments yet.".to_owned(),
+                Some(_) => None,
+                None => Some("No comments yet."),
             };
-            paragraphs.push((0, 0, QuoteRole::Body, said));
+            if let Some(said) = said {
+                paragraphs.push((0, 0, QuoteRole::Body, said.to_owned()));
+            }
             return paragraphs;
         }
         let ended = !self.more_to_take();
@@ -1247,6 +1317,24 @@ impl Hn {
         self.show(context);
     }
 
+    /// Answers the retry on a banner: the list of kept articles read or
+    /// written again, or the open discussion asked for again. Says whether
+    /// the tap was one of those.
+    fn retried(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(SAVED_RETRY) {
+            self.keeper.retry(context);
+            self.repaginate_saved(&*context);
+        } else if action == action_id(THREAD_RETRY) && self.view == View::Thread {
+            self.thread_trouble = None;
+            self.ask_thread(context);
+            self.repaginate_thread(&*context);
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
+    }
+
     /// Tries again to keep the article of the story whose menu is open.
     fn keep_saved_again(&mut self, context: &mut Context) {
         let Some(story) = self.menu.and_then(|index| self.stories.get(index)).cloned() else {
@@ -1441,10 +1529,14 @@ impl Hn {
                 context.clamped_row_beside(&story.title, &model::score(story), TITLE_LINES, true)
             })
             .collect();
+        // Measured with what the row says, "Read, saved" and all. Measured
+        // with the site's words alone, a story marked on the way back from
+        // its thread wrapped a line the page had not counted, and at the
+        // larger text sizes the last row ran under the tabs.
         let summaries = self
             .stories
             .iter()
-            .map(|story| model::summary(story, self.now))
+            .map(|story| self.row_summary(story))
             .collect::<Vec<_>>();
         // Measured with the score, because the score keeps a column at the
         // trailing edge and the title and summary wrap inside what is left.
@@ -1491,10 +1583,16 @@ impl Hn {
             .zip(&summaries)
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect::<Vec<_>>();
-        // Measured under the line that says what is on the device, which is
-        // drawn above the rows whenever there are any.
-        let notice = self.problem.clone().unwrap_or_else(|| self.offline_line());
-        self.pages = context.paginate_rows_with_menu_below_notice(&rows, true, Some(&notice));
+        // Measured under the banner that is drawn above the rows whenever
+        // there are any, with its mark and its action line when it has them.
+        let (level, said, action) = self.saved_notice();
+        let shape = BannerShape::new(level, &said);
+        let shape = if action.is_some() {
+            shape.with_action()
+        } else {
+            shape
+        };
+        self.pages = context.paginate_rows_with_menu_below_banner(&rows, true, Some(shape));
         self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
@@ -1718,11 +1816,14 @@ impl KoboApp for Hn {
         }
         if action == ActionId::BACK {
             // Only ever delivered on a screen that asked for it, so this is
-            // always a thread returning to the list it was opened from.
+            // always a thread returning to the list it was opened from. The
+            // story is marked read, and maybe saved, so its row is measured
+            // again.
             self.view = View::List;
             self.problem = None;
             self.trouble = None;
             self.menu = None;
+            self.repaginate_list(&*context);
             self.show(context);
             return;
         }
@@ -1746,6 +1847,9 @@ impl KoboApp for Hn {
             self.keep_saved_again(context);
             return;
         }
+        if self.retried(context, action) {
+            return;
+        }
         for index in 0..self.stories.len() {
             if action == action_id(&format!("saved-menu-{index}")) {
                 self.menu = Some(index);
@@ -1763,6 +1867,7 @@ impl KoboApp for Hn {
             self.view = View::List;
             self.problem = None;
             self.trouble = None;
+            self.repaginate_list(&*context);
             self.show(context);
             return;
         }
@@ -1837,7 +1942,7 @@ impl Hn {
                     // on, and its own replies go with it because there is
                     // nothing left to hang them under.
                     if self.open_id().and_then(|open| open.parse().ok()) == Some(id) {
-                        self.thread_trouble = Some(Failure::of(error));
+                        self.thread_trouble = Some(error);
                     }
                     self.slots.retain(|slot| slot.id != id);
                     self.pump_thread(context);
@@ -1849,7 +1954,10 @@ impl Hn {
             // on each arrival would be one full panel refresh per comment.
             if self.lanes.is_empty() {
                 self.rebuild_thread(context);
-                if self.comments.is_empty() && !self.more_to_take() {
+                // Only while the thread is showing. Back keeps the lanes
+                // running, and a late empty answer used to put "This thread
+                // came back empty." over the story list it was left for.
+                if self.view == View::Thread && self.comments.is_empty() && !self.more_to_take() {
                     self.problem = Some("This thread came back empty.".to_owned());
                 }
                 self.show(context);
@@ -2022,7 +2130,10 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, LANES, TABS, TITLE_LINES};
+    use super::{
+        model, Awaiting, Hn, Slot, Tab, View, CHUNK, LANES, SAVED_RETRY, TABS, THREAD_RETRY,
+        TITLE_LINES,
+    };
     use kobo_sdk::{
         action_id, ActionId, AppRunner, Command, StoreError, StoreRequest, StoreResult, Task,
         TaskError, TaskId, TaskOutcome,
@@ -3745,6 +3856,256 @@ mod tests {
             "{said:?}"
         );
         let _ = index;
+    }
+
+    /// Fails the open story's own item fetch with `error`, answering the
+    /// pause and the second attempt the SDK makes before the application
+    /// hears of it.
+    fn fail_thread(runner: &mut AppRunner<Hn>, error: TaskError) {
+        let (mut failing, _) = *runner.app().lanes.first().expect("the thread is asked for");
+        for _ in 0..3 {
+            let commands = runner.task_outcome(failing, TaskOutcome::Failed(error));
+            let spawned = |commands: &[Command]| {
+                commands.iter().find_map(|command| match command {
+                    Command::Spawn { task, .. } => Some(*task),
+                    _ => None,
+                })
+            };
+            let Some(nap) = spawned(&commands) else { break };
+            let commands = runner.task_outcome(nap, TaskOutcome::Completed(Vec::new()));
+            match spawned(&commands) {
+                Some(again) => failing = again,
+                None => break,
+            }
+        }
+    }
+
+    /// Every banner a screen carries: its level, and the action and label
+    /// on it.
+    fn banners(
+        screen: &kobo_sdk::Screen,
+    ) -> Vec<(kobo_sdk::BannerLevel, Option<(ActionId, String)>)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Banner { level, action, .. } => Some((
+                    *level,
+                    action
+                        .as_ref()
+                        .map(|action| (action.action, action.label.clone())),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn back_from_a_thread_keeps_a_late_empty_answer_off_the_story_list() {
+        let mut runner = loaded();
+        runner.action(action_id("story-0"));
+        let (task, _) = *runner.app().lanes.first().expect("the thread is asked for");
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::List);
+        runner.task_outcome(task, TaskOutcome::Completed(b"null".to_vec()));
+        assert_eq!(runner.app().problem, None);
+        let drawn = format!("{:?}", runner.app().list());
+        assert!(!drawn.contains("came back empty"), "{drawn}");
+    }
+
+    #[test]
+    fn a_discussion_that_could_not_be_fetched_says_why_on_a_banner_whose_try_again_asks_again() {
+        let mut runner = loaded();
+        runner.action(action_id("story-0"));
+        fail_thread(&mut runner, TaskError::Unreachable);
+        assert_eq!(runner.app().thread_trouble, Some(TaskError::Unreachable));
+        assert_eq!(
+            banners(&runner.app().thread()),
+            [(
+                kobo_sdk::BannerLevel::Attention,
+                Some((action_id(THREAD_RETRY), "Try again".to_owned()))
+            )]
+        );
+        let said: Vec<String> = runner
+            .app()
+            .thread_paragraphs()
+            .into_iter()
+            .map(|(_, _, _, text)| text)
+            .collect();
+        assert!(
+            !said.iter().any(|text| text.contains("connection")),
+            "the reason is said once, on the banner: {said:?}"
+        );
+        runner.action(action_id(THREAD_RETRY));
+        assert_eq!(runner.app().thread_trouble, None);
+        assert_eq!(runner.app().lanes.len(), 1, "Try again asks for the thread");
+        // Offline, the fix is the Wi-Fi rather than asking again.
+        fail_thread(&mut runner, TaskError::Offline);
+        assert_eq!(
+            banners(&runner.app().thread()),
+            [(
+                kobo_sdk::BannerLevel::Attention,
+                Some((action_id(kobo_sdk::JOIN_WIFI), "Join Wi-Fi".to_owned()))
+            )]
+        );
+    }
+
+    #[test]
+    fn a_saved_list_that_could_not_be_written_is_an_error_whose_retry_saving_writes_it_again() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (_, link) = open_linked(&mut runner, &mut device);
+        save_open(&mut runner, &mut device, &link);
+        runner.action(ActionId::BACK);
+        let commands = runner.action(action_id("tab-saved"));
+        device.settle(&mut runner, commands);
+        runner.app_mut().keeper.failed = true;
+        assert_eq!(
+            banners(&runner.app().list()),
+            [(
+                kobo_sdk::BannerLevel::Error,
+                Some((action_id(SAVED_RETRY), "Retry saving".to_owned()))
+            )]
+        );
+        let commands = runner.action(action_id(SAVED_RETRY));
+        device.settle(&mut runner, commands);
+        assert!(!runner.app().keeper.failed);
+        assert_eq!(
+            banners(&runner.app().list()),
+            [(kobo_sdk::BannerLevel::Info, None)]
+        );
+    }
+
+    #[test]
+    fn a_tab_that_came_back_empty_is_one_error_state_with_try_again_under_it() {
+        let mut runner = AppRunner::new(Hn::default());
+        runner.start();
+        let task = spawned(&runner);
+        runner.task_outcome(task, TaskOutcome::Completed(b"[]".to_vec()));
+        let screen = runner.app().list();
+        assert!(banners(&screen).is_empty(), "no banner over the same words");
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, LayoutKind::SplashTitle)));
+        let text: Vec<String> = layout
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect();
+        assert_eq!(
+            text.iter()
+                .filter(|line| line.contains("came back empty"))
+                .count(),
+            1,
+            "{text:?}"
+        );
+        assert!(layout.rect_of_action(action_id("retry")).is_some());
+    }
+
+    /// The saved list under its failure, a discussion that could not be
+    /// fetched, and an empty tab, on a Clara at every text size held either
+    /// way. Each banner here carries an action line the pages are measured
+    /// with.
+    /// A story opened and saved comes back to the list as "Read, saved",
+    /// which is a longer line than the site's own words. The page it is on
+    /// has to have been measured with it.
+    #[test]
+    fn a_story_marked_read_and_saved_is_measured_with_its_marks_when_the_list_comes_back() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let mut runner = AppRunner::with_metrics(Hn::default(), metrics);
+                runner.start();
+                answer_list(&mut runner);
+                for index in 0..runner.app().stories.len() {
+                    runner.action(action_id(&format!("story-{index}")));
+                    runner.action(action_id("save"));
+                    runner.action(ActionId::BACK);
+                }
+                for page in 0..runner.app().pages.len() {
+                    runner.app_mut().page = page;
+                    let diagnostics = runner
+                        .app()
+                        .list()
+                        .diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "page {page} {text_scale:?} {orientation:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_failure_screens_fit_a_clara_at_every_text_size_held_either_way() {
+        let stories = loaded().app().stories.clone();
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Hn::default(), metrics);
+                let context = runner.context();
+                let fits = |screen: kobo_sdk::Screen, what: &str| {
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{what} {text_scale:?} {orientation:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    diagnostics
+                };
+                let mut saved = Hn {
+                    tab: Tab::Saved,
+                    stories: stories.clone(),
+                    ..Hn::default()
+                };
+                saved.keeper.failed = true;
+                saved.repaginate_saved(&context);
+                for page in 0..saved.pages.len() {
+                    saved.page = page;
+                    let drawn = fits(saved.list(), "saved list")
+                        .layout
+                        .nodes
+                        .iter()
+                        .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+                        .count();
+                    assert_eq!(drawn, saved.pages[page].len(), "saved page {page}");
+                }
+                for error in [TaskError::Unreachable, TaskError::Offline] {
+                    let mut thread = Hn {
+                        view: View::Thread,
+                        stories: stories.clone(),
+                        open: Some(0),
+                        thread_trouble: Some(error),
+                        ..Hn::default()
+                    };
+                    thread.repaginate_thread(&context);
+                    fits(thread.thread(), "failed discussion");
+                }
+                let empty = Hn {
+                    problem: Some("That tab came back empty.".to_owned()),
+                    ..Hn::default()
+                };
+                fits(empty.list(), "empty tab");
+            }
+        }
     }
 
     #[test]

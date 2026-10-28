@@ -145,7 +145,7 @@ def main():
                 capture("musicstand-half-turn")
                 drive("input gpio 1 193 1", "wait 1200")
                 # Staff-width zoom: real notation, legible.
-                drive("tap-at 536 724", "wait-for Zoom in", "tap Zoom in", "wait 2000")
+                drive("tap-at 536 724", "wait-for Staff width", "tap Staff width", "wait 2000")
                 capture("musicstand-zoom-staff")
                 drive("tap-at 536 724", "tap-id mark", "wait 800")
                 drive("tap-at 536 724", "wait-for-id library", "tap-id library", "wait-for Library", "wait-for marked")

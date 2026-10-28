@@ -56,6 +56,83 @@ const TOKEN_PAGE: &str =
     "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt";
 const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 4;
 
+/// A line for the banner, with how loudly it is drawn.
+///
+/// The level travels with the words because the same banner carries a
+/// finished action ("Challenge sent"), news ("An incoming challenge
+/// arrived"), a hitch that mends itself ("Reconnecting to Lichess") and a
+/// failure the owner has to answer ("Move failed"). Drawn at one level they
+/// all looked alike, so a sent challenge read like a warning.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Notice {
+    level: BannerLevel,
+    text: String,
+}
+
+impl Notice {
+    /// Neutral news, progress, or a nudge about what to do next.
+    fn info(text: impl Into<String>) -> Self {
+        Self::at(BannerLevel::Info, text)
+    }
+
+    /// Something the owner asked for has finished.
+    fn success(text: impl Into<String>) -> Self {
+        Self::at(BannerLevel::Success, text)
+    }
+
+    /// A hitch that may come right by itself, such as a dropped stream the
+    /// app is already reconnecting.
+    fn attention(text: impl Into<String>) -> Self {
+        Self::at(BannerLevel::Attention, text)
+    }
+
+    /// A failure that waiting will not mend; the owner has to act.
+    fn error(text: impl Into<String>) -> Self {
+        Self::at(BannerLevel::Error, text)
+    }
+
+    /// A failed request in the SDK's words. One that may succeed when asked
+    /// again is something to attend to; a refusal is an error.
+    fn failed(error: TaskError) -> Self {
+        let failure = Failure::of(error);
+        Self::at(
+            if failure.retryable {
+                BannerLevel::Attention
+            } else {
+                BannerLevel::Error
+            },
+            failure.naming(api::SECRET),
+        )
+    }
+
+    fn at(level: BannerLevel, text: impl Into<String>) -> Self {
+        Self {
+            level,
+            text: text.into(),
+        }
+    }
+}
+
+/// A notice reads as its words wherever only the words matter: the hint
+/// under the username field, and the tests.
+impl std::ops::Deref for Notice {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+/// How the home cards are laid out on this panel at this text size.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HomeGrid {
+    /// Cards to a row.
+    columns: usize,
+    /// The Account/Games card says "Challenges" alone, where no grid gives
+    /// it room for "Challenges · boards".
+    brief: bool,
+}
+
 struct HomeTile {
     action: String,
     label: String,
@@ -91,7 +168,7 @@ enum AccountState {
     Ready(Account),
     Missing,
     Invalid,
-    Failed(String),
+    Failed(Notice),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -458,7 +535,7 @@ struct Lichess {
     confirmation: Option<Confirmation>,
     menu_open: bool,
     result_dismissed: bool,
-    notice: Option<String>,
+    notice: Option<Notice>,
     clock: Heartbeat,
     total_ticks: u64,
     gone_tick: u64,
@@ -621,33 +698,48 @@ impl Lichess {
             .top_bar("Lichess")
             .secondary(self.pairing_status());
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         screen
     }
 
-    /// How many cards a home row holds: as many as the panel takes, fewer
-    /// while a card's name or the line under it would be cut short.
+    /// How the home cards sit: as many to a row as the panel takes, fewer
+    /// while a card's name or the line under it would be cut short, and the
+    /// Account/Games card's line in brief only where no column count reads
+    /// it whole.
     ///
     /// The line under a time card says whether the game is rated, the one
     /// thing an owner must know before tapping it, so a text size that cuts
     /// it to "Rapid ·…" gets wider cards instead. Measured on the cards
     /// themselves, row by row, so the columns follow the words on this panel
     /// rather than a guess at the text size.
-    fn home_columns(&self, context: &Context) -> usize {
+    ///
+    /// Fewer columns do not always widen a card: the runtime splits a wide
+    /// slot into cards of its own minimum width, so held sideways a card is
+    /// never much wider than a third of the panel. At the largest size that
+    /// is too narrow for "Challenges · boards", and the card says
+    /// "Challenges" there rather than "Challenges ·…".
+    fn home_grid(&self, context: &Context) -> HomeGrid {
         let metrics = context.metrics();
         let widest = metrics.grid_columns(TileShape::Square).clamp(1, 3);
         let seek_state = self.seek_tile_state();
         let tiles = (0..HOME_TILE_COUNT).collect::<Vec<_>>();
-        (1..=widest)
-            .rev()
-            .find(|&columns| {
-                tiles.chunks(columns).all(|row| {
+        [false, true]
+            .into_iter()
+            .flat_map(|brief| {
+                (1..=widest)
+                    .rev()
+                    .map(move |columns| HomeGrid { columns, brief })
+            })
+            .find(|grid| {
+                tiles.chunks(grid.columns).all(|row| {
                     let cards = row
                         .iter()
-                        .map(|&index| Self::home_tile(index, seek_state, self.seek_rated))
+                        .map(|&index| {
+                            Self::home_tile(index, seek_state, self.seek_rated, grid.brief)
+                        })
                         .collect();
-                    !Self::home_card_row(self.home_header(), cards, columns)
+                    !Self::home_card_row(self.home_header(), cards, grid.columns)
                         .build()
                         .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
                         .nodes
@@ -665,29 +757,31 @@ impl Lichess {
                         })
                 })
             })
-            // Held sideways at the largest sizes a card is as tall as the
-            // panel allows and no narrower grid widens it, so fewer columns
-            // would only cost pages.
-            .unwrap_or(widest)
+            // Nothing on this panel reads whole: the widest grid at least
+            // costs the fewest pages.
+            .unwrap_or(HomeGrid {
+                columns: widest,
+                brief: true,
+            })
     }
 
-    /// The home cards a page holds, in rows of [`Self::home_columns`].
+    /// The home cards a page holds, in rows of [`Self::home_grid`].
     ///
     /// Everything on one page where it fits; otherwise as many whole rows
     /// as the panel holds under the header with the pager drawn, measured
     /// the way the runtime will draw them, so a tall card at a large text
     /// size moves to the next page instead of off the foot of this one.
     fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        self.home_pages_in(context, self.home_columns(context))
+        self.home_pages_in(context, self.home_grid(context))
     }
 
-    /// [`Self::home_pages`] for a column count already measured, so drawing
-    /// the home screen measures its cards once.
-    fn home_pages_in(&self, context: &Context, columns: usize) -> Vec<Vec<usize>> {
+    /// [`Self::home_pages`] for a grid already measured, so drawing the home
+    /// screen measures its cards once.
+    fn home_pages_in(&self, context: &Context, grid: HomeGrid) -> Vec<Vec<usize>> {
         let metrics = context.metrics();
         let fits = |tiles: &[usize], pages: usize| {
             !self
-                .home_page_screen(tiles, columns, 0, pages)
+                .home_page_screen(tiles, grid, 0, pages)
                 .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
                 .has_errors()
         };
@@ -697,7 +791,7 @@ impl Lichess {
         }
         let mut pages = Vec::new();
         let mut page = Vec::new();
-        for row in all.chunks(columns) {
+        for row in all.chunks(grid.columns) {
             let mut candidate = page.clone();
             candidate.extend_from_slice(row);
             if !page.is_empty() && !fits(&candidate, 2) {
@@ -736,13 +830,18 @@ impl Lichess {
     /// knows before tapping whether the game will touch their rating; the
     /// choice itself lives in Account/Games, because a row of chips above
     /// the cards costs the smallest panel a whole row of them.
-    fn home_tile(index: usize, seek_state: TileState, rated: bool) -> HomeTile {
+    fn home_tile(index: usize, seek_state: TileState, rated: bool, brief: bool) -> HomeTile {
         if index == 0 {
             HomeTile {
                 action: "play".to_owned(),
                 label: "Account/Games".to_owned(),
                 glyph: Glyph::Settings,
-                subtitle: "Challenges · boards".to_owned(),
+                subtitle: if brief {
+                    "Challenges"
+                } else {
+                    "Challenges · boards"
+                }
+                .to_owned(),
                 state: TileState::Normal,
             }
         } else if index == 1 {
@@ -810,17 +909,17 @@ impl Lichess {
     }
 
     fn home(&mut self, context: &Context) -> Screen {
-        let columns = self.home_columns(context);
-        let pages = self.home_pages_in(context, columns);
+        let grid = self.home_grid(context);
+        let pages = self.home_pages_in(context, grid);
         self.home_page = self.home_page.min(pages.len().saturating_sub(1));
-        self.home_page_screen(&pages[self.home_page], columns, self.home_page, pages.len())
+        self.home_page_screen(&pages[self.home_page], grid, self.home_page, pages.len())
     }
 
     /// One page of home cards, `columns` to a row.
     fn home_page_screen(
         &self,
         tiles: &[usize],
-        columns: usize,
+        grid: HomeGrid,
         page: usize,
         page_count: usize,
     ) -> Screen {
@@ -829,12 +928,12 @@ impl Lichess {
         let page_count = u16::try_from(page_count).unwrap_or(u16::MAX);
         let seek_state = self.seek_tile_state();
         let mut screen = self.home_header().page_rail(page_index, page_count);
-        for row in tiles.chunks(columns) {
+        for row in tiles.chunks(grid.columns) {
             let cards = row
                 .iter()
-                .map(|index| Self::home_tile(*index, seek_state, self.seek_rated))
+                .map(|index| Self::home_tile(*index, seek_state, self.seek_rated, grid.brief))
                 .collect();
-            screen = Self::home_card_row(screen, cards, columns);
+            screen = Self::home_card_row(screen, cards, grid.columns);
         }
         // A position only where there is somewhere to turn to: "1 of 1" under
         // a home screen that fits on one page reads as a list that failed to
@@ -860,7 +959,7 @@ impl Lichess {
                 ),
             ]);
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         let fetching = self.has_pending(|pending| matches!(pending, Pending::Puzzle));
         screen = screen.button_with_state(
@@ -963,7 +1062,7 @@ impl Lichess {
             .top_bar("Puzzle")
             .secondary(puzzle_status);
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         let last_move = puzzle
             .cursor
@@ -1031,10 +1130,10 @@ impl Lichess {
                     "Lichess rejected the saved token. Make a new one, then sign in again.",
                 )
                 .banner_action(CONNECT, "Sign in again"),
-            AccountState::Failed(message) => screen.banner(BannerLevel::Attention, message),
+            AccountState::Failed(failure) => screen.banner(failure.level, &failure.text),
         };
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         if matches!(self.account, AccountState::Missing) {
             screen = screen.primary_button(CONNECT, "Connect Lichess");
@@ -1085,10 +1184,13 @@ impl Lichess {
                 Glyph::Grid,
             )]);
         }
-        screen = screen.section("Time tiles").chips([
-            ("seek-rated", "Rated", self.seek_rated),
-            ("seek-casual", "Casual", !self.seek_rated),
-        ]);
+        // One pool or the other, never both, so the two are segments of one
+        // control rather than chips, which read as filters that can be on
+        // together.
+        screen = screen.section("Time tiles").segmented(
+            usize::from(!self.seek_rated),
+            [("seek-rated", "Rated"), ("seek-casual", "Casual")],
+        );
         // Without an account a challenge can never be sent, so the button is
         // left out rather than shown grey under the Connect button that is
         // the actual next step.
@@ -1136,21 +1238,24 @@ impl Lichess {
             .heading(self.challenge_username.clone())
             .secondary("Casual")
             .section("Time")
-            .chips(SeekPreset::ALL.into_iter().map(|preset| {
-                (
-                    format!("challenge-time-{}", preset.action()),
-                    preset.label(),
-                    preset == self.challenge_preset,
-                )
-            }))
+            .segmented(
+                position(&SeekPreset::ALL, &self.challenge_preset),
+                SeekPreset::ALL.into_iter().map(|preset| {
+                    (
+                        format!("challenge-time-{}", preset.action()),
+                        preset.label(),
+                    )
+                }),
+            )
             .section("Side")
-            .chips(
+            .segmented(
+                position(&ChallengeSide::ALL, &self.challenge_side),
                 ChallengeSide::ALL
                     .into_iter()
-                    .map(|side| (side.action(), side.label(), side == self.challenge_side)),
+                    .map(|side| (side.action(), side.label())),
             );
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         screen
             .button_with_state(
@@ -1202,9 +1307,9 @@ impl Lichess {
         if let Some(notice) = self
             .notice
             .as_ref()
-            .filter(|notice| !reconciling || notice.as_str() != "Checking games.")
+            .filter(|notice| !reconciling || notice.text != "Checking games.")
         {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         screen
             .button_with_state(
@@ -1233,7 +1338,7 @@ impl Lichess {
             );
         }
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         let pending = self.pending_action.is_some() || self.accepted_challenge.is_some();
         screen
@@ -1263,18 +1368,18 @@ impl Lichess {
             .top_bar("Computer")
             .secondary("Offline · Casual")
             .section("Side")
-            .chips(ChallengeSide::ALL.into_iter().map(|side| {
-                (
-                    side.computer_action(),
-                    side.label(),
-                    side == self.computer_side,
-                )
-            }))
+            .segmented(
+                position(&ChallengeSide::ALL, &self.computer_side),
+                ChallengeSide::ALL
+                    .into_iter()
+                    .map(|side| (side.computer_action(), side.label())),
+            )
             .section("Clock")
-            .chips(
+            .segmented(
+                position(&ComputerClock::ALL, &self.computer_clock),
                 ComputerClock::ALL
                     .into_iter()
-                    .map(|clock| (clock.action(), clock.label(), clock == self.computer_clock)),
+                    .map(|clock| (clock.action(), clock.label())),
             )
             .primary_button("start-computer", "Start game")
             .build()
@@ -1408,7 +1513,7 @@ impl Lichess {
             .top_bar_overflow("game-menu", self.menu_open, menu)
             .band(BandAlign::Top, opponent_slots);
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+            screen = screen.banner(notice.level, &notice.text);
         }
         if game.takeback_pending() {
             screen = screen.banner(
@@ -1585,9 +1690,9 @@ impl Lichess {
                 self.schedule_account_retry(context);
             } else {
                 self.account = AccountState::Unknown;
-                self.notice = Some(
-                    "Finishing previous requests. Refresh account again in a moment.".to_owned(),
-                );
+                self.notice = Some(Notice::info(
+                    "Finishing previous requests. Refresh account again in a moment.",
+                ));
             }
         }
     }
@@ -1846,16 +1951,17 @@ impl Lichess {
             self.expected_seek_game = None;
         }
         if self.accepted_challenge.is_some() {
-            self.notice = Some(
-                "Wait for the accepted challenge to start before opening another board.".to_owned(),
-            );
+            self.notice = Some(Notice::info(
+                "Wait for the accepted challenge to start before opening another board.",
+            ));
             return;
         }
         if (self.pending_action.is_some() || self.pending_move.is_some())
             && self.game.as_ref().is_some_and(|game| game.id != id)
         {
-            self.notice =
-                Some("Wait for the current game action before switching boards.".to_owned());
+            self.notice = Some(Notice::info(
+                "Wait for the current game action before switching boards.",
+            ));
             return;
         }
         self.local_game = false;
@@ -1902,9 +2008,9 @@ impl Lichess {
             if remaining > 0 {
                 self.board_open = None;
                 self.board_ready = false;
-                self.notice = Some(format!(
+                self.notice = Some(Notice::attention(format!(
                     "Lichess asked this board to wait {remaining}s before reconnecting."
-                ));
+                )));
                 self.deferred_board_open = None;
                 self.schedule_board_rate_wait(context, &id, remaining);
                 return;
@@ -1939,7 +2045,9 @@ impl Lichess {
             return;
         }
         let Some(work) = api::board_stream(&id, "open") else {
-            self.notice = Some("Lichess returned an invalid game identifier.".to_owned());
+            self.notice = Some(Notice::error(
+                "Lichess returned an invalid game identifier.",
+            ));
             return;
         };
         self.board_ready = false;
@@ -1951,7 +2059,7 @@ impl Lichess {
             Self::keep_live(context);
         } else {
             self.deferred_board_open = self.session.clone();
-            self.notice = Some("Opening your game. Please wait.".to_owned());
+            self.notice = Some(Notice::info("Opening your game. Please wait."));
         }
     }
 
@@ -2193,9 +2301,9 @@ impl Lichess {
     fn start_seek(&mut self, context: &mut Context, preset: SeekPreset) {
         if let Some(remaining) = self.seek_rate_remaining() {
             if remaining > 0 {
-                self.notice = Some(format!(
+                self.notice = Some(Notice::attention(format!(
                     "Lichess asked pairing to wait {remaining}s before another seek."
-                ));
+                )));
                 self.schedule_seek_rate_wait(context, remaining);
                 return;
             }
@@ -2258,28 +2366,26 @@ impl Lichess {
             AccountState::Unknown | AccountState::Failed(_) | AccountState::Checking => {
                 self.validate_account(context);
                 if self.account == AccountState::Checking {
-                    self.notice = Some(
-                        "Checking your Lichess account. Tap a time again when the top line says Ready."
-                            .to_owned(),
-                    );
+                    self.notice = Some(Notice::info("Checking your Lichess account. Tap a time again when the top line says Ready."));
                 }
                 return;
             }
             AccountState::Ready(_) => {}
         }
         if self.pending_action.is_some() || self.accepted_challenge.is_some() {
-            self.notice = Some("Wait for the current server action to finish.".to_owned());
+            self.notice = Some(Notice::info(
+                "Wait for the current server action to finish.",
+            ));
         } else if self.game.as_ref().is_some_and(Game::active) {
-            self.notice = Some(if self.local_game {
+            self.notice = Some(Notice::info(if self.local_game {
                 "Finish or resign the computer game first. Tap Computer to return to it.".to_owned()
             } else {
                 "Finish your current game first. It is under Account/Games.".to_owned()
-            });
+            }));
         } else {
-            self.notice = Some(
-                "Still connecting to Lichess. Tap a time again when the top line says Ready."
-                    .to_owned(),
-            );
+            self.notice = Some(Notice::info(
+                "Still connecting to Lichess. Tap a time again when the top line says Ready.",
+            ));
         }
     }
 
@@ -2329,11 +2435,11 @@ impl Lichess {
         }
         if let Some(task) = self.seek_task {
             context.cancel(task);
-            self.notice = Some("Cancelling.".to_owned());
+            self.notice = Some(Notice::info("Cancelling."));
         } else if self.route == Route::Pairing {
             self.clock.stop(context);
             self.route = Route::Play;
-            self.notice = Some("Cancelled.".to_owned());
+            self.notice = Some(Notice::success("Cancelled."));
         }
     }
 
@@ -2368,7 +2474,7 @@ impl Lichess {
         context: &mut Context,
         generation: u64,
         preset: SeekPreset,
-        message: String,
+        message: Notice,
     ) {
         if !self.seek_is_current(generation, preset) {
             return;
@@ -2402,7 +2508,7 @@ impl Lichess {
         {
             return;
         }
-        self.notice = Some("Checking games.".to_owned());
+        self.notice = Some(Notice::info("Checking games."));
         if self
             .spawn(
                 context,
@@ -2454,10 +2560,7 @@ impl Lichess {
                 self.seek_baseline.clear();
                 self.clock.stop(context);
                 self.route = Route::Play;
-                self.notice = Some(
-                    "Several new games matched the selected preset. Choose the intended game from Ongoing games."
-                        .to_owned(),
-                );
+                self.notice = Some(Notice::info("Several new games matched the selected preset. Choose the intended game from Ongoing games."));
                 return;
             }
         }
@@ -2477,7 +2580,7 @@ impl Lichess {
             self.seek_baseline.clear();
             self.clock.stop(context);
             self.route = Route::Play;
-            self.notice = Some("No match.".to_owned());
+            self.notice = Some(Notice::info("No match."));
         }
     }
 
@@ -2485,7 +2588,7 @@ impl Lichess {
         &mut self,
         context: &mut Context,
         generation: u64,
-        message: String,
+        message: Notice,
         seconds: u32,
     ) {
         if !self.seek_waiting || self.seek_generation != generation {
@@ -2554,7 +2657,7 @@ impl Lichess {
             // Playing Black means the computer opens, before the board is
             // first drawn, so the owner never sees a board waiting on nobody.
             if !game.my_turn() && !Self::play_computer_reply(game) {
-                self.notice = Some("Computer move failed".to_owned());
+                self.notice = Some(Notice::error("Computer move failed"));
             }
         }
         self.session = Some(Session {
@@ -2591,7 +2694,7 @@ impl Lichess {
             .rev()
             .find(|plies| (plies % 2 == 0) == owner_moves_first);
         let Some(keep) = keep else {
-            self.notice = Some("Nothing to take back yet.".to_owned());
+            self.notice = Some(Notice::info("Nothing to take back yet."));
             return;
         };
         let state = ServerState {
@@ -2615,7 +2718,7 @@ impl Lichess {
             game.my_color,
         );
         let Some(mut rebuilt) = rebuilt else {
-            self.notice = Some("Could not take the move back.".to_owned());
+            self.notice = Some(Notice::error("Could not take the move back."));
             return;
         };
         rebuilt.timed = false;
@@ -2684,12 +2787,12 @@ impl Lichess {
                 let mut state = game.state.clone();
                 state.moves.push(movement);
                 if game.apply(state).is_none() {
-                    self.notice = Some("Move failed".to_owned());
+                    self.notice = Some(Notice::error("Move failed"));
                     return;
                 }
                 Self::finish_local_position(game);
                 if game.active() && !Self::play_computer_reply(game) {
-                    self.notice = Some("Computer move failed".to_owned());
+                    self.notice = Some(Notice::error("Computer move failed"));
                     return;
                 }
                 game.active()
@@ -2718,7 +2821,7 @@ impl Lichess {
                     return;
                 };
                 if !self.board_is_live(&game.id) {
-                    self.notice = Some("Reconnecting to Lichess.".to_owned());
+                    self.notice = Some(Notice::attention("Reconnecting to Lichess."));
                     return;
                 }
                 ActionScope::Game(game.id.clone())
@@ -2762,7 +2865,9 @@ impl Lichess {
             self.accepted_challenge = None;
             self.reconcile_accepted_challenge = false;
             self.pending_move = None;
-            self.notice = Some("Too many requests are already in flight.".to_owned());
+            self.notice = Some(Notice::attention(
+                "Too many requests are already in flight.",
+            ));
         }
     }
 
@@ -2808,14 +2913,14 @@ impl Lichess {
             return;
         };
         if !self.board_is_live(&game.id) {
-            self.notice = Some("Reconnecting to Lichess.".to_owned());
+            self.notice = Some(Notice::attention("Reconnecting to Lichess."));
             return;
         }
         if !game.active() {
             return;
         }
         if !game.my_turn() {
-            self.notice = Some("Wait for the opponent's move.".to_owned());
+            self.notice = Some(Notice::info("Wait for the opponent's move."));
             return;
         }
         let Some(from) = self.selected.take() else {
@@ -2825,7 +2930,7 @@ impl Lichess {
                 self.notice = None;
             } else {
                 self.flash_invalid(square);
-                self.notice = Some("Your piece".to_owned());
+                self.notice = Some(Notice::info("Your piece"));
             }
             return;
         };
@@ -2853,7 +2958,7 @@ impl Lichess {
         if !chess::legal(&game.fen, &movement) {
             self.selected = Some(from);
             self.flash_invalid(square);
-            self.notice = Some("Illegal".to_owned());
+            self.notice = Some(Notice::info("Illegal"));
             return;
         }
         self.invalid_square = None;
@@ -2886,7 +2991,7 @@ impl Lichess {
             } else {
                 self.invalid_square = Some(square);
                 self.invalid_until_tick = self.total_ticks.saturating_add(2);
-                self.notice = Some("Your piece".to_owned());
+                self.notice = Some(Notice::info("Your piece"));
             }
             return;
         };
@@ -2920,7 +3025,7 @@ impl Lichess {
             self.selected = Some(from);
             self.invalid_square = Some(square);
             self.invalid_until_tick = self.total_ticks.saturating_add(2);
-            self.notice = Some("Illegal".to_owned());
+            self.notice = Some(Notice::info("Illegal"));
             return;
         };
         self.invalid_square = None;
@@ -2929,14 +3034,14 @@ impl Lichess {
             .is_some_and(|solution| solution != &movement)
         {
             self.puzzle_wrong = self.puzzle_wrong.saturating_add(1);
-            self.notice = Some(if self.puzzle_wrong == 1 {
+            self.notice = Some(Notice::info(if self.puzzle_wrong == 1 {
                 "Not it. Try again.".to_owned()
             } else {
                 format!(
                     "Not solved. The move was {}.",
                     expected.clone().unwrap_or_default()
                 )
-            });
+            }));
             if self.puzzle_wrong > 1 {
                 self.route = Route::PuzzleResult;
             }
@@ -2951,7 +3056,9 @@ impl Lichess {
             let forced = puzzle.solution[puzzle.cursor].clone();
             let Some((fen, san)) = chess::play(&puzzle.fen, &forced) else {
                 self.puzzle_wrong = 2;
-                self.notice = Some("The stored puzzle reply could not be replayed.".to_owned());
+                self.notice = Some(Notice::error(
+                    "The stored puzzle reply could not be replayed.",
+                ));
                 self.route = Route::PuzzleResult;
                 return;
             };
@@ -2962,7 +3069,7 @@ impl Lichess {
         if puzzle.cursor >= puzzle.solution.len() {
             self.route = Route::PuzzleResult;
         } else {
-            self.notice = reply.map(|reply| format!("Opponent replied {reply}."));
+            self.notice = reply.map(|reply| Notice::info(format!("Opponent replied {reply}.")));
         }
     }
 
@@ -3196,11 +3303,11 @@ impl Lichess {
         if preset.matches_full(full, rated) {
             return true;
         }
-        self.notice = Some(format!(
+        self.notice = Some(Notice::info(format!(
             "The opened game was not the selected {} {} clock. It remains available in Ongoing games.",
             preset.label(),
             preset.speed_label()
-        ));
+        )));
         self.close_board(context, id);
         self.clear_session(context);
         self.game = None;
@@ -3230,7 +3337,7 @@ impl Lichess {
                 self.notice = None;
             }
             other => {
-                self.account = AccountState::Failed(Failure::of(other).naming(api::SECRET));
+                self.account = AccountState::Failed(Notice::failed(other));
             }
         }
         if self.local_game {
@@ -3265,9 +3372,9 @@ impl Lichess {
             Event::GameStart(summary) => {
                 if !summary.supported() {
                     if self.route == Route::Play {
-                        self.notice = Some(
-                            "A non-standard game started and was not offered here.".to_owned(),
-                        );
+                        self.notice = Some(Notice::info(
+                            "A non-standard game started and was not offered here.",
+                        ));
                     }
                     return;
                 }
@@ -3300,14 +3407,15 @@ impl Lichess {
                     self.clear_pending_action();
                     self.accepted_challenge = None;
                     self.reconcile_accepted_challenge = false;
-                    self.notice = Some("Challenge accepted. Opening the board.".to_owned());
+                    self.notice = Some(Notice::success("Challenge accepted. Opening the board."));
                     self.open_board(context, summary.session());
                 } else if seek_match {
                     self.seek_candidate = Some(summary);
                     self.open_seek_candidate(context);
                 } else if self.route == Route::Play {
-                    self.notice =
-                        Some("A Lichess game started. Open it from Ongoing games.".to_owned());
+                    self.notice = Some(Notice::info(
+                        "A Lichess game started. Open it from Ongoing games.",
+                    ));
                 }
             }
             Event::GameFinish(id) => {
@@ -3316,7 +3424,7 @@ impl Lichess {
                     .as_ref()
                     .is_some_and(|session| session.game_id == id);
                 if current && !self.board_is_live(&id) {
-                    self.notice = Some("This game finished while you were away.".to_owned());
+                    self.notice = Some(Notice::info("This game finished while you were away."));
                     self.discard_game(context, &id);
                 } else if self.game.as_ref().is_some_and(|game| game.id == id) {
                     self.notice = None;
@@ -3333,15 +3441,14 @@ impl Lichess {
                         .as_ref()
                         .is_some_and(|accepted| accepted.id != challenge.id)
                     {
-                        self.notice = Some(
-                            "Another challenge arrived while the accepted one is starting."
-                                .to_owned(),
-                        );
+                        self.notice = Some(Notice::info(
+                            "Another challenge arrived while the accepted one is starting.",
+                        ));
                     } else {
                         self.challenge = Some(challenge);
                     }
                     if self.route == Route::Play && self.accepted_challenge.is_none() {
-                        self.notice = Some("An incoming challenge arrived.".to_owned());
+                        self.notice = Some(Notice::info("An incoming challenge arrived."));
                     }
                 }
             }
@@ -3372,7 +3479,7 @@ impl Lichess {
                     if self.route == Route::Challenge {
                         self.route = Route::Play;
                     }
-                    self.notice = Some("The challenge is no longer active.".to_owned());
+                    self.notice = Some(Notice::info("The challenge is no longer active."));
                 }
             }
             Event::Unknown => {}
@@ -3388,7 +3495,7 @@ impl Lichess {
                     .filter(|session| session.game_id == id)
                     .map(|session| session.color)
                 else {
-                    self.notice = Some("The board did not match the saved game.".to_owned());
+                    self.notice = Some(Notice::error("The board did not match the saved game."));
                     self.close_board(context, id);
                     return;
                 };
@@ -3397,7 +3504,9 @@ impl Lichess {
                 }
                 let pending = self.pending_move.clone();
                 let Some(game) = Game::from_full(full, color) else {
-                    self.notice = Some("Could not load the position. Reconnecting.".to_owned());
+                    self.notice = Some(Notice::attention(
+                        "Could not load the position. Reconnecting.",
+                    ));
                     self.close_board(context, id);
                     self.schedule_board_reconnect(context, id);
                     return;
@@ -3409,19 +3518,20 @@ impl Lichess {
                 self.notice = None;
                 self.reconcile_pending_move();
                 if pending.is_some() && self.pending_move.is_none() {
-                    self.notice = Some("Board updated.".to_owned());
+                    self.notice = Some(Notice::info("Board updated."));
                 } else if pending.is_some() {
                     self.pending_move = None;
                     self.selected = None;
-                    self.notice =
-                        Some("The move was not confirmed. Choose your move again.".to_owned());
+                    self.notice = Some(Notice::attention(
+                        "The move was not confirmed. Choose your move again.",
+                    ));
                 }
                 self.reset_clock(context, self.game.as_ref().is_some_and(Game::active));
                 self.finish_if_needed(context);
             }
             BoardRecord::State(state) => {
                 let Some(game) = self.game.as_mut().filter(|game| game.id == id) else {
-                    self.notice = Some("Waiting for the complete board state.".to_owned());
+                    self.notice = Some(Notice::info("Waiting for the complete board state."));
                     self.close_board(context, id);
                     self.schedule_board_reconnect(context, id);
                     return;
@@ -3441,13 +3551,14 @@ impl Lichess {
                     }
                     Some(ApplyState::Reopen) => {
                         self.notice =
-                            Some("The board changed. Refreshing the position.".to_owned());
+                            Some(Notice::info("The board changed. Refreshing the position."));
                         self.close_board(context, id);
                         self.schedule_board_reconnect(context, id);
                     }
                     None => {
-                        self.notice =
-                            Some("Lichess sent a move list that could not be replayed.".to_owned());
+                        self.notice = Some(Notice::error(
+                            "Lichess sent a move list that could not be replayed.",
+                        ));
                         self.close_board(context, id);
                         self.schedule_board_reconnect(context, id);
                     }
@@ -3464,9 +3575,9 @@ impl Lichess {
                 }
             }
             BoardRecord::Unsupported(variant) => {
-                self.notice = Some(format!(
+                self.notice = Some(Notice::error(format!(
                     "The {variant} variant is not supported. Choose a standard game."
-                ));
+                )));
                 self.discard_game(context, id);
             }
             BoardRecord::Ignored => {}
@@ -3493,7 +3604,9 @@ impl Lichess {
         } else {
             self.pending_move = None;
             self.selected = None;
-            self.notice = Some("The position changed before your move was confirmed.".to_owned());
+            self.notice = Some(Notice::attention(
+                "The position changed before your move was confirmed.",
+            ));
         }
     }
 
@@ -3562,18 +3675,18 @@ impl Lichess {
             self.clear_pending_action();
         }
         if let Some(summary) = recovered {
-            self.notice = Some("Your challenge started. Opening the game.".to_owned());
+            self.notice = Some(Notice::success("Your challenge started. Opening the game."));
             self.open_board(context, summary.session());
             true
         } else {
             if self.route == Route::Challenge {
                 self.route = Route::Play;
             }
-            self.notice = Some(if ambiguous {
+            self.notice = Some(Notice::info(if ambiguous {
                 "Several games found. Choose from Ongoing games.".to_owned()
             } else {
                 "That challenge is no longer active. You can choose another game.".to_owned()
-            });
+            }));
             false
         }
     }
@@ -3619,10 +3732,10 @@ impl Lichess {
     )]
     fn handle_completed(&mut self, context: &mut Context, pending: Pending, bytes: &[u8]) {
         if let Some(api::RateLimit::Limited(delay)) = api::rate_limit(bytes) {
-            self.notice = Some(delay.map_or_else(
+            self.notice = Some(Notice::attention(delay.map_or_else(
                 || "Lichess rate-limited this request. Try again later.".to_owned(),
                 |seconds| format!("Lichess rate-limited this request. Try again in {seconds}s."),
-            ));
+            )));
             match pending {
                 Pending::Account => {
                     self.account = AccountState::Failed(self.notice.clone().unwrap());
@@ -3683,9 +3796,9 @@ impl Lichess {
                     self.retry_seek_reconciliation(
                         context,
                         generation,
-                        format!(
+                        Notice::attention(format!(
                             "Lichess asked us to wait {seconds}s. We will check for your game again."
-                        ),
+                        )),
                         seconds,
                     );
                 }
@@ -3719,9 +3832,9 @@ impl Lichess {
                         self.schedule_seek_rate_wait(context, remaining);
                     }
                 } else {
-                    self.account = AccountState::Failed(
-                        "Lichess returned an account response this client cannot read.".to_owned(),
-                    );
+                    self.account = AccountState::Failed(Notice::error(
+                        "Lichess returned an account response this client cannot read.",
+                    ));
                 }
             }
             Pending::AccountRetry => self.validate_account(context),
@@ -3765,8 +3878,9 @@ impl Lichess {
                     if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
                         self.clear_accepted_challenge_wait();
                     }
-                    self.notice =
-                        Some("Lichess returned a game list this client cannot read.".to_owned());
+                    self.notice = Some(Notice::error(
+                        "Lichess returned a game list this client cannot read.",
+                    ));
                 }
                 self.open_event_stream(context);
             }
@@ -3779,11 +3893,13 @@ impl Lichess {
                     ) {
                         self.route = Route::Puzzles;
                     } else {
-                        self.notice = Some("A 32-puzzle session is ready offline.".to_owned());
+                        self.notice =
+                            Some(Notice::success("A 32-puzzle session is ready offline."));
                     }
                 } else {
-                    self.notice =
-                        Some("Lichess returned a puzzle batch this client cannot read.".to_owned());
+                    self.notice = Some(Notice::error(
+                        "Lichess returned a puzzle batch this client cannot read.",
+                    ));
                 }
             }
             Pending::EventOpen => {
@@ -3794,7 +3910,9 @@ impl Lichess {
                     self.event_backoff = 1;
                     self.next_event(context);
                 } else {
-                    self.notice = Some("Could not connect to Lichess. Trying again.".to_owned());
+                    self.notice = Some(Notice::attention(
+                        "Could not connect to Lichess. Trying again.",
+                    ));
                 }
             }
             Pending::EventNext => {
@@ -3802,7 +3920,9 @@ impl Lichess {
                     self.handle_event(context, event);
                     self.next_event(context);
                 } else {
-                    self.notice = Some("Could not read the game update. Reconnecting.".to_owned());
+                    self.notice = Some(Notice::attention(
+                        "Could not read the game update. Reconnecting.",
+                    ));
                     self.recover_accepted_challenge(context);
                     self.close_event(context);
                 }
@@ -3818,7 +3938,7 @@ impl Lichess {
                         context,
                         generation,
                         preset,
-                        "Waiting for match.".to_owned(),
+                        Notice::info("Waiting for match."),
                     );
                 } else if self.seek_generation == generation {
                     self.seek_task = None;
@@ -3832,10 +3952,9 @@ impl Lichess {
                     if let Some(games) = api::parse_playing(bytes) {
                         self.finish_seek_reconciliation(context, generation, games);
                     } else {
-                        self.notice = Some(
-                            "Could not check your game. Wait for another check or cancel pairing."
-                                .to_owned(),
-                        );
+                        self.notice = Some(Notice::attention(
+                            "Could not check your game. Wait for another check or cancel pairing.",
+                        ));
                         let _ = self.spawn(
                             context,
                             Pending::SeekGrace { generation },
@@ -3863,7 +3982,8 @@ impl Lichess {
                     self.board_backoff = 1;
                     self.next_board(context, &id);
                 } else {
-                    self.notice = Some("Could not open your game. Trying again.".to_owned());
+                    self.notice =
+                        Some(Notice::attention("Could not open your game. Trying again."));
                 }
             }
             Pending::BoardNext(id) => {
@@ -3881,7 +4001,9 @@ impl Lichess {
                         self.next_board(context, &id);
                     }
                 } else {
-                    self.notice = Some("Could not read the board update. Reconnecting.".to_owned());
+                    self.notice = Some(Notice::attention(
+                        "Could not read the board update. Reconnecting.",
+                    ));
                     self.close_board(context, &id);
                     self.schedule_board_reconnect(context, &id);
                 }
@@ -3912,7 +4034,7 @@ impl Lichess {
                 if self.route == Route::ChallengeSetup {
                     self.route = Route::Play;
                 }
-                self.notice = Some(format!("Challenge sent to {username}"));
+                self.notice = Some(Notice::success(format!("Challenge sent to {username}")));
             }
             Pending::Action {
                 action,
@@ -3959,7 +4081,7 @@ impl Lichess {
                 self.notice = self
                     .pending_move
                     .is_none()
-                    .then(|| "Waiting for Lichess.".to_owned());
+                    .then(|| Notice::info("Waiting for Lichess."));
             }
         }
     }
@@ -3979,7 +4101,7 @@ impl Lichess {
         }
         match pending {
             Pending::EventOpen | Pending::EventNext => {
-                self.notice = Some(Failure::of(error).naming(api::SECRET));
+                self.notice = Some(Notice::failed(error));
                 self.recover_accepted_challenge(context);
                 self.schedule_event_reconnect(context);
             }
@@ -3992,10 +4114,9 @@ impl Lichess {
                     return;
                 }
                 if error == TaskError::NotFound {
-                    self.notice = Some(
-                        "That game is no longer available. Choose another from Ongoing games."
-                            .to_owned(),
-                    );
+                    self.notice = Some(Notice::error(
+                        "That game is no longer available. Choose another from Ongoing games.",
+                    ));
                     self.discard_game(context, &id);
                 } else {
                     self.notice = Some(
@@ -4003,9 +4124,9 @@ impl Lichess {
                             error,
                             TaskError::Unreachable | TaskError::TimedOut | TaskError::Offline
                         ) {
-                            "Reconnecting to Lichess.".to_owned()
+                            Notice::attention("Reconnecting to Lichess.")
                         } else {
-                            Failure::of(error).naming(api::SECRET)
+                            Notice::failed(error)
                         },
                     );
                     self.schedule_board_reconnect(context, &id);
@@ -4024,10 +4145,7 @@ impl Lichess {
                 self.cancel_seek(context);
                 self.clock.stop(context);
                 self.route = Route::Play;
-                self.notice = Some(
-                    "This Cobalt cannot seek casual games yet. Update Cobalt in Settings, or choose Rated."
-                        .to_owned(),
-                );
+                self.notice = Some(Notice::error("This Cobalt cannot seek casual games yet. Update Cobalt in Settings, or choose Rated."));
             }
             Pending::Seek { generation, preset } => {
                 if self.route == Route::Pairing && self.seek_is_current(generation, preset) {
@@ -4035,10 +4153,10 @@ impl Lichess {
                         context,
                         generation,
                         preset,
-                        format!(
+                        Notice::attention(format!(
                             "{} Checking whether your game started.",
                             Failure::of(error).naming(api::SECRET)
-                        ),
+                        )),
                     );
                 } else if self.seek_generation == generation {
                     self.seek_task = None;
@@ -4050,10 +4168,10 @@ impl Lichess {
                 self.retry_seek_reconciliation(
                     context,
                     generation,
-                    format!(
+                    Notice::attention(format!(
                         "{} We will check for your game again.",
                         Failure::of(error).naming(api::SECRET)
-                    ),
+                    )),
                     10,
                 );
             }
@@ -4073,10 +4191,10 @@ impl Lichess {
                 } else if matches!(scope, ActionScope::Challenge(_)) {
                     self.accepted_challenge = None;
                 }
-                self.notice = Some(format!(
+                self.notice = Some(Notice::attention(format!(
                     "{} Checking whether the action completed.",
                     Failure::of(error).naming(api::SECRET)
-                ));
+                )));
                 if !matches!(action, GameAction::Move(_)) || !current {
                     self.pending_move = None;
                 }
@@ -4087,18 +4205,15 @@ impl Lichess {
                     }
                 }
             }
-            Pending::Puzzle => {
-                self.notice = Some(Failure::of(error).advice.to_owned());
-            }
             Pending::Playing => {
                 if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
                     self.clear_accepted_challenge_wait();
                 }
-                self.notice = Some(Failure::of(error).naming(api::SECRET));
+                self.notice = Some(Notice::failed(error));
                 self.open_event_stream(context);
             }
-            Pending::CreateChallenge { .. } => {
-                self.notice = Some(Failure::of(error).naming(api::SECRET));
+            Pending::Puzzle | Pending::CreateChallenge { .. } => {
+                self.notice = Some(Notice::failed(error));
             }
             Pending::EventRetry
             | Pending::EventRateWait { .. }
@@ -4125,7 +4240,7 @@ impl Lichess {
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
                     self.route = Route::Play;
-                    self.notice = Some("Cancelled.".to_owned());
+                    self.notice = Some(Notice::success("Cancelled."));
                 }
             }
             Pending::EventNext | Pending::EventOpen => self.event_open = false,
@@ -4151,10 +4266,9 @@ impl Lichess {
                 if !matches!(action, GameAction::Move(_)) || !current {
                     self.pending_move = None;
                 }
-                self.notice = Some(
-                    "The action was cancelled with an unknown server outcome; reconnecting."
-                        .to_owned(),
-                );
+                self.notice = Some(Notice::attention(
+                    "The action was cancelled with an unknown server outcome; reconnecting.",
+                ));
                 if let ActionScope::Game(id) = scope {
                     if self
                         .game
@@ -4487,7 +4601,7 @@ impl Lichess {
                 self.selected_preset = Some(SeekPreset::Rapid10_5);
                 self.tasks
                     .insert(TaskId(998), Pending::SeekReconcile { generation: 1 });
-                self.notice = Some("Checking games.".to_owned());
+                self.notice = Some(Notice::info("Checking games."));
                 self.route = Route::Pairing;
             }
             "pairing-error" => {
@@ -4497,10 +4611,9 @@ impl Lichess {
                 self.tasks.clear();
                 self.tasks
                     .insert(TaskId(998), Pending::SeekGrace { generation: 1 });
-                self.notice = Some(
-                    "Could not check your game. Wait for another check or cancel pairing."
-                        .to_owned(),
-                );
+                self.notice = Some(Notice::attention(
+                    "Could not check your game. Wait for another check or cancel pairing.",
+                ));
             }
             "challenge" => {
                 self.account = AccountState::Ready(Account {
@@ -4592,17 +4705,18 @@ impl KoboApp for Lichess {
                 self.session = value.as_deref().and_then(Session::decode);
                 if value.is_some() && self.session.is_none() {
                     context.store().forget(SESSION_KEY);
-                    self.notice =
-                        Some("Could not restore your last game. Check Ongoing games.".to_owned());
+                    self.notice = Some(Notice::error(
+                        "Could not restore your last game. Check Ongoing games.",
+                    ));
                 }
             } else if key == PUZZLE_KEY {
                 self.loaded_puzzles = true;
                 if let Some(bytes) = value {
                     if !self.decode_puzzles(&bytes) {
                         context.store().forget(PUZZLE_KEY);
-                        self.notice = Some(
-                            "Saved puzzles could not be read. Download them again.".to_owned(),
-                        );
+                        self.notice = Some(Notice::error(
+                            "Saved puzzles could not be read. Download them again.",
+                        ));
                     }
                 }
             } else if key == BOARD_RATE_KEY {
@@ -4612,8 +4726,7 @@ impl KoboApp for Lichess {
                         self.board_rate_limits = limits;
                     } else {
                         context.store().forget(BOARD_RATE_KEY);
-                        self.notice =
-                            Some("Saved connection settings could not be read. Checking your game again.".to_owned());
+                        self.notice = Some(Notice::attention("Saved connection settings could not be read. Checking your game again."));
                     }
                 }
             } else if key == EVENT_RATE_KEY {
@@ -4623,10 +4736,9 @@ impl KoboApp for Lichess {
                         self.event_rate_limit = Some(not_before);
                     } else {
                         context.store().forget(EVENT_RATE_KEY);
-                        self.notice = Some(
-                            "Saved connection settings could not be read. Connecting again."
-                                .to_owned(),
-                        );
+                        self.notice = Some(Notice::attention(
+                            "Saved connection settings could not be read. Connecting again.",
+                        ));
                     }
                 }
             } else if key == PREFERENCES_KEY {
@@ -4646,8 +4758,7 @@ impl KoboApp for Lichess {
                         self.seek_rate_limit = Some(not_before);
                     } else {
                         context.store().forget(SEEK_RATE_KEY);
-                        self.notice =
-                            Some("Saved pairing settings could not be read. Check your account before pairing.".to_owned());
+                        self.notice = Some(Notice::error("Saved pairing settings could not be read. Check your account before pairing."));
                     }
                 }
             }
@@ -4685,9 +4796,9 @@ impl KoboApp for Lichess {
                 || self.accepted_challenge.is_some()
                 || self.has_pending(|pending| matches!(pending, Pending::CreateChallenge { .. }))
             {
-                self.notice = Some(
-                    "Wait for the current server action before leaving this screen.".to_owned(),
-                );
+                self.notice = Some(Notice::info(
+                    "Wait for the current server action before leaving this screen.",
+                ));
             } else if self.route == Route::Pairing
                 && (self.seek_task.is_some() || self.seek_waiting)
             {
@@ -4719,7 +4830,7 @@ impl KoboApp for Lichess {
                         self.notice = None;
                         self.route = Route::ChallengeSetup;
                     } else {
-                        self.notice = Some("Enter a valid Lichess username".to_owned());
+                        self.notice = Some(Notice::error("Enter a valid Lichess username"));
                         // The field comes back with the name in it, so a
                         // slip is mended rather than typed again.
                         self.challenge_entry.open_with(username);
@@ -4815,7 +4926,7 @@ impl KoboApp for Lichess {
             self.open_seek_candidate(context);
         } else if action == action_id("keep-seeking") {
             self.seek_candidate = None;
-            self.notice = Some("Continuing to wait on the existing seek.".to_owned());
+            self.notice = Some(Notice::info("Continuing to wait on the existing seek."));
         } else if action == action_id("open-challenge") {
             self.route = Route::Challenge;
         } else if action == action_id("accept-challenge") {
@@ -4946,7 +5057,7 @@ impl KoboApp for Lichess {
         } else if action == action_id("new-puzzles") {
             if !self.has_pending(|pending| matches!(pending, Pending::Puzzle)) {
                 let _ = self.spawn(context, Pending::Puzzle, api::puzzle(false), true);
-                self.notice = Some("Downloading 32 puzzles.".to_owned());
+                self.notice = Some(Notice::info("Downloading 32 puzzles."));
             }
         } else if action == action_id("solve") && self.remaining_puzzles() > 0 {
             self.route = Route::Solve;
@@ -5258,6 +5369,14 @@ fn decode_board_rate_limits(bytes: &[u8]) -> Option<BTreeMap<String, u64>> {
     Some(decoded)
 }
 
+/// Where `value` stands among `all`, for the segment drawn filled. A value
+/// not in the list fills none.
+fn position<T: PartialEq>(all: &[T], value: &T) -> usize {
+    all.iter()
+        .position(|item| item == value)
+        .unwrap_or(all.len())
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("lichess", Lichess::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -5273,7 +5392,7 @@ mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, BoardRecord, Challenge,
         ChallengeDirection, ChallengeSide, ChallengeTime, Color, ComputerClock, Event, FullGame,
-        Game, GameAction, Lichess, Orientation, Pending, Player, Promotion, Puzzle, Route,
+        Game, GameAction, Lichess, Notice, Orientation, Pending, Player, Promotion, Puzzle, Route,
         ServerState, Session, ACCOUNT_RETRY_SECONDS, BOARD_RATE_KEY, CONNECT, EVENT_RATE_KEY,
         HOME_TILE_COUNT, SEEK_RATE_KEY,
     };
@@ -5282,8 +5401,8 @@ mod tests {
         Screen, StoreRequest, TaskError, TaskOutcome,
     };
     use kobo_ui::{
-        render_with, tone, Chrome, ControlState, DisplayMetrics, Glyph, LayoutKind, Node, Surface,
-        TextScale, TileShape, TileState, CLARA_BW_METRICS,
+        render_with, tone, BannerLevel, Chrome, ControlState, DisplayMetrics, Glyph, LayoutKind,
+        Node, Surface, TextScale, TileShape, TileState, CLARA_BW_METRICS,
     };
     use std::collections::BTreeSet;
 
@@ -5613,13 +5732,13 @@ mod tests {
     }
 
     /// The line under a time card is where the owner reads whether a game
-    /// will touch their rating, so no text size may cut it short. Held
-    /// upright, the way this app holds the panel, every card's name and
-    /// line read in full on every page at every size, and every card is on
-    /// some page. Held sideways, which the app never asks for, the pages
-    /// still fit and still reach every card.
+    /// will touch their rating, so no text size may cut it short. Every
+    /// card's name and line read in full on every page at every size, and
+    /// every card is on some page, held upright, the way this app holds the
+    /// panel, and held sideways too, where at the largest size the
+    /// Account/Games card says its line in brief rather than cut.
     #[test]
-    fn every_home_card_reads_in_full_on_a_clara_at_every_text_size() {
+    fn every_home_card_reads_in_full_on_a_clara_at_every_text_size_held_either_way() {
         for text_scale in TextScale::STEPS {
             for orientation in [Orientation::Portrait, Orientation::Landscape] {
                 let metrics = DisplayMetrics {
@@ -5646,9 +5765,6 @@ mod tests {
                             diagnostics.issues
                         );
                         seen.extend(visible_tile_actions(&screen, &metrics));
-                        if orientation == Orientation::Landscape {
-                            continue;
-                        }
                         for node in &diagnostics.layout.nodes {
                             if matches!(
                                 node.kind,
@@ -5669,6 +5785,88 @@ mod tests {
                     assert_eq!(seen.len(), HOME_TILE_COUNT, "{at}: a card was never shown");
                 }
             }
+        }
+    }
+
+    /// Rated or Casual, a challenge's time and side, and the computer's side
+    /// and clock are each one value out of a few, so each is a segmented
+    /// control: one row of equal segments with only the current one filled.
+    /// Chips sized to their words read as filters that can be on together.
+    #[test]
+    fn every_one_of_several_setting_is_a_row_of_equal_segments_with_one_filled() {
+        let metrics = CLARA_BW_METRICS;
+        let mut app = ready_app();
+        app.challenge_username = "ReaderTwo".to_owned();
+        app.challenge_side = ChallengeSide::White;
+        app.computer_clock = ComputerClock::Ten;
+        let times = api::SeekPreset::ALL
+            .iter()
+            .map(|preset| format!("challenge-time-{}", preset.action()))
+            .collect::<Vec<_>>();
+        let settings = [
+            (
+                app.play_screen(),
+                vec!["seek-rated".to_owned(), "seek-casual".to_owned()],
+                0,
+            ),
+            (app.challenge_setup_screen(), times, 0),
+            (
+                app.challenge_setup_screen(),
+                ChallengeSide::ALL
+                    .iter()
+                    .map(|side| side.action().to_owned())
+                    .collect(),
+                2,
+            ),
+            (
+                app.computer_setup_screen(),
+                ChallengeSide::ALL
+                    .iter()
+                    .map(|side| side.computer_action().to_owned())
+                    .collect(),
+                2,
+            ),
+            (
+                app.computer_setup_screen(),
+                ComputerClock::ALL
+                    .iter()
+                    .map(|clock| clock.action().to_owned())
+                    .collect(),
+                1,
+            ),
+        ];
+        for (screen, actions, current) in settings {
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            let segments = actions
+                .iter()
+                .map(|action| {
+                    layout
+                        .nodes
+                        .iter()
+                        .find_map(|node| match node.kind {
+                            LayoutKind::Chip(id, selected) if id == action_id(action) => {
+                                Some((node.rect.width, node.rect.y, selected))
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("{action} is not drawn"))
+                })
+                .collect::<Vec<_>>();
+            let (width, y, _) = segments[0];
+            assert!(
+                segments
+                    .iter()
+                    .all(|&(other, row, _)| row == y && (other - width).abs() < 3),
+                "{actions:?} are not one row of equal segments: {segments:?}"
+            );
+            let filled = segments
+                .iter()
+                .map(|&(_, _, selected)| selected)
+                .collect::<Vec<_>>();
+            let expected = (0..actions.len())
+                .map(|index| index == current)
+                .collect::<Vec<_>>();
+            assert_eq!(filled, expected, "{actions:?}");
         }
     }
 
@@ -7071,6 +7269,55 @@ mod tests {
             .unwrap_or_default()
             .contains("ready offline"));
         assert_eq!(app.puzzles.len(), 1);
+    }
+
+    /// A banner says how much a notice matters as well as what it says: a
+    /// downloaded puzzle set and a sent challenge are finished, so they are
+    /// drawn as done; a batch the app cannot read will not mend by waiting,
+    /// so it is an error; a request that may succeed when asked again is
+    /// something to attend to. Before, every notice was drawn the same way,
+    /// so a sent challenge looked like a warning.
+    #[test]
+    fn a_finished_action_is_drawn_as_done_and_a_failure_by_whether_waiting_mends_it() {
+        fn drawn_level(screen: &Screen) -> Option<BannerLevel> {
+            screen.nodes.iter().find_map(|node| match node {
+                Node::Banner { level, .. } => Some(*level),
+                _ => None,
+            })
+        }
+
+        // Downloaded while the owner is on Account/Games, so the news is a
+        // banner there rather than the Puzzles screen itself.
+        let mut app = ready_app();
+        app.route = Route::Play;
+        let mut context = Context::default();
+        let response = format!(
+            r#"{{"puzzles":[{{"game":{{}},"puzzle":{{"id":"puzzle1","fen":"{}","solution":["e2e4"],"initialPly":0}}}}]}}"#,
+            super::chess::START
+        );
+        app.handle_completed(&mut context, Pending::Puzzle, response.as_bytes());
+        assert_eq!(drawn_level(&app.play_screen()), Some(BannerLevel::Success));
+
+        app.handle_completed(&mut context, Pending::Puzzle, b"not a puzzle batch");
+        assert_eq!(drawn_level(&app.play_screen()), Some(BannerLevel::Error));
+
+        app.handle_completed(
+            &mut context,
+            Pending::CreateChallenge {
+                username: "ReaderTwo".to_owned(),
+            },
+            b"",
+        );
+        assert_eq!(drawn_level(&app.play_screen()), Some(BannerLevel::Success));
+
+        assert_eq!(
+            Notice::failed(TaskError::TimedOut).level,
+            BannerLevel::Attention
+        );
+        assert_eq!(
+            Notice::failed(TaskError::NotFound).level,
+            BannerLevel::Error
+        );
     }
 
     #[test]
@@ -8632,7 +8879,7 @@ mod tests {
     #[test]
     fn game_finish_on_live_board_does_not_duplicate_the_result() {
         let mut app = app_with_game(&[], Color::White);
-        app.notice = Some("Move sent".to_owned());
+        app.notice = Some(Notice::info("Move sent"));
         let mut context = Context::default();
         app.handle_event(&mut context, api::Event::GameFinish("abcdEF12".to_owned()));
         assert!(app.notice.is_none());

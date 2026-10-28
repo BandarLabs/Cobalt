@@ -6,7 +6,7 @@ mod tests;
 use game::{Game, Level, Puzzle, CELLS};
 use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, DialogAction, KoboApp, PencilBoard, PencilMark,
+    action_id, ActionId, BandAlign, Context, DialogAction, Glyph, KoboApp, PencilBoard, PencilMark,
     PencilMarkKind, Screen, ScreenBuilder, SlotWidth, StoreResult,
 };
 use kobo_state::draft::{Draft, Status};
@@ -87,7 +87,7 @@ impl Sudoku {
     }
     fn status(&self) -> String {
         if self.save_failed() {
-            return "Not saved · Open More to retry.".into();
+            return "Not saved · Retry saving in More.".into();
         }
         if self.game.solved(&self.puzzles) {
             // The hint count used to live on a menu screen that no longer
@@ -189,12 +189,14 @@ impl Sudoku {
     }
     /// The game's own entries in More, after New game.
     ///
-    /// Retry save joins them only while a save has failed, next to New game
-    /// at the top, because the status line sends the player here for it.
+    /// Retry saving joins them only while a save has failed, next to New
+    /// game at the top, because the status line sends the player here for it.
+    /// A banner over the board would cost the squares the height the fit
+    /// tests guard, so the status line names the entry instead.
     fn more_items(&self) -> Vec<(&'static str, &'static str)> {
         let mut items = Vec::with_capacity(5);
         if self.save_failed() {
-            items.push(("retry-save", "Retry save"));
+            items.push(("retry-save", "Retry saving"));
         }
         items.push(("restart", "Restart puzzle"));
         items.push((
@@ -218,16 +220,20 @@ impl Sudoku {
     }
     fn screen(&self, context: &Context) -> Screen {
         if !self.loaded {
-            let builder = ScreenBuilder::new("sudoku").top_bar("Sudoku");
+            let head = || ScreenBuilder::new("sudoku").top_bar("Sudoku");
+            // A splash with the fix directly under its reason, the shape every
+            // other whole-screen failure takes. The heading and the Retry at
+            // the foot of the panel left an empty page between the two.
             return if let Some(error) = &self.load_error {
-                builder
-                    .heading("Cannot open game")
-                    .text(error)
-                    .text("Your saved game has been kept. Retry reading it before playing.")
-                    .bottom_action("retry-load", "Retry")
-                    .build()
+                failure_screen(
+                    head,
+                    &context.metrics(),
+                    "Cannot open game",
+                    (&format!("{error} Your saved game has been kept."), error),
+                    ("retry-load", "Try again"),
+                )
             } else {
-                builder.text("Opening your game…").build()
+                head().text("Opening your game…").build()
             };
         }
         // Every screen but the puzzle is a step away from it, so each has a
@@ -239,18 +245,7 @@ impl Sudoku {
                 self.menu,
                 self.more_items(),
             )),
-            View::New => away("Sudoku")
-                .heading(chrome::NEW_GAME_LABEL)
-                .secondary(if self.has_progress() {
-                    "Replaces this game and its history."
-                } else {
-                    "Choose a difficulty."
-                })
-                .button("new-easy", "Easy")
-                .button("new-medium", "Medium")
-                .button("new-hard", "Hard")
-                .bottom_action("play", "Keep playing")
-                .build(),
+            View::New => self.new_game_screen(context),
             View::Restart => away("Sudoku")
                 .confirmation(
                     "Restart puzzle?",
@@ -281,6 +276,59 @@ impl Sudoku {
                 }
                 b.build()
             }
+        }
+    }
+    /// The three difficulties. Each deals a new puzzle, so they are three
+    /// verbs side by side rather than a stack of full-width buttons that
+    /// reads as a form. Where a third of the panel cannot hold "Medium" on
+    /// one line, as upright at the largest sizes, they stack instead of
+    /// breaking the word.
+    fn new_game_screen(&self, context: &Context) -> Screen {
+        const LEVELS: [(&str, &str); 3] = [
+            ("new-easy", "Easy"),
+            ("new-medium", "Medium"),
+            ("new-hard", "Hard"),
+        ];
+        let build = |side_by_side: bool| {
+            let screen = ScreenBuilder::new("sudoku")
+                .top_bar("Sudoku")
+                .owns_back(true)
+                .heading(chrome::NEW_GAME_LABEL)
+                .secondary(if self.has_progress() {
+                    "Replaces this game and its history."
+                } else {
+                    "Choose a difficulty."
+                });
+            let screen = if side_by_side {
+                screen.buttons(LEVELS)
+            } else {
+                LEVELS
+                    .into_iter()
+                    .fold(screen, |screen, (name, label)| screen.button(name, label))
+            };
+            screen.bottom_action("play", "Keep playing").build()
+        };
+        // A label broken across lines makes its button taller than the
+        // one-line buttons of the stacked shape. The runtime names the panel
+        // upright, so it is turned the way the game asked to be drawn.
+        let metrics = context.metrics().oriented(self.orientation());
+        let chrome = kobo_sdk::Chrome::measuring(true);
+        let stacked = build(false);
+        let one_line = stacked
+            .layout_with(&metrics, &chrome)
+            .rect_of_action(action_id(LEVELS[0].0))
+            .map_or(i32::MAX, |rect| rect.height);
+        let paired = build(true);
+        let layout = paired.layout_with(&metrics, &chrome);
+        let whole = LEVELS.iter().all(|(name, _)| {
+            layout
+                .rect_of_action(action_id(name))
+                .is_some_and(|rect| rect.height <= one_line)
+        });
+        if whole {
+            paired
+        } else {
+            stacked
         }
     }
     fn play_screen(&self, builder: ScreenBuilder) -> Screen {
@@ -522,6 +570,33 @@ impl KoboApp for Sudoku {
         }
         self.show(context);
     }
+}
+/// A whole-screen failure: a splash saying why, then its one fix directly
+/// under it. On a small panel at the largest text sizes the mark gives way
+/// first and then the longer sentence, so the reason and the fix are always
+/// on the panel together.
+fn failure_screen(
+    head: impl Fn() -> ScreenBuilder,
+    metrics: &kobo_sdk::DisplayMetrics,
+    title: &str,
+    (full, short): (&str, &str),
+    (retry, label): (&str, &str),
+) -> Screen {
+    let build = |glyph, summary: &str| {
+        head()
+            .splash(glyph, title, summary)
+            .primary_button(retry, label)
+            .build()
+    };
+    [(Some(Glyph::Close), full), (None, full), (None, short)]
+        .into_iter()
+        .map(|(glyph, summary)| build(glyph, summary))
+        .find(|screen| {
+            !screen
+                .diagnostics(metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| build(None, short))
 }
 fn main() -> ExitCode {
     match kobo_sdk::run("sudoku", Sudoku::default()) {

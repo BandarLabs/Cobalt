@@ -71,7 +71,10 @@ struct Fieldbook {
     view: View,
     packs: Vec<Pack>,
     pack_failures: Vec<(String, String)>,
-    pack_notice: Option<String>,
+    /// What went wrong reading the field packs, at the level its meaning
+    /// asks for: a pack that must be pushed again is an error, a shelf that
+    /// did not open this time something to attend to.
+    pack_notice: Option<(BannerLevel, String)>,
     outings: Vec<Outing>,
     sightings: Vec<Sighting>,
     open_outing: Option<u64>,
@@ -242,7 +245,10 @@ impl Fieldbook {
                     }
                     Err(error) => {
                         self.packs.clear();
-                        self.pack_notice = Some(format!("Field packs need re-pushing: {error}"));
+                        self.pack_notice = Some((
+                            BannerLevel::Error,
+                            format!("Field packs need re-pushing: {error}"),
+                        ));
                     }
                 }
                 self.loads.manifest = true;
@@ -258,7 +264,10 @@ impl Fieldbook {
             ShelfProgress::Failed(_) => {
                 self.manifest_load = None;
                 self.loads.manifest = true;
-                self.pack_notice = Some("The field pack shelf could not be opened.".to_owned());
+                self.pack_notice = Some((
+                    BannerLevel::Attention,
+                    "The field pack shelf could not be opened.".to_owned(),
+                ));
                 self.start_when_ready(context);
                 true
             }
@@ -579,8 +588,10 @@ impl Fieldbook {
 
     fn top(&self, title: &str) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("fieldbook").top_bar(title);
+        // A write the reader refused is lost until something is saved
+        // again, so it is drawn as an error rather than a passing note.
         if self.save == SaveState::Failed {
-            screen = screen.banner(BannerLevel::Attention, "Not saved. The last write failed.");
+            screen = screen.banner(BannerLevel::Error, "Not saved. The last write failed.");
         }
         screen
     }
@@ -633,8 +644,8 @@ impl Fieldbook {
 
     fn home_screen(&self, context: &Context) -> (Screen, usize) {
         let mut screen = self.top("Fieldbook");
-        if let Some(notice) = &self.pack_notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+        if let Some((level, notice)) = &self.pack_notice {
+            screen = screen.banner(*level, notice);
         }
         screen = if self.packs.is_empty() {
             screen.secondary("No field pack yet. Send one from a computer with kobo fieldbook push; logging works without one.")
@@ -682,8 +693,8 @@ impl Fieldbook {
         let mut screen = self.top("Field packs");
         if self.packs.is_empty() {
             screen=screen.splash(Some(Glyph::Search),"No field pack yet","Send a pack from a computer with kobo fieldbook push. Sightings logged now stay on this reader and join any pack you import later.");
-            if let Some(notice) = &self.pack_notice {
-                screen = screen.banner(BannerLevel::Attention, notice);
+            if let Some((level, notice)) = &self.pack_notice {
+                screen = screen.banner(*level, notice);
             }
             return (screen.nav_bar(Some(1), Self::tab_bar()).build(), 1);
         }
@@ -886,12 +897,15 @@ impl Fieldbook {
             0 => {}
             1 => {
                 screen = screen
-                    .banner(BannerLevel::Info, "Sighting deleted.")
+                    .banner(BannerLevel::Success, "Sighting deleted.")
                     .banner_action("undo", "Undo delete");
             }
             removed => {
                 screen = screen
-                    .banner(BannerLevel::Info, format!("{removed} sightings deleted."))
+                    .banner(
+                        BannerLevel::Success,
+                        format!("{removed} sightings deleted."),
+                    )
                     .banner_action("undo", "Undo delete");
             }
         }

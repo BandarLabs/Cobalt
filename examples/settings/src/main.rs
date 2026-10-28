@@ -79,6 +79,23 @@ const fn release_window(channel: UpdateChannel) -> u32 {
     }
 }
 
+/// The lines under the two automatic-update switches: what happens now with
+/// each one as it is, rather than what tapping it would do.
+const fn auto_update_summaries(cobalt: bool, apps: bool) -> (&'static str, &'static str) {
+    (
+        if cobalt {
+            "Installs new versions itself"
+        } else {
+            "Installs only when you ask"
+        },
+        if apps {
+            "Apps update themselves"
+        } else {
+            "Apps update when you ask"
+        },
+    )
+}
+
 const fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
         UpdateChannel::Stable => "Stable",
@@ -624,18 +641,15 @@ impl Settings {
     /// than a switch going under the foot of the panel.
     fn update_options_for(&self, context: &Context) -> Screen {
         let metrics = context.metrics();
-        // The last shape gives up the list's prompt, which only repeats what
-        // the two choices under it say, and only where a refusal over the
-        // choices would otherwise push a switch off a panel held sideways.
-        let shapes = [
-            (true, true, true),
-            (false, true, true),
-            (false, false, true),
-            (false, false, false),
-        ];
-        let mut screen = self.update_options_shaped(true, true, true);
-        for (explain, summaries, prompt) in shapes {
-            screen = self.update_options_shaped(explain, summaries, prompt);
+        // Each step gives up one more thing, least needed first: the
+        // switches' own lines, which restate what the switch shows; the
+        // sentence that warns about Beta; the channels' lines; and last the
+        // list's prompt, which only repeats what the two choices under it
+        // say, and only where a refusal over the choices would otherwise push
+        // a switch off a panel held sideways.
+        let mut screen = self.update_options_shaped(0);
+        for given_up in 0..=4 {
+            screen = self.update_options_shaped(given_up);
             if !screen
                 .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
                 .has_errors()
@@ -651,7 +665,13 @@ impl Settings {
         self.update_options_for(&Context::default())
     }
 
-    fn update_options_shaped(&self, explain: bool, summaries: bool, prompt: bool) -> Screen {
+    /// The update options with the first `given_up` of the things
+    /// [`Self::update_options_for`] can do without left out.
+    fn update_options_shaped(&self, given_up: usize) -> Screen {
+        let switch_lines = given_up < 1;
+        let explain = given_up < 2;
+        let summaries = given_up < 3;
+        let prompt = given_up < 4;
         let mut screen = ScreenBuilder::new("settings-update-options")
             .top_bar("Update options")
             .owns_back(true);
@@ -680,9 +700,22 @@ impl Settings {
         if explain {
             screen = screen.text("Beta versions may have more problems. You can change back here at any time, and your apps, their data and your saved keys are kept.");
         }
+        // Each switch's line says what happens now with it as it is, as the
+        // Wi-Fi and Bluetooth switches do. They are the first thing to go
+        // where the panel cannot hold everything.
+        let (cobalt_now, apps_now) = if switch_lines {
+            auto_update_summaries(cobalt, apps)
+        } else {
+            ("", "")
+        };
         screen
-            .toggle(AUTO_COBALT, "Update Cobalt automatically", "", cobalt)
-            .toggle(AUTO_APPS, "Update apps automatically", "", apps)
+            .toggle(
+                AUTO_COBALT,
+                "Update Cobalt automatically",
+                cobalt_now,
+                cobalt,
+            )
+            .toggle(AUTO_APPS, "Update apps automatically", apps_now, apps)
             .build()
     }
 
@@ -3228,6 +3261,81 @@ mod tests {
             "{what} on {metrics:?}: {:?}",
             report.issues
         );
+    }
+
+    #[test]
+    fn the_automatic_update_switches_say_what_is_true_now_and_read_whole_at_every_size() {
+        for (cobalt, apps) in [(true, true), (true, false), (false, true), (false, false)] {
+            let (cobalt_now, apps_now) = super::auto_update_summaries(cobalt, apps);
+            // Every step, smallest to largest. Settings reaches the scale
+            // through the SDK's metrics, which name no list of steps.
+            let mut smallest = CLARA_BW_METRICS.text_scale;
+            while let Some(smaller) = smallest.smaller() {
+                smallest = smaller;
+            }
+            let steps = std::iter::successors(Some(smallest), |scale| scale.larger());
+            for text_scale in steps {
+                for (width, height) in [(1072, 1448), (1448, 1072)] {
+                    let metrics = kobo_sdk::DisplayMetrics {
+                        text_scale,
+                        width,
+                        height,
+                        ..CLARA_BW_METRICS
+                    };
+                    let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+                    let settings = Settings {
+                        view: View::UpdateOptions,
+                        auto_update: Some((cobalt, apps)),
+                        update_channel: Some(UpdateChannel::Stable),
+                        ..Settings::default()
+                    };
+                    let screen = settings.update_options_for(&runner.context());
+                    let summaries: Vec<(String, bool)> = screen
+                        .nodes
+                        .iter()
+                        .filter_map(|node| match node {
+                            Node::Toggle { summary, on, .. } => Some((summary.clone(), *on)),
+                            _ => None,
+                        })
+                        .collect();
+                    let said = |now: &str, on: bool| {
+                        // Where the panel holds it, the line is there and says
+                        // what is true now; where it does not, it goes whole.
+                        if text_scale == CLARA_BW_METRICS.text_scale && width < height {
+                            (now.to_owned(), on)
+                        } else if summaries.iter().all(|(summary, _)| summary.is_empty()) {
+                            (String::new(), on)
+                        } else {
+                            (now.to_owned(), on)
+                        }
+                    };
+                    assert_eq!(
+                        summaries,
+                        [said(cobalt_now, cobalt), said(apps_now, apps)],
+                        "{text_scale:?} {width}x{height}"
+                    );
+                    // They restate the switch, so they go before the
+                    // sentence that warns about Beta.
+                    if summaries.iter().any(|(summary, _)| !summary.is_empty()) {
+                        assert!(
+                            format!("{screen:?}").contains("Beta versions may have more problems"),
+                            "{text_scale:?} {width}x{height}"
+                        );
+                    }
+                    let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                    for (summary, _) in summaries.iter().filter(|(summary, _)| !summary.is_empty())
+                    {
+                        assert!(
+                            layout
+                                .nodes
+                                .iter()
+                                .any(|node| node.text_lines.iter().any(|line| line == summary)),
+                            "{summary:?} is cut at {text_scale:?} {width}x{height}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

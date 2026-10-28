@@ -151,7 +151,10 @@ struct ReadLater {
     /// Consecutive refreshes without one succeeding request; caps the
     /// refresh-refused-refresh loop at a single renewal.
     refresh_attempts: u8,
-    notice: Option<String>,
+    /// The last thing the app has to say, at the level its meaning asks
+    /// for: a finished sync or sign-in is a success, an unsaved write or a
+    /// refused sign-in an error, a server out of reach something to attend to.
+    notice: Option<(BannerLevel, String)>,
     /// The server address, typed on the runtime's keyboard.
     address: TextEntry,
     editing: Option<Setting>,
@@ -197,7 +200,7 @@ impl ReadLater {
         );
     }
 
-    fn problem(&self, error: TaskError) -> String {
+    fn problem(&self, error: TaskError) -> kobo_sdk::failure::Problem {
         let server = self.server();
         let service = kobo_sdk::failure::Service::new("Wallabag").fixed_by(ACCOUNT_FIX);
         let service = if server.is_empty() {
@@ -205,7 +208,20 @@ impl ReadLater {
         } else {
             service.at(&server)
         };
-        service.explain(error).message
+        service.explain(error)
+    }
+
+    /// Says what a failed request means, at the level the failure asks for.
+    fn fail(&mut self, error: TaskError) {
+        let problem = self.problem(error);
+        self.notice = Some((problem.level(), problem.message));
+    }
+
+    /// Whether the notice says `text`, whatever its level.
+    fn says(&self, text: &str) -> bool {
+        self.notice
+            .as_ref()
+            .is_some_and(|(_, notice)| notice == text)
     }
 
     /// The API clients page on the address typed in settings, while there is
@@ -244,7 +260,7 @@ impl ReadLater {
             return;
         }
         let Some(bytes) = cache::encode(&self.entries) else {
-            self.notice = Some("These articles exceed the offline storage limit. Keep fewer articles and sync again.".into());
+            self.notice = Some((BannerLevel::Error, "These articles exceed the offline storage limit. Keep fewer articles and sync again.".into()));
             return;
         };
         if snapshot.save(context, bytes) {
@@ -278,17 +294,18 @@ impl ReadLater {
                             self.entries_origin = Some(self.server());
                         }
                     } else {
-                        self.notice = Some(
+                        self.notice = Some((
+                            BannerLevel::Error,
                             "Saved articles could not be opened. Sync to download them again."
                                 .into(),
-                        );
+                        ));
                     }
                 }
             }
             Some(SnapshotEvent::Failed) => {
-                self.notice = Some(CACHE_ERROR.into());
+                self.notice = Some((BannerLevel::Error, CACHE_ERROR.into()));
             }
-            Some(SnapshotEvent::Saved) if self.notice.as_deref() == Some(CACHE_ERROR) => {
+            Some(SnapshotEvent::Saved) if self.says(CACHE_ERROR) => {
                 self.notice = None;
             }
             _ => {}
@@ -408,12 +425,12 @@ impl ReadLater {
         // Retry saving is the fix for what the banner says, so it is the
         // banner's own action whenever there is a banner to carry it.
         match &self.notice {
-            Some(note) if retry => {
+            Some((level, note)) if retry => {
                 page = page
-                    .banner(BannerLevel::Attention, note)
+                    .banner(*level, note)
                     .banner_action("retry-save", "Retry saving");
             }
-            Some(note) => page = page.banner(BannerLevel::Attention, note),
+            Some((level, note)) => page = page.banner(*level, note),
             None if retry => page = page.button("retry-save", "Retry saving"),
             None => {}
         }
@@ -479,11 +496,11 @@ impl ReadLater {
     /// stay at every size.
     fn connect_screen(&self, context: &Context) -> kobo_sdk::Screen {
         const TEXT: &str = "Sign in from a computer. It asks for your server, a Wallabag API client and your password.";
-        let checked = self.notice.as_deref() == Some(NO_SIGN_IN_YET);
+        let checked = self.says(NO_SIGN_IN_YET);
         let build = |shape: Shape| {
             let mut page = ScreenBuilder::new("readlater").top_bar("Read Later");
-            if let Some(note) = &self.notice {
-                page = page.banner(BannerLevel::Attention, note);
+            if let Some((level, note)) = &self.notice {
+                page = page.banner(*level, note);
                 if checked {
                     page = page.banner_action("check-again", "Check again");
                 }
@@ -585,7 +602,7 @@ impl ReadLater {
     }
 
     fn fetch_queue(&mut self, context: &mut Context, tab: Tab) {
-        self.notice = Some("Syncing articles…".to_owned());
+        self.notice = Some((BannerLevel::Info, "Syncing articles…".to_owned()));
         let (starred, archived) = tab.params();
         if let Some(id) = context.spawn_retrying(Task::Fetch {
             url: wallabag::queue_url(&self.server(), self.depth.max(20), starred, archived),
@@ -603,8 +620,10 @@ impl ReadLater {
     /// places carry over only within one library, never across servers by id.
     fn queue_completed(&mut self, context: &mut Context, origin: &str, tab: Tab, bytes: &[u8]) {
         let Some(mut entries) = wallabag::parse_entries(bytes) else {
-            self.notice =
-                Some("Couldn't load the reading list. Current articles are unchanged.".into());
+            self.notice = Some((
+                BannerLevel::Error,
+                "Couldn't load the reading list. Current articles are unchanged.".into(),
+            ));
             return;
         };
         if self.entries_origin.as_deref() == Some(origin) {
@@ -628,7 +647,7 @@ impl ReadLater {
         }
         self.reconcile_open();
         self.entries_origin = Some(origin.to_owned());
-        self.notice = Some("Reading list synced.".to_owned());
+        self.notice = Some((BannerLevel::Success, "Reading list synced.".to_owned()));
         self.keep_articles(context);
     }
 
@@ -653,10 +672,13 @@ impl ReadLater {
         let Some(action) = self.pending.first().copied() else {
             return;
         };
-        self.notice = Some(format!(
-            "Syncing {} change{}…",
-            self.pending.len(),
-            if self.pending.len() == 1 { "" } else { "s" }
+        self.notice = Some((
+            BannerLevel::Info,
+            format!(
+                "Syncing {} change{}…",
+                self.pending.len(),
+                if self.pending.len() == 1 { "" } else { "s" }
+            ),
         ));
         // Wallabag applies entry flags by PATCH; POST is refused there. The
         // answer echoes the whole entry, body included, so the ceiling is the
@@ -689,7 +711,10 @@ impl ReadLater {
         });
         self.persist_actions(context);
         self.keep_articles(context);
-        self.notice = Some("Archived; sending on the next sync.".to_owned());
+        self.notice = Some((
+            BannerLevel::Success,
+            "Archived; sending on the next sync.".to_owned(),
+        ));
         self.view = Some(View::Queue);
     }
 
@@ -709,11 +734,14 @@ impl ReadLater {
         self.pending.push(action);
         self.persist_actions(context);
         self.keep_articles(context);
-        self.notice = Some(if action.kind == OutboxKind::Star {
-            "Starred; sending on the next sync.".to_owned()
-        } else {
-            "Unstarred; sending on the next sync.".to_owned()
-        });
+        self.notice = Some((
+            BannerLevel::Success,
+            if action.kind == OutboxKind::Star {
+                "Starred; sending on the next sync.".to_owned()
+            } else {
+                "Unstarred; sending on the next sync.".to_owned()
+            },
+        ));
     }
 
     /// An expired token is not the end of a sync: refresh once, install the
@@ -728,7 +756,10 @@ impl ReadLater {
         self.refreshing = true;
         self.refresh_attempts += 1;
         self.resume = Some(resume);
-        self.notice = Some("Refreshing the Wallabag sign-in…".to_owned());
+        self.notice = Some((
+            BannerLevel::Info,
+            "Refreshing the Wallabag sign-in…".to_owned(),
+        ));
         if let Some(id) = context.spawn_retrying(Task::Post {
             url: session.token_url(),
             body: session.refresh_body(),
@@ -848,20 +879,19 @@ impl KoboApp for ReadLater {
                         context.shelf().remove(session::SHELF_FILE);
                         self.entries_origin = None;
                         self.open_cache(context);
-                        self.notice = Some(format!("Signed in to {server}."));
+                        self.notice =
+                            Some((BannerLevel::Success, format!("Signed in to {server}.")));
                     }
                     None => {
-                        self.notice = Some(
-                            "The sign-in from the computer could not be read. Run kobo connect readlater again."
-                                .into(),
-                        );
+                        self.notice = Some((BannerLevel::Error, "The sign-in from the computer could not be read. Run kobo connect readlater again."
+                                .into(),));
                     }
                 }
             }
             // A missing file is the usual answer before the computer step,
             // and the owner who asked is told so rather than shown nothing.
             if checking && self.session.is_none() && self.notice.is_none() {
-                self.notice = Some(NO_SIGN_IN_YET.into());
+                self.notice = Some((BannerLevel::Attention, NO_SIGN_IN_YET.into()));
             }
         } else if let Some(snapshot) = self
             .snapshot
@@ -927,7 +957,7 @@ impl KoboApp for ReadLater {
                             .as_ref()
                             .is_some_and(|snapshot| snapshot.busy() || snapshot.retryable())
                         {
-                            self.notice = Some("Finish saving articles before changing the server. Retry saving if needed.".into());
+                            self.notice = Some((BannerLevel::Error, "Finish saving articles before changing the server. Retry saving if needed.".into()));
                             self.editing = None;
                             self.view = Some(View::Queue);
                             self.show(context);
@@ -1096,19 +1126,15 @@ impl KoboApp for ReadLater {
                 } else {
                     self.refreshing = false;
                     self.resume = None;
-                    self.notice = Some(
-                        "The Wallabag sign-in could not be renewed. Run kobo connect readlater on your computer."
-                            .into(),
-                    );
+                    self.notice = Some((BannerLevel::Error, "The Wallabag sign-in could not be renewed. Run kobo connect readlater on your computer."
+                            .into(),));
                 }
             }
             (PendingTask::Refresh, TaskOutcome::Failed(_) | TaskOutcome::Cancelled) => {
                 self.refreshing = false;
                 self.resume = None;
-                self.notice = Some(
-                    "The Wallabag sign-in could not be renewed. Run kobo connect readlater on your computer."
-                        .into(),
-                );
+                self.notice = Some((BannerLevel::Error, "The Wallabag sign-in could not be renewed. Run kobo connect readlater on your computer."
+                        .into(),));
             }
             (kind, TaskOutcome::Failed(TaskError::Unauthorized)) => {
                 // An expired token: refresh once and replay, unless the
@@ -1116,14 +1142,16 @@ impl KoboApp for ReadLater {
                 if self.session.is_some() && !self.refreshing {
                     self.refresh(context, kind);
                 } else {
-                    self.notice = Some(self.problem(TaskError::Unauthorized));
+                    self.fail(TaskError::Unauthorized);
                 }
             }
             // The real cause, over the cached list that is still readable.
             // "Off the air" for every failure sent owners with a working
             // network looking for a Wi-Fi problem they did not have.
-            (_, TaskOutcome::Failed(error)) => self.notice = Some(self.problem(error)),
-            (_, TaskOutcome::Cancelled) => self.notice = Some("Sync cancelled.".to_owned()),
+            (_, TaskOutcome::Failed(error)) => self.fail(error),
+            (_, TaskOutcome::Cancelled) => {
+                self.notice = Some((BannerLevel::Info, "Sync cancelled.".to_owned()));
+            }
         }
         self.show(context);
     }
@@ -1141,7 +1169,7 @@ impl KoboApp for ReadLater {
             if result == DeviceResult::Done {
                 self.refreshing = false;
                 if let Some(resume) = self.resume.take() {
-                    self.notice = Some("Wallabag sign-in renewed.".into());
+                    self.notice = Some((BannerLevel::Success, "Wallabag sign-in renewed.".into()));
                     match resume {
                         PendingTask::Queue(tab) => self.fetch_queue(context, tab),
                         PendingTask::Article(entry_id) => self.fetch_article(context, entry_id),
@@ -1152,8 +1180,10 @@ impl KoboApp for ReadLater {
             } else {
                 self.refreshing = false;
                 self.resume = None;
-                self.notice =
-                    Some("The refreshed sign-in could not be installed on this reader.".into());
+                self.notice = Some((
+                    BannerLevel::Error,
+                    "The refreshed sign-in could not be installed on this reader.".into(),
+                ));
             }
             self.show(context);
         }
@@ -1313,9 +1343,26 @@ mod tests {
     }
 
     #[test]
+    fn a_save_that_failed_is_drawn_as_an_error_with_retry_saving_on_it() {
+        let mut context = kobo_sdk::AppRunner::new(ReadLater::default()).context();
+        let mut app = reading_list(3);
+        app.cache_dirty = true;
+        app.cache_event(&mut context, Some(SnapshotEvent::Failed));
+        let screen = app.queue_prefix().build();
+        assert!(
+            screen.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Banner { level: BannerLevel::Error, action: Some(action), .. }
+                    if action.action == action_id("retry-save")
+            )),
+            "an unsaved write stays lost until the owner acts: {screen:?}"
+        );
+    }
+
+    #[test]
     fn retry_saving_rides_on_the_banner_that_says_saving_failed() {
         let mut app = reading_list(3);
-        app.notice = Some(CACHE_ERROR.into());
+        app.notice = Some((BannerLevel::Error, CACHE_ERROR.into()));
         app.cache_dirty = true;
         let screen = app.queue_prefix().build();
         assert!(
@@ -1349,8 +1396,12 @@ mod tests {
                 " through the allotments and along the old stone bridge on a quiet autumn morning",
             );
             for trouble in [false, true] {
-                app.notice = trouble
-                    .then(|| "Articles could not be saved. Retry saving before closing.".into());
+                app.notice = trouble.then(|| {
+                    (
+                        BannerLevel::Error,
+                        "Articles could not be saved. Retry saving before closing.".into(),
+                    )
+                });
                 app.cache_dirty = trouble;
                 app.pending = if trouble {
                     vec![OutboxAction {
@@ -1670,7 +1721,12 @@ mod tests {
             cache::decode(app.snapshot.as_ref().unwrap().bytes.as_deref().unwrap()).unwrap(),
             app.entries
         );
-        assert!(app.notice.as_deref().unwrap().contains("Retry saving"));
+        assert!(app
+            .notice
+            .as_ref()
+            .map(|(_, text)| text.as_str())
+            .unwrap()
+            .contains("Retry saving"));
         capture_queue(app, "save-failed.png");
     }
 
@@ -1747,7 +1803,12 @@ mod tests {
             TaskOutcome::Completed(b"not JSON".to_vec()),
         );
         assert_eq!(app.entries[0].content, "An original saved article body.");
-        assert!(app.notice.as_deref().unwrap().contains("unchanged"));
+        assert!(app
+            .notice
+            .as_ref()
+            .map(|(_, text)| text.as_str())
+            .unwrap()
+            .contains("unchanged"));
         capture_queue(&app, "refresh-failed.png");
         app.server = "https://another.example".into();
         app.task = Some((TaskId(3), PendingTask::Queue(Tab::Unread)));
@@ -1880,7 +1941,8 @@ mod tests {
                 let runner = kobo_sdk::AppRunner::with_metrics(ReadLater::default(), metrics);
                 for checked in [false, true] {
                     let app = ReadLater {
-                        notice: checked.then(|| NO_SIGN_IN_YET.to_owned()),
+                        notice: checked
+                            .then(|| (BannerLevel::Attention, NO_SIGN_IN_YET.to_owned())),
                         ..ReadLater::default()
                     };
                     assert!(!app.ready());
@@ -1946,12 +2008,13 @@ mod tests {
             (TaskError::Unreachable, "did not answer"),
             (TaskError::Offline, "Join Wi-Fi"),
         ] {
-            let message = app.problem(error);
+            let message = app.problem(error).message;
             assert!(message.contains(said), "{error:?}: {message}");
             assert!(!message.contains("Off the air"), "{message}");
         }
         assert!(app
             .problem(TaskError::Unauthorized)
+            .message
             .contains("kobo connect readlater"));
     }
 
@@ -2329,7 +2392,7 @@ mod independent_review {
                 let commands = runner.device_result(DeviceResult::Done);
                 let retried = fetch(&commands);
                 assert_eq!(
-                    runner.app().notice.as_deref(),
+                    runner.app().notice.as_ref().map(|(_, text)| text.as_str()),
                     Some("Wallabag sign-in renewed.")
                 );
                 assert_eq!((runner.app().view, runner.app().open), navigation);

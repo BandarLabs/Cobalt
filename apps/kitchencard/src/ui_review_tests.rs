@@ -410,3 +410,80 @@ fn the_servings_step_one_at_a_time_between_one_and_twelve() {
     }
     assert_eq!(runner.app().servings, MAX_SERVINGS);
 }
+
+/// Ticking an ingredient off is state the runtime draws as a box, not a
+/// check mark the app picks for the row's lead, so a ticked line reads as
+/// ticked and is the same size as an open one. There is no selection bar,
+/// because nothing is done to the ticked lines all at once. The list still
+/// pages whole at every size, held either way, and ticking a line moves
+/// nothing on the page.
+#[test]
+fn ticked_ingredients_are_checked_rows_that_move_nothing_at_every_size_held_either_way() {
+    for text_scale in TextScale::STEPS {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let at = format!("{text_scale:?} {orientation:?}");
+            let mut runner = AppRunner::with_metrics(
+                Kitchen {
+                    view: Some(View::Ingredients),
+                    ..kitchen()
+                },
+                metrics,
+            );
+            let pages = runner.app().ingredients_pages(&runner.context());
+            assert_eq!(
+                pages.iter().flatten().copied().collect::<Vec<_>>(),
+                (0..18).collect::<Vec<_>>(),
+                "{at}"
+            );
+            let before = runner.app().screen(&runner.context());
+            assert_fits(&before, metrics);
+            let first = pages[0][0];
+            runner.action(action_id(&format!("ingredient-{first}")));
+            assert_eq!(runner.app().checked, [first], "{at}");
+            let after = runner.app().screen(&runner.context());
+            assert_fits(&after, metrics);
+            let states = after
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_sdk::Node::Rows { rows, .. } => {
+                        Some(rows.iter().map(|row| row.state).collect::<Vec<_>>())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{at}: no ingredient list"));
+            assert_eq!(states[0], RowState::Checked, "{at}");
+            assert!(
+                states[1..]
+                    .iter()
+                    .all(|state| *state == RowState::Unchecked),
+                "{at}: {states:?}"
+            );
+            assert!(
+                !after
+                    .nodes
+                    .iter()
+                    .any(|node| matches!(node, kobo_sdk::Node::SelectionBar { .. })),
+                "{at}: a selection bar"
+            );
+            let chrome = Chrome::measuring(true);
+            let (was, now) = (
+                before.layout_with(&metrics, &chrome),
+                after.layout_with(&metrics, &chrome),
+            );
+            for &index in &pages[0] {
+                let action = action_id(&format!("ingredient-{index}"));
+                assert_eq!(
+                    was.rect_of_action(action),
+                    now.rect_of_action(action),
+                    "{at}: ingredient {index} moved"
+                );
+            }
+        }
+    }
+}

@@ -201,7 +201,9 @@ def main():
                 address = start()
                 drive('wait-for-id feed-0')
                 assert (state/'feeds').read_bytes()==before_import
-                drive('expect 0 unread')
+                # A feed read to the end carries no unread badge, and the
+                # count is no longer written into its summary.
+                drive('expect Updated', 'expect-missing unread')
                 capture('17-subscriptions-reopened')
                 stop()
                 damaged = b'\xfforiginal subscriptions must survive'
@@ -214,7 +216,13 @@ def main():
                 (state/'feeds').write_bytes(before_import)
                 drive('tap-id retry-load-subscriptions', 'wait-for-id feed-0')
                 capture('19-subscriptions-reloaded')
-                drive('tap-id add', 'tap-id browse-feeds', 'expect Science + Tech', 'expect NASA Science')
+                # An address that is not HTTPS comes back in the field with
+                # the reason under it, and nothing is fetched.
+                drive('tap-id add', 'tap-id feed-address', 'type http://example.com/feed.xml',
+                      'tap-id kb.enter', 'wait-for Use an HTTPS feed address.',
+                      'expect http://example.com/feed.xml')
+                capture('19b-http-address-refused')
+                drive('tap-id browse-feeds', 'expect Science + Tech', 'expect NASA Science')
                 capture('20-browse-feeds')
                 drive('scenario offline', 'tap-id starter-0', 'wait-for This reader is not on a network')
                 assert (state/'feeds').read_bytes()==before_import
@@ -224,7 +232,7 @@ def main():
                     'status': 'passed', 'checks': ['saved feed opens without network', 'saved body search, no matches and clearing without network',
                     'HTML reading and page turn with a verified offline image', 'offline refresh retains articles',
                     'process restart reopens saved body at saved page', 'original snapshot unchanged',
-                    'no server mutations', 'failed progress write preserves prior state', 'explicit save retry persists latest position', 'OPML preview supports selection and skips duplicate and HTTP entries', 'OPML save failure preserves subscriptions and retry adds only new feed', 'failed unfollow preserves disk state and retry survives restart', 'unreadable subscriptions survive retry and a repaired file can reload', 'starter browsing sends no requests and offline selection does not subscribe',
+                    'no server mutations', 'failed progress write preserves prior state', 'explicit save retry persists latest position', 'OPML preview supports selection and skips duplicate and HTTP entries', 'OPML save failure preserves subscriptions and retry adds only new feed', 'failed unfollow preserves disk state and retry survives restart', 'unreadable subscriptions survive retry and a repaired file can reload', 'an HTTP address stays in the field with its reason and fetches nothing', 'starter browsing sends no requests and offline selection does not subscribe',
                     'the computer stages a checked OPML list into the Feeds shelf'], 'fixture': 'original-rss-journal',
                     'limits': ['Image snapshot is seeded locally; network download and image-save failure need separate coverage'],
                 }, indent=2)+'\n')

@@ -2,9 +2,14 @@ expect Ready
 expect Account/Games
 expect Puzzles
 expect Computer
+# At the larger text sizes the cards are set two to a row, so the time cards
+# are on the second page; at the default size the pager is not drawn at all.
+maybe-tap-id home-next
 expect 10+0
 expect 10+5
 expect 15+10
 expect 30+0
+# At the largest size the last time card is on a third page.
+maybe-tap-id home-next
 expect 30+20
 shot home

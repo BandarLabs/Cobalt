@@ -28,6 +28,33 @@ const LIMIT: usize = 50;
 const STEPS: [&str; 3] = ["Address", "Token", "Check"];
 /// Where a Readeck server makes API tokens, under the owner's own address.
 const TOKEN_PAGE: &str = "/profile/tokens";
+/// What a check of the store says when the computer has not written a server.
+/// Checking again is the answer, so the banner that says it carries that
+/// action.
+const NO_SERVER_YET: &str = "No server has arrived from the computer yet.";
+
+/// What the last check for a server written from the computer found.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServerCheck {
+    /// No check yet, or a fresh one under way.
+    Unchecked,
+    /// A check found no server; the banner says so and carries Check again.
+    FoundNothing,
+}
+
+/// How much the first connect step says around its field, from the most to
+/// the least; each shape leaves out one more thing than the one before.
+/// Held sideways at the larger text sizes the sentence, then the field's
+/// hint, then the step line give way, so the command, Check again, the field
+/// and Use saved token stay on the panel. A refused address keeps its reason
+/// under the field in every shape.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ServerShape {
+    Full,
+    WithoutSentence,
+    WithoutHint,
+    WithoutSteps,
+}
 
 /// The token flow. `connecting` puts it in its place among [`STEPS`]; signing
 /// in again from the inbox is the token alone, so it carries none.
@@ -124,6 +151,8 @@ struct Readeck {
     book: BookView,
     scale: TextScale,
     more_open: bool,
+    /// What the last check for a server written from the computer found.
+    server_check: ServerCheck,
     problem: Option<String>,
     /// Why the last refresh failed, shown over whatever inbox is on screen.
     failure: Option<Problem>,
@@ -154,6 +183,7 @@ impl Default for Readeck {
             book: BookView::new(),
             scale: TextScale::Medium,
             more_open: false,
+            server_check: ServerCheck::Unchecked,
             problem: None,
             failure: None,
             reloading: false,
@@ -252,7 +282,7 @@ impl Readeck {
                 .top_bar("Readeck")
                 .activity("Opening settings", None)
                 .build(),
-            View::Server => self.server_screen(),
+            View::Server => self.server_screen(context),
             View::Search => ScreenBuilder::new("readeck-search")
                 .top_bar("Search library")
                 .text_entry_with_hint(
@@ -292,9 +322,14 @@ impl Readeck {
         }
     }
     /// The first step of connecting: where the server is. The runtime draws
-    /// the keys; this screen is the field, the computer route beside it, and
-    /// the way to keep a token that is already on the reader.
-    fn server_screen(&self) -> Screen {
+    /// the keys; this screen is the computer route, the field, and the way
+    /// to keep a token that is already on the reader.
+    ///
+    /// Laid out as every connect screen is: a banner first, then the
+    /// command, then Check again directly under it. Once a check has found
+    /// nothing, Check again moves onto the banner that says so, rather than
+    /// sitting in the top bar where it is read last.
+    fn server_screen(&self, context: &Context) -> Screen {
         if self.address.is_open() {
             return ScreenBuilder::new("readeck-server")
                 .top_bar("Connect Readeck")
@@ -302,22 +337,52 @@ impl Readeck {
                 .text_entry(&self.address, "Readeck server address", "Next")
                 .build();
         }
-        let mut screen = ScreenBuilder::new("readeck-server")
-            .top_bar("Connect Readeck")
-            .top_bar_action("check-again", "Check again")
-            .steps(0, 3, STEPS)
-            .secondary("Run kobo connect readeck on your computer, then tap Check again. Or type your HTTPS server here.")
-            .field("server-address", &self.draft, "https://readeck.example")
-            .field_label("Server address")
-            .field_hint("The address you open Readeck at, starting with https://")
-            .field_kind(FieldKind::Address);
-        if let Some(error) = &self.address_error {
-            screen = screen.field_error(error);
-        }
-        screen
-            .button("saved-token", "Use saved token")
-            .owns_back(true)
-            .build()
+        let build = |shape: ServerShape| {
+            let mut screen = ScreenBuilder::new("readeck-server").top_bar("Connect Readeck");
+            if self.server_check == ServerCheck::FoundNothing {
+                screen = screen
+                    .banner(BannerLevel::Attention, NO_SERVER_YET)
+                    .banner_action("check-again", "Check again");
+            }
+            if shape < ServerShape::WithoutSteps {
+                screen = screen.steps(0, 3, STEPS);
+            }
+            if shape == ServerShape::Full {
+                screen = screen.secondary("Run this on your computer, or type your server below.");
+            }
+            screen = screen.command("kobo connect readeck");
+            if self.server_check == ServerCheck::Unchecked {
+                screen = screen.primary_button("check-again", "Check again");
+            }
+            screen = screen
+                .field("server-address", &self.draft, "https://readeck.example")
+                .field_label("Server address")
+                .field_kind(FieldKind::Address);
+            if let Some(error) = &self.address_error {
+                screen = screen.field_error(error);
+            } else if shape < ServerShape::WithoutHint {
+                screen =
+                    screen.field_hint("The address you open Readeck at, starting with https://");
+            }
+            screen
+                .button("saved-token", "Use saved token")
+                .owns_back(true)
+                .build()
+        };
+        let metrics = context.metrics();
+        [
+            ServerShape::Full,
+            ServerShape::WithoutSentence,
+            ServerShape::WithoutHint,
+        ]
+        .into_iter()
+        .map(build)
+        .find(|screen| {
+            !screen
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| build(ServerShape::WithoutSteps))
     }
     fn controls(&self) -> Screen {
         if self.mutation.is_some() {
@@ -470,6 +535,7 @@ impl Readeck {
         self.draft = self.server.clone().unwrap_or_default();
         self.address_error = None;
         self.more_open = false;
+        self.server_check = ServerCheck::Unchecked;
         self.view = View::Server;
     }
     fn submit_server(&mut self) {
@@ -763,6 +829,7 @@ impl KoboApp for Readeck {
             } else if action == action_id("server-address") {
                 self.address.open_with(&self.draft);
             } else if action == action_id("check-again") {
+                self.server_check = ServerCheck::Unchecked;
                 self.reload_server(context);
             } else if action == action_id("saved-token") {
                 self.prepare_server(false);
@@ -1030,6 +1097,7 @@ impl Readeck {
     fn reloaded(&mut self, context: &mut Context, loaded: Option<String>) {
         match loaded {
             Some(server) if self.server.as_ref() != Some(&server) => {
+                self.server_check = ServerCheck::Unchecked;
                 self.cancel_requests(context);
                 self.account.close();
                 self.server = Some(server);
@@ -1049,12 +1117,7 @@ impl Readeck {
             {
                 self.fetch_list(context, 0, false);
             }
-            None if self.view == View::Server => {
-                self.problem = Some(
-                    "No server has arrived from the computer yet. Run kobo connect readeck, then check again."
-                        .into(),
-                );
-            }
+            None if self.view == View::Server => self.server_check = ServerCheck::FoundNothing,
             Some(_) | None => {}
         }
     }

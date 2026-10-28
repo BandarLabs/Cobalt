@@ -182,7 +182,7 @@ def main():
                 undo();assert position(1)[1].split(',')[0]=='1'
                 # A solved board offers the next puzzle where the mode sits, so
                 # clear one line first to bring the mode back.
-                choose(0);drive('tap-id edge-0','wait-idle','tap-id line-mode','tap-id edge-0','expect Mode: Cross','wait-idle')
+                choose(0);drive('tap-id edge-0','wait-idle','tap-id line-mode','tap-id edge-0','expect Draw lines','wait-idle')
                 assert position(0)[1].split(',')[0]=='2'
                 capture('07-excluded-edge')
                 undo();undo();assert position(0)[-1]=='1'

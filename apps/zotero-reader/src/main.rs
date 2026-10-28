@@ -33,6 +33,16 @@ const KEYS_PAGE: &str = "https://www.zotero.org/settings/keys";
 const NO_ID_YET: &str =
     "No user ID has arrived from the computer yet. Run the command, then check again.";
 
+/// How much of the first connect screen the panel has room for, most first.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SetupShape {
+    Full,
+    /// Without the sentence over the command.
+    Short,
+    /// Without the field's hint either, and Use phone in the top bar.
+    Tight,
+}
+
 /// The key flow. `connecting` puts it in its place among [`STEPS`]; a key that
 /// goes missing later is asked for on its own.
 fn key_setup(connecting: bool) -> CredentialSetup {
@@ -907,8 +917,19 @@ impl ReadingList {
     }
 
     /// The first step of connecting. The runtime draws the digits; this
-    /// screen is the field, where the ID comes from, and the computer route.
-    fn setup_screen(&self) -> Screen {
+    /// screen is the computer route, which brings the ID and the key at
+    /// once, then the field for an owner typing the ID here.
+    ///
+    /// Laid out as every connect screen is: what the owner needs to read
+    /// first under the top bar, then where this is in connecting and the
+    /// one command, with Check again directly under the command. Once a
+    /// check has found nothing, Check again is the action of the banner that
+    /// says so, and the button under the command goes, so it is offered
+    /// once. Where the panel has no room, held sideways at the larger text
+    /// sizes, the sentence over the command gives way first, then the
+    /// field's hint, and Use phone moves into the top bar; the command and
+    /// every control stay.
+    fn setup_screen(&self, context: &Context) -> Screen {
         if self.user_entry.is_open() {
             return ScreenBuilder::new("zotero-reader-setup")
                 .top_bar("Connect Zotero")
@@ -932,36 +953,54 @@ impl ReadingList {
                 .build();
         }
         let checked = self.trouble.as_deref() == Some(NO_ID_YET);
-        let mut screen = ScreenBuilder::new("zotero-reader-setup").top_bar("Connect Zotero");
-        // Check again lives in the bar until a check has found nothing; then
-        // it is the action of the banner that says so, and only there.
-        if !checked {
-            screen = screen.top_bar_action("check-again", "Check again");
-        }
-        screen = screen
-            .steps(0, 3, STEPS)
-            .field("zotero-user-id", &self.user_draft, "Numeric Zotero user ID")
-            .field_label("Zotero user ID")
-            .field_kind(FieldKind::Number);
-        // A banner is what the owner needs to read while it is up, and the
-        // hint gives up its line to it so the screen fits a panel held on its
-        // side at the largest text. The runtime's field says the same.
-        if self.trouble.is_none() {
-            screen = screen.field_hint("The number shown beside your Zotero API key.");
-        }
-        if let Some(error) = &self.user_error {
-            screen = screen.field_error(error);
-        }
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
-            if checked {
-                screen = screen.banner_action("check-again", "Check again");
+        let build = |shape: SetupShape| {
+            let mut screen = ScreenBuilder::new("zotero-reader-setup").top_bar("Connect Zotero");
+            if shape == SetupShape::Tight {
+                screen = screen.top_bar_action("zotero-phone", "Use phone");
             }
-        }
-        screen
-            .secondary("Or run kobo connect zotero-reader on a computer.")
-            .button("zotero-phone", "Use phone")
-            .build()
+            if let Some(trouble) = &self.trouble {
+                screen = screen.banner(BannerLevel::Attention, trouble.clone());
+                if checked {
+                    screen = screen.banner_action("check-again", "Check again");
+                }
+            }
+            screen = screen.steps(0, 3, STEPS);
+            if shape == SetupShape::Full {
+                screen = screen
+                    .secondary("Run this on your computer. It asks for your user ID and API key.");
+            }
+            screen = screen.command("kobo connect zotero-reader");
+            if !checked {
+                screen = screen.primary_button("check-again", "Check again");
+            }
+            screen = screen
+                .field("zotero-user-id", &self.user_draft, "Numeric Zotero user ID")
+                .field_label("Zotero user ID")
+                .field_kind(FieldKind::Number);
+            // A banner is what the owner needs to read while it is up, and the
+            // hint gives up its line to it. The runtime's field says the same.
+            if self.trouble.is_none() && shape != SetupShape::Tight {
+                screen = screen.field_hint("The number shown beside your Zotero API key.");
+            }
+            if let Some(error) = &self.user_error {
+                screen = screen.field_error(error);
+            }
+            if shape != SetupShape::Tight {
+                screen = screen.button("zotero-phone", "Use phone");
+            }
+            screen.build()
+        };
+        let metrics = context.metrics();
+        [SetupShape::Full, SetupShape::Short]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .issues
+                    .is_empty()
+            })
+            .unwrap_or_else(|| build(SetupShape::Tight))
     }
 
     fn collections_screen(&self, context: &Context) -> Screen {
@@ -1335,7 +1374,7 @@ impl ReadingList {
             return;
         }
         let screen = match self.view {
-            View::Setup => self.setup_screen(),
+            View::Setup => self.setup_screen(context),
             View::Collections => self.collections_screen(context),
             View::Feed => self.feed_screen(context),
             View::Search => self.search_screen(),
@@ -2235,7 +2274,7 @@ mod tests {
                 metrics.width = width;
                 metrics.height = height;
                 let text_scale = metrics.text_scale;
-                let _runner = AppRunner::with_metrics(ReadingList::default(), metrics);
+                let runner = AppRunner::with_metrics(ReadingList::default(), metrics);
                 let refused =
                     "The Zotero user ID must contain only digits and is not your username.";
                 for (trouble, user_error, phone) in [
@@ -2251,7 +2290,7 @@ mod tests {
                         phone,
                         ..ReadingList::default()
                     };
-                    let screen = app.setup_screen().with_own_back(phone);
+                    let screen = app.setup_screen(&runner.context()).with_own_back(phone);
                     let diagnostics =
                         screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
                     assert!(
@@ -2274,13 +2313,69 @@ mod tests {
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(" ");
+                    // The command is set with non-breaking hyphens.
                     assert!(
-                        text.contains("kobo connect zotero-reader"),
+                        text.replace('\u{2011}', "-")
+                            .contains("kobo connect zotero-reader"),
                         "the computer route must not be clipped: {text}"
                     );
+                    for action in ["check-again", "zotero-phone"] {
+                        assert!(
+                            diagnostics
+                                .layout
+                                .rect_of_action(action_id(action))
+                                .is_some(),
+                            "{text_scale:?} {width}x{height}: {action}"
+                        );
+                    }
                 }
             }
         }
+    }
+
+    /// Where each part of the connect screen is drawn, in reading order.
+    fn connect_order(screen: &kobo_sdk::Screen) -> Vec<&'static str> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Banner { .. } => Some("banner"),
+                kobo_sdk::Node::Steps { .. } => Some("steps"),
+                kobo_sdk::Node::Quote { .. } => Some("command"),
+                kobo_sdk::Node::Button {
+                    action,
+                    emphasis: kobo_sdk::Emphasis::Primary,
+                    ..
+                } if *action == action_id("check-again") => Some("check again"),
+                kobo_sdk::Node::Field { .. } => Some("field"),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_connect_screen_reads_banner_then_command_then_check_again_with_nothing_in_the_bar() {
+        let context = AppRunner::new(ReadingList::default()).context();
+        let first = ReadingList::default().setup_screen(&context);
+        assert_eq!(
+            connect_order(&first),
+            ["steps", "command", "check again", "field"],
+            "{first:?}"
+        );
+        assert!(first
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
+        let checked = ReadingList {
+            trouble: Some(super::NO_ID_YET.to_owned()),
+            ..ReadingList::default()
+        }
+        .setup_screen(&context);
+        assert_eq!(
+            connect_order(&checked),
+            ["banner", "steps", "command", "field"],
+            "Check again moves onto the banner: {checked:?}"
+        );
     }
 
     #[test]

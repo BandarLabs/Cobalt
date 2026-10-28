@@ -144,14 +144,13 @@ impl Calibre {
             return s.problem_banner_with(failure, "retry", Some("sign-in-again"));
         }
         match self.settings.state {
+            // An unsaved setup waits on the owner, so it is an Error; a save
+            // in flight is news, not trouble.
             settings::State::Failed => s
-                .banner(
-                    kobo_sdk::BannerLevel::Attention,
-                    "Library setup is not saved.",
-                )
+                .banner(kobo_sdk::BannerLevel::Error, "Library setup is not saved.")
                 .banner_action("settings-save", "Retry saving"),
             settings::State::Saving => {
-                s.banner(kobo_sdk::BannerLevel::Attention, "Saving library setup.")
+                s.banner(kobo_sdk::BannerLevel::Info, "Saving library setup.")
             }
             _ => s,
         }
@@ -376,7 +375,7 @@ impl Calibre {
             return self.account.screen("Library account");
         }
         if self.reading.visible {
-            return self.reading.screen();
+            return self.reading.screen(c);
         }
         match self.view {
             View::Libraries => {
@@ -386,8 +385,12 @@ impl Calibre {
                 if !self.loaded {
                     s = s.secondary("Loading libraries…");
                 } else if self.settings.state == settings::State::Blocked {
-                    s = s.text("Saved library settings could not be read. They have been left untouched.")
-                        .button("settings-load", "Retry loading settings");
+                    s = s
+                        .banner(
+                            kobo_sdk::BannerLevel::Error,
+                            "Saved library settings could not be read. They have been left untouched.",
+                        )
+                        .banner_action("settings-load", "Retry loading settings");
                 } else if self.url.is_empty() {
                     s = s
                         .splash(
@@ -835,10 +838,11 @@ mod tests {
             "the catalog stays: {drawn}"
         );
         assert!(drawn.contains("did not answer"), "{drawn}");
-        let away = catalog::failure(
+        let away = catalog::problem(
             "https://192.168.1.4:8083/opds",
             kobo_sdk::TaskError::Unreachable,
-        );
+        )
+        .message;
         assert!(away.contains("home network"), "{away}");
         assert!(!away.contains("address"), "{away}");
     }
@@ -931,7 +935,68 @@ mod tests {
                     }
                 }
             }
+            // The setup's own banners: an unsaved setup over the catalog,
+            // with its retry line, and unreadable settings on Libraries.
+            app.failure = None;
+            for (state, view, retry) in [
+                (settings::State::Failed, View::Library, "settings-save"),
+                (settings::State::Blocked, View::Libraries, "settings-load"),
+            ] {
+                app.settings.state = state;
+                app.view = view;
+                let diagnostics = app
+                    .screen(&context)
+                    .diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?} {orientation:?} {retry}: {:?}",
+                    diagnostics.issues
+                );
+                assert!(diagnostics
+                    .layout
+                    .rect_of_action(action_id(retry))
+                    .is_some());
+            }
+            app.settings.state = settings::State::Loading;
         }
+    }
+    #[test]
+    fn an_unsaved_setup_and_unreadable_settings_are_error_banners_carrying_their_retry() {
+        let mut app = loaded_catalog();
+        let c = Context::default();
+        let banner = |app: &Calibre| {
+            app.screen(&c).nodes.iter().find_map(|node| match node {
+                kobo_sdk::Node::Banner {
+                    level,
+                    action: Some(action),
+                    ..
+                } => Some((*level, action.action, action.label.clone())),
+                _ => None,
+            })
+        };
+        app.settings.state = settings::State::Failed;
+        assert_eq!(
+            banner(&app),
+            Some((
+                kobo_sdk::BannerLevel::Error,
+                action_id("settings-save"),
+                "Retry saving".to_owned()
+            ))
+        );
+        app.settings.state = settings::State::Blocked;
+        app.view = View::Libraries;
+        assert_eq!(
+            banner(&app),
+            Some((
+                kobo_sdk::BannerLevel::Error,
+                action_id("settings-load"),
+                "Retry loading settings".to_owned()
+            ))
+        );
+        assert!(!app.screen(&c).nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Button { action, .. } if *action == action_id("settings-load")
+        )));
     }
     #[test]
     fn setup_save_retry_and_unreadable_settings_guard() {

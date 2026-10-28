@@ -8,7 +8,7 @@ use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Credential, FieldKind, Glyph, KoboApp, Position,
-    Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
+    RowState, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use mealie::Recipe;
 use std::{process::ExitCode, time::Duration};
@@ -480,7 +480,12 @@ impl Kitchen {
             ))
     }
 
-    fn ingredient_rows(&self) -> Vec<(String, String, String, Glyph)> {
+    /// The ingredient lines as a checklist. Each line carries whether it is
+    /// ticked and the runtime draws the box, so a ticked line is the same
+    /// size as an open one and nothing on the page moves when it is ticked.
+    /// There is no selection bar: ticking off is the whole job here, and
+    /// nothing is done to the ticked lines all at once.
+    fn ingredient_rows(&self) -> Vec<(String, String, String, Glyph, RowState)> {
         self.recipe().map_or_else(Vec::new, |recipe| {
             recipe
                 .ingredients
@@ -497,10 +502,14 @@ impl Kitchen {
                         format!("ingredient-{index}"),
                         ingredient.label().to_owned(),
                         detail,
+                        // The box takes the lead's place, so this mark is
+                        // never drawn; it is what the row would lead with
+                        // anywhere it is not a checklist.
+                        Glyph::Circle,
                         if self.checked.contains(&index) {
-                            Glyph::Check
+                            RowState::Checked
                         } else {
-                            Glyph::Circle
+                            RowState::Unchecked
                         },
                     )
                 })
@@ -512,7 +521,7 @@ impl Kitchen {
         let rows = self.ingredient_rows();
         let borrowed = rows
             .iter()
-            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .map(|(_, title, detail, _, _)| (title.as_str(), detail.as_str()))
             .collect::<Vec<_>>();
         context.paginate_rows_under(
             &borrowed,
@@ -540,7 +549,7 @@ impl Kitchen {
         let pages = self.ingredients_pages(context);
         let page = self.ingredients_page.min(pages.len().saturating_sub(1));
         Self::page_controls(
-            screen.rows(pages[page].iter().map(|&index| rows[index].clone())),
+            screen.checked_rows(pages[page].iter().map(|&index| rows[index].clone())),
             page,
             pages.len(),
         )

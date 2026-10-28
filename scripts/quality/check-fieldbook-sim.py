@@ -175,12 +175,12 @@ def main():
                 drive("wait-for lake merced")
                 capture("fieldbook-home-restored")
 
-                # Every species is one tap away: Mallard, the eighth bird, is on
-                # the tally's second page. An open outing survives a restart.
+                # Every species is a page turn or two away: Mallard, the eighth
+                # bird, is on the tally's second page, and on the third at the
+                # largest text size. An open outing survives a restart.
                 drive("tap-id new-outing", "wait-for Name this place",
                       "type pier", "tap Save", "wait-for pier")
-                drive("tap-id outing-next", "wait-for Mallard", "tap Mallard",
-                      "wait-for 1 logged")
+                drive("tap-id outing-next", "tap-paged Mallard", "wait-for 1 logged")
                 capture("fieldbook-tally-page-two")
                 stop()
                 start()

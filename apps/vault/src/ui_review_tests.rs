@@ -1,7 +1,7 @@
 //! In-process app and renderer checks; no interactive simulator is required.
 use super::*;
 use kobo_sdk::{AppRunner, DiagnosticSeverity, Node};
-use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
+use kobo_ui::{Chrome, DisplayMetrics, Orientation, TextScale, CLARA_BW_METRICS};
 use std::collections::BTreeSet;
 
 fn vault() -> Vault {
@@ -400,4 +400,175 @@ fn notes_pushed_while_vault_was_away_appear_when_it_comes_back() {
     );
     runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
     assert!(runner.app().manifest_load.is_some());
+}
+
+fn banners(screen: &Screen) -> Vec<(BannerLevel, String, Option<ActionId>)> {
+    screen
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Banner {
+                level,
+                text,
+                action,
+                ..
+            } => Some((*level, text.clone(), action.as_ref().map(|a| a.action))),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A note whose body could not be read used to drop the reader back on the
+/// list with no word, so the tap looked as if it had done nothing.
+#[test]
+fn a_note_that_cannot_be_opened_says_so_on_the_list_it_returns_to() {
+    let mut runner = AppRunner::new(vault());
+    runner.action(action_id("recent"));
+    runner.action(action_id("note-3"));
+    assert!(runner.app().body_load.is_some(), "the body is being read");
+    let mut context = runner.context();
+    runner.app_mut().on_shelf(
+        &mut context,
+        &shelf::note_name("id-3"),
+        StoreResult::Denied(kobo_sdk::StoreError::Missing),
+    );
+    assert_eq!(runner.app().view, View::Recent);
+    let mut context = runner.context();
+    let screen = runner.app_mut().screen(&mut context);
+    assert_eq!(
+        banners(&screen),
+        [(BannerLevel::Error, UNREADABLE.to_owned(), None)]
+    );
+    // Turning the page of the list keeps it; the next tap moves on.
+    runner.action(action_id("list-next"));
+    assert!(runner.app().notice.is_some());
+    runner.action(action_id("list-prev"));
+    runner.action(action_id("note-4"));
+    assert!(runner.app().notice.is_none());
+}
+
+/// The notice costs the lists their room, so every row of every list it can
+/// sit over is still reached by turning pages, at every size held either way.
+#[test]
+fn every_list_row_is_reached_under_the_unreadable_note_notice_at_every_size_held_either_way() {
+    for text_scale in TextScale::STEPS {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let runner = AppRunner::with_metrics(Vault::default(), metrics);
+            let mut context = runner.context();
+            for (view, expected) in [
+                (View::Browse, 20),
+                (View::TagNotes, 20),
+                (View::Recent, 20),
+                (View::Search, 20),
+                (View::Backlinks, 19),
+            ] {
+                let mut app = vault();
+                app.view = view;
+                app.notice = Some((BannerLevel::Error, UNREADABLE.to_owned()));
+                let mut seen = BTreeSet::new();
+                for _ in 0..100 {
+                    let screen = app.screen(&mut context);
+                    assert_fits(&screen, metrics);
+                    assert_eq!(banners(&screen).len(), 1, "{view:?}");
+                    let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                    for node in &screen.nodes {
+                        if let Node::Rows { rows, .. } = node {
+                            for row in rows {
+                                assert!(layout.rect_of_action(row.action).is_some());
+                                seen.insert(row.action.0);
+                            }
+                        }
+                    }
+                    let before = app.page(view);
+                    app.on_action(&mut context, action_id("list-next"));
+                    if app.page(view) == before {
+                        break;
+                    }
+                }
+                assert_eq!(
+                    seen.len(),
+                    expected,
+                    "{view:?} at {text_scale:?} {orientation:?}"
+                );
+            }
+        }
+    }
+}
+
+/// Import failures are an error with See why on the banner, in place of the
+/// About Vault button that went to the same screen, and the home screen keeps
+/// every way in on the panel at every size held either way.
+#[test]
+fn import_failures_carry_see_why_in_place_of_about_vault_at_every_size_held_either_way() {
+    for text_scale in TextScale::STEPS {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let runner = AppRunner::with_metrics(Vault::default(), metrics);
+            let mut context = runner.context();
+            for failed in [true, false] {
+                let mut app = vault();
+                if !failed {
+                    app.pushed.as_mut().unwrap().failures.clear();
+                }
+                let at = format!("{text_scale:?} {orientation:?} failed {failed}");
+                let screen = app.screen(&mut context);
+                assert_fits(&screen, metrics);
+                let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                for action in ["browse", "tags", "recent", "search", "about"] {
+                    assert!(
+                        layout.rect_of_action(action_id(action)).is_some(),
+                        "{at}: {action}"
+                    );
+                }
+                let offered = layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind.acts_on() == Some(action_id("about")))
+                    .count();
+                assert_eq!(offered, 1, "{at}");
+                let drawn = banners(&screen);
+                if failed {
+                    assert_eq!(
+                        drawn,
+                        [(
+                            BannerLevel::Error,
+                            "12 notes did not import.".to_owned(),
+                            Some(action_id("about"))
+                        )],
+                        "{at}"
+                    );
+                } else {
+                    assert!(drawn.is_empty(), "{at}");
+                    assert!(format!("{screen:?}").contains("About Vault"), "{at}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_note_no_longer_on_the_shelf_is_drawn_as_an_error() {
+    let runner = AppRunner::new(Vault::default());
+    let mut context = runner.context();
+    let mut app = vault();
+    app.current = usize::MAX;
+    app.view = View::Note;
+    let screen = app.screen(&mut context);
+    assert_eq!(
+        banners(&screen),
+        [(
+            BannerLevel::Error,
+            "This note is no longer on the shelf.".to_owned(),
+            None
+        )]
+    );
 }

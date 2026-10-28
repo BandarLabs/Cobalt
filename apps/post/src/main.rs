@@ -33,6 +33,17 @@ enum View {
     Compose,
 }
 
+/// How much of the connect screen the panel has room for, most first.
+#[derive(Clone, Copy)]
+enum Shape {
+    Marked,
+    Plain,
+    Compact,
+    /// Held sideways at the largest sizes with a banner up: the heading and
+    /// the first sentence give way, and what to do stays.
+    Short,
+}
+
 #[derive(Default)]
 struct Post {
     view: View,
@@ -60,15 +71,33 @@ struct Post {
     page_index: usize,
     advance_on_fetch: bool,
     loaded: bool,
-    notice: Option<String>,
+    /// What the screen says about the last thing that happened, at the
+    /// level its meaning asks for: a sent reply is a success and a refused
+    /// one an error, so the two never look alike.
+    notice: Option<(BannerLevel, String)>,
     /// The owner tapped Check again on setup and is owed an answer.
     checking: bool,
 }
 
 impl Post {
     /// The real cause of a failed request, in the gateway's terms.
-    fn problem(&self, error: TaskError) -> String {
+    fn problem(&self, error: TaskError) -> kobo_sdk::failure::Problem {
         problem_at(&self.gateway, error)
+    }
+
+    /// The notice as a banner, at its own level.
+    fn banner(screen: ScreenBuilder, notice: Option<&(BannerLevel, String)>) -> ScreenBuilder {
+        match notice {
+            Some((level, text)) => screen.banner(*level, text),
+            None => screen,
+        }
+    }
+
+    /// Whether the notice is the answer to a Check again that found nothing.
+    fn checked(&self) -> bool {
+        self.notice
+            .as_ref()
+            .is_some_and(|(_, text)| text == NO_GATEWAY_YET)
     }
 
     fn show(&self, c: &mut Context) {
@@ -77,7 +106,7 @@ impl Post {
                 .top_bar("Post")
                 .activity("Opening", None)
                 .build(),
-            View::Setup => self.setup(),
+            View::Setup => self.setup(c),
             View::Inbox => self.inbox(c),
             View::Letter => self.letter(c),
             View::Compose => self.compose(),
@@ -85,38 +114,65 @@ impl Post {
         c.set_screen(built.with_own_back(matches!(self.view, View::Letter | View::Compose)));
     }
 
-    fn setup(&self) -> Screen {
+    /// The first screen, until a gateway is set up.
+    ///
+    /// Laid out as every connect screen is: what the owner needs to read
+    /// first under the top bar, then what Post needs and the one command
+    /// that gives it, with Check again directly under the command. Once a
+    /// check has found nothing, Check again is the action of the banner that
+    /// says so, and the button under the command goes, so it is offered
+    /// once. Typing the address here comes last, for an owner without a
+    /// computer to hand. Where the panel has no room, held sideways at the
+    /// larger text sizes, the mark goes first, then the heading is set as a
+    /// section, and last, with a banner up at the largest sizes, the heading
+    /// and the sentence about Hermes give way to one line saying what to do;
+    /// the command and every control stay.
+    fn setup(&self, context: &Context) -> Screen {
+        const TEXT: &str = "Post reads letters from your Hermes gateway. Run this on your computer. It asks for the address and a token.";
         if self.address.is_open() {
             return ScreenBuilder::new("post-setup")
                 .top_bar("Post")
                 .text_entry(&self.address, "Gateway address", "Save gateway")
                 .build();
         }
-        let checked = self.notice.as_deref() == Some(NO_GATEWAY_YET);
-        let mut screen = ScreenBuilder::new("post-setup").top_bar("Post");
-        // Check again sits in the bar until a check has found nothing; then
-        // it is the action of the banner that says so, and only there.
-        if !checked {
-            screen = screen.top_bar_action("check-again", "Check again");
-        }
-        screen = screen
-            .section("Connect a gateway")
-            .secondary("Post reads letters from a Hermes gateway you run. On your computer:")
-            .command("kobo connect post");
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+        let checked = self.checked();
+        let build = |shape: Shape| {
+            let mut screen = Self::banner(
+                ScreenBuilder::new("post-setup").top_bar("Post"),
+                self.notice.as_ref(),
+            );
             if checked {
                 screen = screen.banner_action("check-again", "Check again");
             }
-        }
-        screen = screen
-            .field(GATEWAY_URL, &self.draft, "https://hermes.example.net")
-            .field_label("Gateway address")
-            .field_kind(FieldKind::Address);
-        if let Some(error) = &self.address_error {
-            screen = screen.field_error(error);
-        }
-        screen.build()
+            screen = match shape {
+                Shape::Marked => screen.splash(Some(Glyph::Chat), "Connect a gateway", TEXT),
+                Shape::Plain => screen.splash(None, "Connect a gateway", TEXT),
+                Shape::Compact => screen.section("Connect a gateway").secondary(TEXT),
+                Shape::Short => screen.secondary("Run this on your computer to connect a gateway."),
+            }
+            .command("kobo connect post");
+            if !checked {
+                screen = screen.primary_button("check-again", "Check again");
+            }
+            screen = screen
+                .field(GATEWAY_URL, &self.draft, "https://hermes.example.net")
+                .field_label("Gateway address")
+                .field_kind(FieldKind::Address);
+            if let Some(error) = &self.address_error {
+                screen = screen.field_error(error);
+            }
+            screen.build()
+        };
+        let metrics = context.metrics();
+        [Shape::Marked, Shape::Plain, Shape::Compact]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| build(Shape::Short))
     }
 
     fn inbox_pages(&self, context: &Context) -> Vec<Vec<usize>> {
@@ -148,12 +204,12 @@ impl Post {
     }
 
     fn inbox_page(&self, indices: &[usize], page: usize) -> Screen {
-        let mut s = ScreenBuilder::new("post-inbox")
-            .top_bar("Post")
-            .top_bar_action(REFRESH, "Check");
-        if let Some(notice) = &self.notice {
-            s = s.banner(BannerLevel::Attention, notice);
-        }
+        let mut s = Self::banner(
+            ScreenBuilder::new("post-inbox")
+                .top_bar("Post")
+                .top_bar_action(REFRESH, "Check"),
+            self.notice.as_ref(),
+        );
         let queued = self
             .outbox
             .iter()
@@ -201,10 +257,7 @@ impl Post {
         {
             screen = screen.text(format!("Your reply: {}.", reply.state.label()));
         }
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
-        }
-        screen
+        Self::banner(screen, self.notice.as_ref())
     }
 
     fn letter_pages(&self, context: &Context, letter: &Letter) -> Vec<Vec<String>> {
@@ -262,14 +315,13 @@ impl Post {
     }
 
     fn compose(&self) -> Screen {
-        let mut s = ScreenBuilder::new("post-compose")
+        let s = ScreenBuilder::new("post-compose")
             .top_bar("Reply")
             .heading("Write a letter")
             .field("reply-body", self.keyboard.text(), "Your reply");
-        if let Some(notice) = &self.notice {
-            s = s.banner(BannerLevel::Attention, notice);
-        }
-        s.keyboard(&self.keyboard, "Send letter").build()
+        Self::banner(s, self.notice.as_ref())
+            .keyboard(&self.keyboard, "Send letter")
+            .build()
     }
 
     fn place(&self, id: &str) -> usize {
@@ -322,7 +374,7 @@ impl Post {
             self.fetching_page = 1;
             // A progress banner only fits while the list is empty.
             self.notice = if self.letters.is_empty() {
-                Some("Checking for letters…".into())
+                Some((BannerLevel::Info, "Checking for letters…".into()))
             } else {
                 None
             };
@@ -380,18 +432,26 @@ impl Post {
                     }
                     self.save_cache(c);
                 } else {
-                    self.notice = Some(
+                    // The gateway is the owner's own, and one that answers
+                    // with something else needs its address or its setup
+                    // looked at; waiting will not mend it.
+                    self.notice = Some((
+                        BannerLevel::Error,
                         "The gateway answered with something other than letters. Your cached list is unchanged."
                             .into(),
-                    );
+                    ));
                 }
             }
             TaskOutcome::Failed(e) => {
-                self.notice = Some(if self.letters.is_empty() {
-                    self.problem(e)
-                } else {
-                    format!("{} Your cached letters are still here.", self.problem(e))
-                });
+                let problem = self.problem(e);
+                self.notice = Some((
+                    problem.level(),
+                    if self.letters.is_empty() {
+                        problem.message
+                    } else {
+                        format!("{} Your cached letters are still here.", problem.message)
+                    },
+                ));
             }
             TaskOutcome::Cancelled => {}
         }
@@ -411,37 +471,48 @@ impl Post {
             TaskOutcome::Completed(bytes) => {
                 if protocol::reply_outcome(&bytes).is_some() {
                     sent.state = ReplyState::Delivered;
-                    self.notice = Some("Sent to Hermes.".into());
+                    self.notice = Some((BannerLevel::Success, "Sent to Hermes.".into()));
                 } else {
                     sent.state = ReplyState::Queued;
-                    self.notice =
-                        Some("Couldn't read the gateway's answer. The reply stays queued.".into());
+                    self.notice = Some((
+                        BannerLevel::Attention,
+                        "Couldn't read the gateway's answer. The reply stays queued.".into(),
+                    ));
                 }
             }
             TaskOutcome::Failed(TaskError::NotFound) => {
                 sent.state = ReplyState::Rejected;
-                self.notice = Some(
+                self.notice = Some((
+                    BannerLevel::Error,
                     "Reply rejected: the letter no longer exists on the gateway. Edit and send again."
                         .into(),
-                );
+                ));
             }
             TaskOutcome::Failed(TaskError::TooLarge) => {
                 sent.state = ReplyState::Rejected;
-                self.notice =
-                    Some("Reply too long for the gateway. Shorten and send again.".into());
+                self.notice = Some((
+                    BannerLevel::Error,
+                    "Reply too long for the gateway. Shorten and send again.".into(),
+                ));
             }
             TaskOutcome::Failed(e @ (TaskError::NoCredential | TaskError::Unauthorized)) => {
                 sent.state = ReplyState::Queued;
-                self.notice = Some(problem_at(&self.gateway, e));
+                let problem = problem_at(&self.gateway, e);
+                self.notice = Some((problem.level(), problem.message));
             }
             TaskOutcome::Failed(TaskError::RateLimited(_)) => {
                 sent.state = ReplyState::Queued;
-                self.notice =
-                    Some("Rate limited by the gateway. The reply sends on the next check.".into());
+                self.notice = Some((
+                    BannerLevel::Attention,
+                    "Rate limited by the gateway. The reply sends on the next check.".into(),
+                ));
             }
             TaskOutcome::Failed(_) | TaskOutcome::Cancelled => {
                 sent.state = ReplyState::Queued;
-                self.notice = Some("Reply still queued. It sends on the next connection.".into());
+                self.notice = Some((
+                    BannerLevel::Attention,
+                    "Reply still queued. It sends on the next connection.".into(),
+                ));
             }
         }
         let delivered = completed && sent.state == ReplyState::Delivered;
@@ -463,11 +534,17 @@ impl Post {
             self.save_outbox(c);
             self.keyboard.clear();
             self.view = View::Letter;
-            self.notice = Some("Reply queued; sending on this connection.".into());
+            self.notice = Some((
+                BannerLevel::Info,
+                "Reply queued; sending on this connection.".into(),
+            ));
             self.show(c);
             self.flush_replies(c);
         } else {
-            self.notice = Some("Write a reply of at most 32,000 characters.".into());
+            self.notice = Some((
+                BannerLevel::Error,
+                "Write a reply of at most 32,000 characters.".into(),
+            ));
             self.show(c);
         }
     }
@@ -530,7 +607,7 @@ impl Post {
     }
 }
 
-fn problem_at(gateway: &str, error: TaskError) -> String {
+fn problem_at(gateway: &str, error: TaskError) -> kobo_sdk::failure::Problem {
     let service = kobo_sdk::failure::Service::new("Your gateway")
         .fixed_by("Run kobo connect post on your computer.");
     let service = if gateway.is_empty() {
@@ -538,7 +615,7 @@ fn problem_at(gateway: &str, error: TaskError) -> String {
     } else {
         service.at(gateway)
     };
-    service.explain(error).message
+    service.explain(error)
 }
 
 fn excerpt(text: &str) -> String {
@@ -595,7 +672,7 @@ impl KoboApp for Post {
             if self.view == View::Setup {
                 if self.gateway.is_empty() {
                     if std::mem::take(&mut self.checking) {
-                        self.notice = Some(NO_GATEWAY_YET.into());
+                        self.notice = Some((BannerLevel::Attention, NO_GATEWAY_YET.into()));
                         self.show(c);
                     }
                 } else {
@@ -962,7 +1039,7 @@ mod large_text_tests {
                     );
                 }
             }
-            let setup = app.setup();
+            let setup = app.setup(&runner.context());
             fits(&setup, metrics);
             let text = setup
                 .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
@@ -972,7 +1049,7 @@ mod large_text_tests {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(" ");
-            assert!(text.contains("On your computer:"), "{text}");
+            assert!(text.contains("Run this on your computer."), "{text}");
             // The whole command, so a clipped command fails here.
             assert!(text.contains("kobo connect post"), "{text}");
             for (notice, error) in [
@@ -984,12 +1061,12 @@ mod large_text_tests {
             ] {
                 let app = Post {
                     view: View::Setup,
-                    notice: notice.map(Into::into),
+                    notice: notice.map(|text| (BannerLevel::Attention, text.into())),
                     address_error: error.map(Into::into),
                     draft: "http://hermes.example.net".into(),
                     ..Default::default()
                 };
-                fits(&app.setup(), metrics);
+                fits(&app.setup(&runner.context()), metrics);
             }
         }
     }
@@ -1011,7 +1088,7 @@ mod large_text_tests {
             }) if initial == "https://" && submit == "Save gateway"
         )));
         runner.type_text("http://hermes.example.net");
-        let setup = runner.app().setup();
+        let setup = runner.app().setup(&runner.context());
         assert!(
             setup.nodes.iter().any(|node| matches!(
                 node,
@@ -1033,10 +1110,10 @@ mod large_text_tests {
     fn a_check_that_found_nothing_carries_check_again_on_its_banner() {
         let app = Post {
             view: View::Setup,
-            notice: Some(NO_GATEWAY_YET.into()),
+            notice: Some((BannerLevel::Attention, NO_GATEWAY_YET.into())),
             ..Default::default()
         };
-        let setup = app.setup();
+        let setup = app.setup(&Context::default());
         assert!(
             setup.nodes.iter().any(|node| matches!(
                 node,
@@ -1049,5 +1126,142 @@ mod large_text_tests {
             .top_bar
             .as_ref()
             .is_some_and(|bar| bar.actions.is_empty()));
+    }
+
+    /// Where each part of the connect screen is drawn, in reading order.
+    fn connect_order(screen: &Screen) -> Vec<&'static str> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Banner { .. } => Some("banner"),
+                kobo_sdk::Node::Splash { .. } | kobo_sdk::Node::Section { .. } => Some("heading"),
+                kobo_sdk::Node::Quote { .. } => Some("command"),
+                kobo_sdk::Node::Button {
+                    action,
+                    emphasis: kobo_ui::Emphasis::Primary,
+                    ..
+                } if *action == action_id("check-again") => Some("check again"),
+                kobo_sdk::Node::Field { .. } => Some("field"),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_connect_screen_reads_banner_then_command_then_check_again_with_nothing_in_the_bar() {
+        let context = Context::default();
+        let first = Post {
+            view: View::Setup,
+            ..Default::default()
+        }
+        .setup(&context);
+        assert_eq!(
+            connect_order(&first),
+            ["heading", "command", "check again", "field"],
+            "{first:?}"
+        );
+        assert!(first
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
+        let checked = Post {
+            view: View::Setup,
+            notice: Some((BannerLevel::Attention, NO_GATEWAY_YET.into())),
+            ..Default::default()
+        }
+        .setup(&context);
+        assert_eq!(
+            connect_order(&checked),
+            ["banner", "heading", "command", "field"],
+            "Check again moves onto the banner: {checked:?}"
+        );
+    }
+
+    #[test]
+    fn every_connect_state_fits_a_clara_at_every_text_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for (width, height) in [(1072, 1448), (1448, 1072)] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    text_scale,
+                    ..kobo_sdk::CLARA_BW_METRICS
+                };
+                let runner = kobo_sdk::AppRunner::with_metrics(Post::default(), metrics);
+                let context = runner.context();
+                for (notice, error) in [
+                    (None, None),
+                    (Some((BannerLevel::Attention, NO_GATEWAY_YET)), None),
+                    (
+                        None,
+                        Some("Enter the secure https address of your Hermes gateway."),
+                    ),
+                    (
+                        Some((
+                            BannerLevel::Error,
+                            "Your gateway did not accept your account. Run kobo connect post on your computer.",
+                        )),
+                        None,
+                    ),
+                ] {
+                    let app = Post {
+                        view: View::Setup,
+                        notice: notice.map(|(level, text)| (level, text.into())),
+                        address_error: error.map(Into::into),
+                        draft: "http://hermes.example.net".into(),
+                        ..Default::default()
+                    };
+                    let screen = app.setup(&context);
+                    fits(&screen, metrics);
+                    let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    let text = layout
+                        .nodes
+                        .iter()
+                        .flat_map(|node| node.text_lines.iter())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    assert!(
+                        text.replace('\u{2011}', "-").contains("kobo connect post"),
+                        "{text_scale:?} {width}x{height}: {text}"
+                    );
+                    assert!(layout.rect_of_action(action_id("check-again")).is_some()
+                        || app.notice.is_some());
+                    assert!(layout.rect_of_action(action_id(GATEWAY_URL)).is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_sent_reply_is_a_success_and_a_refused_one_an_error() {
+        let mut context = Context::default();
+        let reply = Reply::new("https://gateway.example", "dawn", "Tea first.").unwrap();
+        let mut sending = reply.clone();
+        sending.state = ReplyState::Sending;
+        let mut app = Post {
+            gateway: "https://gateway.example".into(),
+            outbox: vec![sending.clone()],
+            ..Default::default()
+        };
+        app.send_outcome(
+            &mut context,
+            TaskOutcome::Completed(br#"{"status":"accepted"}"#.to_vec()),
+        );
+        assert_eq!(
+            app.notice,
+            Some((BannerLevel::Success, "Sent to Hermes.".into()))
+        );
+        let mut app = Post {
+            gateway: "https://gateway.example".into(),
+            outbox: vec![sending],
+            ..Default::default()
+        };
+        app.send_outcome(&mut context, TaskOutcome::Failed(TaskError::NotFound));
+        assert_eq!(
+            app.notice.as_ref().map(|(level, _)| *level),
+            Some(BannerLevel::Error)
+        );
     }
 }

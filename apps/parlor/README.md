@@ -32,8 +32,12 @@ Four classic board games against the computer, or for two players passing one Ko
 - Pass-and-play is the other choice on the setup screen. The board turns
   180° for the player to move, or stays still for side-by-side play, and
   undo needs the other player to agree.
-- Rules and the menu (New game, Change game) sit in the top bar, and Undo at
-  the foot, where every Cobalt game keeps them.
+- Rules and the menu (New game, Change game, Use landscape) sit in the top
+  bar, and Undo at the foot, where every Cobalt game keeps them.
+- Use landscape turns the reader on its side, with the board beside whose
+  move it is; the choice is kept until Use portrait.
+- The setup screen is a form: nothing changes until Start game, and Back
+  leaves the game in progress as it was.
 - Legal destinations are marked with hollow rings.
 - Every move is saved, and reopening offers to resume the exact position.
 

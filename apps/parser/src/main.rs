@@ -5,9 +5,9 @@ mod zvm;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, Chrome, Context, DisplayMetrics, Glyph, KoboApp, LayoutIssueKind,
-    ParagraphPresentation, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
-    StoreResult, TileShape,
+    action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
+    LayoutIssueKind, ParagraphPresentation, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+    ShelfUpload, StoreResult, TileShape,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -50,7 +50,11 @@ struct Parser {
     pages_keyboard_open: Option<bool>,
     page: usize,
     keyboard: Keyboard,
-    message: Option<String>,
+    /// What the last thing done came to, with how it is drawn: a save that
+    /// finished is a success, a save that could not be written is an error,
+    /// and an empty slot is only news. Drawn at one level, a good save and a
+    /// failed one looked the same on the slots screen.
+    message: Option<(BannerLevel, String)>,
     slot_action: SlotAction,
     keyboard_open: bool,
     /// A verb tapped without its object, waiting for the reader to choose
@@ -131,8 +135,8 @@ impl Parser {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
             .heading("Interactive fiction");
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder
     }
@@ -146,17 +150,45 @@ impl Parser {
         )
     }
 
+    /// An empty shelf, said the way Vault and Music Stand say theirs: what is
+    /// missing, the command to type on the computer under its own heading,
+    /// and the check directly under the command, so the owner who has just
+    /// typed it finds the next step beside it rather than at the foot.
+    ///
+    /// Held sideways at the larger sizes, a message over it pushed Check for
+    /// stories off the panel, so the mark gives way first and then the
+    /// sentence; the title, the command and the check always stay.
+    fn empty_library(&self, context: &Context) -> Screen {
+        let screen = |glyph: Option<Glyph>, body: &str| {
+            let mut builder = ScreenBuilder::new("parser").top_bar("Parser");
+            if let Some((level, message)) = &self.message {
+                builder = builder.banner(*level, message);
+            }
+            builder
+                .splash(glyph, "No stories yet", body)
+                .section("On your computer")
+                .command("kobo parser push story.z5")
+                .button("refresh", "Check for stories")
+                .build()
+        };
+        let body = "Send a .z3, .z5 or .z8 story from a computer. Stories play without Wi-Fi.";
+        let metrics = context.metrics();
+        [(Some(Glyph::Book), body), (None, body), (None, "")]
+            .into_iter()
+            .map(|(glyph, body)| screen(glyph, body))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| screen(None, ""))
+    }
+
     fn library_screen(&self, context: &Context) -> Screen {
-        let builder = self.library_prefix();
         if self.stories.is_empty() {
-            return builder
-                .empty_state(
-                    "No stories yet. Push a .z3, .z5 or .z8 story with \
-                     kobo parser push FILE; stories play completely offline.",
-                )
-                .bottom_action("refresh", "Check again")
-                .build();
+            return self.empty_library(context);
         }
+        let builder = self.library_prefix();
         let pages = self.library_pages(context);
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let mut builder = builder.tile_grid(
@@ -261,8 +293,8 @@ impl Parser {
             u16::try_from(page).unwrap_or(u16::MAX),
             u16::try_from(pages).unwrap_or(u16::MAX),
         );
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder.build()
     }
@@ -360,8 +392,8 @@ impl Parser {
             .top_bar(title)
             .owns_back(true)
             .text(guidance);
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder
     }
@@ -438,7 +470,7 @@ impl Parser {
                 self.show(context);
             }
             Err(error) => {
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.view = View::Library;
                 self.show(context);
             }
@@ -461,7 +493,7 @@ impl Parser {
             }
             Err(error) => {
                 self.transcript.push_str(&machine.take_output());
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.repaginate(context);
             }
         }
@@ -490,7 +522,7 @@ impl Parser {
                 }
             }
             Err(error) => {
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.repaginate(context);
             }
         }
@@ -527,14 +559,17 @@ impl Parser {
                 match machine.complete_save(true) {
                     Ok(state) => {
                         self.transcript.push_str(&machine.take_output());
-                        self.message = Some("Saved the story checkpoint.".to_owned());
+                        self.message = Some((
+                            BannerLevel::Success,
+                            "Saved the story checkpoint.".to_owned(),
+                        ));
                         self.repaginate(context);
                         self.page = self.last_content_page();
                         if !matches!(state, RunState::Halted | RunState::NeedInput { .. }) {
                             self.finish_file_request(context, &state);
                         }
                     }
-                    Err(error) => self.message = Some(error.to_string()),
+                    Err(error) => self.message = Some((BannerLevel::Error, error.to_string())),
                 }
             }
         } else if *state == RunState::NeedRestore {
@@ -544,7 +579,10 @@ impl Parser {
             self.slot_action = SlotAction::Restore;
             self.view = View::Slots;
             self.slots_page = 0;
-            self.message = Some("The story asked to restore a game - pick a slot.".to_owned());
+            self.message = Some((
+                BannerLevel::Info,
+                "The story asked to restore a game. Pick a slot.".to_owned(),
+            ));
         }
     }
 
@@ -781,7 +819,8 @@ impl KoboApp for Parser {
                         match self.slot_action {
                             SlotAction::Save => {
                                 self.begin_save(context, name);
-                                self.message = Some(format!("Saved in slot {slot}."));
+                                self.message =
+                                    Some((BannerLevel::Success, format!("Saved in slot {slot}.")));
                             }
                             SlotAction::Restore => {
                                 if self.saves.contains(&name) {
@@ -792,7 +831,8 @@ impl KoboApp for Parser {
                                     self.message = None;
                                     self.view = View::Play;
                                 } else {
-                                    self.message = Some(format!("Slot {slot} is empty."));
+                                    self.message =
+                                        Some((BannerLevel::Info, format!("Slot {slot} is empty.")));
                                 }
                             }
                         }
@@ -963,6 +1003,7 @@ impl KoboApp for Parser {
         self.autosave(context);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Shelf(items) = &result {
             self.stories = items
@@ -994,8 +1035,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.saving = None;
-                    self.message =
-                        Some("The save could not be written. Check free space.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "The save could not be written. Check free space.".to_owned(),
+                    ));
                     self.show(context);
                     return;
                 }
@@ -1013,7 +1056,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
-                    self.message = Some("That story could not be read from storage.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "That story could not be read from storage.".to_owned(),
+                    ));
                     self.show(context);
                     return;
                 }
@@ -1033,7 +1079,9 @@ impl KoboApp for Parser {
                     if let Some(machine) = &mut self.machine {
                         match machine.restore_quetzal(&bytes) {
                             Ok(()) => restored = true,
-                            Err(error) => self.message = Some(error.to_string()),
+                            Err(error) => {
+                                self.message = Some((BannerLevel::Error, error.to_string()));
+                            }
                         }
                     }
                     if restored {
@@ -1050,7 +1098,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.pending_restore = None;
-                    self.message = Some("The saved game could not be restored.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "The saved game could not be restored.".to_owned(),
+                    ));
                     self.advance_story(context);
                 }
                 ShelfProgress::Moving { .. } | ShelfProgress::Elsewhere => {}
@@ -1636,7 +1687,10 @@ mod tests {
             ..Parser::default()
         };
         parser.slot_action = SlotAction::Restore;
-        parser.message = Some("The story asked to restore a game - pick a slot.".to_owned());
+        parser.message = Some((
+            BannerLevel::Info,
+            "The story asked to restore a game. Pick a slot.".to_owned(),
+        ));
         for scale in TextScale::STEPS {
             let scaled = DisplayMetrics {
                 text_scale: scale,

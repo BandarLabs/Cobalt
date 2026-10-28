@@ -47,7 +47,7 @@ fn long_letters_keep_every_word_and_the_reply_action_at_every_text_size() {
         for notice in [false, true] {
             let mut app = post();
             if notice {
-                app.notice = Some("The Hermes gateway is offline. Your reply is still queued and will be sent when the connection returns.".into());
+                app.notice = Some((BannerLevel::Attention, "The Hermes gateway is offline. Your reply is still queued and will be sent when the connection returns.".into()));
                 app.outbox
                     .push(Reply::new(&app.gateway, "long", "Thank you for the letter.").unwrap());
             }
@@ -127,8 +127,9 @@ fn a_gateway_signed_in_from_the_computer_opens_the_inbox_on_check_again() {
     assert!(runner
         .app()
         .notice
-        .as_deref()
+        .as_ref()
         .unwrap()
+        .1
         .contains("No gateway has arrived"));
     runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
     runner.store_result(kobo_sdk::StoreResult::Loaded {
@@ -149,7 +150,9 @@ fn a_failed_check_names_its_cause_without_an_em_dash() {
         &mut context,
         kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized),
     );
-    let notice = app.notice.clone().unwrap();
+    let (level, notice) = app.notice.clone().unwrap();
+    // A refused account is not mended by waiting, so it is drawn as an error.
+    assert_eq!(level, kobo_sdk::BannerLevel::Error);
     assert!(notice.contains("did not accept your account"), "{notice}");
     assert!(notice.contains("kobo connect post"), "{notice}");
     assert!(!notice.contains('\u{2014}'), "{notice}");

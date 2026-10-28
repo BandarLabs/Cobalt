@@ -59,7 +59,7 @@ stays marked Completed once solved, even after a restart.
 ## Saving
 
 Progress is marked saved only once storage confirms it. If storage is full,
-keep the app open, free some space and choose **Retry save**. Your latest
+keep the app open, free some space and choose **Retry saving**. Your latest
 letters stay in memory, and the reader will not suspend until they are saved.
 Saves that cannot be read are left untouched.
 

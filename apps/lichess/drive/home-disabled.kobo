@@ -1,6 +1,8 @@
 expect Offline
 expect Account/Games
 expect Puzzles
+# At the larger text sizes the time cards are on the second page.
+maybe-tap-id home-next
 expect 10+0
 expect Rapid · Rated
 shot unready-home

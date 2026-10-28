@@ -112,9 +112,9 @@ def main():
                 drive('scenario storage-full','tap-id digit-3','wait-idle','expect Not saved')
                 capture('04-unsaved-move')
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==2, 'Failed write replaced durable data'
-                drive('expect Open More to retry.','tap-id game-more','wait-idle','expect New game','expect Retry save')
+                drive('expect Retry saving in More.','tap-id game-more','wait-idle','expect New game','expect Retry saving')
                 capture('05-save-recovery')
-                drive('scenario normal','tap-id retry-save','wait-idle','expect-missing Not saved','expect-missing Retry save')
+                drive('scenario normal','tap-id retry-save','wait-idle','expect-missing Not saved','expect-missing Retry saving')
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==6
                 restart()
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==6

@@ -153,7 +153,10 @@ struct Reader {
     /// Whether the last change sent came back unanswered.
     unreachable: bool,
     task: Option<(TaskId, Awaiting)>,
-    notice: Option<String>,
+    /// The last thing the app has to say, at the level its meaning asks
+    /// for: a finished sync is a success, an unsaved write an error, and a
+    /// Miniflux out of reach something to attend to.
+    notice: Option<(BannerLevel, String)>,
     /// The server address, typed on the runtime's keyboard.
     address: TextEntry,
     editing: Option<Setting>,
@@ -198,18 +201,20 @@ impl Reader {
                             self.page = 0;
                         }
                         Err(_) => {
-                            self.notice = Some(
+                            self.notice = Some((
+                                BannerLevel::Error,
                                 "Saved articles could not be read. Sync to download them again."
                                     .into(),
-                            );
+                            ));
                         }
                     }
                 }
             }
             Some(SnapshotEvent::Failed) => {
-                self.notice = Some(
+                self.notice = Some((
+                    BannerLevel::Error,
                     "Articles could not be saved or opened. Retry saving before closing.".into(),
-                );
+                ));
             }
             // A save that landed says nothing: the articles were already on
             // screen, and a line congratulating the store would push the
@@ -226,7 +231,10 @@ impl Reader {
             .as_mut()
             .is_some_and(|snapshot| snapshot.save(context, bytes))
         {
-            self.notice = Some("New articles are not saved. Retry saving before closing.".into());
+            self.notice = Some((
+                BannerLevel::Error,
+                "New articles are not saved. Retry saving before closing.".into(),
+            ));
         }
     }
 
@@ -286,18 +294,24 @@ impl Reader {
     /// Ordered by what a reader can do something about: something that needs
     /// retrying comes before a count of changes still to go out, which is only
     /// news.
-    fn notice(&self) -> Option<String> {
+    ///
+    /// A write that did not land is an error, because it stays lost until
+    /// the owner taps Retry saving; changes kept for a Miniflux that did not
+    /// answer go out by themselves on the next sync, so they only ask for
+    /// attention.
+    fn notice(&self) -> Option<(BannerLevel, String)> {
         if let Some(notice) = &self.notice {
             return Some(notice.clone());
         }
+        let error = |text: &str| Some((BannerLevel::Error, text.to_owned()));
         if self.changes.failed {
-            return Some("Your changes are not saved on this Kobo yet.".into());
+            return error("Your changes are not saved on this Kobo yet.");
         }
         if self.progress.failed {
-            return Some("Reading positions are not saved.".into());
+            return error("Reading positions are not saved.");
         }
         if self.illustrations.can_retry() {
-            return Some("Some article images are not saved.".into());
+            return error("Some article images are not saved.");
         }
         // One sentence for both halves of the same fact. A reader whose train
         // went into a tunnel is owed "it did not go, and it is not lost",
@@ -305,18 +319,25 @@ impl Reader {
         let waiting = self.changes.len();
         match (waiting, self.unreachable) {
             (0, _) => None,
-            (1, false) => Some("1 change waiting for Miniflux.".into()),
-            (waiting, false) => Some(format!("{waiting} changes waiting for Miniflux.")),
-            (1, true) => Some(
+            (1, false) => Some((BannerLevel::Info, "1 change waiting for Miniflux.".into())),
+            (waiting, false) => Some((
+                BannerLevel::Info,
+                format!("{waiting} changes waiting for Miniflux."),
+            )),
+            (1, true) => Some((
+                BannerLevel::Attention,
                 "Miniflux did not answer. 1 change is kept and goes out on the next sync.".into(),
-            ),
-            (waiting, true) => Some(format!(
-                "Miniflux did not answer. {waiting} changes are kept and go out on the next sync."
+            )),
+            (waiting, true) => Some((
+                BannerLevel::Attention,
+                format!(
+                    "Miniflux did not answer. {waiting} changes are kept and go out on the next sync."
+                ),
             )),
         }
     }
 
-    fn shelf_prefix(&self, notice: Option<&str>) -> ScreenBuilder {
+    fn shelf_prefix(&self, notice: Option<&(BannerLevel, String)>) -> ScreenBuilder {
         let screen = ScreenBuilder::new("rss-miniflux")
             .top_bar("Digest")
             .top_bar_glyph("sync", "Sync", Glyph::Refresh)
@@ -328,10 +349,10 @@ impl Reader {
         match notice {
             // Retry saving is the fix for what the banner says, so it is the
             // banner's own action rather than a control at the foot.
-            Some(notice) if self.retryable() => screen
-                .banner(BannerLevel::Attention, notice)
+            Some((level, notice)) if self.retryable() => screen
+                .banner(*level, notice)
                 .banner_action("retry-save", "Retry saving"),
-            Some(notice) => screen.banner(BannerLevel::Info, notice),
+            Some((level, notice)) => screen.banner(*level, notice),
             None if self.retryable() => {
                 screen.bottom_action_marked("retry-save", "Retry saving", Glyph::Refresh)
             }
@@ -367,7 +388,7 @@ impl Reader {
         &self,
         context: &Context,
         rows: &[(String, String)],
-        notice: Option<&str>,
+        notice: Option<&(BannerLevel, String)>,
     ) -> Vec<Vec<usize>> {
         let borrowed = rows
             .iter()
@@ -388,14 +409,14 @@ impl Reader {
 
     fn shelf(&self, context: &Context) -> Screen {
         let notice = self.notice();
-        let screen = self.shelf_prefix(notice.as_deref());
+        let screen = self.shelf_prefix(notice.as_ref());
         let listed = self.listed();
         if listed.is_empty() {
             let (heading, detail) = self.tab.nothing_here();
             return screen.splash(Some(Glyph::Rss), heading, detail).build();
         }
         let rows = self.shelf_rows(context, &listed);
-        let pages = self.shelf_pages(context, &rows, notice.as_deref());
+        let pages = self.shelf_pages(context, &rows, notice.as_ref());
         let page = self.page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).cloned().unwrap_or_default();
         let mut screen = screen.rows_with_menu(shown.iter().map(|&row| {
@@ -465,8 +486,8 @@ impl Reader {
         let pages = context.paginate_rows(&rows, false);
         let page = self.page.min(pages.len().saturating_sub(1));
         let mut screen = ScreenBuilder::new("rss-miniflux").top_bar("Suggested feeds");
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Info, notice.clone());
+        if let Some((level, notice)) = &self.notice {
+            screen = screen.banner(*level, notice.clone());
         }
         screen = screen.rows(pages.get(page).into_iter().flatten().map(|&index| {
             (
@@ -534,11 +555,14 @@ impl Reader {
     /// every control is kept at every size.
     fn connect(&self, context: &Context) -> Screen {
         const TEXT: &str = "Run this on your computer. It asks for your server and API token.";
-        let checked = self.notice.as_deref() == Some(NO_ACCOUNT_YET);
+        let checked = self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, notice)| notice == NO_ACCOUNT_YET);
         let build = |shape: Shape| {
             let mut screen = ScreenBuilder::new("rss-miniflux").top_bar("Digest");
-            if let Some(notice) = &self.notice {
-                screen = screen.banner(BannerLevel::Attention, notice.clone());
+            if let Some((level, notice)) = &self.notice {
+                screen = screen.banner(*level, notice.clone());
                 if checked {
                     screen = screen.banner_action("check-again", "Check again");
                 }
@@ -588,7 +612,10 @@ impl Reader {
             self.task = Some((id, awaiting));
             return true;
         }
-        self.notice = Some("This Kobo could not start the request. Try again.".into());
+        self.notice = Some((
+            BannerLevel::Attention,
+            "This Kobo could not start the request. Try again.".into(),
+        ));
         false
     }
 
@@ -602,22 +629,29 @@ impl Reader {
         }
         if self.snapshot.is_none() {
             self.open_snapshot(context);
-            self.notice = Some("Opening saved articles. Choose Sync when they are ready.".into());
+            self.notice = Some((
+                BannerLevel::Info,
+                "Opening saved articles. Choose Sync when they are ready.".into(),
+            ));
             return;
         }
         if self.snapshot.as_ref().is_some_and(Snapshot::busy) {
-            self.notice = Some(
+            self.notice = Some((
+                BannerLevel::Info,
                 "Saved articles are still being opened or updated. Try Sync again shortly.".into(),
-            );
+            ));
             return;
         }
         // Changes first. A sync that ran before them would download the state
         // they are about to change and show the reader their own tap undone.
         if self.flush_changes(context) {
-            self.notice = Some("Sending your changes to Miniflux…".into());
+            self.notice = Some((
+                BannerLevel::Info,
+                "Sending your changes to Miniflux…".into(),
+            ));
             return;
         }
-        self.notice = Some("Syncing articles…".into());
+        self.notice = Some((BannerLevel::Info, "Syncing articles…".into()));
         self.unreachable = false;
         self.arriving.clear();
         self.fetch_part(context, 0);
@@ -665,7 +699,10 @@ impl Reader {
         };
         let id = article.id;
         if !self.changes.push(context, id, change) {
-            self.notice = Some("This Kobo cannot hold more unsent changes. Sync first.".into());
+            self.notice = Some((
+                BannerLevel::Error,
+                "This Kobo cannot hold more unsent changes. Sync first.".into(),
+            ));
             return;
         }
         self.flush_changes(context);
@@ -689,10 +726,11 @@ impl Reader {
         let origin = article.url.clone();
         let unread = self.shown_status(article) == Status::Unread;
         if body.trim().is_empty() {
-            self.notice = Some(
+            self.notice = Some((
+                BannerLevel::Info,
                 "This feed supplied a summary only. Choose Load full article to fetch the rest."
                     .into(),
-            );
+            ));
         }
         self.book
             .open(context, kobo_doc::html::parse(&body), memory);
@@ -850,7 +888,7 @@ impl KoboApp for Reader {
                     self.open_snapshot(context);
                 }
                 if std::mem::take(&mut self.checking) && !self.configured() {
-                    self.notice = Some(NO_ACCOUNT_YET.into());
+                    self.notice = Some((BannerLevel::Attention, NO_ACCOUNT_YET.into()));
                 }
             }
             self.show(context);
@@ -916,7 +954,7 @@ impl KoboApp for Reader {
         } else if action == action_id("next") {
             let listed = self.listed();
             let rows = self.shelf_rows(context, &listed);
-            let pages = self.shelf_pages(context, &rows, self.notice().as_deref());
+            let pages = self.shelf_pages(context, &rows, self.notice().as_ref());
             self.page = self
                 .page
                 .saturating_add(1)
@@ -991,8 +1029,10 @@ impl Reader {
         match self.address.handle(action) {
             Some(Typing::Submitted(value)) => {
                 if !self.settings_are_safe_to_change() {
-                    self.notice =
-                        Some("Finish saving and syncing before changing accounts.".into());
+                    self.notice = Some((
+                        BannerLevel::Error,
+                        "Finish saving and syncing before changing accounts.".into(),
+                    ));
                     self.editing = None;
                     self.view = Some(View::Shelf);
                     return;
@@ -1055,9 +1095,15 @@ impl Reader {
         let id = article.id;
         let task = miniflux::full_content(&self.server, &self.credential, id);
         if self.spawn(context, task, Awaiting::Full(id)) {
-            self.notice = Some("Asking Miniflux for the full article…".into());
+            self.notice = Some((
+                BannerLevel::Info,
+                "Asking Miniflux for the full article…".into(),
+            ));
         } else {
-            self.notice = Some("Finish the request in progress, then try again.".into());
+            self.notice = Some((
+                BannerLevel::Info,
+                "Finish the request in progress, then try again.".into(),
+            ));
         }
     }
 
@@ -1084,7 +1130,10 @@ impl Reader {
         }
         let task = miniflux::categories(&self.server, &self.credential);
         if self.spawn(context, task, Awaiting::Categories(index)) {
-            self.notice = Some(format!("Adding {} to Miniflux…", STARTER_FEEDS[index].0));
+            self.notice = Some((
+                BannerLevel::Info,
+                format!("Adding {} to Miniflux…", STARTER_FEEDS[index].0),
+            ));
         }
     }
 
@@ -1110,7 +1159,7 @@ impl Reader {
                 }
                 Err(error) => {
                     self.arriving.clear();
-                    self.notice = Some(error.message().into());
+                    self.notice = Some((BannerLevel::Error, error.message().into()));
                 }
             },
             TaskOutcome::Failed(error) => {
@@ -1120,20 +1169,26 @@ impl Reader {
                     // unread list is worth more than a perfect batch, so it
                     // is kept, and what was saved for the other tabs stays.
                     self.keep_partial_batch(context);
-                    self.notice = Some(format!(
-                        "Unread is up to date. Starred and History were not: {}",
-                        problem.message
+                    self.notice = Some((
+                        problem.level(),
+                        format!(
+                            "Unread is up to date. Starred and History were not: {}",
+                            problem.message
+                        ),
                     ));
                 } else {
                     self.arriving.clear();
                     // The saved articles are on screen under the banner, so
                     // only the cause and the fix are said.
-                    self.notice = Some(format!("Could not sync. {}", problem.message));
+                    self.notice = Some((
+                        problem.level(),
+                        format!("Could not sync. {}", problem.message),
+                    ));
                 }
             }
             TaskOutcome::Cancelled => {
                 self.arriving.clear();
-                self.notice = Some("Sync cancelled.".into());
+                self.notice = Some((BannerLevel::Info, "Sync cancelled.".into()));
             }
         }
     }
@@ -1157,10 +1212,13 @@ impl Reader {
     fn batch_arrived(&mut self, context: &mut Context) {
         self.articles = std::mem::take(&mut self.arriving);
         self.page = 0;
-        self.notice = Some(match self.articles.len() {
-            1 => "Synced 1 article.".to_owned(),
-            count => format!("Synced {count} articles."),
-        });
+        self.notice = Some((
+            BannerLevel::Success,
+            match self.articles.len() {
+                1 => "Synced 1 article.".to_owned(),
+                count => format!("Synced {count} articles."),
+            },
+        ));
         self.keep_articles(context);
     }
 
@@ -1196,11 +1254,20 @@ impl Reader {
     fn fetched(&mut self, context: &mut Context, id: u64, outcome: &TaskOutcome) {
         let TaskOutcome::Completed(bytes) = outcome else {
             self.notice = Some(match outcome {
-                TaskOutcome::Failed(error) => format!(
-                    "The full article could not be fetched. The summary is kept. {}",
-                    self.service().explain(*error).message
+                TaskOutcome::Failed(error) => {
+                    let problem = self.service().explain(*error);
+                    (
+                        problem.level(),
+                        format!(
+                            "The full article could not be fetched. The summary is kept. {}",
+                            problem.message
+                        ),
+                    )
+                }
+                _ => (
+                    BannerLevel::Info,
+                    "The full article could not be fetched. The summary is kept.".into(),
                 ),
-                _ => "The full article could not be fetched. The summary is kept.".into(),
             });
             return;
         };
@@ -1211,32 +1278,42 @@ impl Reader {
                 };
                 self.articles[index].content = body;
                 self.keep_articles(context);
-                self.notice = Some("The full article is here.".into());
+                self.notice = Some((BannerLevel::Success, "The full article is here.".into()));
                 if self.open == Some(index) {
                     self.open_article(context, index);
                 }
             }
             Ok(_) => {
-                self.notice =
-                    Some("Miniflux fetched the page and found no article text in it.".into());
+                self.notice = Some((
+                    BannerLevel::Info,
+                    "Miniflux fetched the page and found no article text in it.".into(),
+                ));
             }
-            Err(error) => self.notice = Some(error.message().into()),
+            Err(error) => self.notice = Some((BannerLevel::Error, error.message().into())),
         }
     }
 
     fn categorised(&mut self, context: &mut Context, index: usize, outcome: &TaskOutcome) {
         let TaskOutcome::Completed(bytes) = outcome else {
             self.notice = Some(match outcome {
-                TaskOutcome::Failed(error) => self.service().explain(*error).message,
-                _ => "Could not reach Miniflux to add this feed.".into(),
+                TaskOutcome::Failed(error) => {
+                    let problem = self.service().explain(*error);
+                    (problem.level(), problem.message)
+                }
+                _ => (
+                    BannerLevel::Attention,
+                    "Could not reach Miniflux to add this feed.".into(),
+                ),
             });
             return;
         };
         match miniflux::parse_categories(bytes) {
             Ok(categories) => {
                 let Some((category, _)) = categories.first() else {
-                    self.notice =
-                        Some("Your Miniflux account has no category to file a feed under.".into());
+                    self.notice = Some((
+                        BannerLevel::Error,
+                        "Your Miniflux account has no category to file a feed under.".into(),
+                    ));
                     return;
                 };
                 let task = miniflux::subscribe(
@@ -1247,19 +1324,25 @@ impl Reader {
                 );
                 self.spawn(context, task, Awaiting::Subscribe(index));
             }
-            Err(error) => self.notice = Some(error.message().into()),
+            Err(error) => self.notice = Some((BannerLevel::Error, error.message().into())),
         }
     }
 
     fn subscribed(&mut self, index: usize, outcome: &TaskOutcome) {
         self.notice = Some(match outcome {
-            TaskOutcome::Completed(_) => format!(
-                "{} was added to your Miniflux account. Sync to read it.",
-                STARTER_FEEDS[index].0
+            TaskOutcome::Completed(_) => (
+                BannerLevel::Success,
+                format!(
+                    "{} was added to your Miniflux account. Sync to read it.",
+                    STARTER_FEEDS[index].0
+                ),
             ),
-            _ => format!(
-                "{} was not added. Check the feed in Miniflux before trying again.",
-                STARTER_FEEDS[index].0
+            _ => (
+                BannerLevel::Error,
+                format!(
+                    "{} was not added. Check the feed in Miniflux before trying again.",
+                    STARTER_FEEDS[index].0
+                ),
             ),
         });
     }
@@ -1352,6 +1435,28 @@ mod tests {
     use super::*;
     use kobo_sdk::{AppRunner, Command, StoreRequest, Task};
     use kobo_ui::{Chrome, Orientation, TextScale, CLARA_BW_METRICS};
+
+    #[test]
+    fn an_unsaved_write_is_an_error_and_an_added_feed_a_success() {
+        let mut app = Reader::default();
+        app.changes.failed = true;
+        assert_eq!(
+            app.notice().map(|(level, _)| level),
+            Some(BannerLevel::Error),
+            "a write that did not land stays lost until Retry saving"
+        );
+        let mut app = Reader::default();
+        app.subscribed(0, &TaskOutcome::Completed(Vec::new()));
+        assert_eq!(
+            app.notice.as_ref().map(|(level, _)| *level),
+            Some(BannerLevel::Success)
+        );
+        app.subscribed(0, &TaskOutcome::Failed(kobo_sdk::TaskError::NotFound));
+        assert_eq!(
+            app.notice.as_ref().map(|(level, _)| *level),
+            Some(BannerLevel::Error)
+        );
+    }
 
     const SAVED_ARTICLE: &[u8] = br#"{"entries":[{"id":7,"title":"A saved article","content":"<h2>A heading</h2><p>The complete article body.</p>","starred":true,"status":"unread","url":"https://example.com/story","feed":{"title":"Journal"}}]}"#;
     const NOTHING: &[u8] = br#"{"entries":[]}"#;
@@ -1476,7 +1581,10 @@ mod tests {
                     server: "https://flux.example".into(),
                     credential: "miniflux".into(),
                     articles,
-                    notice: Some("Could not sync. Saved articles are still available.".into()),
+                    notice: Some((
+                        BannerLevel::Attention,
+                        "Could not sync. Saved articles are still available.".into(),
+                    )),
                     ..Reader::default()
                 },
                 metrics,
@@ -1645,7 +1753,8 @@ mod tests {
         assert!(runner
             .app()
             .notice
-            .as_deref()
+            .as_ref()
+            .map(|(_, text)| text.as_str())
             .unwrap()
             .contains("valid Miniflux response"));
     }
@@ -1677,7 +1786,7 @@ mod tests {
         let after = runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Denied));
         assert!(written(&after).is_some(), "the unread list is kept");
         assert!(!runner.app().articles.is_empty());
-        let notice = runner.app().notice().unwrap();
+        let notice = runner.app().notice().unwrap().1;
         assert!(notice.contains("Unread is up to date"), "{notice}");
         assert!(notice.contains("kobo connect rss-miniflux"), "{notice}");
         assert!(!notice.contains("Wi-Fi"), "{notice}");
@@ -1690,7 +1799,7 @@ mod tests {
         runner.action(action_id("sync"));
         let (task, _) = runner.app().task.unwrap();
         runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized));
-        let notice = runner.app().notice().unwrap();
+        let notice = runner.app().notice().unwrap().1;
         assert!(notice.contains("did not accept your account"), "{notice}");
         assert!(!notice.contains("Wi-Fi"), "{notice}");
     }
@@ -1722,7 +1831,8 @@ mod tests {
                 let runner = AppRunner::with_metrics(Reader::default(), metrics);
                 for checked in [false, true] {
                     let app = Reader {
-                        notice: checked.then(|| NO_ACCOUNT_YET.to_owned()),
+                        notice: checked
+                            .then(|| (BannerLevel::Attention, NO_ACCOUNT_YET.to_owned())),
                         ..Reader::default()
                     };
                     let screen = app.connect(&runner.context());
@@ -1880,6 +1990,7 @@ mod tests {
             .app()
             .notice()
             .unwrap()
+            .1
             .contains("goes out on the next sync"));
 
         let again = runner.action(action_id("sync"));
@@ -1931,7 +2042,8 @@ mod tests {
         assert!(runner
             .app()
             .notice
-            .as_deref()
+            .as_ref()
+            .map(|(_, text)| text.as_str())
             .unwrap()
             .contains("Finish saving and syncing"));
     }

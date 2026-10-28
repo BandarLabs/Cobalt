@@ -49,6 +49,14 @@ tap-id game-more
 tap New game
 tap Pass-and-play
 expect Turns for each player
+tap Back
+expect Your move
+expect You 0 · Computer 0
+tap-id game-more
+tap New game
+expect Computer strength
+tap Pass-and-play
+expect Turns for each player
 tap Start game
 expect Black to move
 tap-id cell-19
@@ -63,4 +71,33 @@ tap Undo
 expect The other player taps Undo to agree
 tap Undo
 expect The last move is taken back.
+expect Black to move
+tap-id game-more
+expect Use landscape
+tap Use landscape
+expect Black to move
+expect Black 0 · White 0
+clean
+shot reversi-landscape
+tap-id game-more
+tap New game
+expect Turns for each player
+clean
+shot parlor-setup-landscape
+tap Computer
+expect Computer strength
+expect Start game
+clean
+shot parlor-setup-solo-landscape
+tap Rules
+expect Bracketed discs flip
+clean
+shot parlor-rules-landscape
+tap Back
+expect Computer strength
+tap Back
+expect Black to move
+expect Black 0 · White 0
+tap-id game-more
+tap Use portrait
 expect Black to move

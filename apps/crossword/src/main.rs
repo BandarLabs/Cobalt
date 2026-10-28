@@ -38,7 +38,7 @@ struct ClueRow {
     number: u16,
 }
 
-const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nSaves are confirmed by storage. If a save fails, keep the app open and choose Retry save. Unreadable records are kept intact.";
+const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nSaves are confirmed by storage. If a save fails, keep the app open and choose Retry saving. Unreadable records are kept intact.";
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
     #[default]
@@ -111,13 +111,18 @@ impl Crossword {
     }
     fn screen(&self, context: &Context) -> Screen {
         let mut b = ScreenBuilder::new("crossword").top_bar("Crossword");
+        // Both failures fill the screen, so each is a splash with its fix
+        // directly under the reason rather than a heading at the top and the
+        // fix pinned to the foot with an empty panel between them.
         if !self.loaded {
             return if let Some(error) = &self.load_error {
-                b.heading("Cannot open progress")
-                    .text(error)
-                    .text("Your saved game has been kept.")
-                    .bottom_action("retry-load", "Retry")
-                    .build()
+                failure_screen(
+                    || ScreenBuilder::new("crossword").top_bar("Crossword"),
+                    &context.metrics(),
+                    "Cannot open progress",
+                    (&format!("{error} Your saved game has been kept."), error),
+                    ("retry-load", "Try again"),
+                )
             } else {
                 b.text("Opening puzzles…").build()
             };
@@ -126,9 +131,24 @@ impl Crossword {
         let p = &PUZZLES[self.current];
         let g = self.game();
         let (label, _) = p.clue(g.position.selected, g.position.down);
+        // The board ignores input until the save succeeds, so this replaces
+        // it rather than sitting over it as a banner.
         if matches!(self.draft.status(), Status::Failed(_)) {
-            return b.heading("Progress is not saved").text("Your latest letters are still here. Keep the app open while you make room on your reader, then retry.")
-                .bottom_action("retry-save", "Retry save").build();
+            let away = self.view != View::Puzzles;
+            return failure_screen(
+                || {
+                    ScreenBuilder::new("crossword")
+                        .top_bar("Crossword")
+                        .owns_back(away)
+                },
+                &context.metrics(),
+                "Progress is not saved",
+                (
+                    "Your latest letters are still here. Keep the app open while you make room on your reader, then retry.",
+                    "Keep the app open while you make room on your reader, then retry.",
+                ),
+                ("retry-save", "Retry saving"),
+            );
         }
         match self.view {
             View::Puzzles => self.puzzles_screen(b, context),
@@ -785,6 +805,33 @@ fn completed_line(game: &Progress) -> String {
     }
 }
 
+/// A whole-screen failure: a splash saying why, then its one fix directly
+/// under it. On a small panel at the largest text sizes the mark gives way
+/// first and then the longer sentence, so the reason and the fix are always
+/// on the panel together.
+fn failure_screen(
+    head: impl Fn() -> ScreenBuilder,
+    metrics: &kobo_sdk::DisplayMetrics,
+    title: &str,
+    (full, short): (&str, &str),
+    (retry, label): (&str, &str),
+) -> Screen {
+    let build = |glyph, summary: &str| {
+        head()
+            .splash(glyph, title, summary)
+            .primary_button(retry, label)
+            .build()
+    };
+    [(Some(Glyph::Close), full), (None, full), (None, short)]
+        .into_iter()
+        .map(|(glyph, summary)| build(glyph, summary))
+        .find(|screen| {
+            !screen
+                .diagnostics(metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| build(None, short))
+}
 fn main() -> ExitCode {
     match kobo_sdk::run("crossword", Crossword::default()) {
         Ok(()) => ExitCode::SUCCESS,

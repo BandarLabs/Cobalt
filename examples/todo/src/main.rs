@@ -254,7 +254,9 @@ struct Todo {
     ///
     /// A refused save still leaves the words on screen, because throwing
     /// them away would be worse; the banner says the list is memory only
-    /// until a save lands.
+    /// until a save lands. Both things it says, a refused save and a full
+    /// list, ask the owner to do something (free space, clear finished
+    /// items), so it is drawn as an error rather than a passing note.
     notice: Option<String>,
     page: usize,
     /// The tag the list is narrowed to, if any.
@@ -503,7 +505,7 @@ impl Todo {
     fn around_the_selection(&self) -> Screen {
         let mut screen = ScreenBuilder::new("Todo");
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+            screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
         screen
             .selection_bar(
@@ -546,7 +548,7 @@ impl Todo {
         let mut screen = ScreenBuilder::new("Todo")
             .secondary("Tap an item to rename it, move it, give it a date or remove it.");
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+            screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
         screen
             .spacer(Space::Medium)
@@ -562,7 +564,7 @@ impl Todo {
     fn around_the_list(&self) -> Screen {
         let mut screen = ScreenBuilder::new("Todo");
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+            screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
         let tags = self.all_tags();
         if !tags.is_empty() {
@@ -634,7 +636,7 @@ impl Todo {
             .top_bar_action(all, all_label)
             .owns_back(true);
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+            screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
         let page = self
             .select_pages
@@ -702,7 +704,7 @@ impl Todo {
     fn list(&self) -> Screen {
         let mut screen = ScreenBuilder::new("Todo").top_bar(self.title());
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+            screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
         if !self.items.is_empty() {
             // Only where there is something to change. An Edit control over
@@ -808,7 +810,7 @@ impl Todo {
             .owns_back(true)
             .secondary("Tap an item to rename it, move it, give it a date or remove it.");
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+            screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
         if self.items.is_empty() {
             screen = screen.empty_state("Nothing on the list yet.");
@@ -885,30 +887,30 @@ impl Todo {
         } else {
             screen
         };
-        // Chips rather than a list of full-width choices. Four dates set as
-        // four rows is most of a panel at the larger text settings, and the
-        // screen they were on then had nowhere to put the last of them; four
-        // short words sit on two lines and say the same thing. The one it
-        // already has is drawn as chosen by the renderer rather than marked
-        // in a label.
+        // One date out of four, side by side with the one it has filled: a
+        // segmented control, because these are one answer to one question.
+        // Chips read as filters, several of which can be on at once. Four
+        // dates set as four rows was most of a panel at the larger text
+        // settings, and where a label will not fit its quarter the renderer
+        // wraps the four as it did before. A date already past is none of
+        // these, so none is filled.
         let chosen = match item.due.map(|day| day - self.today) {
-            Some(0) => Some(DUE_TODAY),
-            Some(1) => Some(DUE_TOMORROW),
-            Some(days) if days > 1 => Some(DUE_WEEK),
-            Some(_) => None,
-            None => Some(DUE_NONE),
+            Some(0) => 0,
+            Some(1) => 1,
+            Some(days) if days > 1 => 2,
+            Some(_) => usize::MAX,
+            None => 3,
         };
         screen
             .section("When it is due")
-            .chips(
+            .segmented(
+                chosen,
                 [
                     (DUE_TODAY, "Today"),
                     (DUE_TOMORROW, "Tomorrow"),
                     (DUE_WEEK, "In a week"),
                     (DUE_NONE, "No date"),
-                ]
-                .into_iter()
-                .map(|(name, label)| (name, label, chosen == Some(name))),
+                ],
             )
             .build()
     }
@@ -1976,6 +1978,98 @@ mod tests {
         );
         assert_eq!(todo.notice, None, "the banner outlived the save");
         let _ = &mut context;
+    }
+
+    #[test]
+    fn a_refused_save_is_drawn_as_an_error_the_owner_has_to_act_on() {
+        let mut todo = started(&[("left", false)]);
+        let mut context = Context::default();
+        todo.on_save(
+            &mut context,
+            ITEMS,
+            StoreResult::Denied(kobo_sdk::StoreError::NoRoom),
+        );
+        let levels: Vec<_> = todo
+            .list()
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Banner { level, .. } => Some(*level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels, [kobo_sdk::BannerLevel::Error]);
+    }
+
+    #[test]
+    fn the_due_date_is_one_segmented_choice_with_the_date_already_set_filled_at_every_size_held_either_way(
+    ) {
+        let dates = [
+            (super::DUE_TODAY, Some(0)),
+            (super::DUE_TOMORROW, Some(1)),
+            (super::DUE_WEEK, Some(7)),
+            (super::DUE_NONE, None),
+        ];
+        for scale in TextScale::STEPS {
+            for (width, height) in [(1072, 1448), (1448, 1072)] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale: scale,
+                    width,
+                    height,
+                    ..kobo_ui::CLARA_BW_METRICS
+                };
+                let _runner = AppRunner::with_metrics(Todo::default(), metrics);
+                for (chosen, days) in dates {
+                    let mut todo = started(&[("first", false), ("second", false)]);
+                    todo.items[1].due = days.map(|days| todo.today + days);
+                    let screen = todo.item(1);
+                    let report = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        !report.has_errors(),
+                        "{scale:?} {width}x{height} {chosen}: {:?}",
+                        report.issues
+                    );
+                    let chips: Vec<_> = report
+                        .layout
+                        .nodes
+                        .iter()
+                        .filter_map(|node| match node.kind {
+                            LayoutKind::Chip(action, selected) => {
+                                Some((action, selected, node.rect))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(chips.len(), 4, "{scale:?} {width}x{height}");
+                    let filled: Vec<_> = chips
+                        .iter()
+                        .filter(|(_, selected, _)| *selected)
+                        .map(|(action, _, _)| *action)
+                        .collect();
+                    assert_eq!(filled, [action_id(chosen)], "{scale:?} {width}x{height}");
+                }
+            }
+        }
+        // At the default size upright the four fit side by side as equal
+        // parts. The old chips were each as wide as its word.
+        let metrics = kobo_ui::CLARA_BW_METRICS;
+        let _runner = AppRunner::with_metrics(Todo::default(), metrics);
+        let todo = started(&[("first", false), ("second", false)]);
+        let report = todo
+            .item(1)
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        let chips: Vec<kobo_ui::Rect> = report
+            .layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Chip(..)))
+            .map(|node| node.rect)
+            .collect();
+        assert!(
+            chips.iter().all(|rect| rect.y == chips[0].y)
+                && chips[..3].iter().all(|rect| rect.width == chips[0].width),
+            "the four dates are not four equal parts at the default size: {chips:?}"
+        );
     }
 
     #[test]

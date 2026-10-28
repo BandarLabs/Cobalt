@@ -4,6 +4,8 @@ expect-missing Shapes, not color
 expect-missing Enter guess
 tap Rules
 expect Filled: right spot
+expect Hard mode
+expect Guesses can leave out letters found.
 clean
 shot inkling-help
 tap Play
@@ -28,7 +30,7 @@ clean
 shot inkling-knowledge
 tap-id game-more
 expect New game
-expect Hard mode: off
+expect-missing Hard mode
 tap Statistics
 expect Played 0. Won 0.
 tap Play

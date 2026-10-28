@@ -262,6 +262,15 @@ fn failure_notice_and_an_empty_collection_keep_navigation_reachable() {
     });
     runner.app_mut().save = SaveState::Failed;
     verify_list(&mut runner, "outing-", 24);
+    let home = runner.app().home_screen(&runner.context()).0;
+    assert!(
+        home.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Banner { level: kobo_sdk::BannerLevel::Error, text, .. }
+                if text == "Not saved. The last write failed."
+        )),
+        "a refused write is an error: {home:?}"
+    );
     tap(&mut runner, "packs");
     verify_list(&mut runner, "pack-", 12);
     runner.app_mut().packs.clear();

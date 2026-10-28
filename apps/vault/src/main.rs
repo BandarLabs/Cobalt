@@ -8,8 +8,8 @@ mod shelf;
 
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, Position, RowLead, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, StoreResult,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Position, RowLead, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult,
 };
 use model::{link_matches_path, Note};
 use shelf::{ImportFailure, Manifest, NoteEntry};
@@ -22,6 +22,9 @@ use std::rc::Rc;
 /// vault packed by an older CLI is not stranded.
 const LEGACY_INDEX_KEY: &str = "vault-index-v1";
 const STATE: &str = "vault-state-v2";
+/// Said on the list a tap returns to when the note it opened could not be
+/// read off the shelf.
+const UNREADABLE: &str = "This note could not be opened. Push your notes again from your computer.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -96,6 +99,10 @@ struct Vault {
     /// were measured for. Every tap repaints, and measuring a long note's
     /// headings again for a page turn is work a single-core reader feels.
     laid_out: RefCell<Option<LaidOut>>,
+    /// What the last tap came to, drawn over the list it left the reader on.
+    /// A note whose body could not be read used to drop the reader back on
+    /// the list with no word, so the tap looked as if it did nothing.
+    notice: Option<(BannerLevel, String)>,
 }
 
 impl Default for Vault {
@@ -124,6 +131,7 @@ impl Default for Vault {
             failure_index: 0,
             trail: Vec::new(),
             laid_out: RefCell::new(None),
+            notice: None,
         }
     }
 }
@@ -140,6 +148,15 @@ impl Vault {
 
     fn set_page(&mut self, view: View, page: usize) {
         self.pages.insert(view as u8, page);
+    }
+
+    /// A list's head with the notice over it, so the rows are paged under
+    /// what is actually drawn above them.
+    fn noticed(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match &self.notice {
+            Some((level, text)) => screen.banner(*level, text),
+            None => screen,
+        }
     }
 
     fn current_entry(&self) -> Option<&(NoteEntry, Source)> {
@@ -412,7 +429,7 @@ impl Vault {
             };
         }
         match self.view {
-            View::Home => self.home_screen(),
+            View::Home => self.home_screen(cx),
             View::About => self.about_screen(cx),
             View::Failure => self.failure_screen(cx),
             View::Browse => {
@@ -451,7 +468,7 @@ impl Vault {
                 } else {
                     format!("Browse / {}", self.browse_stack.join(" / "))
                 };
-                let screen = ScreenBuilder::new("vault-browse").top_bar(title);
+                let screen = self.noticed(ScreenBuilder::new("vault-browse").top_bar(title));
                 if rows.is_empty() {
                     screen
                         .text("This folder is empty.")
@@ -464,7 +481,7 @@ impl Vault {
             View::Note => self.note_screen(cx),
             View::Tags => {
                 let tags = self.deduped_tags();
-                let screen = ScreenBuilder::new("vault-tags").top_bar("Tags");
+                let screen = self.noticed(ScreenBuilder::new("vault-tags").top_bar("Tags"));
                 if tags.is_empty() {
                     screen
                         .text("No tags in this vault yet.")
@@ -499,8 +516,9 @@ impl Vault {
                         )
                     })
                     .collect();
-                let screen =
-                    ScreenBuilder::new("vault-tag-notes").top_bar(format!("#{}", self.tag_filter));
+                let screen = self.noticed(
+                    ScreenBuilder::new("vault-tag-notes").top_bar(format!("#{}", self.tag_filter)),
+                );
                 self.paged_rows(cx, View::TagNotes, &rows, screen)
             }
             View::Recent => {
@@ -520,7 +538,7 @@ impl Vault {
                         )
                     })
                     .collect();
-                let screen = ScreenBuilder::new("vault-recent").top_bar("Recent");
+                let screen = self.noticed(ScreenBuilder::new("vault-recent").top_bar("Recent"));
                 self.paged_rows(cx, View::Recent, &rows, screen)
             }
             View::Search => {
@@ -536,7 +554,8 @@ impl Vault {
                         )
                     })
                     .collect();
-                let screen = ScreenBuilder::new("vault-search-results").top_bar("Search");
+                let screen =
+                    self.noticed(ScreenBuilder::new("vault-search-results").top_bar("Search"));
                 if rows.is_empty() {
                     screen
                         .text("Nothing in this vault matches.")
@@ -565,7 +584,7 @@ impl Vault {
                     || "Backlinks".to_owned(),
                     |(entry, _)| format!("Links to {}", entry.title),
                 );
-                let screen = ScreenBuilder::new("vault-backlinks").top_bar(title);
+                let screen = self.noticed(ScreenBuilder::new("vault-backlinks").top_bar(title));
                 if rows.is_empty() {
                     screen
                         .text("No note links here yet.")
@@ -578,10 +597,31 @@ impl Vault {
         }
     }
 
-    fn home_screen(&self) -> Screen {
+    /// The way into the vault, shaped for the panel it is on.
+    ///
+    /// Held sideways from the middle sizes up, and upright at the largest
+    /// with a banner over it, the four ways in ran off the panel. So the
+    /// count under the top bar keeps its place while the four rows become
+    /// two buttons a line, and then the count gives way too; every way in
+    /// stays.
+    fn home_screen(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        let shapes = [(true, false), (true, true), (false, true)];
+        shapes
+            .into_iter()
+            .map(|(count, compact)| self.home_shaped(count, compact))
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| self.home_shaped(false, true))
+    }
+
+    fn home_shaped(&self, count: bool, compact: bool) -> Screen {
         let pushed = self.pushed.as_ref().map_or(0, |m| m.notes.len());
         let synced = self.synced.as_ref().map_or(0, |m| m.notes.len());
-        let screen = ScreenBuilder::new("vault-home").top_bar("Vault");
+        let screen = self.noticed(ScreenBuilder::new("vault-home").top_bar("Vault"));
         if self.notes.is_empty() {
             return screen
                 .splash(
@@ -601,14 +641,21 @@ impl Vault {
             .chain(self.synced.iter())
             .map(|m| m.failures.len())
             .sum();
+        // Notes that did not import are a failure the owner fixes on the
+        // computer, so the banner is an error and carries the way to the
+        // reasons. About Vault is where they are listed, so while there are
+        // any the banner's See why takes its place rather than sitting
+        // beside a second button that goes to the same screen.
         if failures > 0 {
-            screen = screen.banner(
-                kobo_sdk::BannerLevel::Attention,
-                format!(
-                    "{failures} note{} did not import; see About Vault.",
-                    if failures == 1 { "" } else { "s" }
-                ),
-            );
+            screen = screen
+                .banner(
+                    BannerLevel::Error,
+                    format!(
+                        "{failures} note{} did not import.",
+                        if failures == 1 { "" } else { "s" }
+                    ),
+                )
+                .banner_action("about", "See why");
         }
         let mut heading = if pushed == 1 {
             "1 note".to_owned()
@@ -618,16 +665,32 @@ impl Vault {
         if synced > 0 {
             heading.push_str(&format!(" + {synced} synced"));
         }
-        screen
-            .heading(heading)
-            .rows([
+        if count {
+            screen = screen.heading(heading);
+        }
+        let mut screen = if compact {
+            screen.grid(
+                2,
+                false,
+                [
+                    ("browse", "Browse"),
+                    ("tags", "Tags"),
+                    ("recent", "Recent"),
+                    ("search", "Search"),
+                ],
+            )
+        } else {
+            screen.rows([
                 ("browse", "Browse", "Folders and notes", Glyph::Folder),
                 ("tags", "Tags", "Notes by tag", Glyph::Note),
                 ("recent", "Recent", "Last changed notes", Glyph::Clock),
                 ("search", "Search", "Find text in this vault", Glyph::Search),
             ])
-            .button("about", "About Vault")
-            .build()
+        };
+        if failures == 0 {
+            screen = screen.button("about", "About Vault");
+        }
+        screen.build()
     }
 
     fn failures(&self) -> Vec<&ImportFailure> {
@@ -705,10 +768,7 @@ impl Vault {
         let Some((entry, _)) = self.current_entry() else {
             return ScreenBuilder::new("vault-note")
                 .top_bar("Vault")
-                .banner(
-                    kobo_sdk::BannerLevel::Attention,
-                    "This note is no longer on the shelf.",
-                )
+                .banner(BannerLevel::Error, "This note is no longer on the shelf.")
                 .button("home", "Vault")
                 .build()
                 .with_own_back(true);
@@ -854,6 +914,11 @@ impl KoboApp for Vault {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
+        // The notice answers the tap before this one; turning the page of
+        // the list it sits over keeps it, anything else moves on from it.
+        if a != action_id("list-prev") && a != action_id("list-next") {
+            self.notice = None;
+        }
         if let Some(event) = self.entry.handle(a) {
             if let Typing::Submitted(query) = event {
                 let missing: Vec<String> = self
@@ -1088,6 +1153,7 @@ impl Vault {
                     self.advance_search(cx);
                 } else {
                     self.view = self.origin;
+                    self.notice = Some((BannerLevel::Error, UNREADABLE.to_owned()));
                 }
                 self.show(cx);
             }

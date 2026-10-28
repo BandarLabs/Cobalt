@@ -177,15 +177,15 @@ def main():
                     shot='sync-not-started.png'))
 
                 drive('tap-id toggle', 'wait-for Sync is off',
-                      'expect Syncs once now, then on your schedule.', 'wait-idle')
+                      'expect Paused. Your files stay here.', 'wait-idle')
                 capture('sync-paused')
                 result['checks'].append(dict(
-                    name='turning Sync off shows it off with the way back on',
+                    name='turning Sync off shows it off and says the files stay',
                     shot='sync-paused.png'))
 
                 stop()
                 ADDRESS = start()
-                drive('wait-for Syncs once now, then on your schedule.',
+                drive('wait-for Paused. Your files stay here.',
                       'expect-missing First sync finished',
                       'expect Added to Vault', 'wait-idle', timeout=300)
                 capture('sync-restored')

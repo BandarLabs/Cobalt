@@ -73,7 +73,11 @@ struct HomePanel {
     search_entry: TextEntry,
     task: Option<(TaskId, &'static str)>,
     poll_clock: Heartbeat,
-    banner: Option<String>,
+    /// What the panel says about the last thing that happened, at the level
+    /// its meaning asks for: a tile that changed is a success, a refused
+    /// token an error, and a Home Assistant out of reach something to attend
+    /// to, so the three never look alike.
+    banner: Option<(BannerLevel, String)>,
     wall: bool,
     last_ok: Option<(i64, String)>,
     pending: Option<(String, String)>,
@@ -158,7 +162,7 @@ fn now_hhmm() -> String {
 /// words of the thing they can actually do about it. A Home Assistant on the
 /// home network that does not answer is usually a panel that has left home,
 /// so that is said before "check the address".
-fn failure_message(base: &str, error: TaskError) -> String {
+fn failure(base: &str, error: TaskError) -> kobo_sdk::failure::Problem {
     let service = kobo_sdk::failure::Service::new("Home Assistant").fixed_by(
         "Run kobo connect homepanel on your computer with a new long-lived access token.",
     );
@@ -167,7 +171,23 @@ fn failure_message(base: &str, error: TaskError) -> String {
     } else {
         service.at(base)
     };
-    service.explain(error).message
+    service.explain(error)
+}
+
+/// How much of the connect screen the panel has room for, most first.
+#[derive(Clone, Copy)]
+enum Shape {
+    Marked,
+    Plain,
+    Compact,
+    /// Held sideways at the largest sizes with a banner up: the heading
+    /// gives way and one sentence says what to do.
+    Short,
+    /// A long refusal held sideways at the largest sizes: the sentence and
+    /// the field's label give way too, Use phone moves into the top bar, and
+    /// the HTTPS rule is said under the field only while the address there
+    /// does not already follow it.
+    Bare,
 }
 
 fn title(id: &str) -> String {
@@ -257,13 +277,41 @@ impl HomePanel {
         }
     }
 
+    /// The banner's words, whatever its level.
+    fn banner_text(&self) -> Option<&str> {
+        self.banner.as_ref().map(|(_, text)| text.as_str())
+    }
+
+    /// The banner on a screen, at its own level.
+    fn say(screen: ScreenBuilder, banner: Option<&(BannerLevel, String)>) -> ScreenBuilder {
+        match banner {
+            Some((level, text)) => screen.banner(*level, text),
+            None => screen,
+        }
+    }
+
+    /// Says what a failed request means, at the level the failure asks for,
+    /// after `lead` when there is one.
+    fn fail(&mut self, lead: Option<String>, error: TaskError, tail: Option<String>) {
+        let problem = failure(&self.base, error);
+        let level = problem.level();
+        let mut message = problem.message;
+        if let Some(lead) = lead {
+            message = format!("{lead} {message}");
+        }
+        if let Some(tail) = tail {
+            message = format!("{message} {tail}");
+        }
+        self.banner = Some((level, message));
+    }
+
     fn show(&self, context: &mut Context) {
         let screen = match &self.view {
             View::Opening => ScreenBuilder::new("homepanel-opening")
                 .top_bar("Home Panel")
                 .activity("Opening", None)
                 .build(),
-            View::Setup => self.setup(),
+            View::Setup => self.setup(context),
             View::Grid => self.grid(context),
             View::Settings => self.settings(),
             View::Edit => self.edit(),
@@ -302,7 +350,25 @@ impl HomePanel {
             .filter(|page| page.len() <= kobo_sdk::MAX_CODE_BYTES)
     }
 
-    fn setup(&self) -> Screen {
+    /// The first screen, until an address and a token are on the reader.
+    ///
+    /// Laid out as every connect screen is: what the owner needs to read
+    /// first under the top bar, then what Home Panel needs and the one
+    /// command that gives it, with Check again directly under the command.
+    /// The token is named before anything has failed, because nothing works
+    /// without it and the reader has no way to make one. Once a check has
+    /// found nothing, Check again is the action of the banner that says so,
+    /// and the button under the command goes, so it is offered once. Typing
+    /// the address here comes after, for an owner without a computer to hand.
+    /// Where the panel has no room, held sideways at the larger text sizes,
+    /// the mark goes first, then the heading is set as a section, then the
+    /// heading gives way to one sentence, and last, under a long refusal
+    /// sideways at the largest sizes, see [`Shape::Bare`]; the command and
+    /// every control stay.
+    fn setup(&self, context: &Context) -> Screen {
+        const TEXT: &str = "Run this on your computer and give it a long-lived access token. Home Assistant must be on HTTPS.";
+        const SHORT: &str =
+            "Run this on your computer with a long-lived token. Home Assistant must be on HTTPS.";
         if self.address.is_open() {
             return ScreenBuilder::new("homepanel-setup")
                 .top_bar("Home Panel")
@@ -319,35 +385,53 @@ impl HomePanel {
                 .bottom_action(HOME_URL, "Edit address")
                 .build();
         }
-        // The token step comes first because nothing works without it, and
-        // the reader has no way to make one: it used to appear only after a
-        // test had already failed for want of it.
-        let checked = self.banner.as_deref() == Some(NO_ADDRESS_YET);
-        let mut s = ScreenBuilder::new("homepanel-setup").top_bar("Home Panel");
-        // Check again sits in the bar until a check has found nothing; then
-        // it is the action of the banner that says so, and only there.
-        if !checked {
-            s = s.top_bar_action(CHECK_AGAIN, "Check again");
-        }
-        s = s
-            .text("On your computer, run this and give it a long-lived access token. Home Assistant must be on HTTPS.")
-            .command("kobo connect homepanel")
-            .field(HOME_URL, &self.draft, "https://ha.example.net")
-            .field_label("Home Assistant address")
-            .field_kind(FieldKind::Address);
-        if let Some(error) = &self.address_error {
-            s = s.field_error(error);
-        }
-        if let Some(b) = &self.banner {
-            s = s.banner(BannerLevel::Attention, b);
+        let checked = self.banner_text() == Some(NO_ADDRESS_YET);
+        let bare = |shape: Shape| matches!(shape, Shape::Bare);
+        let build = |shape: Shape| {
+            let mut s = ScreenBuilder::new("homepanel-setup").top_bar("Home Panel");
+            if bare(shape) && self.token_page().is_some() {
+                s = s.top_bar_action(PHONE, "Use phone");
+            }
+            s = Self::say(s, self.banner.as_ref());
             if checked {
                 s = s.banner_action(CHECK_AGAIN, "Check again");
             }
-        }
-        if self.token_page().is_some() {
-            s = s.button(PHONE, "Use phone");
-        }
-        s.build()
+            s = match shape {
+                Shape::Marked => s.splash(Some(Glyph::Light), "Connect Home Assistant", TEXT),
+                Shape::Plain => s.splash(None, "Connect Home Assistant", TEXT),
+                Shape::Compact => s.section("Connect Home Assistant").secondary(TEXT),
+                Shape::Short => s.secondary(SHORT),
+                Shape::Bare => s,
+            }
+            .command("kobo connect homepanel");
+            if !checked {
+                s = s.primary_button(CHECK_AGAIN, "Check again");
+            }
+            s = s.field(HOME_URL, &self.draft, "https://ha.example.net");
+            if !bare(shape) {
+                s = s.field_label("Home Assistant address");
+            }
+            s = s.field_kind(FieldKind::Address);
+            if let Some(error) = &self.address_error {
+                s = s.field_error(error);
+            } else if bare(shape) && !self.draft.starts_with("https://") {
+                s = s.field_hint("Home Assistant must be on HTTPS.");
+            }
+            if !bare(shape) && self.token_page().is_some() {
+                s = s.button(PHONE, "Use phone");
+            }
+            s.build()
+        };
+        let metrics = context.metrics();
+        [Shape::Marked, Shape::Plain, Shape::Compact, Shape::Short]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| build(Shape::Bare))
     }
 
     fn grid_prefix(&self) -> ScreenBuilder {
@@ -358,10 +442,7 @@ impl HomePanel {
         if let Some(freshness) = self.freshness() {
             screen = screen.secondary(freshness);
         }
-        if let Some(banner) = &self.banner {
-            screen = screen.banner(BannerLevel::Attention, banner);
-        }
-        screen
+        Self::say(screen, self.banner.as_ref())
     }
 
     fn page_controls(screen: ScreenBuilder, page: usize, pages: usize) -> ScreenBuilder {
@@ -439,34 +520,36 @@ impl HomePanel {
         self.grid_slice(&pages[page], page, pages.len())
     }
 
+    /// Settings. The address is shown as the labelled field the setup screen
+    /// uses, and tapping it opens setup with the address in it. Back is the
+    /// way out; a Done beside it meant the same thing.
     fn settings(&self) -> Screen {
-        let mut s = ScreenBuilder::new("homepanel-settings")
-            .top_bar("Settings")
-            .section("Connection")
-            .text(self.base.clone())
-            .button("change-url", "Change address")
-            // One setting with two states, so it is a switch: the row says
-            // what it does whichever way it is set.
-            .toggle(
-                "wall",
-                "Wall panel",
-                "One large tile per row, for a reader by the door.",
-                self.wall,
-            )
-            .section("Tiles")
-            .text(format!("{} of {MAX_TILES}", self.tiles.len()));
-        if let Some(b) = &self.banner {
-            s = s.banner(BannerLevel::Attention, b);
-        }
-        s.button("edit", "Edit tiles").button(BACK, "Done").build()
+        // One setting with two states, so it is a switch, and its summary
+        // says how the tiles are laid out now rather than what a tap does.
+        let wall = if self.wall {
+            "One large tile per row, for a reader by the door."
+        } else {
+            "Two tiles per row."
+        };
+        Self::say(
+            ScreenBuilder::new("homepanel-settings").top_bar("Settings"),
+            self.banner.as_ref(),
+        )
+        .field("change-url", &self.base, "https://ha.example.net")
+        .field_label("Home Assistant address")
+        .field_kind(FieldKind::Address)
+        .toggle("wall", "Wall panel", wall, self.wall)
+        .section_with_value("Tiles", format!("{} of {MAX_TILES}", self.tiles.len()))
+        .button("edit", "Edit tiles")
+        .build()
     }
 
+    /// The tiles in order, a page at a time. Back returns to settings.
     fn edit(&self) -> Screen {
         let mut s = ScreenBuilder::new("homepanel-edit").top_bar("Edit tiles");
         if self.tiles.is_empty() {
             return s
                 .splash(Some(Glyph::Light), "No tiles", "Add a tile first.")
-                .button(BACK, "Done")
                 .build();
         }
         let pages = self.tiles.len().div_ceil(EDIT_PAGE);
@@ -483,22 +566,17 @@ impl HomePanel {
                 entity_glyph(&self.tiles[index]),
             )
         }));
-        if let Some(b) = &self.banner {
-            s = s.banner(BannerLevel::Attention, b);
-        }
+        s = Self::say(s, self.banner.as_ref());
         if pages > 1 {
             s = s.button("more", format!("More tiles ({}/{pages})", page + 1));
         }
-        s.button(BACK, "Done").build()
+        s.build()
     }
 
     fn tile(&self, index: usize) -> Screen {
         let mut s = ScreenBuilder::new("homepanel-tile").top_bar("Tile");
         let Some(id) = self.tiles.get(index) else {
-            return s
-                .splash(None, "Tile is gone", "It was removed.")
-                .button(BACK, "Done")
-                .build();
+            return s.splash(None, "Tile is gone", "It was removed.").build();
         };
         s = s.heading(title(id)).text(id.clone()).text(format!(
             "State: {}",
@@ -511,13 +589,15 @@ impl HomePanel {
         if let Some(target) = climate.target {
             s = s.text(format!("Target: {}°", format_degrees(target)));
         }
-        let mut buttons = Vec::new();
+        // Back is the way out. A Done beside Move up and Remove meant the
+        // same thing, and at the largest sizes it squeezed the three into
+        // thirds of the panel until "Remove" broke inside the word.
         if index > 0 {
-            buttons.push(("move-up", "Move up"));
+            s.buttons([("move-up", "Move up"), ("remove", "Remove")])
+                .build()
+        } else {
+            s.button("remove", "Remove").build()
         }
-        buttons.push(("remove", "Remove"));
-        buttons.push((BACK, "Done"));
-        s.buttons(buttons).build()
     }
 
     fn climate_screen(&self, id: &str) -> Screen {
@@ -533,15 +613,13 @@ impl HomePanel {
         if let Some(target) = climate.target {
             s = s.text(format!("Target: {}°", format_degrees(target)));
         }
-        if let Some(b) = &self.banner {
-            s = s.banner(BannerLevel::Attention, b);
-        }
-        s.buttons([("cool", "Cooler"), ("warm", "Warmer"), ("power", "Power")])
+        Self::say(s, self.banner.as_ref())
+            .buttons([("cool", "Cooler"), ("warm", "Warmer"), ("power", "Power")])
             .build()
     }
 
     fn detail_screen(&self, id: &str) -> Screen {
-        let mut s = ScreenBuilder::new("homepanel-reading")
+        let s = ScreenBuilder::new("homepanel-reading")
             .top_bar(title(id))
             .text(format!(
                 "State: {}",
@@ -549,20 +627,14 @@ impl HomePanel {
             ))
             .text(id)
             .secondary("This tile only shows its reading. It is not switched from here.");
-        if let Some(banner) = &self.banner {
-            s = s.banner(BannerLevel::Attention, banner);
-        }
-        s.build()
+        Self::say(s, self.banner.as_ref()).build()
     }
 
     fn picker_prefix(&self) -> ScreenBuilder {
-        let mut screen = ScreenBuilder::new("homepanel-add")
+        let screen = ScreenBuilder::new("homepanel-add")
             .top_bar("Add a tile")
             .top_bar_glyph(SEARCH, "Search", Glyph::Search);
-        if let Some(banner) = &self.banner {
-            screen = screen.banner(BannerLevel::Attention, banner);
-        }
-        screen
+        Self::say(screen, self.banner.as_ref())
     }
 
     fn picker_rows(&self) -> Vec<(String, String, String, Glyph)> {
@@ -727,7 +799,7 @@ impl HomePanel {
     fn test(&mut self, context: &mut Context) {
         if let Some(id) = context.spawn(ha::test_connection(&self.base)) {
             self.task = Some((id, "test"));
-            self.banner = Some("Testing connection…".into());
+            self.banner = Some((BannerLevel::Info, "Testing connection…".into()));
             self.show(context);
         }
     }
@@ -740,7 +812,10 @@ impl HomePanel {
         if let Some(id) = context.spawn(ha::entities(&self.base)) {
             self.task = Some((id, "entities"));
         } else {
-            self.banner = Some("Device list is busy. Try again in a moment.".into());
+            self.banner = Some((
+                BannerLevel::Attention,
+                "Device list is busy. Try again in a moment.".into(),
+            ));
         }
         self.show(context);
     }
@@ -748,14 +823,20 @@ impl HomePanel {
     fn set_climate(&mut self, context: &mut Context, id: &str, delta: f64) {
         let climate = self.climate_of(id);
         let Some(target) = climate.target else {
-            self.banner = Some("Home Assistant has not reported a target temperature yet.".into());
+            self.banner = Some((
+                BannerLevel::Attention,
+                "Home Assistant has not reported a target temperature yet.".into(),
+            ));
             self.show(context);
             return;
         };
         let next = ((target + delta) * 2.0).round() / 2.0;
         if let Some(task) = context.spawn(ha::set_temperature(&self.base, id, next)) {
             self.task = Some((task, "climate"));
-            self.banner = Some(format!("Setting {}°…", format_degrees(next)));
+            self.banner = Some((
+                BannerLevel::Info,
+                format!("Setting {}°…", format_degrees(next)),
+            ));
             self.show(context);
         }
     }
@@ -769,10 +850,18 @@ impl HomePanel {
         self.save_last_ok(context);
         if let Some((id, before)) = self.pending.take() {
             let now = self.state_of(&id).unwrap_or("Not connected");
+            // A tile that did not move asks the owner to look at Home
+            // Assistant, so it is an error; one that moved is the tap done.
             self.banner = Some(if now == before {
-                format!("{} did not change. Check Home Assistant.", title(&id))
+                (
+                    BannerLevel::Error,
+                    format!("{} did not change. Check Home Assistant.", title(&id)),
+                )
             } else {
-                format!("{} is now {now}.", title(&id))
+                (
+                    BannerLevel::Success,
+                    format!("{} is now {now}.", title(&id)),
+                )
             });
         } else if self.poll_failed {
             // A recovery clears the outage banner; a quiet poll never erases a
@@ -790,7 +879,10 @@ impl HomePanel {
             self.show(context);
         } else if action == action_id(ADD) {
             if self.tiles.len() >= MAX_TILES {
-                self.banner = Some("Home Panel can show up to 12 tiles.".into());
+                self.banner = Some((
+                    BannerLevel::Info,
+                    "Home Panel can show up to 12 tiles.".into(),
+                ));
                 self.show(context);
             } else {
                 self.load_entities(context);
@@ -846,7 +938,7 @@ impl HomePanel {
         } else if action == action_id("remove") {
             self.tiles.remove(index);
             self.save_tiles(context);
-            self.banner = Some(format!("{} removed.", title(&id)));
+            self.banner = Some((BannerLevel::Success, format!("{} removed.", title(&id))));
             self.view = View::Edit;
             self.show(context);
             self.fetch(context);
@@ -922,7 +1014,7 @@ impl HomePanel {
         if let Some(task) = context.spawn(request) {
             self.task = Some((task, "service"));
             let state = self.state_of(id).unwrap_or_default().to_owned();
-            self.banner = Some(format!("Updating {}…", title(id)));
+            self.banner = Some((BannerLevel::Info, format!("Updating {}…", title(id))));
             self.pending = Some((id.to_owned(), state));
             self.show(context);
         }
@@ -983,7 +1075,7 @@ impl KoboApp for HomePanel {
             // on screen: the panel opens without anything typed here.
             if self.base.is_empty() {
                 if std::mem::take(&mut self.checking) {
-                    self.banner = Some(NO_ADDRESS_YET.into());
+                    self.banner = Some((BannerLevel::Attention, NO_ADDRESS_YET.into()));
                     self.show(context);
                 }
             } else {
@@ -1144,7 +1236,7 @@ impl KoboApp for HomePanel {
                 self.poll_clock.start(context);
             }
             ("test", TaskOutcome::Failed(error)) => {
-                self.banner = Some(failure_message(&self.base, error));
+                self.fail(None, error, None);
                 self.show(context);
             }
             ("poll", TaskOutcome::Completed(bytes)) => {
@@ -1152,31 +1244,40 @@ impl KoboApp for HomePanel {
             }
             ("poll", TaskOutcome::Failed(error)) => {
                 self.poll_failed = true;
-                let mut message = failure_message(&self.base, error);
                 if let Some((id, _)) = self.pending.take() {
-                    message = format!("Couldn't confirm {}. {message}", title(&id));
-                } else if let Some((_, hhmm)) = &self.last_ok {
-                    message = format!("{message} Showing readings from {hhmm}.");
+                    self.fail(
+                        Some(format!("Couldn't confirm {}.", title(&id))),
+                        error,
+                        None,
+                    );
+                } else {
+                    let tail = self
+                        .last_ok
+                        .as_ref()
+                        .map(|(_, hhmm)| format!("Showing readings from {hhmm}."));
+                    self.fail(None, error, tail);
                 }
-                self.banner = Some(message);
                 self.show(context);
             }
             ("entities", TaskOutcome::Completed(bytes)) => {
                 self.entities = ha::entity_rows(&bytes);
                 self.banner = if self.entities.is_empty() {
-                    Some("Home Assistant returned no devices.".into())
+                    Some((
+                        BannerLevel::Info,
+                        "Home Assistant returned no devices.".into(),
+                    ))
                 } else {
                     None
                 };
                 self.show(context);
             }
             ("entities", TaskOutcome::Failed(error)) => {
-                self.banner = Some(failure_message(&self.base, error));
+                self.fail(None, error, None);
                 self.view = View::Grid;
                 self.show(context);
             }
             ("service", TaskOutcome::Completed(_)) => {
-                self.banner = Some("Updated. Checking status…".into());
+                self.banner = Some((BannerLevel::Success, "Updated. Checking status…".into()));
                 self.show(context);
                 self.fetch(context);
             }
@@ -1185,20 +1286,14 @@ impl KoboApp for HomePanel {
                     .pending
                     .take()
                     .map_or_else(|| "that device".to_owned(), |(id, _)| title(&id));
-                self.banner = Some(format!(
-                    "Couldn't update {name}. {}",
-                    failure_message(&self.base, error)
-                ));
+                self.fail(Some(format!("Couldn't update {name}.")), error, None);
                 self.show(context);
             }
             ("climate", TaskOutcome::Completed(_)) => {
                 self.fetch(context);
             }
             ("climate", TaskOutcome::Failed(error)) => {
-                self.banner = Some(format!(
-                    "Couldn't set the temperature. {}",
-                    failure_message(&self.base, error)
-                ));
+                self.fail(Some("Couldn't set the temperature.".into()), error, None);
                 self.show(context);
             }
             _ => {}
@@ -1304,13 +1399,22 @@ mod tests {
     #[test]
     fn failure_messages_name_the_fix() {
         let base = "https://ha.example";
-        assert!(failure_message(base, TaskError::NoCredential).contains("kobo connect homepanel"));
-        assert!(failure_message(base, TaskError::Offline).contains("Wi-Fi"));
-        assert!(failure_message(base, TaskError::Unreachable).contains("did not answer"));
-        assert!(failure_message(base, TaskError::Unauthorized).contains("long-lived access token"));
-        assert!(!failure_message(base, TaskError::Unauthorized).contains("address"));
+        assert!(failure(base, TaskError::NoCredential)
+            .message
+            .contains("kobo connect homepanel"));
+        assert!(failure(base, TaskError::Offline).message.contains("Wi-Fi"));
+        assert!(failure(base, TaskError::Unreachable)
+            .message
+            .contains("did not answer"));
+        assert!(failure(base, TaskError::Unauthorized)
+            .message
+            .contains("long-lived access token"));
+        assert!(!failure(base, TaskError::Unauthorized)
+            .message
+            .contains("address"));
         assert!(
-            failure_message("https://homeassistant.local:8123", TaskError::Unreachable)
+            failure("https://homeassistant.local:8123", TaskError::Unreachable)
+                .message
                 .contains("home network")
         );
     }
@@ -1424,7 +1528,7 @@ mod large_text_tests {
     fn setup_instructions_and_keyboard_are_complete_at_large_text() {
         for metrics in panels() {
             let runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
-            let screen = runner.app().setup();
+            let screen = runner.app().setup(&runner.context());
             fits(&screen, metrics);
             let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
             let text = layout
@@ -1442,19 +1546,24 @@ mod large_text_tests {
 
     #[test]
     fn every_setup_state_fits_at_every_size_held_either_way() {
-        for portrait in panels() {
+        // Held sideways too, at every size: the connect screen gives up its
+        // mark and then its heading before it would run off the panel.
+        let clara =
+            kobo_ui::TextScale::STEPS
+                .into_iter()
+                .map(|text_scale| kobo_sdk::DisplayMetrics {
+                    text_scale,
+                    ..kobo_sdk::CLARA_BW_METRICS
+                });
+        for portrait in panels().chain(clara) {
             let landscape = kobo_sdk::DisplayMetrics {
                 width: portrait.height,
                 height: portrait.width,
                 ..portrait
             };
-            // On its side the panel is checked at the default size: the
-            // setup prose and the command fill a sideways panel at the
-            // largest size, as they did when the app drew its own keys.
-            let sideways =
-                (landscape.text_scale == kobo_ui::TextScale::Default).then_some(landscape);
-            for metrics in std::iter::once(portrait).chain(sideways) {
-                let _runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
+            for metrics in [portrait, landscape] {
+                let runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
+                let context = runner.context();
                 for (draft, error, banner, phone) in [
                     ("https://ha.example.net", None, None, false),
                     (
@@ -1463,20 +1572,112 @@ mod large_text_tests {
                         None,
                         false,
                     ),
-                    ("", None, Some(NO_ADDRESS_YET), false),
+                    (
+                        "",
+                        None,
+                        Some((BannerLevel::Attention, NO_ADDRESS_YET.to_owned())),
+                        false,
+                    ),
+                    (
+                        "https://homeassistant.local:8123",
+                        None,
+                        Some((
+                            BannerLevel::Error,
+                            failure("https://homeassistant.local:8123", TaskError::Unauthorized)
+                                .message,
+                        )),
+                        false,
+                    ),
                     ("https://homeassistant.local:8123", None, None, true),
                 ] {
                     let app = HomePanel {
                         draft: draft.into(),
                         address_error: error.map(Into::into),
-                        banner: banner.map(Into::into),
+                        banner,
                         phone,
                         ..HomePanel::default()
                     };
-                    fits(&app.setup().with_own_back(phone), metrics);
+                    let screen = app.setup(&context).with_own_back(phone);
+                    fits(&screen, metrics);
+                    if phone {
+                        continue;
+                    }
+                    let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    let text = layout
+                        .nodes
+                        .iter()
+                        .flat_map(|node| node.text_lines.iter())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    assert!(
+                        text.contains("kobo connect homepanel"),
+                        "{metrics:?}: {text}"
+                    );
+                    assert!(
+                        text.contains("must be on HTTPS.")
+                            || error.is_some()
+                            || draft.starts_with("https://"),
+                        "{metrics:?}: {text}"
+                    );
+                    if app.token_page().is_some() {
+                        assert!(layout.rect_of_action(action_id(PHONE)).is_some());
+                    }
+                    assert!(layout.rect_of_action(action_id(CHECK_AGAIN)).is_some());
+                    assert!(layout.rect_of_action(action_id(HOME_URL)).is_some());
                 }
             }
         }
+    }
+
+    /// Where each part of the connect screen is drawn, in reading order.
+    fn connect_order(screen: &Screen) -> Vec<&'static str> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Banner { .. } => Some("banner"),
+                kobo_sdk::Node::Splash { .. } | kobo_sdk::Node::Section { .. } => Some("heading"),
+                kobo_sdk::Node::Quote { .. } => Some("command"),
+                kobo_sdk::Node::Button {
+                    action,
+                    emphasis: kobo_ui::Emphasis::Primary,
+                    ..
+                } if *action == action_id(CHECK_AGAIN) => Some("check again"),
+                kobo_sdk::Node::Field { .. } => Some("field"),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_connect_screen_reads_banner_then_command_then_check_again_with_nothing_in_the_bar() {
+        let context = kobo_sdk::AppRunner::new(HomePanel::default()).context();
+        let first = HomePanel::default().setup(&context);
+        assert_eq!(
+            connect_order(&first),
+            ["heading", "command", "check again", "field"],
+            "{first:?}"
+        );
+        assert!(first
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
+        let checked = HomePanel {
+            banner: Some((BannerLevel::Attention, NO_ADDRESS_YET.into())),
+            ..HomePanel::default()
+        }
+        .setup(&context);
+        assert_eq!(
+            connect_order(&checked),
+            ["banner", "heading", "command", "field"],
+            "Check again moves onto the banner: {checked:?}"
+        );
+        assert!(checked.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Banner { action: Some(action), .. }
+                if action.action == action_id(CHECK_AGAIN)
+        )));
     }
 
     #[test]
@@ -1496,7 +1697,7 @@ mod large_text_tests {
             }) if initial == "https://" && submit == "Test connection"
         )));
         runner.type_text("http://ha.example.net");
-        let screen = runner.app().setup();
+        let screen = runner.app().setup(&runner.context());
         assert!(
             screen.nodes.iter().any(|node| matches!(
                 node,
@@ -1551,5 +1752,159 @@ mod large_text_tests {
         runner.action(action_id("wall"));
         assert!(runner.app().wall);
         assert_eq!(toggle(&runner.app().settings()), Some(true));
+    }
+
+    #[test]
+    fn settings_show_the_address_as_a_labelled_field_the_tile_count_beside_its_heading_and_no_done()
+    {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Settings,
+            ..panel_for_settings()
+        });
+        let settings = runner.app().settings();
+        assert!(
+            settings.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Field { value, label: Some(label), kind: FieldKind::Address, .. }
+                    if value == "https://ha.example" && label == "Home Assistant address"
+            )),
+            "{settings:?}"
+        );
+        assert!(
+            settings.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Section { title, value: Some(value), .. }
+                    if title == "Tiles" && value == "3 of 12"
+            )),
+            "{settings:?}"
+        );
+        assert!(
+            !format!("{settings:?}").contains("\"Done\""),
+            "Back is the way out of settings: {settings:?}"
+        );
+        runner.action(action_id("change-url"));
+        assert!(runner.app().view == View::Setup);
+        assert_eq!(runner.app().draft, "https://ha.example");
+    }
+
+    #[test]
+    fn the_wall_panel_summary_says_how_the_tiles_are_laid_out_now() {
+        let summary = |wall: bool| {
+            HomePanel {
+                wall,
+                ..HomePanel::default()
+            }
+            .settings()
+            .nodes
+            .into_iter()
+            .find_map(|node| match node {
+                kobo_sdk::Node::Toggle { summary, .. } => Some(summary),
+                _ => None,
+            })
+        };
+        assert_eq!(summary(false).as_deref(), Some("Two tiles per row."));
+        assert_eq!(
+            summary(true).as_deref(),
+            Some("One large tile per row, for a reader by the door.")
+        );
+    }
+
+    #[test]
+    fn settings_fit_a_clara_at_every_text_size_held_either_way_with_a_banner() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for (width, height) in [(1072, 1448), (1448, 1072)] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    text_scale,
+                    ..kobo_sdk::CLARA_BW_METRICS
+                };
+                let _runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
+                for wall in [false, true] {
+                    let app = HomePanel {
+                        wall,
+                        banner: Some((BannerLevel::Success, "fan removed.".into())),
+                        ..panel_for_settings()
+                    };
+                    fits(&app.settings().with_own_back(true), metrics);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_finished_change_is_a_success_and_a_refused_token_an_error() {
+        let mut context = kobo_sdk::AppRunner::new(HomePanel::default()).context();
+        let mut app = panel_for_settings();
+        app.task = Some((TaskId(4), "service"));
+        app.on_task(&mut context, TaskId(4), TaskOutcome::Completed(Vec::new()));
+        assert_eq!(
+            app.banner.as_ref().map(|(level, _)| *level),
+            Some(BannerLevel::Success)
+        );
+        app.task = Some((TaskId(5), "test"));
+        app.on_task(
+            &mut context,
+            TaskId(5),
+            TaskOutcome::Failed(TaskError::Unauthorized),
+        );
+        assert_eq!(
+            app.banner.as_ref().map(|(level, _)| *level),
+            Some(BannerLevel::Error)
+        );
+        app.task = Some((TaskId(6), "test"));
+        app.on_task(
+            &mut context,
+            TaskId(6),
+            TaskOutcome::Failed(TaskError::Offline),
+        );
+        assert_eq!(
+            app.banner.as_ref().map(|(level, _)| *level),
+            Some(BannerLevel::Attention),
+            "a panel off the Wi-Fi may come right by itself"
+        );
+    }
+
+    fn panel_for_settings() -> HomePanel {
+        HomePanel {
+            base: "https://ha.example".into(),
+            tiles: vec![
+                "light.desk".into(),
+                "switch.fan".into(),
+                "climate.bedroom".into(),
+            ],
+            ..HomePanel::default()
+        }
+    }
+
+    #[test]
+    fn the_tile_screen_keeps_move_up_and_remove_whole_with_back_as_the_way_out() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for (width, height) in [(1072, 1448), (1448, 1072)] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    text_scale,
+                    ..kobo_sdk::CLARA_BW_METRICS
+                };
+                let _runner = kobo_sdk::AppRunner::with_metrics(HomePanel::default(), metrics);
+                let screen = panel_for_settings().tile(1);
+                fits(&screen.clone().with_own_back(true), metrics);
+                let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+                let lines = layout
+                    .nodes
+                    .iter()
+                    .flat_map(|node| node.text_lines.iter())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for label in ["Move up", "Remove"] {
+                    assert!(
+                        lines.iter().any(|line| line == label),
+                        "{text_scale:?} {width}x{height}: {label} broke: {lines:?}"
+                    );
+                }
+                assert!(!lines.iter().any(|line| line == "Done"), "{lines:?}");
+            }
+        }
     }
 }

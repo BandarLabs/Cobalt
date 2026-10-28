@@ -213,9 +213,11 @@ def main():
                 drive('tap-id library', 'wait-for-id entry-0', 'wait-idle')
                 capture('20-connected-from-the-computer')
                 # The library at home stops answering: the catalog stays, with
-                # the home-network hint rather than "check the address".
+                # the home-network hint rather than "check the address". Its
+                # first entry is the one every text size keeps on the first
+                # page; at the largest the book itself turns to the second.
                 authentication['down'] = True
-                drive('tap-id entry-0', 'wait-for home network', 'expect A Walk by the River')
+                drive('tap-id entry-0', 'wait-for home network', 'expect Authors')
                 capture('21-library-away-from-home')
                 result = dict(status='passed', profile=args.profile, scale=args.scale,
                               basis='actual-sdk-simulator-with-private-https-opds-and-original-epub',

@@ -98,10 +98,14 @@ def main():
                 # name as every other game, and the old jargon is gone.
                 drive("expect-missing Shapes, not color", "expect-missing Enter guess",
                       "tap Rules", "wait-for Find the five-letter word",
-                      "expect Filled: right spot.")
+                      "expect Filled: right spot.", "expect Hard mode",
+                      "expect Guesses can leave out letters found.")
                 capture("inkling-help")
+                # Hard mode is a switch under the rules, applied on the tap.
+                drive("tap-id hard", "wait-for Each guess must use the letters found.",
+                      "tap-id hard", "wait-for Guesses can leave out letters found.")
                 drive("tap Play", "wait-for Inkling · Sep 1")
-                drive("tap-id game-more", "wait-for New game", "expect Hard mode: off",
+                drive("tap-id game-more", "wait-for New game", "expect-missing Hard mode",
                       "expect Statistics")
                 capture("inkling-more")
                 drive("tap Statistics", "wait-for Played 0. Won 0.", "tap Play",

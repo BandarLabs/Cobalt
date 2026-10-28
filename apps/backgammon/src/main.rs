@@ -1803,42 +1803,41 @@ fn screen_for(game: &Game, bands: Option<Bands>, context: &Context) -> Screen {
         View::Board => {}
     }
     match game.phase {
+        // The three cube questions are whole-screen confirmations, the same
+        // shape as New match: the question, what each answer leads to, and
+        // the two answers. They were two muted lines over a pair of grid
+        // keys, which read as a status with keys under it rather than as a
+        // question waiting for an answer.
         Phase::ConfirmDouble => ScreenBuilder::new("backgammon-double")
             .top_bar("Backgammon")
-            .secondary(format!("Offer the cube at {}?", game.cube * 2))
-            .secondary("The opponent may take or drop. This cannot be undone.")
-            .grid(
-                2,
-                false,
-                [
-                    ("confirm-double", "Offer double"),
-                    ("cancel-double", "Cancel"),
-                ],
+            .confirmation(
+                format!("Offer the cube at {}?", game.cube * 2),
+                "The opponent may take or drop. This cannot be undone.",
+                kobo_sdk::DialogAction::new("confirm-double", "Offer double"),
+                kobo_sdk::DialogAction::new("cancel-double", "Cancel"),
             )
             .build(),
         Phase::Offered(player) => ScreenBuilder::new("backgammon-cube")
             .top_bar("Backgammon")
-            .secondary(format!(
-                "{} offers the cube at {}.",
-                player.name(),
-                game.cube * 2
-            ))
-            .secondary(format!(
-                "{} may take and play on for {}, or drop and give up {} now.",
-                player.other().name(),
-                points(game.cube * 2),
-                points(game.cube)
-            ))
-            .grid(2, false, [("take", "Take"), ("drop", "Drop")])
+            .confirmation(
+                format!("{} offers the cube at {}", player.name(), game.cube * 2),
+                format!(
+                    "{} may take and play on for {}, or drop and give up {} now.",
+                    player.other().name(),
+                    points(game.cube * 2),
+                    points(game.cube)
+                ),
+                kobo_sdk::DialogAction::new("take", "Take"),
+                kobo_sdk::DialogAction::new("drop", "Drop"),
+            )
             .build(),
         Phase::ConfirmDrop(player) => ScreenBuilder::new("backgammon-drop")
             .top_bar("Backgammon")
-            .secondary(format!("Drop {}'s double?", player.name()))
-            .secondary("This ends the game and cannot be undone.")
-            .grid(
-                2,
-                false,
-                [("confirm-drop", "Drop cube"), ("cancel-drop", "Cancel")],
+            .confirmation(
+                format!("Drop {}'s double?", player.name()),
+                "This ends the game and cannot be undone.",
+                kobo_sdk::DialogAction::new("confirm-drop", "Drop cube"),
+                kobo_sdk::DialogAction::new("cancel-drop", "Cancel"),
             )
             .build(),
         Phase::GameOver(winner) => result_screen(
@@ -3536,8 +3535,15 @@ mod tests {
     /// and where the cube stands.
     #[test]
     fn the_board_states_the_turn_the_dice_and_the_cube_at_every_text_size() {
-        // Upright only: held sideways the board is taller than a Clara at any
-        // text size, which needs a layout of its own.
+        // Upright only, because Backgammon is only ever drawn upright: the
+        // runtime turns an app only when the app asks, and this one offers no
+        // Use landscape. It could not: the runtime draws its board across the
+        // panel's whole width whatever room it is given, half as tall as wide,
+        // so a Clara on its side spends 720 of its 1072 pixels on the board
+        // and the numbered strips and top bar leave 73, less than one finger
+        // for Undo, Roll and Double and nothing for Bar and Off. Standing the
+        // board beside its controls needs the runtime's board to keep to the
+        // room it is given.
         for text_scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
                 text_scale,

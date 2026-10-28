@@ -72,10 +72,11 @@ fn all_wall_tiles_and_error_notices_fit_at_every_text_size() {
                 view: View::Grid,
                 wall,
                 tiles: (0..12).map(|n| format!("light.room_{n:02}")).collect(),
-                banner: Some(
+                banner: Some((
+                    BannerLevel::Attention,
                     "Home Assistant did not answer. Check the address and that it is running."
                         .into(),
-                ),
+                )),
                 ..HomePanel::default()
             };
             let pages = app.grid_pages(&context);
@@ -196,13 +197,12 @@ fn stale_poll_outcomes_preserve_the_current_service_and_its_result() {
                     confirmation,
                     TaskOutcome::Completed(br#"[{"id":"light.desk","s":"on"}]"#.to_vec()),
                 );
-                assert_eq!(runner.app().banner.as_deref(), Some("desk is now on."));
+                assert_eq!(runner.app().banner_text(), Some("desk is now on."));
             } else {
                 runner.task_outcome(current.0, TaskOutcome::Failed(TaskError::Unauthorized));
                 assert!(runner
                     .app()
-                    .banner
-                    .as_deref()
+                    .banner_text()
                     .unwrap()
                     .starts_with("Couldn't update desk."));
             }
@@ -260,7 +260,7 @@ fn repeated_taps_keep_each_service_request_and_only_the_latest_status() {
                 br#"[{"id":"light.desk","s":"off"},{"id":"switch.fan","s":"on"}]"#.to_vec(),
             ),
         );
-        assert_eq!(runner.app().banner.as_deref(), Some("fan is now on."));
+        assert_eq!(runner.app().banner_text(), Some("fan is now on."));
         assert!(runner.app().pending.is_none());
     }
 }
@@ -303,7 +303,7 @@ fn stale_poll_does_not_consume_a_new_connection_test() {
             .task_outcome(poll, TaskOutcome::Completed(vec![]))
             .is_empty());
         assert_eq!(runner.app().task, Some(current));
-        assert_eq!(runner.app().banner.as_deref(), Some("Testing connection…"));
+        assert_eq!(runner.app().banner_text(), Some("Testing connection…"));
         if succeeds {
             runner.task_outcome(current.0, TaskOutcome::Completed(vec![]));
             assert!(runner.app().view == View::Grid);
@@ -314,8 +314,7 @@ fn stale_poll_does_not_consume_a_new_connection_test() {
             assert!(runner.app().view == View::Setup);
             assert!(runner
                 .app()
-                .banner
-                .as_deref()
+                .banner_text()
                 .unwrap()
                 .contains("did not accept your account"));
         }
@@ -336,12 +335,11 @@ fn stale_poll_does_not_consume_the_latest_temperature_change() {
     );
     assert!(runner.task_outcome(poll, TaskOutcome::Cancelled).is_empty());
     assert_eq!(runner.app().task, Some(current));
-    assert_eq!(runner.app().banner.as_deref(), Some("Setting 21.5°…"));
+    assert_eq!(runner.app().banner_text(), Some("Setting 21.5°…"));
     runner.task_outcome(current.0, TaskOutcome::Failed(TaskError::Unauthorized));
     assert!(runner
         .app()
-        .banner
-        .as_deref()
+        .banner_text()
         .unwrap()
         .starts_with("Couldn't set the temperature."));
     assert_eq!(runner.app().climate_of("climate.room").target, Some(21.0));
@@ -366,8 +364,7 @@ fn an_address_written_from_the_computer_opens_the_panel_on_check_again() {
     });
     assert!(runner
         .app()
-        .banner
-        .as_deref()
+        .banner_text()
         .unwrap()
         .contains("No address has arrived"));
     runner.lifecycle(kobo_sdk::Lifecycle::Foreground);

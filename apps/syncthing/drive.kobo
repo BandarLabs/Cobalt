@@ -8,7 +8,7 @@ shot syncthing-off
 tap-id toggle
 expect Sync now
 expect Starting
-expect Turn off to stop all syncing. Files stay.
+expect Files move with your computer.
 expect-missing Sync is off
 clean
 shot syncthing-on
@@ -33,4 +33,4 @@ tap-id toggle
 expect Sync is off
 tap Set up Sync
 tap Back
-expect Syncs once now, then on your schedule.
+expect Paused. Your files stay here.

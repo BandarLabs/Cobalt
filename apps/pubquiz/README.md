@@ -19,11 +19,13 @@ Trivia rounds for one player, or for a group passing one Kobo around.
   Literature, Nature, Sport & Games), each at three difficulties. They play
   offline from the first launch.
 - Get more questions adds a pack from Open Trivia DB while online. The pack
-  plays offline afterwards, alongside the bundled questions.
+  plays offline afterwards, alongside the bundled questions. If the download
+  fails, the message on Home says why and carries Join Wi-Fi or Try again.
 - Solo rounds of up to ten questions.
 - Pass-around mode for two to four named players. Everyone answers the same
   question in turn, with a hand-over screen between players, then the table
-  sees who was right.
+  sees who was right. Renaming a player starts from the name already there,
+  and the keyboard shows the naming rule.
 - Rules and the game menu sit in the top bar of every round screen. New game
   in the menu ends the round and goes back to its choices.
 - The round is saved as it is played, so a reader that sleeps mid-round opens
