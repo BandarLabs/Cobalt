@@ -93,13 +93,10 @@ fn publish_with(
     destination: &Path,
     sync: &mut impl FnMut(&Path) -> io::Result<()>,
 ) -> io::Result<()> {
-    // FlushFileBuffers answers ERROR_ACCESS_DENIED on a read-only handle, so
-    // the final flush asks for write access even though nothing is written.
-    fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(partial)?
-        .sync_all()?;
+    // The shared helper asks for write access only on Windows, where
+    // FlushFileBuffers refuses a read-only handle; on the device this is the
+    // read-only open and fsync it always was.
+    kobo_protocol::durability::sync_file(partial)?;
     fs::rename(partial, destination)?;
     sync(parent(destination))
 }

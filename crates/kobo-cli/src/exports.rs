@@ -247,11 +247,11 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if bounded_file(&target, offer.bytes).is_ok_and(|bytes| offer.matches(&bytes)) {
-                        // FlushFileBuffers answers ERROR_ACCESS_DENIED on a
-                        // read-only handle, so confirming the existing copy
-                        // asks for write access even though nothing is written.
-                        fs::OpenOptions::new().read(true).write(true).open(&target)
-                            .and_then(|file| file.sync_all())
+                        // Confirming the copy must not need write access to
+                        // it on macOS or Linux, where an owner may have made it
+                        // read-only; the shared helper asks for that only on
+                        // Windows, whose flush call requires it.
+                        kobo_protocol::durability::sync_file(&target)
                             .and_then(|()| kobo_protocol::durability::sync_directory(&folder))
                             .map_err(|error| format!("The copy is present, but its save could not be confirmed: {error}"))?;
                         return Ok(target);
