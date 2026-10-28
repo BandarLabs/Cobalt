@@ -637,6 +637,10 @@ fn finished(status: &'static str, exit: i32, tail: String) -> ResultRecord {
 #[cfg(test)]
 mod tests {
 
+    // Windows has no process group to probe once the shell has exited (see
+    // `group_running`), so a descendant that let go of the output pipes is
+    // neither waited for nor killed there. These check the Unix tracking.
+    #[cfg(unix)]
     #[test]
     fn redirected_descendants_remain_subject_to_the_deadline() {
         let directory = directory();
@@ -658,6 +662,10 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(3));
     }
 
+    // Windows has no process group to probe once the shell has exited (see
+    // `group_running`), so a descendant that let go of the output pipes is
+    // neither waited for nor killed there. These check the Unix tracking.
+    #[cfg(unix)]
     #[test]
     fn short_lived_redirected_descendants_finish_before_reporting_success() {
         let directory = directory();
@@ -679,6 +687,10 @@ mod tests {
         );
     }
 
+    // Windows has no process group to probe once the shell has exited (see
+    // `group_running`), so a descendant that let go of the output pipes is
+    // neither waited for nor killed there. These check the Unix tracking.
+    #[cfg(unix)]
     #[test]
     fn descendants_ignoring_term_are_killed_after_grace() {
         let directory = directory();
@@ -698,11 +710,25 @@ mod tests {
     #[test]
     fn command_results_preserve_status_and_bound_noisy_output() {
         let directory = directory();
-        for (command, expected, code) in [
+        #[cfg(unix)]
+        let cases = [
             ("printf ok", "ok", 0),
             ("printf failed >&2; exit 7", "failed", 7),
             ("yes x | head -c 100000", "ok", 0),
-        ] {
+        ];
+        // The same three in cmd: a plain success, a failure with its own exit
+        // code on standard error, and far more output than the tail keeps.
+        #[cfg(windows)]
+        let cases = [
+            ("echo ok", "ok", 0),
+            ("echo failed 1>&2 & exit /b 7", "failed", 7),
+            (
+                "for /L %i in (1,1,300) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "ok",
+                0,
+            ),
+        ];
+        for (command, expected, code) in cases {
             let result = run_command(
                 command,
                 &directory,
