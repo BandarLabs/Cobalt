@@ -915,10 +915,10 @@ fn rules_screen(quiz: &Quiz) -> Screen {
         .top_bar(game::RULES_LABEL)
         .owns_back(true)
         .section("Solo")
-        .text("Up to ten questions, one point for each right answer.")
+        .text("Up to ten questions. A point for each right answer.")
         .section("With friends")
-        .text("Two to four players pass one reader round the table, then see who was right.")
-        .text("Rounds are saved as you play, even if the reader sleeps.")
+        .text("Two to four players pass the reader round, then see who was right.")
+        .secondary("A round is saved if the reader sleeps.")
         .bottom_action(name, label)
         .build()
 }
@@ -2524,8 +2524,7 @@ mod help_layout_tests {
             ..Quiz::default()
         };
         assert!(format!("{:?}", screen(&from_round)).contains("Back to the round"));
-        let screens = [screen(&from_home), screen(&from_round)];
-        for screen in screens {
+        for quiz in [&from_home, &from_round] {
             for (width, height, pixels_per_inch) in
                 [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
             {
@@ -2536,6 +2535,13 @@ mod help_layout_tests {
                         pixels_per_inch,
                         text_scale,
                     };
+                    // A runner installs the face and the size the runtime
+                    // measures with, and the screen is built after it. Built
+                    // before, it was laid out at whatever the thread's previous
+                    // test left set, and a real overflow on the six-inch panel
+                    // passed or failed by test order.
+                    let _runner = kobo_sdk::AppRunner::with_metrics(Quiz::default(), metrics);
+                    let screen = screen(quiz);
                     let chrome = kobo_ui::Chrome::measuring(true);
                     let diagnostics = screen.diagnostics(&metrics, &chrome);
                     assert!(
@@ -2674,7 +2680,7 @@ mod chrome_tests {
         assert!(!format!("{home:?}").contains("How to play"));
         runner.action(action_id(game::RULES));
         assert_eq!(runner.app().view, View::Rules);
-        assert!(format!("{:?}", screen(runner.app())).contains("round the table"));
+        assert!(format!("{:?}", screen(runner.app())).contains("pass the reader round"));
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Home);
     }
