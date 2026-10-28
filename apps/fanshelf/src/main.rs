@@ -5,7 +5,7 @@ mod library;
 
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
     ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -94,7 +94,12 @@ enum AdultPurpose {
 #[allow(clippy::struct_excessive_bools)]
 struct Fanshelf {
     view: View,
-    keyboard: Keyboard,
+    /// A work's address or number, typed on the runtime's keyboard with the
+    /// marks an address needs beside the letters.
+    work_entry: TextEntry,
+    /// A tag's name or address. Tag names have spaces in them, so this one
+    /// keeps the space bar.
+    tag_entry: TextEntry,
     works: Vec<Work>,
     tags: Vec<FollowedTag>,
     feed: Vec<FeedWork>,
@@ -149,7 +154,8 @@ impl Default for Fanshelf {
     fn default() -> Self {
         Self {
             view: View::Shelf,
-            keyboard: Keyboard::new(),
+            work_entry: TextEntry::new().address(),
+            tag_entry: TextEntry::new(),
             works: Vec::new(),
             tags: Vec::new(),
             feed: Vec::new(),
@@ -351,9 +357,9 @@ impl Fanshelf {
         match self.view {
             View::Shelf => self.shelf_screen(context),
             View::Add => self.entry_screen(
-                ScreenBuilder::new("fs-add")
-                    .top_bar("Add work")
-                    .heading("Add an AO3 work"),
+                ScreenBuilder::new("fs-add").top_bar("Add work"),
+                &self.work_entry,
+                "Add an AO3 work",
                 "Work address or number, such as 4242",
                 "Open work",
             ),
@@ -370,9 +376,9 @@ impl Fanshelf {
             View::Fandoms => self.fandoms_screen(context),
             View::Manage => self.manage_screen(context),
             View::AddTag => self.entry_screen(
-                ScreenBuilder::new("fs-add-tag")
-                    .top_bar("Follow tag")
-                    .heading("Follow an AO3 tag"),
+                ScreenBuilder::new("fs-add-tag").top_bar("Follow tag"),
+                &self.tag_entry,
+                "Follow an AO3 tag",
                 "Tag name or tag address",
                 "Follow",
             ),
@@ -390,22 +396,25 @@ impl Fanshelf {
         }
     }
 
-    /// A screen that takes typed text: what has been typed so far, and why
-    /// the last attempt was refused.
+    /// A screen that takes typed text on the reader's own keyboard, and says
+    /// why the last attempt was refused.
     ///
-    /// Both used to be missing. The keys answered but nothing on the panel
-    /// showed the letters, and a work number that could not be read set a
-    /// message this screen never drew, so a mistyped address looked like a
-    /// button that did nothing.
-    fn entry_screen(&self, screen: ScreenBuilder, hint: &str, submit: &str) -> Screen {
-        let mut screen = screen;
-        if let Some(message) = &self.message {
-            screen = screen.banner(BannerLevel::Attention, message);
-        }
+    /// The reason takes the place of the guidance under the prompt. The
+    /// runtime's field covers this application's screen, so a banner drawn
+    /// here would sit under the keys unseen, and a mistyped address would
+    /// come back looking like a button that did nothing.
+    fn entry_screen(
+        &self,
+        screen: ScreenBuilder,
+        entry: &TextEntry,
+        prompt: &str,
+        hint: &str,
+        submit: &str,
+    ) -> Screen {
+        let hint = self.message.as_deref().unwrap_or(hint);
         screen
-            .typed(&self.keyboard, hint)
-            .keyboard(&self.keyboard, submit)
             .owns_back(true)
+            .text_entry_with_hint(entry, prompt, hint, submit)
             .build()
     }
 
@@ -422,13 +431,13 @@ impl Fanshelf {
                     "That is not an AO3 work address or number. Try the number in the work's address, such as 4242."
                         .into(),
                 );
-                self.keyboard = Keyboard::with_text(entered);
+                self.work_entry.open_with(entered);
             }
             return;
         }
         let Some(tag) = parse_tag(&entered) else {
             self.message = Some("Type a tag name, or paste the tag's AO3 address.".into());
-            self.keyboard = Keyboard::with_text(entered);
+            self.tag_entry.open_with(entered);
             return;
         };
         if self.tags.iter().any(|known| known.slug == tag.slug) {
@@ -436,7 +445,7 @@ impl Fanshelf {
             self.message = Some("You already follow this tag.".into());
         } else if self.tags.len() >= MAX_TAGS {
             self.message = Some(format!("Fanshelf can follow {MAX_TAGS} tags at most."));
-            self.keyboard = Keyboard::with_text(entered);
+            self.tag_entry.open_with(entered);
         } else {
             self.tags.push(tag);
             self.save_tags(context);
@@ -1548,19 +1557,34 @@ impl KoboApp for Fanshelf {
             }
         }
         // Back is the way out of a typing screen, so it is not offered to the
-        // keyboard first: it used to be, the keyboard had no use for it, and
-        // the screen it was pressed on stayed put.
+        // field first: the field has no use for it, and the screen it was
+        // pressed on would stay put.
         if matches!(self.view, View::Add | View::AddTag) && action != ActionId::BACK {
-            if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let entered = self.keyboard.take();
-                self.submitted(context, entered);
+            let entry = if self.view == View::Add {
+                &mut self.work_entry
+            } else {
+                &mut self.tag_entry
+            };
+            match entry.handle(action) {
+                Some(Typing::Submitted(entered)) => self.submitted(context, entered),
+                // Backing out of the reader's keyboard is leaving the screen
+                // it was opened from, as Back always was.
+                Some(Typing::Cancelled | Typing::Saved | Typing::Refused(_)) => {
+                    self.view = if self.view == View::Add {
+                        View::Shelf
+                    } else {
+                        View::Follow
+                    };
+                    self.message = None;
+                }
+                Some(Typing::Changed) | None => {}
             }
             self.show(context);
             return;
         }
 
         if action == action_id("add") {
-            self.keyboard.clear();
+            self.work_entry.open();
             self.view = View::Add;
             self.message = None;
         } else if action == action_id("filter") {
@@ -1622,7 +1646,7 @@ impl KoboApp for Fanshelf {
             self.shelf_page = 0;
             self.message = None;
         } else if action == action_id("add-tag") {
-            self.keyboard.clear();
+            self.tag_entry.open();
             self.view = View::AddTag;
             self.message = None;
         } else if action == action_id("adult-confirm") {
@@ -1826,6 +1850,49 @@ mod tests {
     use super::*;
     use kobo_sdk::{AppRunner, Command, StoreRequest};
     use kobo_ui::{Chrome, Node, CLARA_BW_METRICS};
+
+    #[test]
+    fn a_mistyped_work_comes_back_in_the_field_with_the_reason_under_the_prompt() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        let opened = runner.action(action_id("add"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) =
+            kobo_sdk::keyboard::testing::asked(&opened)
+        else {
+            panic!("Add did not ask for the reader's keyboard");
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Address);
+        let refused = runner.type_text("nonsense");
+        let Some(kobo_sdk::DeviceRequest::TypeText { hint, initial, .. }) =
+            kobo_sdk::keyboard::testing::asked(&refused)
+        else {
+            panic!("the field did not come back for a correction");
+        };
+        assert!(
+            hint.starts_with("That is not an AO3 work address or number."),
+            "{hint}"
+        );
+        assert_eq!(initial, "nonsense");
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Shelf);
+        assert_eq!(runner.app().message, None);
+    }
+
+    #[test]
+    fn a_tag_is_typed_with_a_space_bar_and_backing_out_returns_to_the_followed_tags() {
+        let mut runner = AppRunner::new(Fanshelf {
+            view: View::Follow,
+            ..Fanshelf::default()
+        });
+        let opened = runner.action(action_id("add-tag"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) =
+            kobo_sdk::keyboard::testing::asked(&opened)
+        else {
+            panic!("Add did not ask for the reader's keyboard");
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Text);
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Follow);
+    }
 
     fn work() -> Work {
         Work {

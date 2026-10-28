@@ -21,9 +21,9 @@ mod search;
 mod status;
 
 use kobo_bookview::offline::{Heard, Keeper};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
+    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, RowState, Screen,
     ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
@@ -114,6 +114,9 @@ const KEEP_NEWEST: usize = 10;
 /// their results because of Feedsearch, and both have to say so.
 const ATTRIBUTION: &str = "Feed search powered by feedsearch.dev";
 
+/// The address field on the screen that adds a feed.
+const FEED_ADDRESS: &str = "feed-address";
+
 /// A feed the reader has chosen to follow.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Subscription {
@@ -189,7 +192,10 @@ struct Feeds {
     /// False until the store has answered once, so that an empty list is not
     /// mistaken for a reader who follows nothing.
     loaded: bool,
-    keyboard: Keyboard,
+    /// The address of a site or feed to add, typed on the reader's keyboard.
+    entry: TextEntry,
+    /// Words to look for in saved articles, typed on the reader's keyboard.
+    search_entry: TextEntry,
     /// What was typed, kept to caption the results screen.
     query: String,
     article_query: String,
@@ -862,19 +868,41 @@ impl Feeds {
         screen.build()
     }
 
+    /// Where a feed is added from: an address, an OPML file or the bundled
+    /// list.
+    ///
+    /// The address field raises the reader's keyboard when it is tapped
+    /// rather than with the screen, because the keyboard covers the panel and
+    /// Import OPML and Browse would be out of reach behind it.
     fn search(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("rss-search")
-            .top_bar("Add a feed")
+        let screen = ScreenBuilder::new("rss-search").top_bar("Add a feed");
+        if self.entry.is_open() {
+            return screen
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Website or HTTPS feed address",
+                    ATTRIBUTION,
+                    "Search",
+                )
+                .build();
+        }
+        let mut screen = screen
             .top_bar_action("import-opml", "Import OPML")
             .top_bar_action("browse-feeds", "Browse");
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
         screen
-            .typed(&self.keyboard, "Website or HTTPS feed address")
+            .field(FEED_ADDRESS, "", "Website or HTTPS feed address")
+            .field_kind(kobo_sdk::FieldKind::Address)
             .secondary(ATTRIBUTION)
-            .keyboard(&self.keyboard, "Search")
             .build()
+    }
+
+    /// Raises the reader's keyboard for a feed address.
+    fn type_address(&mut self) {
+        self.entry = TextEntry::new().address();
+        self.entry.open();
     }
 
     fn results(&self, context: &Context) -> Screen {
@@ -1039,21 +1067,13 @@ impl Feeds {
         }
         let rows: Vec<_> = fresh
             .iter()
-            .map(|(index, feed)| {
+            .map(|(_, feed)| {
                 (
                     feed.title.clone(),
-                    format!(
-                        "{} · {}",
-                        if self.import_excluded.contains(index) {
-                            "Not selected"
-                        } else {
-                            "Selected"
-                        },
-                        // The site, the way somebody would say it. The whole
-                        // address wrapped onto a second line for most feeds
-                        // and said nothing the host did not.
-                        pretty_host(&feed.site, &feed.url)
-                    ),
+                    // The site, the way somebody would say it. The whole
+                    // address wrapped onto a second line for most feeds and
+                    // said nothing the host did not.
+                    pretty_host(&feed.site, &feed.url),
                 )
             })
             .collect();
@@ -1061,25 +1081,31 @@ impl Feeds {
             .iter()
             .map(|(title, detail)| (title.as_str(), detail.as_str()))
             .collect();
-        let pages = context.paginate_rows_below_notice(&measured, false, Some(&notice));
+        // Paged as though a bar were under the list, because the selection
+        // bar is: it takes the room a bar would.
+        let pages = context.paginate_rows_below_notice(&measured, true, Some(&notice));
         let page = self.list_page.min(pages.len().saturating_sub(1));
-        screen = screen.rows(pages.get(page).into_iter().flatten().map(|index| {
+        // Each feed is ticked in the runtime's own box, and the bar under the
+        // list counts them and adds them, so what will be added is read off
+        // the boxes rather than off a word in every row.
+        screen = screen.checked_rows(pages.get(page).into_iter().flatten().map(|index| {
+            let (feed, _) = fresh[*index];
             (
-                format!("import-toggle-{}", fresh[*index].0),
+                format!("import-toggle-{feed}"),
                 rows[*index].0.as_str(),
                 rows[*index].1.as_str(),
                 Glyph::Rss,
+                if self.import_excluded.contains(&feed) {
+                    RowState::Unchecked
+                } else {
+                    RowState::Checked
+                },
             )
         }));
-        if selected > 0 && selected <= room {
-            screen = screen.bottom_action(
-                "import-confirm",
-                format!(
-                    "Add {selected} {}",
-                    if selected == 1 { "feed" } else { "feeds" }
-                ),
-            );
-        }
+        let add = (selected > 0 && selected <= room).then_some(("import-confirm", "Add"));
+        screen = screen
+            .fill()
+            .selection_bar(u32::try_from(selected).unwrap_or(u32::MAX), add);
         if pages.len() > 1 {
             screen = screen
                 .page_turns("list-back", "list-next")
@@ -1095,9 +1121,11 @@ impl Feeds {
             } else {
                 "Search saved articles"
             })
-            .top_bar_action("clear-search", "Clear")
-            .typed(&self.keyboard, "Words in the title, author or article")
-            .keyboard(&self.keyboard, "Search")
+            .text_entry(
+                &self.search_entry,
+                "Words in the title, author or article",
+                "Search",
+            )
             .build()
     }
 
@@ -2086,7 +2114,7 @@ impl KoboApp for Feeds {
             self.open = None;
             self.article_query.clear();
             self.saved_hits.clear();
-            self.keyboard = Keyboard::new();
+            self.search_entry.open();
             self.list_page = 0;
             self.view = View::ArticleSearch;
             // The saved copies are read one feed at a time as feeds are
@@ -2097,7 +2125,7 @@ impl KoboApp for Feeds {
         }
         if action == action_id("search-articles") && self.view == View::Items {
             self.article_search = ArticleSearch::ThisFeed;
-            self.keyboard = Keyboard::with_text(&self.article_query);
+            self.search_entry.open_with(self.article_query.clone());
             self.view = View::ArticleSearch;
             self.show(context);
             return;
@@ -2120,12 +2148,9 @@ impl KoboApp for Feeds {
             return;
         }
         if self.view == View::ArticleSearch {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    self.keyboard
-                        .take()
-                        .trim()
-                        .clone_into(&mut self.article_query);
+            match self.search_entry.handle(action) {
+                Some(Typing::Submitted(words)) => {
+                    self.article_query = words;
                     self.list_page = 0;
                     if self.article_search == ArticleSearch::EverySaved {
                         self.view = View::SavedResults;
@@ -2136,7 +2161,18 @@ impl KoboApp for Feeds {
                     self.show(context);
                     return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
+                Some(Typing::Changed) => {
+                    self.show(context);
+                    return;
+                }
+                // Backing out returns to the list the search was opened
+                // from, as Back always did here.
+                Some(_) => {
+                    self.view = if self.article_search == ArticleSearch::EverySaved {
+                        View::Shelf
+                    } else {
+                        View::Items
+                    };
                     self.show(context);
                     return;
                 }
@@ -2193,27 +2229,30 @@ impl KoboApp for Feeds {
             self.show(context);
             return;
         }
-        // The keyboard first: while the search screen is up, it owns the panel.
-        if self.view == View::Search {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let typed = self.keyboard.take().trim().to_owned();
-                    if typed.is_empty() {
-                        return;
-                    }
+        // The keyboard first: while it is up, it owns the panel.
+        if self.view == View::Search && self.entry.is_open() {
+            if action == ActionId::BACK {
+                // Back from the keyboard puts it away and keeps Add a feed.
+                self.entry.close();
+                self.show(context);
+                return;
+            }
+            if let Some(typing) = self.entry.handle(action) {
+                if let Typing::Submitted(typed) = typing {
                     self.query.clone_from(&typed);
                     self.view = View::Found;
                     self.list_page = 0;
                     self.find_feed(context, &typed);
-                    self.show(context);
-                    return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
-                }
-                None => {}
+                self.show(context);
+                return;
             }
+        }
+        if self.view == View::Search && action == action_id(FEED_ADDRESS) {
+            self.problem = None;
+            self.type_address();
+            self.show(context);
+            return;
         }
 
         // An open menu takes Back before the view does: the scrim beside a
@@ -2241,12 +2280,20 @@ impl KoboApp for Feeds {
                     self.view = View::Shelf;
                     self.list_page = 0;
                 }
+                // A list narrowed by a search widens again first. The
+                // search screen used to carry Clear, and the reader's own
+                // keyboard has no room for it.
+                View::Items if !self.article_query.is_empty() => {
+                    self.article_query.clear();
+                    self.list_page = 0;
+                }
                 View::Search | View::Items => {
                     self.view = View::Shelf;
                     self.list_page = 0;
                 }
                 View::Found | View::Starters => self.view = View::Search,
                 View::ArticleSearch => {
+                    self.search_entry.close();
                     self.view = if self.article_search == ArticleSearch::EverySaved {
                         View::Shelf
                     } else {
@@ -2265,10 +2312,18 @@ impl KoboApp for Feeds {
         }
 
         if action == action_id("add") {
-            self.keyboard.clear();
+            // From the results, "Change address" means typing one, so the
+            // keyboard comes straight up; from the shelf the screen comes
+            // first, with Import OPML and Browse beside the field.
+            let typing = self.view == View::Found;
             self.problem = None;
             self.trouble = None;
             self.view = View::Search;
+            if typing {
+                self.type_address();
+            } else {
+                self.entry.close();
+            }
             self.show(context);
             return;
         }
@@ -2722,10 +2777,8 @@ mod tests {
             ..Feeds::default()
         });
         runner.action(action_id("add"));
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
-        let commands = runner.action(action_id("kb.enter"));
+        runner.action(action_id(super::FEED_ADDRESS));
+        let commands = runner.type_text("paw");
         let asked = commands.iter().find_map(|command| match command {
             Command::Spawn { work, .. } => Some(work.clone()),
             _ => None,
@@ -3333,6 +3386,77 @@ mod tests {
         assert!(runner.app().subscriptions.is_empty());
     }
 
+    /// Forty-one feeds from a file with room for forty: every page fits at
+    /// every text size with the bar under it, and the bar offers Add only
+    /// once what is ticked fits.
+    #[test]
+    fn feeds_to_import_are_ticked_in_boxes_and_counted_by_the_bar_that_adds_them() {
+        let preview = || opml::Import {
+            feeds: (0..41)
+                .map(|i| Subscription {
+                    title: format!("A journal with a long enough name to wrap {i}"),
+                    url: format!("https://example.com/feed-{i}.xml"),
+                    site: format!("https://journal-{i}.example.com/"),
+                })
+                .collect(),
+            skipped: 0,
+        };
+        let bar = |screen: &kobo_sdk::Screen| {
+            screen
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_sdk::Node::SelectionBar { count, actions, .. } => {
+                        Some((*count, actions.len()))
+                    }
+                    _ => None,
+                })
+                .expect("a selection bar")
+        };
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(
+                Feeds {
+                    view: View::Import,
+                    loaded: true,
+                    import_preview: Some(preview()),
+                    ..Feeds::default()
+                },
+                metrics,
+            );
+            let context = runner.context();
+            let first = runner.app().import_screen(&context);
+            assert_eq!(bar(&first), (41, 0), "Add was offered past the limit");
+            let after = screen_of(&runner.action(action_id("import-toggle-0")));
+            assert_eq!(bar(&after), (40, 1));
+            let states: Vec<_> = after
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_sdk::Node::Rows { rows, .. } => {
+                        Some(rows.iter().map(|row| row.state).collect::<Vec<_>>())
+                    }
+                    _ => None,
+                })
+                .expect("the feeds");
+            assert_eq!(states[0], kobo_sdk::RowState::Unchecked);
+            assert!(states[1..]
+                .iter()
+                .all(|state| *state == kobo_sdk::RowState::Checked));
+            // A page past the last is drawn as the last, so every page is
+            // reached by counting to the number of feeds.
+            for page in 0..41 {
+                runner.app_mut().list_page = page;
+                let screen = runner.app().import_screen(&context);
+                let issues = screen.validate(&metrics);
+                assert!(issues.is_empty(), "{text_scale:?} page {page}: {issues:?}");
+            }
+        }
+    }
+
     #[test]
     fn an_empty_opml_selection_does_not_write_subscriptions() {
         let mut runner = AppRunner::new(Feeds {
@@ -3448,8 +3572,7 @@ mod tests {
         }
         let mut runner = AppRunner::new(app);
         runner.action(action_id("search-saved"));
-        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text("quartz");
-        let commands = runner.action(action_id("kb.enter"));
+        let commands = runner.type_text("quartz");
         assert_eq!(runner.app_mut().view, View::SavedResults);
         assert_eq!(
             runner
@@ -3493,8 +3616,7 @@ mod tests {
             ..Feeds::default()
         });
         runner.action(action_id("search-articles"));
-        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text(" bridge JO ");
-        let commands = runner.action(action_id("kb.enter"));
+        let commands = runner.type_text(" bridge JO ");
         assert_eq!(runner.app_mut().matching_items(), vec![1]);
         assert!(!commands
             .iter()
@@ -3506,12 +3628,12 @@ mod tests {
         runner.action(kobo_sdk::ActionId::BACK);
         assert_eq!(runner.app_mut().article_query, "bridge JO");
         runner.action(action_id("search-articles"));
-        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text("quartz");
-        let commands = runner.action(action_id("kb.enter"));
+        let commands = runner.type_text("quartz");
         assert!(runner.app_mut().matching_items().is_empty());
         assert!(format!("{:?}", screen_of(&commands)).contains("No saved articles match"));
-        runner.action(action_id("search-articles"));
-        runner.action(action_id("clear-search"));
+        // Back widens a narrowed list before it leaves the feed.
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app_mut().view, View::Items);
         assert_eq!(runner.app_mut().matching_items(), vec![0, 1]);
     }
 
@@ -3797,22 +3919,14 @@ mod tests {
             "the empty shelf",
         );
 
-        // Typing an address. The keyboard takes most of the panel, and the
-        // attribution has to fit above it.
+        // Adding a feed: the field with Import OPML and Browse beside it,
+        // and the attribution under it.
         fits_the_panel(
             &screen_of(&runner.action(action_id("add"))),
             "the search screen",
         );
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            fits_the_panel(
-                &screen_of(&runner.action(action_id(key))),
-                "the search screen mid-typing",
-            );
-        }
-        fits_the_panel(
-            &screen_of(&runner.action(action_id("kb.enter"))),
-            "the search in flight",
-        );
+        runner.action(action_id(super::FEED_ADDRESS));
+        fits_the_panel(&screen_of(&runner.type_text("paw")), "the search in flight");
 
         // A full page of results, each with the longest title and summary the
         // service is allowed to return, plus the attribution underneath.
@@ -3931,11 +4045,9 @@ mod tests {
             "the search screen does not credit Feedsearch"
         );
 
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
+        runner.action(action_id(super::FEED_ADDRESS));
         // The results screen, while the search is still in flight.
-        let waiting = screen_of(&runner.action(action_id("kb.enter")));
+        let waiting = screen_of(&runner.type_text("paw"));
         assert!(
             format!("{waiting:?}").contains("feedsearch.dev"),
             "the results screen does not credit Feedsearch while loading"

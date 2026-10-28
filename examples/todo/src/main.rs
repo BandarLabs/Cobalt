@@ -28,7 +28,7 @@ use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, Context, ControlState, Glyph, KoboApp, LogLevel, Position,
-    RowLead, Screen, ScreenBuilder, SlotWidth, Space, StoreResult,
+    RowLead, RowState, Screen, ScreenBuilder, SlotWidth, Space, StoreResult,
 };
 use std::process::ExitCode;
 
@@ -61,6 +61,18 @@ const DELETE: &str = "delete";
 const EDIT_LIST: &str = "edit-list";
 const EDIT_PREVIOUS: &str = "edit-previous";
 const EDIT_NEXT: &str = "edit-next";
+/// The way into ticking several items and acting on them at once, from the
+/// list. A shopping trip ends with six things to cross off, and six taps on a
+/// panel that repaints each one is slower than ticking six boxes and pressing
+/// one verb.
+const SELECT: &str = "select";
+const SELECT_PREVIOUS: &str = "select-previous";
+const SELECT_NEXT: &str = "select-next";
+/// Finishes every ticked item, or reopens them when every one is finished.
+const SELECT_FINISH: &str = "select-finish";
+const SELECT_DELETE: &str = "select-delete";
+const SELECT_ALL: &str = "select-all";
+const SELECT_NONE: &str = "select-none";
 
 /// Whether a control can act, said the way the toolkit says it.
 const fn state_of(enabled: bool) -> ControlState {
@@ -79,6 +91,19 @@ fn edit_name(index: usize) -> String {
 /// Which item an editing row belongs to.
 fn edit_index(action: ActionId) -> Option<usize> {
     (0..MAX_ITEMS).find(|index| action_id(&edit_name(*index)) == action)
+}
+
+/// The action a row carries while items are being ticked.
+///
+/// Its own name rather than the list's, because a tap on the same row means
+/// "tick it" here and "finish it" there, and the two must never be confused
+/// by a tap that lands as the screen changes.
+fn select_name(index: usize) -> String {
+    format!("select.{index}")
+}
+
+fn select_index(action: ActionId) -> Option<usize> {
+    (0..MAX_ITEMS).find(|index| action_id(&select_name(*index)) == action)
 }
 
 /// Today, as days since the epoch on the reader's own calendar.
@@ -214,6 +239,8 @@ enum View {
     Item(usize),
     /// A copy being prepared for the owner's computer.
     Saving,
+    /// The list with a box on every row, to act on several items at once.
+    Selecting,
 }
 
 struct Todo {
@@ -267,12 +294,26 @@ struct Todo {
     edit_pages: Vec<Vec<usize>>,
     /// Which page of the editing screen is showing.
     edit_page: usize,
-    /// What the last Clear finished took away, until the next change.
+    /// What the last Clear finished or Delete took away, each with the place
+    /// it held, until the next change.
     ///
     /// One undo, kept in memory only. The alternative to this is asking "are
     /// you sure" before a button that is pressed once a week, which trains
-    /// everybody to answer without reading it.
-    cleared: Vec<Item>,
+    /// everybody to answer without reading it. The places are kept so that
+    /// undoing a delete puts unfinished items back where the owner had
+    /// ordered them, not at the bottom of the list.
+    cleared: Vec<(usize, Item)>,
+    /// What the undo button says. "Undo clear" under a list the owner just
+    /// deleted three items from names the wrong thing.
+    undo_label: &'static str,
+    /// The items ticked on the selecting screen, by index.
+    ticked: std::collections::BTreeSet<usize>,
+    /// Which rows belong on each page of the selecting screen.
+    ///
+    /// Measured on their own, because that screen draws a selection bar
+    /// where the list draws its buttons and says less under each row.
+    select_pages: Vec<Vec<usize>>,
+    select_page: usize,
     /// Today, as days since the epoch, taken once per repaint.
     today: i64,
     /// The copy being prepared for a paired computer.
@@ -296,6 +337,10 @@ impl Default for Todo {
             edit_pages: Vec::new(),
             edit_page: 0,
             cleared: Vec::new(),
+            undo_label: "Undo clear",
+            ticked: std::collections::BTreeSet::new(),
+            select_pages: Vec::new(),
+            select_page: 0,
             today: today(),
             export: None,
         }
@@ -351,6 +396,7 @@ impl Todo {
                 View::List => self.list(),
                 View::Editing => self.editing(),
                 View::Item(index) => self.item(index),
+                View::Selecting => self.selecting(),
                 View::Saving => self
                     .export
                     .as_ref()
@@ -410,7 +456,61 @@ impl Todo {
             self.pages.push(Vec::new());
         }
         self.page = self.page.min(self.pages.len() - 1);
+        self.repaginate_selecting(context, &order);
         self.repaginate_editing(context);
+    }
+
+    /// The same, for the selecting screen: the rows the list showed, in the
+    /// order it showed them, under the headings it drew, above a selection
+    /// bar rather than buttons.
+    fn repaginate_selecting(&mut self, context: &Context, order: &[usize]) {
+        let rows: Vec<(Option<&str>, String, String)> = order
+            .iter()
+            .map(|&index| {
+                let item = &self.items[index];
+                (
+                    self.headings.get(&index).copied(),
+                    item.text.clone(),
+                    self.select_summary(item),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(Option<&str>, &str, &str)> = rows
+            .iter()
+            .map(|(section, title, summary)| (*section, title.as_str(), summary.as_str()))
+            .collect();
+        let pages = context.paginate_rows_in_sections_under(
+            &borrowed,
+            false,
+            Position::AtTheFoot,
+            &self.around_the_selection(),
+        );
+        self.select_pages = pages
+            .into_iter()
+            .map(|page| page.into_iter().map(|at| order[at]).collect())
+            .collect();
+        if self.select_pages.is_empty() {
+            self.select_pages.push(Vec::new());
+        }
+        self.select_page = self.select_page.min(self.select_pages.len() - 1);
+        // An item that was ticked and is no longer on the list, or no longer
+        // shown, cannot be acted on, and counting it would make the bar
+        // promise more than the verbs will do.
+        self.ticked.retain(|index| order.contains(index));
+    }
+
+    /// Everything the selecting screen draws around its rows.
+    fn around_the_selection(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("Todo");
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+        }
+        screen
+            .selection_bar(
+                u32::try_from(self.ticked.len()).unwrap_or(u32::MAX),
+                self.selection_verbs(),
+            )
+            .build()
     }
 
     /// The same, for the editing screen.
@@ -480,6 +580,114 @@ impl Todo {
             .build()
     }
 
+    /// What a row says while it is being ticked. The list's "Tap to reopen"
+    /// would be a lie here, where a tap ticks the box.
+    fn select_summary(&self, item: &Item) -> String {
+        if item.done {
+            "Done.".to_owned()
+        } else {
+            item.due
+                .map(|day| when(day, self.today))
+                .unwrap_or_default()
+        }
+    }
+
+    /// The two things that can be done to what is ticked.
+    ///
+    /// Always two, in the same places, so a finger that has learnt where
+    /// Delete is does not find a different verb under it when the count
+    /// changes. Two rather than three because at the largest text size a
+    /// third verb cut all of them to their first three letters. The first
+    /// finishes the ticked items, and reopens them when every one is already
+    /// finished, which is the only thing left to do to them.
+    fn selection_verbs(&self) -> [(&'static str, &'static str); 2] {
+        let all_done = !self.ticked.is_empty()
+            && self
+                .ticked
+                .iter()
+                .all(|&index| self.items.get(index).is_some_and(|item| item.done));
+        let finish = if all_done { "Reopen" } else { "Finish" };
+        [(SELECT_FINISH, finish), (SELECT_DELETE, "Delete")]
+    }
+
+    /// Ticks every row the list shows, or none once they all are, from the
+    /// top bar where it stays out of the way of the verbs.
+    fn select_all(&self) -> (&'static str, &'static str) {
+        let shown = self.ordered();
+        if !shown.is_empty() && shown.iter().all(|index| self.ticked.contains(index)) {
+            (SELECT_NONE, "Select none")
+        } else {
+            (SELECT_ALL, "Select all")
+        }
+    }
+
+    /// The list again, with a box on every row and a bar at the foot that
+    /// acts on everything ticked.
+    ///
+    /// The same rows in the same order under the same headings, so ticking
+    /// starts from what the owner was already looking at. Back leaves without
+    /// changing anything.
+    fn selecting(&self) -> Screen {
+        let (all, all_label) = self.select_all();
+        let mut screen = ScreenBuilder::new("Todo")
+            .top_bar("Select items")
+            .top_bar_action(all, all_label)
+            .owns_back(true);
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice);
+        }
+        let page = self
+            .select_pages
+            .get(self.select_page)
+            .cloned()
+            .unwrap_or_default();
+        let mut run: Vec<usize> = Vec::new();
+        for &index in &page {
+            if let Some(heading) = self.headings.get(&index) {
+                if !run.is_empty() {
+                    screen = screen.checked_rows(run.drain(..).map(|index| self.select_row(index)));
+                }
+                screen = screen.section(*heading);
+            }
+            run.push(index);
+        }
+        if !run.is_empty() {
+            screen = screen.checked_rows(run.into_iter().map(|index| self.select_row(index)));
+        }
+        if self.select_pages.len() > 1 {
+            screen = screen
+                .page_turns(SELECT_PREVIOUS, SELECT_NEXT)
+                .page_position(
+                    u16::try_from(self.select_page + 1).unwrap_or(1),
+                    u16::try_from(self.select_pages.len()).unwrap_or(1),
+                );
+        }
+        screen
+            .fill()
+            .selection_bar(
+                u32::try_from(self.ticked.len()).unwrap_or(u32::MAX),
+                self.selection_verbs(),
+            )
+            .build()
+    }
+
+    /// One row of the selecting screen, ticked or not.
+    fn select_row(&self, index: usize) -> (String, String, String, Glyph, RowState) {
+        let item = &self.items[index];
+        let state = if self.ticked.contains(&index) {
+            RowState::Checked
+        } else {
+            RowState::Unchecked
+        };
+        (
+            select_name(index),
+            item.text.clone(),
+            self.select_summary(item),
+            Glyph::Note,
+            state,
+        )
+    }
+
     /// What a row says under its words: when it is due, or that it is finished.
     fn summary(&self, item: &Item) -> String {
         let due = item.due.map(|day| when(day, self.today));
@@ -500,6 +708,12 @@ impl Todo {
             // Only where there is something to change. An Edit control over
             // an empty list is a promise about a screen with nothing on it.
             screen = screen.top_bar_action(EDIT_LIST, "Edit");
+        }
+        if self.loaded && self.items.len() > 1 {
+            // Beside Edit, because ticking several items is the other way of
+            // changing the list, and there is nothing to choose between with
+            // one item on it.
+            screen = screen.top_bar_action(SELECT, "Select");
         }
         if !self.loaded {
             // The shape of the answer, before the answer. The list appears in
@@ -570,7 +784,7 @@ impl Todo {
             // The way back from the one button here that throws something
             // away. Offered until the next change, and then gone: an undo
             // that outlives what it was undoing is a trap.
-            screen = screen.buttons([(ADD, "Add"), (UNDO_CLEAR, "Undo clear")]);
+            screen = screen.buttons([(ADD, "Add"), (UNDO_CLEAR, self.undo_label)]);
         } else if self.items.iter().any(|item| item.done) {
             screen = screen.buttons([(ADD, "Add"), (CLEAR_DONE, "Clear finished")]);
         } else if self.items.is_empty() {
@@ -972,6 +1186,9 @@ impl KoboApp for Todo {
             self.show(context);
             return;
         }
+        if self.selecting_action(context, action) {
+            return;
+        }
         if self.editing_action(context, action) {
             return;
         }
@@ -986,22 +1203,23 @@ impl KoboApp for Todo {
         match action {
             action if action == action_id(CLEAR_DONE) => {
                 // Kept, rather than gone: one undo, until the next change.
-                self.cleared = self
-                    .items
-                    .iter()
-                    .filter(|item| item.done)
-                    .cloned()
+                let finished: Vec<usize> = (0..self.items.len())
+                    .filter(|&index| self.items[index].done)
                     .collect();
-                self.items.retain(|item| !item.done);
+                self.remove(&finished, "Undo clear");
                 self.clamp_page();
                 self.save(context);
                 self.show(context);
             }
             action if action == action_id(UNDO_CLEAR) => {
+                // Back in the places they were taken from, first place first,
+                // so each insertion lands where it stood before the ones
+                // after it were put back.
                 let restored = std::mem::take(&mut self.cleared);
-                for item in restored {
+                for (index, item) in restored {
                     if self.items.len() < MAX_ITEMS {
-                        self.items.push(item);
+                        let at = index.min(self.items.len());
+                        self.items.insert(at, item);
                     }
                 }
                 self.save(context);
@@ -1021,6 +1239,107 @@ impl KoboApp for Todo {
 }
 
 impl Todo {
+    /// Takes the items at `indices` off the list and keeps them, with their
+    /// places, for one undo labelled `undo`.
+    fn remove(&mut self, indices: &[usize], undo: &'static str) {
+        let mut removed = Vec::new();
+        for &index in indices.iter().rev() {
+            if index < self.items.len() {
+                removed.push((index, self.items.remove(index)));
+            }
+        }
+        removed.reverse();
+        self.cleared = removed;
+        self.undo_label = undo;
+    }
+
+    /// The taps that belong to the selecting screen and the way into it.
+    ///
+    /// Returns whether it took the tap.
+    fn selecting_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(SELECT) {
+            self.ticked.clear();
+            self.view = View::Selecting;
+            // Onto the page holding the first row the list was showing, so
+            // the boxes appear beside the items the owner was looking at.
+            let first = self.pages.get(self.page).and_then(|page| page.first());
+            self.select_page = first
+                .and_then(|first| {
+                    self.select_pages
+                        .iter()
+                        .position(|page| page.contains(first))
+                })
+                .unwrap_or(0);
+            self.show(context);
+            return true;
+        }
+        if self.view != View::Selecting {
+            return false;
+        }
+        if action == ActionId::BACK {
+            self.ticked.clear();
+            self.view = View::List;
+            self.show(context);
+            return true;
+        }
+        if let Some(index) = select_index(action) {
+            if !self.ticked.remove(&index) && index < self.items.len() {
+                self.ticked.insert(index);
+            }
+            self.show(context);
+            return true;
+        }
+        if action == action_id(SELECT_PREVIOUS) || action == action_id(SELECT_NEXT) {
+            self.select_page = if action == action_id(SELECT_NEXT) {
+                (self.select_page + 1).min(self.select_pages.len().saturating_sub(1))
+            } else {
+                self.select_page.saturating_sub(1)
+            };
+            self.show(context);
+            return true;
+        }
+        if action == action_id(SELECT_ALL) {
+            self.ticked = self.ordered().into_iter().collect();
+            self.show(context);
+            return true;
+        }
+        if action == action_id(SELECT_NONE) {
+            self.ticked.clear();
+            self.show(context);
+            return true;
+        }
+        let finish = action == action_id(SELECT_FINISH);
+        if !finish && action != action_id(SELECT_DELETE) {
+            return false;
+        }
+        // A verb with nothing ticked does nothing, rather than leaving the
+        // screen as though it had acted.
+        if self.ticked.is_empty() {
+            return true;
+        }
+        let ticked: Vec<usize> = std::mem::take(&mut self.ticked).into_iter().collect();
+        if finish {
+            let done = ticked
+                .iter()
+                .any(|&index| self.items.get(index).is_some_and(|item| !item.done));
+            for &index in &ticked {
+                if let Some(item) = self.items.get_mut(index) {
+                    item.done = done;
+                }
+            }
+            self.cleared.clear();
+        } else {
+            self.remove(&ticked, "Undo delete");
+            self.clamp_page();
+        }
+        // Back to the list, where the result can be seen and, after a
+        // delete, undone.
+        self.view = View::List;
+        self.save(context);
+        self.show(context);
+        true
+    }
+
     /// The taps that belong to editing: the screen itself, one item, and
     /// everything that can be done to that item.
     ///
@@ -1277,6 +1596,7 @@ mod tests {
         let mut screens = vec![
             ("list".to_owned(), todo.list()),
             ("editing".to_owned(), todo.editing()),
+            ("selecting".to_owned(), todo.selecting()),
         ];
         for index in 0..todo.items.len() {
             screens.push((format!("item-{index}"), todo.item(index)));
@@ -1313,10 +1633,18 @@ mod tests {
             }
             let mut todo = started(&items);
             todo.items[0].due = Some(today());
+            // Enough ticked that the bar counts in two figures.
+            todo.ticked = (0..12).collect();
             todo.repaginate(&runner.context());
-            for page in 0..todo.pages.len().max(todo.edit_pages.len()) {
+            let pages = todo
+                .pages
+                .len()
+                .max(todo.edit_pages.len())
+                .max(todo.select_pages.len());
+            for page in 0..pages {
                 todo.page = page.min(todo.pages.len() - 1);
                 todo.edit_page = page.min(todo.edit_pages.len() - 1);
+                todo.select_page = page.min(todo.select_pages.len() - 1);
                 for (name, screen) in every_screen(&todo) {
                     let errors = screen
                         .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(false))
@@ -1332,6 +1660,97 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// Ticks the items whose words are `texts` on the selecting screen.
+    fn tick(todo: &mut Todo, context: &mut Context, texts: &[&str]) {
+        for text in texts {
+            let index = todo
+                .items
+                .iter()
+                .position(|item| item.text == *text)
+                .expect("an item with those words");
+            todo.on_action(context, action_id(&super::select_name(index)));
+        }
+    }
+
+    #[test]
+    fn ticked_items_are_finished_together_and_the_rest_are_left_alone() {
+        let mut todo = started(&[("milk", false), ("bread", false), ("eggs", false)]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(super::SELECT));
+        assert_eq!(todo.view, View::Selecting);
+        tick(&mut todo, &mut context, &["milk", "eggs"]);
+        let _ignored = context.take_commands();
+        todo.on_action(&mut context, action_id(super::SELECT_FINISH));
+        let done: Vec<_> = todo.items.iter().map(|item| item.done).collect();
+        assert_eq!(done, [true, false, true]);
+        assert_eq!(
+            todo.view,
+            View::List,
+            "the list did not come back to show it"
+        );
+        assert_eq!(
+            saved(&context.take_commands()).as_deref(),
+            Some(b"x milk\n- bread\nx eggs\n".as_slice()),
+            "the change was kept in memory only"
+        );
+    }
+
+    #[test]
+    fn ticking_only_finished_items_offers_to_reopen_them() {
+        let mut todo = started(&[("milk", true), ("bread", false)]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(super::SELECT));
+        tick(&mut todo, &mut context, &["milk"]);
+        assert_eq!(todo.selection_verbs()[0].1, "Reopen");
+        todo.on_action(&mut context, action_id(super::SELECT_FINISH));
+        assert!(!todo.items[0].done);
+    }
+
+    #[test]
+    fn deleted_items_come_back_where_they_stood_when_the_delete_is_undone() {
+        let mut todo = started(&[("milk", false), ("bread", false), ("eggs", false)]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(super::SELECT));
+        tick(&mut todo, &mut context, &["milk", "eggs"]);
+        todo.on_action(&mut context, action_id(super::SELECT_DELETE));
+        let texts: Vec<_> = todo.items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, ["bread"]);
+        assert_eq!(todo.undo_label, "Undo delete");
+        todo.on_action(&mut context, action_id(super::UNDO_CLEAR));
+        let texts: Vec<_> = todo.items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, ["milk", "bread", "eggs"]);
+    }
+
+    #[test]
+    fn select_all_ticks_what_the_list_shows_and_back_leaves_everything_as_it_was() {
+        let mut todo = started(&[("milk #shop", false), ("vet", false), ("eggs #shop", true)]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(&tag_action("shop")));
+        todo.on_action(&mut context, action_id(super::SELECT));
+        todo.on_action(&mut context, action_id(super::SELECT_ALL));
+        assert_eq!(
+            todo.ticked.iter().copied().collect::<Vec<_>>(),
+            [0, 2],
+            "an item the filter hid was ticked"
+        );
+        assert_eq!(todo.select_all().1, "Select none");
+        todo.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        assert_eq!(todo.view, View::List);
+        assert!(todo.ticked.is_empty());
+        let done: Vec<_> = todo.items.iter().map(|item| item.done).collect();
+        assert_eq!(done, [false, false, true]);
+    }
+
+    #[test]
+    fn a_verb_with_nothing_ticked_does_nothing_and_stays_on_the_screen() {
+        let mut todo = started(&[("milk", false), ("bread", false)]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(super::SELECT));
+        todo.on_action(&mut context, action_id(super::SELECT_DELETE));
+        assert_eq!(todo.items.len(), 2);
+        assert_eq!(todo.view, View::Selecting);
     }
 
     #[test]

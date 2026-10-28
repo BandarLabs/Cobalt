@@ -138,10 +138,12 @@ def main():
                 capture('09-search-entry')
                 drive('type quartz', 'tap-id kb.enter', 'expect No saved articles match')
                 capture('11-no-matches')
-                drive('tap-id search-articles', 'tap-id clear-search', 'tap-id search-articles',
+                # Back widens a narrowed list before it leaves the feed: the
+                # reader's own keyboard has no room for the Clear it once had.
+                drive('tap Back', 'wait-for-id item-0', 'tap-id search-articles',
                       'type reeds', 'tap-id kb.enter', 'wait-for-id item-0')
                 capture('10-search-results')
-                drive('tap-id search-articles', 'tap-id clear-search')
+                drive('tap Back', 'wait-for-id search-articles')
                 drive('tap-id item-0', 'wait-for-id reader-forward')
                 capture('03-html-article')
                 drive('tap-id reader-forward')
@@ -175,8 +177,8 @@ def main():
                       'wait-for-id import-file-0', 'tap-id import-file-0', 'wait-for-id import-confirm',
                       'expect 1 new feed')
                 drive('expect Second journal', 'expect example.com', 'expect-missing second.xml',
-                      'tap-id import-toggle-1', 'expect Not selected',
-                      'tap-id import-toggle-1', 'expect Selected', 'wait-for-id import-confirm')
+                      'tap-id import-toggle-1', 'expect None selected',
+                      'tap-id import-toggle-1', 'expect 1 selected', 'wait-for-id import-confirm')
                 capture('12-opml-preview')
                 before_import = (state/'feeds').read_bytes()
                 drive('scenario storage-full', 'tap-id import-confirm', 'wait-idle',

@@ -184,6 +184,7 @@ def main():
                 assert 'sidekick init' in words(pairing).replace('- ', ''), words(pairing)
                 checks.append('an unpaired reader is told what to run on the computer')
 
+                drive('tap-id address.box', 'wait-idle')
                 type_text(address)
                 drive('tap Next', 'wait-idle')
                 code = capture('02-code')

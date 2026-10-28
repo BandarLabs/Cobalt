@@ -28,7 +28,8 @@ const CHECK: &str = "check";
 const MODE_FRAME: &str = "mode-frame";
 const MODE_SLOW: &str = "mode-slow";
 const INTERVALS: [&str; 3] = ["interval-0", "interval-1", "interval-2"];
-const ORDER_DATE: &str = "order-date";
+/// Shuffle on or off. It used to be two segments, "By date" and "Shuffle",
+/// for what is one switch.
 const ORDER_SHUFFLE: &str = "order-shuffle";
 /// The choices each mode offers, in minutes for Frame mode and hours for the
 /// slow slideshow, in the order the settings screen shows them.
@@ -267,10 +268,16 @@ impl Frame {
             .secondary(mode_note)
             .section("Change the photo every")
             .segmented(interval, INTERVALS.into_iter().zip(labels))
-            .section("Order")
-            .segmented(
-                usize::from(self.settings.shuffled),
-                [(ORDER_DATE, "By date"), (ORDER_SHUFFLE, "Shuffle")],
+            .spacer(kobo_sdk::Space::Medium)
+            .toggle(
+                ORDER_SHUFFLE,
+                "Shuffle",
+                if self.settings.shuffled {
+                    "Photos come in a random order."
+                } else {
+                    "Photos come in date order."
+                },
+                self.settings.shuffled,
             )
             .build()
             .with_own_back(true)
@@ -958,16 +965,15 @@ impl KoboApp for Frame {
             };
             self.save(context);
             self.apply_power_policy(context);
-        } else if action == action_id(ORDER_DATE) || action == action_id(ORDER_SHUFFLE) {
-            let shuffled = action == action_id(ORDER_SHUFFLE);
-            if shuffled != self.settings.shuffled {
-                self.settings.shuffled = shuffled;
-                self.settings.position = 0;
-                self.picture = None;
-                self.save(context);
-                self.abandon_photo_load(context);
-                self.start_current(context);
-            }
+        } else if action == action_id(ORDER_SHUFFLE) {
+            // A new order starts from its first photo, because the place in
+            // the old order means nothing in the new one.
+            self.settings.shuffled = !self.settings.shuffled;
+            self.settings.position = 0;
+            self.picture = None;
+            self.save(context);
+            self.abandon_photo_load(context);
+            self.start_current(context);
         }
         self.show(context);
     }
@@ -1670,7 +1676,7 @@ mod tests {
         assert_eq!(runner.app().view, View::Settings);
         let screen = runner.app().settings_screen();
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        for name in [MODE_FRAME, MODE_SLOW, ORDER_DATE, ORDER_SHUFFLE]
+        for name in [MODE_FRAME, MODE_SLOW, ORDER_SHUFFLE]
             .into_iter()
             .chain(INTERVALS)
         {
@@ -1684,6 +1690,52 @@ mod tests {
         assert_eq!(runner.app().settings.interval(), 5);
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn shuffle_is_one_switch_that_starts_the_new_order_from_its_first_photo() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]);
+        runner.action(action_id(SETTINGS));
+        runner.app_mut().settings.position = 1;
+        runner.action(action_id(ORDER_SHUFFLE));
+        assert!(runner.app().settings.shuffled);
+        assert_eq!(runner.app().settings.position, 0);
+        let screen = runner.app().settings_screen();
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, kobo_ui::Node::Toggle { on: true, .. })),
+            "the switch does not say shuffle is on"
+        );
+        runner.action(action_id(ORDER_SHUFFLE));
+        assert!(!runner.app().settings.shuffled);
+    }
+
+    #[test]
+    fn the_settings_fit_every_text_size_in_both_modes() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Frame::default(), metrics);
+            let mut frame = Frame::default();
+            for slow in [false, true] {
+                frame.settings.slow = slow;
+                frame.wake_refused = Some(DenyReason::WithheldForBattery);
+                frame.awake_refused = Some(DenyReason::WithheldForBattery);
+                let screen = frame.settings_screen();
+                let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(
+                    !diagnostics.has_errors(),
+                    "{text_scale:?} slow {slow}: {:?}",
+                    diagnostics.issues
+                );
+            }
+            drop(runner);
+        }
     }
 
     #[test]

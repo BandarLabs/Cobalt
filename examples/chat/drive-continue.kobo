@@ -7,6 +7,10 @@ wait-for so the flour can
 expect Continue the answer
 clean
 shot continue-after-restart
+# Back from the reader's keyboard returns to the reply, Continue intact.
 tap Type
-tap Conversation
+wait-for Type a message
+clean
+shot compose
+tap Back
 expect Continue the answer

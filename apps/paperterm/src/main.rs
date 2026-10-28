@@ -1402,6 +1402,7 @@ mod tests {
                         None,
                         Some("Use a name or IP address, for example laptop:9332."),
                         Some("Enter the six letters and numbers from your computer."),
+                        Some("Saved pairing could not be read. You can enter it again."),
                     ] {
                         let app = Paperterm {
                             view,
@@ -1421,6 +1422,53 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn a_refused_address_is_said_in_the_fields_hint_without_moving_the_field_or_the_keys() {
+        let metrics = DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+        let place = |form_error| {
+            let app = Paperterm {
+                view: View::Address,
+                form_error,
+                ..Paperterm::default()
+            };
+            let screen = app.screen();
+            let field = screen.nodes.iter().find_map(|node| match node {
+                kobo_ui::Node::Field {
+                    label,
+                    hint,
+                    error,
+                    kind,
+                    ..
+                } => Some((label.clone(), hint.clone(), error.clone(), *kind)),
+                _ => None,
+            });
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            (
+                field,
+                layout.rect_of_action(action_id("address")),
+                layout.rect_of_action(action_id(KB_ENTER)),
+            )
+        };
+        let (calm, calm_field, calm_enter) = place(None);
+        let (refused, refused_field, refused_enter) =
+            place(Some("Use a name or IP address, for example laptop:9332."));
+        let (label, hint, error, kind) = refused.expect("a field");
+        assert_eq!(label.as_deref(), Some("Address"));
+        assert!(hint.is_some_and(|hint| hint.contains("kobo stream init")));
+        assert_eq!(
+            error.as_deref(),
+            Some("Use a name or IP address, for example laptop:9332.")
+        );
+        assert_eq!(kind, kobo_sdk::FieldKind::Address);
+        assert!(calm.expect("a field").2.is_none());
+        assert_eq!(calm_field, refused_field, "the field moved");
+        assert_eq!(calm_enter, refused_enter, "the keys moved");
+    }
+
     #[test]
     fn pairing_errors_preserve_typed_values_and_do_not_start_requests() {
         let mut app = Paperterm {

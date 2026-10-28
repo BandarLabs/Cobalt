@@ -35,6 +35,30 @@ enum View {
     Guide,
     Folders,
     About,
+    /// How often Sync runs, as a list with the current answer marked.
+    Schedule,
+}
+
+/// Every schedule, in the order the list offers them.
+const SCHEDULES: [Cadence; 4] = [
+    Cadence::Manual,
+    Cadence::Hourly,
+    Cadence::FourHourly,
+    Cadence::Daily,
+];
+const SCHEDULE_PREVIOUS: &str = "schedule-previous";
+const SCHEDULE_NEXT: &str = "schedule-next";
+
+fn schedule_name(index: usize) -> String {
+    format!("schedule.{index}")
+}
+
+/// What each schedule means for the owner, under its name in the list.
+const fn schedule_summary(cadence: Cadence) -> &'static str {
+    match cadence {
+        Cadence::Manual => "You start each sync with Sync now.",
+        Cadence::Hourly | Cadence::FourHourly | Cadence::Daily => "Runs while Cobalt is open.",
+    }
 }
 
 /// The supervisor's status, parsed line by line. Lines past the third come
@@ -117,6 +141,9 @@ struct Sync {
     watch: Heartbeat,
     first_sync_seen: bool,
     first_sync_banner: bool,
+    /// Which page of the schedule list is showing. Four answers fit one page
+    /// at every size today, but the count is the runtime's to decide.
+    schedule_page: u16,
 }
 
 impl Default for Sync {
@@ -131,6 +158,7 @@ impl Default for Sync {
             watch: Heartbeat::every(5),
             first_sync_seen: false,
             first_sync_banner: false,
+            schedule_page: 0,
         }
     }
 }
@@ -202,6 +230,7 @@ impl Sync {
             View::Guide => guide_screen(),
             View::Folders => folders_screen(),
             View::About => about_screen(),
+            View::Schedule => self.schedule_screen(),
         };
         // Supporting pages must receive the runtime Back event before it can
         // leave the app; the status screen remains the root exit.
@@ -253,15 +282,14 @@ impl Sync {
         }
         if self.first_sync_banner {
             return Some((
-                BannerLevel::Info,
+                BannerLevel::Success,
                 "First sync finished. Notes and photos now arrive after each sync.".to_owned(),
             ));
         }
         if self.asked == Asked::Stalled {
             return Some((
-                BannerLevel::Attention,
-                "Sync has not started. Check Settings for a Cobalt update, then tap Sync now again."
-                    .to_owned(),
+                BannerLevel::Error,
+                "Sync has not started. Check Settings for a Cobalt update, then tap Sync now again.".to_owned(),
             ));
         }
         if self.status.needs_the_owner() {
@@ -278,7 +306,7 @@ impl Sync {
 
     fn status_screen(&self) -> Screen {
         let facts = self.status_facts();
-        let mut rows = Vec::with_capacity(4);
+        let mut rows = Vec::with_capacity(3);
         if self.config.enabled {
             rows.push((
                 "sync-now",
@@ -290,13 +318,6 @@ impl Sync {
                 } else {
                     "Send and receive files now.".to_owned()
                 },
-                Glyph::Refresh,
-            ));
-        } else {
-            rows.push((
-                "toggle",
-                "Turn on Sync".to_owned(),
-                "Syncs once now, then on your schedule.".to_owned(),
                 Glyph::Refresh,
             ));
         }
@@ -329,14 +350,6 @@ impl Sync {
                 Glyph::Folder,
             )
         });
-        if self.config.enabled {
-            rows.push((
-                "toggle",
-                "Turn off Sync".to_owned(),
-                "Stops all syncing. Your files stay.".to_owned(),
-                Glyph::Settings,
-            ));
-        }
         // The banner leads the screen: appended last it is the first node the
         // stack drops when a larger text size runs out of panel, which hid
         // "Sync is off." at exactly the sizes where the warning matters.
@@ -344,13 +357,50 @@ impl Sync {
         if let Some((level, text)) = self.banner() {
             screen = screen.banner(level, text);
         }
+        // One switch, first, in the same place whether Sync is on or off.
+        // It used to be two rows, "Turn on Sync" at the top and "Turn off
+        // Sync" at the bottom, and neither said which state it was in.
+        let summary = if self.config.enabled {
+            "Turn off to stop all syncing. Files stay."
+        } else {
+            "Syncs once now, then on your schedule."
+        };
         screen
+            .toggle("toggle", "Sync", summary, self.config.enabled)
             .rows(rows)
             .facts(
                 facts
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str())),
             )
+            .build()
+    }
+
+    /// How often Sync runs, one answer from a list with the current one
+    /// marked. Tapping the schedule row used to step through the four in
+    /// turn, so reaching the one before the current took three taps and a
+    /// repaint each.
+    fn schedule_screen(&self) -> Screen {
+        let chosen = SCHEDULES
+            .iter()
+            .position(|cadence| *cadence == self.config.cadence)
+            .unwrap_or(0);
+        ScreenBuilder::new("syncthing")
+            .top_bar("Schedule")
+            .option_list(
+                "How often Sync runs",
+                self.schedule_page,
+                SCHEDULE_PREVIOUS,
+                SCHEDULE_NEXT,
+                SCHEDULES.iter().enumerate().map(|(index, cadence)| {
+                    (
+                        schedule_name(index),
+                        cadence.label(),
+                        schedule_summary(*cadence),
+                    )
+                }),
+            )
+            .chosen(chosen)
             .build()
     }
 
@@ -466,7 +516,7 @@ fn guide_screen() -> Screen {
         .secondary("1. Install Syncthing on the computer with its package manager.")
         .secondary("2. With the reader awake on Wi-Fi, run this on the computer:")
         .text("kobo sync setup ~/Documents/notes --folder vault")
-        .secondary("3. Run kobo sync run on the computer, then tap Turn on Sync here. The first sync starts at once.")
+        .secondary("3. Run kobo sync run on the computer, then turn on Sync here. The first sync starts at once.")
         .secondary("Files come to the reader in vault, frame and books, and changes made here never go back. Files in out go to the computer.")
         .build()
 }
@@ -603,9 +653,32 @@ impl KoboApp for Sync {
         } else if action == action_id("sync-now") {
             self.ask_for_a_sync(context);
         } else if action == action_id("cadence") {
-            self.config.cadence = self.config.cadence.next();
+            // Opens on the page holding the current answer, counted the way
+            // the runtime pages the list.
+            let chosen = SCHEDULES
+                .iter()
+                .position(|cadence| *cadence == self.config.cadence)
+                .unwrap_or(0);
+            let per_page = kobo_sdk::options_per_page(&context.metrics(), true).max(1);
+            self.schedule_page = u16::try_from(chosen / per_page).unwrap_or(0);
+            self.view = View::Schedule;
+        } else if action == action_id(SCHEDULE_NEXT) {
+            let last = kobo_sdk::options_pages(SCHEDULES.len(), &context.metrics(), true)
+                .saturating_sub(1);
+            let last = u16::try_from(last).unwrap_or(0);
+            self.schedule_page = self.schedule_page.saturating_add(1).min(last);
+        } else if action == action_id(SCHEDULE_PREVIOUS) {
+            self.schedule_page = self.schedule_page.saturating_sub(1);
+        } else if let Some(cadence) = (0..SCHEDULES.len())
+            .find(|index| action == action_id(&schedule_name(*index)))
+            .map(|index| SCHEDULES[index])
+        {
+            // Choosing is the whole of what the list is for, so the choice
+            // closes it as well as making it.
+            self.config.cadence = cadence;
             self.apply_schedule(context);
             self.save(context);
+            self.view = View::Status;
         } else if action == action_id("folders") {
             self.view = View::Folders;
         } else if action == action_id("about") {

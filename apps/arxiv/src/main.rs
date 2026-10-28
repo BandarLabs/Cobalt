@@ -29,7 +29,7 @@ use atom::{Paper, Results};
 use kobo_bookview::offline::{Heard, Keeper, NO_ROOM};
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
     ShelfDownload, ShelfProgress, StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -539,7 +539,8 @@ impl AbstractBlock {
 #[derive(Debug, Default)]
 struct Arxiv {
     view: View,
-    keyboard: Keyboard,
+    /// The words of a search, typed on the reader's own keyboard.
+    entry: TextEntry,
     /// The subject list's own page, because the headings and followed
     /// subjects together are more than one screen of rows.
     subject_page: usize,
@@ -1158,14 +1159,20 @@ impl Arxiv {
             .build()
     }
 
+    /// The search field, which the runtime draws over this screen.
+    ///
+    /// The runtime keeps this screen's title in its top bar and puts the
+    /// prompt under it, so the title names the application and the prompt
+    /// says what is being asked, rather than both saying "Search arXiv".
     fn search(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("arxiv-search").top_bar("Search arXiv");
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
-        }
-        screen
-            .typed(&self.keyboard, "A phrase, an author, a title")
-            .keyboard(&self.keyboard, "Search")
+        ScreenBuilder::new("arxiv-search")
+            .top_bar("Preprints")
+            .text_entry_with_hint(
+                &self.entry,
+                "Search arXiv",
+                "A phrase, an author, a title",
+                "Search",
+            )
             .build()
     }
 
@@ -1177,13 +1184,14 @@ impl Arxiv {
     fn library(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("arxiv-library").top_bar("Library");
         if self.keeper.failed {
+            // The way out of the failure sits on the banner that names it,
+            // where it used to be a top bar mark the words had to point at.
             screen = screen
-                .top_bar_glyph(RETRY_KEPT, "Try again", Glyph::Refresh)
                 .banner(
-                    BannerLevel::Attention,
-                    "The list of papers kept on this reader could not be read or saved. \
-                     Tap Try again.",
-                );
+                    BannerLevel::Error,
+                    "The list of papers kept on this reader could not be read or saved.",
+                )
+                .banner_action(RETRY_KEPT, "Try again");
         }
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
@@ -1336,23 +1344,33 @@ impl Arxiv {
             .as_ref()
             .map_or_else(|| "Preprints".to_owned(), Query::title);
         let mut screen = ScreenBuilder::new("arxiv-listing").top_bar(title);
+        let failed = self.papers.is_empty() && self.trouble.is_some();
         if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+            let level = if failed {
+                BannerLevel::Error
+            } else {
+                BannerLevel::Attention
+            };
+            screen = screen.banner(level, trouble.clone());
         }
         if self.waiting_for(Awaiting::Listing) {
             return screen.skeleton(6).build();
+        }
+        if failed {
+            // The one thing that can change a listing that never arrived goes
+            // on the banner saying why, rather than in a button of its own
+            // under it.
+            screen = screen.banner_action(RETRY_LISTING, "Try again");
         }
         // The window control carries its own state as its label, so the
         // one button is both the way to change the reach of the listing and
         // the only place that says what the reach currently is.
         let narrowing = (WINDOW, self.window.label(), Glyph::Filter);
-        if self.papers.is_empty() && self.trouble.is_some() {
+        if failed {
             // A listing that never arrived is not a listing with nothing in
-            // it. The banner says why, and the page offers the one thing that
-            // can change it, rather than advice about search words that were
-            // never the problem.
+            // it. The banner says why and carries the retry, rather than
+            // advice about search words that were never the problem.
             return screen
-                .primary_button(RETRY_LISTING, "Try again")
                 .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
                 .build();
         }
@@ -2011,29 +2029,27 @@ impl KoboApp for Arxiv {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        // The keyboard first: while the search screen is up it owns the panel,
-        // and every letter on it would otherwise fall through to the checks
-        // below.
-        if self.view == View::Search {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let typed = self.keyboard.text().trim().to_owned();
-                    if typed.is_empty() {
-                        return;
-                    }
+        // The search field first: while it is open the runtime holds the
+        // panel, and its answer arrives as an action like any other.
+        if let Some(typing) = self.entry.handle(action) {
+            match typing {
+                Typing::Submitted(typed) => {
                     self.papers.clear();
                     self.group = None;
                     self.view = View::Listing;
                     self.ask_listing(context, Query::Words(typed), 0);
-                    self.show(context);
-                    return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
+                // Backing out of the keyboard is Back from the search, which
+                // has only ever led to the subject list.
+                Typing::Cancelled | Typing::Saved | Typing::Refused(_)
+                    if self.view == View::Search =>
+                {
+                    self.view = View::Subjects;
                 }
-                None => {}
+                _ => {}
             }
+            self.show(context);
+            return;
         }
 
         if action == ActionId::BACK {
@@ -2151,7 +2167,7 @@ impl KoboApp for Arxiv {
         }
 
         if action == action_id(SEARCH) {
-            self.keyboard.clear();
+            self.entry.open();
             self.trouble = None;
             self.view = View::Search;
             self.show(context);
@@ -2780,6 +2796,9 @@ mod tests {
             app.saved = (0..12)
                 .map(|index| format!("river measurements {index}"))
                 .collect();
+            // The library's own failure and its retry go above the trouble
+            // notice, so the kept papers are paged under both.
+            app.keeper.failed = true;
             for (view, prefix, count) in [
                 (View::Subjects, GROUP, GROUPS.len()),
                 (View::Listing, super::PAPER, 12),
@@ -3152,6 +3171,101 @@ mod tests {
             command,
             Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("cat:cs.AI")
         )));
+    }
+
+    /// A search is typed on the reader's own keyboard, and what comes back
+    /// is the question arXiv is asked. Backing out is Back from the search.
+    #[test]
+    fn a_search_is_typed_on_the_readers_keyboard_and_backing_out_returns_to_the_subjects() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        let commands = runner.action(action_id(super::SEARCH));
+        let Some(kobo_sdk::DeviceRequest::TypeText {
+            prompt,
+            hint,
+            submit,
+            ..
+        }) = kobo_sdk::keyboard::testing::asked(&commands).cloned()
+        else {
+            panic!("the reader's keyboard was not asked for: {commands:?}")
+        };
+        assert_eq!(
+            (prompt.as_str(), hint.as_str(), submit.as_str()),
+            ("Search arXiv", "A phrase, an author, a title", "Search")
+        );
+        let commands = runner.type_text("  neural fields ");
+        assert_eq!(runner.app().view, View::Listing);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("neural")
+        )));
+
+        runner.action(ActionId::BACK);
+        runner.action(action_id(super::SEARCH));
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Subjects);
+    }
+
+    /// The retry for a library that could not be read or saved is on the
+    /// banner that says so, not in the top bar away from it.
+    #[test]
+    fn a_library_that_could_not_be_saved_offers_its_retry_on_the_banner() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().keeper.failed = true;
+        runner.app_mut().view = View::Library;
+        let context = runner.context();
+        let screen = runner.app().library(&context);
+        let retry = action_id(super::RETRY_KEPT);
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Banner { level: kobo_sdk::BannerLevel::Error, action: Some(action), .. }
+                if action.action == retry
+        )));
+        assert!(
+            screen
+                .top_bar
+                .as_ref()
+                .is_none_or(|bar| bar.actions.iter().all(|a| a.action != retry)),
+            "the retry is still in the top bar as well"
+        );
+    }
+
+    /// A listing that never arrived says so with its retry on the banner,
+    /// and the banner, its action and the date window fit at every size.
+    #[test]
+    fn a_listing_that_never_arrived_fits_its_retry_at_every_text_size() {
+        for metrics in text_size_metrics() {
+            let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+            let app = Arxiv {
+                view: View::Listing,
+                query: Some(Query::Words("neural fields".into())),
+                trouble: Some(
+                    "This reader is not on a network. Connect to Wi-Fi and try again.".into(),
+                ),
+                ..Arxiv::default()
+            };
+            let diagnostics = app
+                .listing(&context)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{:?}: {:?}",
+                metrics.text_scale,
+                diagnostics.issues
+            );
+            let retry = action_id(super::RETRY_LISTING);
+            let rect = diagnostics
+                .layout
+                .rect_of_action(retry)
+                .expect("the retry is drawn");
+            assert_eq!(
+                diagnostics
+                    .layout
+                    .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                Some(retry)
+            );
+        }
     }
 
     /// The bar over a paper says which paper it is in words.

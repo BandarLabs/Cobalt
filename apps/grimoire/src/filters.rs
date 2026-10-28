@@ -134,20 +134,11 @@ impl Grimoire {
                 .into_iter()
                 .enumerate()
                 .map(|(index, value)| {
-                    let selected = index == self.filter.selected(self);
                     (
                         format!("filter-value-{index}"),
                         value,
-                        if selected {
-                            "Selected".into()
-                        } else {
-                            String::new()
-                        },
-                        if selected {
-                            Glyph::Check
-                        } else {
-                            Glyph::Circle
-                        },
+                        String::new(),
+                        Glyph::Circle,
                     )
                 })
                 .collect()
@@ -171,6 +162,16 @@ impl Grimoire {
     }
     fn filter_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let rows = self.filter_rows();
+        if self.view == View::FilterChoice {
+            // The runtime pages an option list itself, by the panel and the
+            // text size alone, so the pages are counted the way it counts.
+            let per_page = kobo_sdk::options_per_page(&context.metrics(), false).max(1);
+            return (0..rows.len())
+                .collect::<Vec<_>>()
+                .chunks(per_page)
+                .map(<[usize]>::to_vec)
+                .collect();
+        }
         let measured = rows
             .iter()
             .map(|(_, title, summary, _)| (title.as_str(), summary.as_str()))
@@ -182,6 +183,22 @@ impl Grimoire {
         let pages = self.filter_pages(context);
         let page = self.filter_page.min(pages.len().saturating_sub(1));
         let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        if self.view == View::FilterChoice {
+            // One answer from a list, marked by the runtime rather than by a
+            // tick and the word "Selected" written into the row.
+            return ScreenBuilder::new("grimoire-filters")
+                .top_bar(self.title())
+                .option_list(
+                    "Show only",
+                    u16::try_from(page).unwrap_or(u16::MAX),
+                    "filters-previous",
+                    "filters-next",
+                    rows.into_iter()
+                        .map(|(name, value, _, _)| (name, value, "")),
+                )
+                .chosen(self.filter.selected(self))
+                .build();
+        }
         let screen = ScreenBuilder::new("grimoire-filters")
             .top_bar(self.title())
             .rows(visible.iter().map(|&index| rows[index].clone()))
@@ -190,18 +207,12 @@ impl Grimoire {
                 u16::try_from(page + 1).unwrap_or(u16::MAX),
                 u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
             );
-        if self.view == View::FilterChoice {
-            screen
-                .bottom_action("filter-cancel", "Back to filters")
-                .build()
-        } else {
-            screen
-                .action_bar([
-                    ("clear", "Clear filters"),
-                    ("filter-results", "View results"),
-                ])
-                .build()
-        }
+        screen
+            .action_bar([
+                ("clear", "Clear filters"),
+                ("filter-results", "View results"),
+            ])
+            .build()
     }
     pub(super) fn filter_action(&mut self, context: &Context, action: ActionId) -> bool {
         if action == action_id("filters")
@@ -240,7 +251,9 @@ impl Grimoire {
             {
                 self.filter = filter;
                 self.view = View::FilterChoice;
-                self.filter_page = 0;
+                // The list opens on the page holding the answer already given.
+                self.filter_page = self.filter.selected(self)
+                    / kobo_sdk::options_per_page(&context.metrics(), false).max(1);
             }
         } else if let Some(index) =
             self.filter
@@ -264,6 +277,37 @@ mod tests {
     use super::*;
     use kobo_sdk::{AppRunner, KoboApp};
     use kobo_ui::{Chrome, DisplayMetrics, TextScale};
+
+    #[test]
+    fn a_filter_is_one_answer_from_a_list_that_opens_on_the_page_holding_it() {
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Largest,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let mut runner = AppRunner::with_metrics(
+            Grimoire {
+                view: View::Compendium,
+                ..Grimoire::default()
+            },
+            metrics,
+        );
+        let last = Filter::Class.values(runner.app()).len() - 1;
+        Filter::Class.set(runner.app_mut(), last);
+        runner.action(action_id("filters"));
+        runner.action(action_id("spell-class"));
+        let per_page = kobo_sdk::options_per_page(&metrics, false);
+        assert_eq!(runner.app().filter_page, last / per_page);
+        let screen = runner.app().filter_screen(&runner.context());
+        let Some(kobo_ui::Node::Options { selected, page, .. }) = screen
+            .nodes
+            .iter()
+            .find(|node| matches!(node, kobo_ui::Node::Options { .. }))
+        else {
+            panic!("the choices are not an option list");
+        };
+        assert_eq!(*selected, u16::try_from(last).ok());
+        assert_eq!(usize::from(*page), last / per_page);
+    }
 
     #[test]
     fn named_choices_apply_exact_values_and_any_stays_first() {

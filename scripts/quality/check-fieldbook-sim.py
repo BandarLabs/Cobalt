@@ -122,10 +122,11 @@ def main():
                 # Review, delete, undo.
                 drive("tap-id sightings", "wait-for American Robin ×2")
                 capture("fieldbook-sightings")
-                drive("tap American Robin ×2", "wait-for Delete sighting?",
+                drive("tap American Robin ×2", "wait-for 1 selected",
+                      "tap-id delete-ticked", "wait-for Delete sighting?",
                       "tap Keep sighting", "wait-for American Robin ×2")
-                drive("tap American Robin ×2", "wait-for Delete sighting?",
-                      "tap Delete", "wait-for Sighting deleted.",
+                drive("tap-id delete-ticked", "wait-for Delete sighting?",
+                      "tap-id delete-sighting", "wait-for Sighting deleted.",
                       "tap Undo delete", "wait-for American Robin ×2")
 
                 # Log from search while the outing is open: a species beyond
@@ -134,7 +135,9 @@ def main():
                 drive("tap back", "tap Resume tally", "wait-for lake merced")
                 drive("tap Type a species", "wait-for Search packs")
                 drive("type bufflehead", "tap Find", "wait-for Bufflehead")
-                drive("tap Bufflehead", "wait-for Bucephala albeola")
+                # By id: the search field above the result now shows the
+                # word searched for, and a tap on it opens the keyboard.
+                drive("tap-id found-0", "wait-for Bucephala albeola")
                 capture("fieldbook-search-detail")
                 drive("tap-id log-detail", "wait-for 2 species, 3 birds")
                 capture("fieldbook-log-from-search")

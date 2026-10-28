@@ -25,6 +25,20 @@ tap Popular
 wait-for All Books
 clean
 shot gutenbird-popular
+# Search is a field the reader's keyboard opens, with the recent searches
+# and the switch for every catalog in sight before anything is typed.
+tap-id search
+wait-for Search every catalog
+clean
+shot gutenbird-search
+tap-id query
+wait-for-id kb.enter
+clean
+shot gutenbird-search-typing
+tap Back
+wait-for Search every catalog
+tap Back
+wait-for All Books
 tap Pride and Prejudice
 wait-for-id read
 expect-missing With images

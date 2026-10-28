@@ -346,19 +346,30 @@ impl Flashcards {
             .get(page)
             .cloned()
             .unwrap_or_else(|| (0..choices.len()).collect());
-        let rows = indices.into_iter().filter_map(|index| {
-            let choice = choices.get(index)?;
-            Some((
-                choice.action.clone(),
-                choice.title.clone(),
-                choice.summary.clone(),
-                Glyph::Book,
-                choice.trailing.clone(),
-            ))
-        });
+        let shown: Vec<&DeckChoice> = indices
+            .into_iter()
+            .filter_map(|index| choices.get(index))
+            .collect();
         screen = screen
             .section_with_value("Choose a deck", format!("{total} due"))
-            .rows_with_trailing(rows);
+            .rows(shown.iter().map(|choice| {
+                (
+                    choice.action.clone(),
+                    choice.title.clone(),
+                    choice.summary.clone(),
+                    Glyph::Book,
+                )
+            }));
+        // The cards still due in each deck as a count the runtime draws at a
+        // fixed width, so a deck name does not rewrap as the count falls
+        // through a session. A deck with nothing left carries none; its
+        // summary already says how many were done today.
+        for choice in shown.iter().filter(|choice| choice.due > 0) {
+            screen = screen.row_badge(
+                &choice.action,
+                u32::try_from(choice.due).unwrap_or(u32::MAX),
+            );
+        }
         if choices
             .iter()
             .any(|choice| matches!(card_text_font(&choice.title), Ok(CardTextFont::Japanese)))
@@ -410,7 +421,7 @@ impl Flashcards {
                 action: "deck-all".to_owned(),
                 title: "All due cards".to_owned(),
                 summary: format!("Across {} decks", rows.len()),
-                trailing: due_label(study.due(manifest, None).len()),
+                due: study.due(manifest, None).len(),
             });
         }
         for (group, due, cleared) in rows {
@@ -423,7 +434,7 @@ impl Flashcards {
                 } else {
                     format!("{cleared} done today")
                 },
-                trailing: due_label(due),
+                due,
             });
         }
         choices
@@ -1260,7 +1271,8 @@ struct DeckChoice {
     action: String,
     title: String,
     summary: String,
-    trailing: String,
+    /// Cards still due in this deck this session.
+    due: usize,
 }
 
 fn loading_screen(received: u64, total: Option<u64>, sample_saving: bool) -> Screen {
@@ -1803,14 +1815,6 @@ fn next_due_sentence(days: Option<i64>) -> String {
     }
 }
 
-fn due_label(count: usize) -> String {
-    if count == 0 {
-        "Done".to_owned()
-    } else {
-        format!("{count} due")
-    }
-}
-
 fn progress_percent(done: usize, total: usize) -> usize {
     done.saturating_mul(100).checked_div(total).unwrap_or(100)
 }
@@ -2278,7 +2282,7 @@ mod tests {
             .app()
             .deck_choices()
             .iter()
-            .any(|choice| choice.trailing == "5 due"));
+            .any(|choice| choice.due == 5));
     }
 
     #[test]
@@ -2547,9 +2551,23 @@ mod tests {
         app.open_study();
         app.grade_now(1, Grade::Good);
         let choices = app.deck_choices();
-        assert_eq!(choices[0].trailing, "1 due");
-        assert_eq!(choices[1].trailing, "Done");
-        assert_eq!(choices[2].trailing, "1 due");
+        let due: Vec<usize> = choices.iter().map(|choice| choice.due).collect();
+        assert_eq!(due, [1, 0, 1]);
+        let badges: Vec<Option<u32>> = app
+            .deck_picker()
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Rows { rows, .. } => Some(rows.iter().map(|row| row.badge)),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(
+            badges,
+            [Some(1), None, Some(1)],
+            "a finished deck carries a count, or a due one does not"
+        );
         assert!(choices
             .iter()
             .all(|choice| !choice.summary.contains("1 new")));
@@ -2562,6 +2580,33 @@ mod tests {
             .find(|node| node.kind == LayoutKind::Section)
             .expect("deck section");
         assert_eq!(section.text_lines.last().map(String::as_str), Some("1 due"));
+    }
+
+    #[test]
+    fn a_deck_list_with_its_counts_fits_every_text_size() {
+        for text_scale in TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let _runner = kobo_sdk::AppRunner::with_metrics(Flashcards::default(), metrics);
+            install_fonts();
+            let mut app = Flashcards {
+                bundle: Some(fixture_bundle(true)),
+                deck_pages: vec![vec![0, 1, 2]],
+                japanese_font: Some(JAPANESE_FONT_HANDLE),
+                view: View::Decks,
+                ..Flashcards::default()
+            };
+            app.open_study();
+            let screen = app.deck_picker();
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                !diagnostics.has_errors(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
     }
 
     #[test]

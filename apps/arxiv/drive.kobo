@@ -25,6 +25,16 @@ clean
 shot library
 tap Back
 wait-idle
+# A search is typed on the reader's own keyboard, and Back puts it away.
+tap Search arXiv
+wait-for Type here
+expect A phrase, an author, a title
+clean
+shot search
+tap Back
+wait-idle
+expect Computer Science
+expect-missing Type here
 scenario offline
 tap Computer Science
 wait-idle

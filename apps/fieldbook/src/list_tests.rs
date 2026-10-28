@@ -125,6 +125,7 @@ fn complete_outing_pack_sighting_and_life_lists_fit_every_text_size() {
         tap(&mut runner, "pack-11");
         assert_eq!(runner.app().pack_pick, Some(11));
         assert_eq!(runner.app().view, View::Search);
+        runner.cancel_text();
         runner.action(ActionId::BACK);
         runner.app_mut().open_outing = Some(23);
         runner.app_mut().view = View::Sightings;
@@ -138,7 +139,7 @@ fn complete_outing_pack_sighting_and_life_lists_fit_every_text_size() {
 }
 
 #[test]
-fn sighting_removal_requires_confirmation_and_is_undoable() {
+fn ticked_sightings_go_together_after_one_confirmation_and_come_back_with_one_undo() {
     for text_scale in TextScale::STEPS {
         let mut runner = populated(DisplayMetrics {
             text_scale,
@@ -146,32 +147,111 @@ fn sighting_removal_requires_confirmation_and_is_undoable() {
         });
         runner.app_mut().view = View::Sightings;
         verify_list(&mut runner, "sight-", 18);
+        let pages_before = runner.app().sightings_screen(&runner.context()).1;
         tap(&mut runner, "sight-17");
-        assert_eq!(runner.app().sightings.len(), 18);
-        assert_eq!(runner.app().delete_candidate, Some(17));
+        assert_eq!(
+            runner.app().sightings.len(),
+            18,
+            "a tick removed a sighting"
+        );
+        assert!(runner.app().ticked.contains(&17));
+        assert_eq!(
+            runner.app().sightings_screen(&runner.context()).1,
+            pages_before,
+            "the selection bar pushed rows onto another page"
+        );
+        runner.app_mut().sightings_page = 0;
+        tap(&mut runner, "sight-0");
+        tap(&mut runner, "sight-1");
+        tap(&mut runner, "sight-1");
+        assert_eq!(runner.app().ticked, BTreeSet::from([0, 17]));
+        let shown = screen(&runner);
+        assert!(shown
+            .nodes
+            .iter()
+            .any(|node| matches!(node, kobo_ui::Node::SelectionBar { count: 2, .. })));
+        tap(&mut runner, "delete-ticked");
+        assert!(runner.app().confirming);
         let shown = screen(&runner);
         let metrics = runner.context().metrics();
         let chrome = Chrome::for_screen(&shown, false, Chrome::measuring(true).status);
         assert!(!shown.diagnostics(&metrics, &chrome).has_errors());
-        runner.action(action_id("sight-17"));
-        assert_eq!(runner.app().sightings.len(), 18);
+        runner.action(action_id("sight-5"));
+        assert!(
+            !runner.app().ticked.contains(&5),
+            "a row answered under the dialog"
+        );
         runner.action(ActionId::BACK);
-        assert!(runner.app().delete_candidate.is_none());
+        assert!(!runner.app().confirming);
         assert_eq!(runner.app().view, View::Sightings);
-        tap(&mut runner, "sight-17");
+        tap(&mut runner, "delete-ticked");
         tap(&mut runner, "keep-sighting");
         assert_eq!(runner.app().sightings.len(), 18);
-        tap(&mut runner, "sight-17");
+        tap(&mut runner, "delete-ticked");
         tap(&mut runner, "delete-sighting");
-        assert_eq!(runner.app().sightings.len(), 17);
+        assert_eq!(runner.app().sightings.len(), 16);
+        assert!(runner.app().ticked.is_empty());
         runner.action(action_id("delete-sighting"));
-        assert_eq!(runner.app().sightings.len(), 17);
+        assert_eq!(runner.app().sightings.len(), 16);
         tap(&mut runner, "undo");
         assert_eq!(runner.app().sightings.len(), 18);
+        assert_eq!(runner.app().sightings[0].code, "bird-0");
         assert_eq!(runner.app().sightings[17].code, "bird-17");
         runner.action(action_id("undo"));
         assert_eq!(runner.app().sightings.len(), 18);
     }
+}
+
+#[test]
+fn a_search_is_typed_on_the_readers_keyboard_and_a_miss_is_said_under_the_field() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    let commands = runner.action(action_id("search"));
+    let Some(kobo_sdk::DeviceRequest::TypeText { prompt, submit, .. }) =
+        kobo_sdk::keyboard::testing::asked(&commands).cloned()
+    else {
+        panic!("the reader's keyboard was not asked for: {commands:?}")
+    };
+    assert_eq!((prompt.as_str(), submit.as_str()), ("Species", "Find"));
+    runner.type_text("zzzz");
+    assert_eq!(runner.app().view, View::Search);
+    assert_eq!(runner.app().query, "zzzz");
+    let shown = screen(&runner);
+    assert!(shown.nodes.iter().any(|node| matches!(
+        node,
+        kobo_ui::Node::Field { value, error: Some(error), .. }
+            if value == "zzzz" && error.contains("zzzz")
+    )));
+    // The field opens again on what was searched, and backing out keeps it.
+    let commands = runner.action(action_id("search-field"));
+    assert!(matches!(
+        kobo_sdk::keyboard::testing::asked(&commands),
+        Some(kobo_sdk::DeviceRequest::TypeText { initial, .. }) if initial == "zzzz"
+    ));
+    runner.cancel_text();
+    assert_eq!(runner.app().query, "zzzz");
+    assert_eq!(runner.app().view, View::Search);
+    // A new search starts empty rather than on the end of the last one.
+    let commands = runner.action(action_id("search"));
+    assert!(matches!(
+        kobo_sdk::keyboard::testing::asked(&commands),
+        Some(kobo_sdk::DeviceRequest::TypeText { initial, .. }) if initial.is_empty()
+    ));
+}
+
+#[test]
+fn naming_a_place_starts_the_outing_and_backing_out_returns_to_today() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    runner.action(action_id("new-outing"));
+    runner.type_text(" lake merced ");
+    assert_eq!(runner.app().view, View::Outing);
+    assert_eq!(
+        runner.app().open().map(|outing| outing.location.as_str()),
+        Some("lake merced")
+    );
+    runner.action(action_id("new-outing"));
+    runner.cancel_text();
+    assert_eq!(runner.app().view, View::Home);
+    assert!(!runner.app().naming_location);
 }
 
 #[test]
