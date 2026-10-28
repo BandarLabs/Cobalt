@@ -3,9 +3,9 @@
   "display_name": "Habits",
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
-  "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-  "version": "0.1.5",
-  "release_notes": "Add a habit is offered on the empty Today screen, Stats sums up the week, Settings states the streak rules and exports a backup for your paired computer, and every habit has an edit screen: rename, schedule, archive.",
+  "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
+  "version": "0.1.10",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "check",
   "capabilities": []
 }

@@ -235,7 +235,7 @@ def main():
                 assert 'finished on the computer' in words(said), words(said)
                 checks.append('a key that has run opens what it said, not only when it failed')
 
-                drive('tap Back to controls', 'wait-idle')
+                drive('tap back', 'wait-idle')
                 back = capture('07-back-with-the-last-result')
                 assert 'Test finished' in words(back), words(back)
                 checks.append('the deck says what the last key it ran did')

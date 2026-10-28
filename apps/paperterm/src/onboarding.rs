@@ -14,35 +14,35 @@ pub(super) fn welcome(error: Option<&str>) -> Screen {
 }
 pub(super) fn setup() -> Screen {
     ScreenBuilder::new("paperterm-setup")
-        .top_bar("Paperterm")
-        .heading("1. Prepare the computer")
-        .text("Open its terminal and run:")
-        .text("kobo stream init")
-        .text("Keep the address and pairing code it prints. Both devices need to be on the same network.")
-        .button("trust", "Next: trust this computer")
-        .button("welcome", "Back")
+        .top_bar("Connect a computer")
+        .heading("1. Pair the computer")
+        .text("In a terminal on the computer, run:")
+        .command("kobo stream init")
+        .secondary("It finds this Kobo on your network, trusts the computer, and prints an address and a pairing code to enter here.")
+        .buttons([("welcome", "Back"), ("trust", "Next")])
         .build()
 }
+/// The step `kobo stream init` already took when it found the reader. Kept as
+/// its own page for a reader it could not find, which is the one case where
+/// the owner has to do it by hand.
 pub(super) fn trust() -> Screen {
     ScreenBuilder::new("paperterm-trust")
-        .top_bar("Paperterm")
-        .heading("2. Trust this computer")
-        .text("Run kobo devices on your computer to find the reader's address. Use that address for READER_IP:")
-        .text("kobo trust set stream --device READER_IP")
-        .text("This lets your Kobo recognize the computer's secure connection.")
-        .button("start", "Next: start a session")
-        .button("setup", "Back")
+        .top_bar("Connect a computer")
+        .heading("2. Trust the computer")
+        .text("Done already if the last step found this Kobo. If it did not:")
+        .command("kobo trust set stream --reader NAME")
+        .secondary("NAME is what kobo pair saved this Kobo as.")
+        .buttons([("setup", "Back"), ("start", "Next")])
         .build()
 }
 pub(super) fn start() -> Screen {
     ScreenBuilder::new("paperterm-start")
-        .top_bar("Paperterm")
+        .top_bar("Connect a computer")
         .heading("3. Start a session")
-        .text("For keyboard access on both devices, run:")
-        .text("kobo stream --interactive -- /bin/sh")
-        .text("Leave this terminal open and keep the computer awake. The session runs on the computer.")
-        .button("enter-address", "Enter computer address")
-        .button("trust", "Back")
+        .text("Run this and leave the terminal open:")
+        .command("kobo stream --interactive -- /bin/sh")
+        .secondary("The session runs on the computer, so keep it awake.")
+        .buttons([("trust", "Back"), ("enter-address", "Enter address")])
         .build()
 }
 pub(super) fn preview() -> Screen {

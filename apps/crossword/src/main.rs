@@ -281,7 +281,9 @@ impl Crossword {
         let word = p.word(g.position.selected, g.position.down);
         let mut entry = b
             .top_bar(label)
-            .top_bar_action("direction", if g.position.down { "→" } else { "↓" })
+            // The direction it switches to, in words. A bare arrow in the bar
+            // gave no hint that it was a control, or which way it would go.
+            .top_bar_action("direction", if g.position.down { "Across" } else { "Down" })
             .text(clue)
             .grid_with_selection(
                 u8::try_from(word.len()).expect("small word"),

@@ -30,6 +30,25 @@ test("setup metadata renders escaped steps links and commands", () => {
   assert.doesNotMatch(html, /<address>/);
 });
 
+test("steps that use commands say how to install the ready-built kobo command", () => {
+  const html = setupPanel({
+    id: "library",
+    setup: { steps: [{ text: "Install the key.", command: "kobo secret set library" }] }
+  });
+
+  assert.match(html, /install\.sh \| sh -s -- --no-setup/);
+  assert.match(html, /<code>kobo<\/code> command/);
+});
+
+test("steps without commands do not send readers to a terminal", () => {
+  const html = setupPanel({
+    id: "reader-only",
+    setup: { steps: [{ text: "Open the app and sign in." }] }
+  });
+
+  assert.doesNotMatch(html, /install\.sh/);
+});
+
 test("setup metadata rejects unsafe links and unknown fields", () => {
   assert.throws(
     () =>

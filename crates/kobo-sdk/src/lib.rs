@@ -11,6 +11,8 @@ pub mod collections;
 #[cfg(test)]
 mod load_result_tests;
 #[cfg(test)]
+mod segmented_tests;
+#[cfg(test)]
 mod selected_grid_tests;
 mod suspend;
 

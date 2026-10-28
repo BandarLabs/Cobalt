@@ -105,7 +105,7 @@ impl PencilBoard {
                 PencilMarkKind::Sum { across, down }
                     if across > 45 || down > 45 || across == 0 && down == 0 =>
                 {
-                    return false
+                    return false;
                 }
                 PencilMarkKind::Digit { value, .. } if value > 9 => return false,
                 PencilMarkKind::Candidates(m) if m == 0 || m & !0x1FF != 0 => return false,

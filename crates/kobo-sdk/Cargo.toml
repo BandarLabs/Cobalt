@@ -7,7 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Application SDK for declarative Kobo E Ink applications"
-documentation = "https://docs.rs/kobo-sdk"
 
 [features]
 # On by default, because an application that measures text with different type

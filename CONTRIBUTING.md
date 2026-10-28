@@ -4,6 +4,10 @@ Bug reports, fixes, applications, and device testing are welcome. Open an
 issue before a large change. Check open issues and pull requests first, then
 comment on the relevant thread with what you plan to change or test.
 
+Open pull requests against the `beta` branch, not `main`. `main` holds the
+stable release, and changes reach it when a tested beta is promoted. See
+[docs/RELEASE-TRAIN.md](docs/RELEASE-TRAIN.md).
+
 ## Applications
 
 Application contributions have their own guide:
@@ -58,7 +62,9 @@ guess.
 ## Code changes
 
 Keep pull requests focused and explain any behavior or safety boundary they
-change. Add tests for changed behavior and run the relevant workspace checks:
+change. `rust-toolchain.toml` names the compiler CI uses, and rustup installs
+and selects it on its own, so the checks below see the same lints CI does. Add
+tests for changed behavior and run the relevant workspace checks:
 
 ```sh
 cargo fmt --all --check
@@ -66,8 +72,8 @@ cargo test --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-For a change that alters how the device behaves — rendering, touch, power,
-radios, or anything else a reader would notice — also attach a photo or short
+For a change to how the device behaves, such as rendering, touch, power,
+radios or anything else a reader would notice, also attach a photo or short
 video of Settings ▸ About drawn on your device with the change installed. The
 page names the profile, firmware, kernel, and runtime version it was read
 from, so the picture shows the build ran where the claim says it did.

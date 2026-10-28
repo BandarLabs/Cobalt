@@ -358,12 +358,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Re-pinned over the Windows host support: the lock also gains the kobo-abi edges for the CLI, SDK, sidekickd, and wifi-trace, all workspace-internal, and none of which resolves differently for a Unix build.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge. Re-pinned for the new Readeck app stanza (including the existing kobo-net parser) and the host-only kobo-cli to kobo-policy edge for server-account setup; existing Store app dependency closures are unchanged.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "b264c8e2a7ac600cf3f19a1a7372d61b62f38bc6"
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
     }
    ]
   },
@@ -401,12 +401,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes.",
+   "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes. Tile drawing has since moved with it: square tiles set their mark at the smaller size and keep the card shape's outline to the card, because a tile outline is drawn in ink at the button weight and a grid of them boxes every app on the launcher, a busy tile draws its ink dot on paper with a border like every other corner chip, and an unavailable square tile keeps the mark that says it refuses a tap. The runtime draws all of it from nodes published apps already emit, so their bytes, their protocol and their layouts are unchanged and no catalog app needs a new version. The per-tile node reservation rises from seven to eight to match what an outlined tile can put down, and keyboard key labels ask for two more pixels before taking a size, which measures the same on every supported panel and scale. The runtime's status band is drawn in pure ink with its marks at seven tenths of the band, separates a radio that is on but unusable from one that is off, and shows the battery level as a number. Applications are never given a status; they measure against a representative one whose band height is unchanged, so their pages paginate exactly as before, and the band's one added node sits far inside the layout node budget. The band now lays out an ordered list of runtime marks, dropping the innermost before any would reach the clock, and reserves the battery figure's widest width so the radio does not move as the charge changes. Applications still never supply a status, the representative one they measure against keeps the same height, and the band now uses fewer layout nodes than before. The Bluetooth glyph keeps its name and wire number but is drawn as headphones, because the Bluetooth rune is the Bluetooth SIG's registered figure mark; an app that asks for it sends the same bytes and the runtime draws headphones. The band's clock and battery figure are drawn in pure ink like its marks, which apps never draw or measure. Buttons laid out inside a band slot now fill the slot, so a row of them is equal widths; chips inside a band slot lay out as one row of equal segments when every label fits that share, and wrap as before otherwise; two fills share the free room between them; and an overlay is drawn as a rounded sheet with its shadow inside its own rectangle. Each is the runtime drawing nodes published apps already emit: a wider button can only unwrap a label, never add a line; a single row of segments is never taller than the wrap it replaces; a screen with one fill lays out exactly as before, and content between two fills only moves within room that was already free; the overlay's rectangle is unchanged. Published binaries' pages therefore still fit as they measured them, and no catalog app needs a new version for this.",
    "files": [
     {
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
-     "compatible_blob": "58cffb6a0b820055751b15f9a6232252945906f8"
+     "compatible_blob": "d43f100e17181682b91bcd01451065b2f0bc2652"
     }
    ]
   },
@@ -418,6 +418,50 @@
      "path": "Cargo.lock",
      "base_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696",
      "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Take rustls 0.23.46 for the four TLS advisories published on 2026-10-14 (RUSTSEC-2026-0346 to RUSTSEC-2026-0349). Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "rust-toolchain.toml pins the compiler the workflows already named, 1.85.1, so a contributor builds and lints with the one CI uses; no Store binary is built differently. Any later change to the pin is a global release input again.",
+   "files": [
+    {
+     "path": "rust-toolchain.toml",
+     "base_blob": null,
+     "compatible_blob": "6c114996c00c356bd8c1bb9800f901b1165c19e2"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "The panel frame planner moved from kobod into its own crate, kobo-frame-plan, and every Store package now inherits the workspace version from its Cargo.toml. The lock gains one path crate that only the runtime and the simulator depend on, and the Store packages' own version lines; no Store binary resolves to different code. The inline test modules of kobo-ui, kobo-protocol, the kobo command and the runtime's device module moved into sibling files, which changes those sources' bytes and none of their code; the active entries naming them are re-pinned to the tree.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Take rustls-webpki 0.103.16 and webpki-roots 1.0.11 for the two certificate trust advisories published on 2026-10-19 and 2026-10-20 (RUSTSEC-2026-0381 and RUSTSEC-2026-0382). Store apps keep their existing messages and cannot open a network socket inside the sandbox, so any TLS code they link is never reached; the runtime makes their requests, and the patched trust store reaches readers in the next platform package. The lock also gains kobo-readeck, a new Store app that adds only its own package, and the host-only kobo-cli edge to kobo-policy for server-bound secrets.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f394649a66bc235232478bb20240de9596390eff",
+     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
     }
    ]
   },

@@ -166,6 +166,8 @@ struct Needles {
     /// Which project the counter screen is counting.
     current: usize,
     collection: Collection,
+    project_page: usize,
+    collection_pages: [usize; 3],
     libraries: [Vec<Pattern>; 3],
     loaded: [bool; 3],
     selected: Option<Pattern>,
@@ -182,14 +184,17 @@ struct Needles {
 
 impl Needles {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen().with_own_back(self.route != Route::Project));
+        context.set_screen(
+            self.screen(context)
+                .with_own_back(self.route != Route::Project),
+        );
     }
 
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.route {
             Route::Project => self.project(),
-            Route::Projects => self.projects_screen(),
-            Route::Library => self.library(),
+            Route::Projects => self.projects_screen(context).0,
+            Route::Library => self.library(context).0,
             Route::Pattern => self.pattern(),
             Route::Reading => self
                 .book
@@ -231,7 +236,12 @@ impl Needles {
     }
 
     fn project(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("needles-project").top_bar("Needles");
+        // Projects and the pattern library are places, so they are marks in
+        // the bar rather than two more boxes in a wall of eight.
+        let mut screen = ScreenBuilder::new("needles-project")
+            .top_bar("Needles")
+            .top_bar_glyph("library", "Library, queue and favorites", Glyph::Book)
+            .top_bar_glyph("projects", "Projects", Glyph::Folder);
         if let Some(note) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, note);
         }
@@ -270,27 +280,84 @@ impl Needles {
                     .try_into()
                     .unwrap_or(100)
             })
-            // Undo sits beside the increment it reverses: a miscount is fixed
-            // with a tap next to the tap that made it, not one a screen away.
-            .buttons([("plus", "+1 row"), ("undo", "Undo")])
+            // The count is what this screen is for, so the controls sit at
+            // the foot where a thumb rests between stitches, and +1 row is
+            // the one filled control: it is pressed a hundred times for every
+            // press of anything else, and it was the same small box as six
+            // things done once a project.
+            .rows([(
+                "read",
+                "Read synced pattern",
+                "The pattern sent from your computer",
+                Glyph::Note,
+            )])
+            .fill()
             .buttons([
                 ("section", "Change section"),
                 ("repeat-total", "Repeat length"),
             ])
-            .buttons([("read", "Read synced pattern"), ("projects", "Projects")])
-            .button("library", "Library, queue and favorites")
+            // Undo still sits beside the increment it reverses: a miscount is
+            // fixed with a tap next to the tap that made it.
+            .band(
+                kobo_sdk::BandAlign::Middle,
+                [
+                    (
+                        kobo_sdk::SlotWidth::Fill,
+                        Box::new(|slot: ScreenBuilder| slot.button("undo", "Undo"))
+                            as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                    ),
+                    (
+                        kobo_sdk::SlotWidth::Fill,
+                        Box::new(|slot: ScreenBuilder| slot.primary_button("plus", "+1 row")),
+                    ),
+                ],
+            )
             .build()
     }
 
     /// Everything being counted, each with where it stands, so switching
     /// projects is picking up the right needle rather than starting over.
-    fn projects_screen(&self) -> Screen {
-        ScreenBuilder::new("needles-projects")
-            .top_bar("Projects")
-            .rows(self.projects.iter().enumerate().map(|(index, project)| {
+    fn paged_rows(
+        context: &Context,
+        screen: ScreenBuilder,
+        rows: &[(String, String, String, RowLead)],
+        page: usize,
+        pinned_action: bool,
+    ) -> (ScreenBuilder, usize) {
+        let labels = rows
+            .iter()
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_under(
+            &labels,
+            pinned_action,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen.rows(visible.iter().map(|&index| rows[index].clone()));
+        if count > 1 {
+            screen = screen
+                .page_turns("list-previous", "list-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
+        }
+        (screen, count)
+    }
+
+    fn projects_screen(&self, context: &Context) -> (Screen, usize) {
+        let rows = self
+            .projects
+            .iter()
+            .enumerate()
+            .map(|(index, project)| {
                 (
                     format!("project-{index}"),
-                    project.name.clone(),
+                    context.clamped_row(&project.name, 2, false),
                     format!(
                         "{} - row {}",
                         project
@@ -301,16 +368,25 @@ impl Needles {
                     ),
                     RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
                 )
-            }))
-            .build()
+            })
+            .collect::<Vec<_>>();
+        let (screen, pages) = Self::paged_rows(
+            context,
+            ScreenBuilder::new("needles-projects").top_bar("Projects"),
+            &rows,
+            self.project_page,
+            false,
+        );
+        (screen.build(), pages)
     }
 
-    fn library(&self) -> Screen {
+    fn library(&self, context: &Context) -> (Screen, usize) {
         let mut screen = ScreenBuilder::new("needles-library").top_bar("Library");
         if let Some(note) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, note);
         }
         let selected = self.collection.index();
+        let mut pages = 1;
         if self.loaded.iter().any(|loaded| *loaded) {
             screen = screen.tabs(
                 selected,
@@ -327,26 +403,53 @@ impl Needles {
                     "Add your Ravelry sign-in during setup, then sync this collection.",
                 );
             } else {
-                screen = screen.section(self.collection.title()).rows(
-                    self.libraries[selected]
-                        .iter()
-                        .enumerate()
-                        .map(|(index, pattern)| {
-                            (
-                                format!("pattern-{index}"),
-                                pattern.title.clone(),
-                                pattern.detail.clone(),
-                                Glyph::Bookmark,
-                            )
-                        }),
+                let rows = self.libraries[selected]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, pattern)| {
+                        (
+                            format!("pattern-{index}"),
+                            context.clamped_row(&pattern.title, 2, true),
+                            pattern.detail.clone(),
+                            RowLead::Icon(Glyph::Bookmark),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                (screen, pages) = Self::paged_rows(
+                    context,
+                    screen,
+                    &rows,
+                    self.collection_pages[selected],
+                    true,
                 );
             }
         } else {
             screen = screen.skeleton(5);
         }
-        screen
-            .primary_button("sync", format!("Sync {}", self.collection.title()))
-            .build()
+        let sync = self.task.as_ref().map_or_else(
+            || format!("Sync {}", self.collection.title()),
+            |(_, collection)| format!("Syncing {}…", collection.title()),
+        );
+        (screen.bottom_action("sync", sync).build(), pages)
+    }
+
+    fn turn_list(&mut self, context: &Context, forward: bool) {
+        let count = match self.route {
+            Route::Projects => self.projects_screen(context).1,
+            Route::Library => self.library(context).1,
+            _ => return,
+        };
+        let page = match self.route {
+            Route::Projects => &mut self.project_page,
+            Route::Library => &mut self.collection_pages[self.collection.index()],
+            _ => return,
+        };
+        let last = count.saturating_sub(1);
+        *page = if forward {
+            page.saturating_add(1).min(last)
+        } else {
+            (*page).min(last).saturating_sub(1)
+        };
     }
 
     fn pattern(&self) -> Screen {
@@ -357,7 +460,7 @@ impl Needles {
         let mut screen = ScreenBuilder::new("needles-pattern")
             .top_bar("Pattern")
             .heading(title)
-            .text("Use `kobo needles push` on your computer to prepare and transfer a PDF you own. Text pages reflow here.")
+            .text("Use kobo needles push on your computer to prepare and transfer a PDF you own. Text pages reflow here.")
             .primary_button("follow", "Follow this pattern")
             .button("read", "Open synced pattern");
         if let Some(note) = &self.notice {
@@ -443,6 +546,9 @@ impl Needles {
     }
 
     fn sync(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            return;
+        }
         let collection = self.collection;
         if let Some(task) = context.spawn_retrying(Task::Fetch {
             url: collection.url().to_owned(),
@@ -475,6 +581,7 @@ impl Needles {
             .take(MAX_PATTERNS)
             .collect();
         self.loaded[collection.index()] = true;
+        self.collection_pages[collection.index()] = 0;
         true
     }
 
@@ -636,6 +743,8 @@ impl Default for Needles {
             projects: vec![Project::new("Row counter")],
             current: 0,
             collection: Collection::Library,
+            project_page: 0,
+            collection_pages: [0; 3],
             libraries: std::array::from_fn(|_| Vec::new()),
             loaded: [false; 3],
             selected: None,
@@ -834,7 +943,7 @@ impl KoboApp for Needles {
                         }
                         Err(_) => {
                             self.notice = Some(
-                                "The transferred pattern is not readable Markdown or text. Run `kobo needles push` again."
+                                "The transferred pattern is not readable Markdown or text. Run kobo needles push again."
                                     .to_owned(),
                             );
                         }
@@ -843,7 +952,7 @@ impl KoboApp for Needles {
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
                     self.notice = Some(
-                        "No readable pattern is on this Kobo yet. Run `kobo needles push PATTERN.pdf --device <address>` on your computer."
+                        "No readable pattern is on this Kobo yet. Run kobo needles push PATTERN.pdf on your computer."
                             .to_owned(),
                     );
                 }
@@ -888,7 +997,15 @@ impl KoboApp for Needles {
             }
         }
         if action == ActionId::BACK {
-            self.route = Route::Project;
+            self.route = if self.route == Route::Pattern {
+                Route::Library
+            } else {
+                Route::Project
+            };
+        } else if action == action_id("list-next") {
+            self.turn_list(context, true);
+        } else if action == action_id("list-previous") {
+            self.turn_list(context, false);
         } else if action == action_id("plus") {
             self.increment(context);
         } else if action == action_id("undo") {
@@ -939,6 +1056,13 @@ impl KoboApp for Needles {
         self.show(context);
     }
 
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if matches!(self.route, Route::Projects | Route::Library) {
+            self.turn_list(context, forward);
+            self.show(context);
+        }
+    }
+
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
         if self.book.woke(context, task, &outcome) != Step::Elsewhere {
             self.show(context);
@@ -956,10 +1080,9 @@ impl KoboApp for Needles {
                 "Ravelry returned a {} this version cannot read.",
                 collection.title().to_lowercase()
             )),
-            TaskOutcome::Failed(TaskError::NoCredential) => Some(
-                "Install your credential with `kobo secret set ravelry --device <address>`."
-                    .to_owned(),
-            ),
+            TaskOutcome::Failed(TaskError::NoCredential) => {
+                Some("Install your credential with kobo secret set ravelry.".to_owned())
+            }
             TaskOutcome::Failed(TaskError::Unauthorized) => {
                 Some("Ravelry did not accept the named Basic credential.".to_owned())
             }
@@ -1322,3 +1445,6 @@ mod tests {
             .is_empty());
     }
 }
+
+#[cfg(test)]
+mod collection_tests;

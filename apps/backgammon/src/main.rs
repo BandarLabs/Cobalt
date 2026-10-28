@@ -26,7 +26,16 @@ const BOARD_PICTURE: PictureHandle = PictureHandle(1);
 const BOARD_WIDTH: u32 = 960;
 /// How wide one point is on the drawn board.
 const POINT_WIDTH: i32 = 68;
-const BOARD_HEIGHT: u32 = 580;
+/// The height the board itself is drawn at.
+const DRAWN_HEIGHT: u32 = 580;
+/// A band above and below the board for the point numbers.
+///
+/// Both rows of points were numbered in the narrow gap between them, top row
+/// two pixels above bottom row, so 13 was drawn over 12 and 15 over 10, and
+/// the board read 18, 14, 18, 16, 87 along its middle. Each row is now
+/// numbered beside its own points, the way a printed board is.
+const LABEL_BAND: u32 = 30;
+const BOARD_HEIGHT: u32 = DRAWN_HEIGHT + 2 * LABEL_BAND;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Player {
@@ -407,6 +416,8 @@ enum View {
     /// beside the controls that play it.
     Match,
     Help,
+    NewMatch,
+    History,
 }
 
 impl Phase {
@@ -456,6 +467,7 @@ struct Game {
     dice: Vec<u8>,
     selected: Option<Selected>,
     point_page: usize,
+    history_page: usize,
     cube: u8,
     cube_owner: Option<Player>,
     score: [u8; 2],
@@ -487,6 +499,7 @@ impl Default for Game {
             dice: Vec::new(),
             selected: None,
             point_page: 0,
+            history_page: 0,
             cube: 1,
             cube_owner: None,
             score: [0; 2],
@@ -778,6 +791,8 @@ impl Game {
     }
 
     fn start_match(&mut self) {
+        self.played.clear();
+        self.turn_moves.clear();
         self.score = [0; 2];
         self.crawford_used = false;
         self.start_game();
@@ -900,6 +915,7 @@ impl Game {
             dice: saved_dice(fields[4])?,
             selected: None,
             point_page: 0,
+            history_page: 0,
             cube: fields[5].parse().ok()?,
             cube_owner: saved_owner(fields[6]).ok()?,
             score: saved_pair(fields[7])?,
@@ -1202,8 +1218,9 @@ fn displayed_points(game: &Game) -> Vec<usize> {
 }
 
 fn put_pixel(pixels: &mut [u8], x: i32, y: i32, tone: u8) {
+    let rows = pixels.len() / usize::try_from(BOARD_WIDTH).expect("width");
     if (0..i32::try_from(BOARD_WIDTH).expect("board width fits i32")).contains(&x)
-        && (0..i32::try_from(BOARD_HEIGHT).expect("board height fits i32")).contains(&y)
+        && (0..i32::try_from(rows).expect("board height fits i32")).contains(&y)
     {
         pixels[usize::try_from(y).expect("checked y")
             * usize::try_from(BOARD_WIDTH).expect("width")
@@ -1264,6 +1281,17 @@ fn triangle(pixels: &mut [u8], x: i32, width: i32, top: bool, dark: bool) {
     }
 }
 
+/// One digit's width, stroke and the gap between two digits, in board pixels.
+///
+/// The board is drawn at 960 pixels and shown at about 830 on a Clara, so a
+/// two pixel stroke came out at under two and the three pixel gap between
+/// the digits of 13 closed up: the 1's right edge read as the 3's missing
+/// left side, and 13 to 18 were read as 18 to 88.
+const DIGIT_WIDTH: i32 = 14;
+const DIGIT_HEIGHT: i32 = 24;
+const DIGIT_STROKE: i32 = 3;
+const DIGIT_GAP: i32 = 6;
+
 fn seven_segment_digit(pixels: &mut [u8], x: i32, y: i32, digit: u8, tone: u8) {
     const SEGMENTS: [[bool; 7]; 10] = [
         [true, true, true, true, true, true, false],
@@ -1277,15 +1305,17 @@ fn seven_segment_digit(pixels: &mut [u8], x: i32, y: i32, digit: u8, tone: u8) {
         [true, true, true, true, true, true, true],
         [true, true, true, true, false, true, true],
     ];
+    let (wide, tall, stroke) = (DIGIT_WIDTH, DIGIT_HEIGHT, DIGIT_STROKE);
+    let half = tall / 2;
     let segments = SEGMENTS[usize::from(digit)];
     let strokes = [
-        (x + 2, y, 8, 2),
-        (x + 10, y + 2, 2, 8),
-        (x + 10, y + 12, 2, 8),
-        (x + 2, y + 20, 8, 2),
-        (x, y + 12, 2, 8),
-        (x, y + 2, 2, 8),
-        (x + 2, y + 10, 8, 2),
+        (x + stroke, y, wide - 2 * stroke, stroke),
+        (x + wide - stroke, y + stroke, stroke, half - stroke),
+        (x + wide - stroke, y + half, stroke, half - stroke),
+        (x + stroke, y + tall - stroke, wide - 2 * stroke, stroke),
+        (x, y + half, stroke, half - stroke),
+        (x, y + stroke, stroke, half - stroke),
+        (x + stroke, y + half - stroke / 2, wide - 2 * stroke, stroke),
     ];
     for (on, (left, top, width, height)) in segments.into_iter().zip(strokes) {
         if on {
@@ -1294,13 +1324,15 @@ fn seven_segment_digit(pixels: &mut [u8], x: i32, y: i32, digit: u8, tone: u8) {
     }
 }
 
-fn number(pixels: &mut [u8], x: i32, y: i32, value: u8, tone: u8) {
+/// Draws a number of one or two digits centred on `centre`.
+fn number(pixels: &mut [u8], centre: i32, y: i32, value: u8, tone: u8) {
     let value = value.min(99);
     if value >= 10 {
-        seven_segment_digit(pixels, x, y, value / 10, tone);
-        seven_segment_digit(pixels, x + 15, y, value % 10, tone);
+        let left = centre - DIGIT_WIDTH - DIGIT_GAP / 2;
+        seven_segment_digit(pixels, left, y, value / 10, tone);
+        seven_segment_digit(pixels, left + DIGIT_WIDTH + DIGIT_GAP, y, value % 10, tone);
     } else {
-        seven_segment_digit(pixels, x, y, value, tone);
+        seven_segment_digit(pixels, centre - DIGIT_WIDTH / 2, y, value, tone);
     }
 }
 
@@ -1367,17 +1399,32 @@ fn draw_points(pixels: &mut [u8], game: &Game, order: &[usize]) {
             if count > shown {
                 number(
                     pixels,
-                    x + POINT_WIDTH / 2 - 7,
+                    x + POINT_WIDTH / 2,
                     if row == 0 { 214 } else { 344 },
                     count,
                     if white { 32 } else { 244 },
                 );
             }
         }
+    }
+}
+
+/// Numbers each point in the band beside its own row.
+fn draw_point_numbers(pixels: &mut [u8], order: &[usize]) {
+    let band = i32::try_from(LABEL_BAND).expect("band");
+    let bottom = i32::try_from(BOARD_HEIGHT).expect("height") - band;
+    for (slot, point) in order.iter().enumerate() {
+        let row = slot / 12;
+        let x = point_x(slot % 12) + POINT_WIDTH / 2;
+        let y = if row == 0 {
+            (band - DIGIT_HEIGHT) / 2
+        } else {
+            bottom + (band - DIGIT_HEIGHT) / 2
+        };
         number(
             pixels,
-            x + POINT_WIDTH / 2 - if *point + 1 >= 10 { 15 } else { 7 },
-            if row == 0 { 278 } else { 280 },
+            x,
+            y,
             u8::try_from(*point + 1).expect("point number fits"),
             44,
         );
@@ -1427,8 +1474,8 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
             checker(pixels, 480, y, player == Player::White);
             number(
                 pixels,
-                473,
-                y - 11,
+                480,
+                y - DIGIT_HEIGHT / 2,
                 count,
                 if player == Player::White { 32 } else { 244 },
             );
@@ -1444,13 +1491,7 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
     // the box rather than beside it.
     fill_rect(pixels, 440, 268, 80, 46, 232);
     stroke_rect(pixels, 440, 268, 80, 46, 40);
-    number(
-        pixels,
-        if game.cube >= 10 { 458 } else { 466 },
-        275,
-        game.cube,
-        32,
-    );
+    number(pixels, 480, 279, game.cube, 32);
 
     for (index, value) in game.dice.iter().take(4).enumerate() {
         let x = if index % 2 == 0 { 440 } else { 484 };
@@ -1460,11 +1501,8 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
 }
 
 fn board_pixels(game: &Game) -> Vec<u8> {
-    let mut pixels = vec![
-        248;
-        usize::try_from(BOARD_WIDTH).expect("width")
-            * usize::try_from(BOARD_HEIGHT).expect("height")
-    ];
+    let width = usize::try_from(BOARD_WIDTH).expect("width");
+    let mut pixels = vec![248; width * usize::try_from(DRAWN_HEIGHT).expect("height")];
     fill_rect(&mut pixels, 12, 12, 936, 556, 226);
     stroke_rect(&mut pixels, 12, 12, 936, 556, 30);
     fill_rect(&mut pixels, 434, 14, 92, 552, 148);
@@ -1473,10 +1511,35 @@ fn board_pixels(game: &Game) -> Vec<u8> {
     draw_points(&mut pixels, game, &order);
     draw_move_markers(&mut pixels, game, &order);
     draw_centre(&mut pixels, game);
-    pixels
+    let band = width * usize::try_from(LABEL_BAND).expect("band");
+    let mut framed = vec![248; band];
+    framed.extend_from_slice(&pixels);
+    framed.extend(std::iter::repeat_n(248, band));
+    draw_point_numbers(&mut framed, &order);
+    framed
 }
 
+#[cfg(test)]
 fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+    screen_for(game, picture, &Context::default())
+}
+
+fn screen_for(game: &Game, picture: Option<TilePicture>, context: &Context) -> Screen {
+    if game.view == View::History {
+        return history_screen(game, context);
+    }
+    if game.view == View::NewMatch {
+        return ScreenBuilder::new("backgammon-new-match")
+            .top_bar("Backgammon")
+            .owns_back(true)
+            .confirmation(
+                "Start a new match?",
+                "Clear this game, the score and turn history. This cannot be undone.",
+                kobo_sdk::DialogAction::new("confirm-new-match", "Start match"),
+                kobo_sdk::DialogAction::new("cancel-new-match", "Keep match"),
+            )
+            .build();
+    }
     if game.view == View::Match {
         return match_screen(game);
     }
@@ -1484,13 +1547,12 @@ fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
         return ScreenBuilder::new("backgammon-help")
             .top_bar("How to play")
             .owns_back(true)
-            .heading("Move all 15 checkers home, then off")
-            .text("Roll, tap a checker, then a legal destination marked on the board.")
-            .text("A lone opposing checker is hit and sent to the bar. Move bar checkers first.")
+            .text("Roll, tap a checker, then a marked legal destination.")
+            .text("A lone opposing checker goes to the bar when hit. Move your bar checkers first.")
             .text(
-                "Once every checker is home, bear them off. The first player to clear all 15 wins.",
+                "Bring all 15 checkers home before bearing them off. The first to clear all 15 wins.",
             )
-            .text("Double raises the game's value before a roll; the opponent may take or drop.")
+            .text("Before a roll, Double raises the game's value. Your opponent may take or drop.")
             .bottom_action("close-help", "Play")
             .build();
     }
@@ -1550,11 +1612,27 @@ fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
             ))
             .primary_button("new-match", "New match")
             .build(),
-        Phase::Playing => playing_screen(game, picture),
+        Phase::Playing => fitted_playing_screen(game, picture, context),
     }
 }
 
-fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+fn fitted_playing_screen(game: &Game, picture: Option<TilePicture>, context: &Context) -> Screen {
+    let metrics = context.metrics();
+    // Preserve every control and fact. The decorative board picture gives up
+    // only the space the measured text and touch targets actually need.
+    for height in (20..=52).rev() {
+        let candidate = playing_screen(game, picture, height);
+        if !candidate
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            return candidate;
+        }
+    }
+    playing_screen(game, picture, 20)
+}
+
+fn playing_screen(game: &Game, picture: Option<TilePicture>, height: u16) -> Screen {
     let mut screen = ScreenBuilder::new("backgammon")
         .top_bar("Backgammon")
         .top_bar_action("match", "Match")
@@ -1569,7 +1647,7 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
             &game.message
         });
     if let Some(picture) = picture {
-        screen = screen.unframed_picture(picture, 52);
+        screen = screen.unframed_picture(picture, height);
     }
     // The dice and the cube in words as well as pips. The board draws both,
     // but it is drawn 52 mm wide on a six inch panel, and a number that small
@@ -1606,8 +1684,11 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
             ("off", checker_counter("Off", game.position.off)),
         ],
     );
+    // The board grows until the screen is full, so without this the point
+    // keys ended exactly on the bar's rule and lost their bottom edge to it.
     screen
         .grid(8, true, point_controls(game))
+        .spacer(kobo_sdk::Space::Small)
         .action_bar([("roll", "Roll"), ("double", "Double"), ("undo", "Undo")])
         .build()
 }
@@ -1653,14 +1734,10 @@ fn match_screen(game: &Game) -> Screen {
     let mut screen = ScreenBuilder::new("backgammon-match")
         .top_bar("Match")
         .owns_back(true)
-        .facts([
-            ("Players", game.mode.label().to_owned()),
-            ("Plays to", game.match_to.to_string()),
-            (
-                "Score",
-                format!("White {} · Black {}", game.score[0], game.score[1]),
-            ),
-        ]);
+        .secondary(format!(
+            "White {} · Black {} · First to {}",
+            game.score[0], game.score[1], game.match_to
+        ));
     if let Some(provenance) = game.dice_source.provenance() {
         // A recorded game that looks like chance and is not would be a lie
         // about the dice, so a seeded run says so wherever the match is shown.
@@ -1682,14 +1759,7 @@ fn match_screen(game: &Game) -> Screen {
             ),
         ],
     );
-    screen = screen.section("Turn history");
-    if game.played.is_empty() {
-        screen = screen.secondary("Nothing played yet.");
-    } else {
-        for line in game.played.iter().rev().take(6) {
-            screen = screen.text(line.clone());
-        }
-    }
+    screen = screen.button("turn-history", "Turn history");
     screen
         .grid(
             2,
@@ -1698,6 +1768,40 @@ fn match_screen(game: &Game) -> Screen {
         )
         .bottom_action("close-match", "Board")
         .build()
+}
+
+fn history_pages(game: &Game, context: &Context) -> Vec<Vec<String>> {
+    let text = if game.played.is_empty() {
+        "Nothing played yet.".to_owned()
+    } else {
+        game.played
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    context.paginate(&text, false)
+}
+
+fn history_screen(game: &Game, context: &Context) -> Screen {
+    let pages = history_pages(game, context);
+    let page = game.history_page.min(pages.len().saturating_sub(1));
+    let mut builder = ScreenBuilder::new("backgammon-history")
+        .top_bar("Turn history")
+        .owns_back(true);
+    for text in &pages[page] {
+        builder = builder.text(text);
+    }
+    if pages.len() > 1 {
+        builder = builder
+            .page_turns("history-previous", "history-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+    }
+    builder.build()
 }
 
 /// One move as a board writes it: "8/5", "bar/20", "6/off".
@@ -1732,7 +1836,25 @@ impl KoboApp for Game {
         context.store().load(OLD_SAVE);
         self.show(context);
     }
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::History {
+            let last = history_pages(self, context).len().saturating_sub(1);
+            let page = self.history_page.min(last);
+            self.history_page = if forward {
+                (page + 1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            self.show(context);
+        }
+    }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.view == View::History
+            && (action == action_id("history-next") || action == action_id("history-previous"))
+        {
+            self.on_page_turn(context, action == action_id("history-next"));
+            return;
+        }
         if let Some(persisted) = self.apply_action(action) {
             if persisted {
                 context.store().save(SAVE, self.encode());
@@ -1822,7 +1944,7 @@ impl Game {
         } else {
             None
         };
-        context.set_screen(screen(self, picture));
+        context.set_screen(screen_for(self, picture, context));
     }
 }
 
@@ -1832,6 +1954,30 @@ impl Game {
 /// the same word means something different on each of them.
 fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
     match game.view {
+        View::History => {
+            if action == ActionId::BACK {
+                game.view = View::Match;
+            }
+            Some(())
+        }
+        View::Match if action == action_id("turn-history") => {
+            game.history_page = 0;
+            game.view = View::History;
+            Some(())
+        }
+        View::NewMatch => {
+            if action == action_id("confirm-new-match") {
+                game.start_match();
+                game.view = View::Board;
+            } else if action == action_id("cancel-new-match") || action == ActionId::BACK {
+                game.view = View::Match;
+            }
+            Some(())
+        }
+        View::Match if action == action_id("new-match") => {
+            game.view = View::NewMatch;
+            Some(())
+        }
         View::Help => {
             if action == action_id("close-help") || action == ActionId::BACK {
                 game.view = View::Board;
@@ -1857,8 +2003,9 @@ fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
 }
 
 fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
-    if game.view == View::Help {
-        return view_action(game, action).filter(|()| game.view != View::Help);
+    if matches!(game.view, View::Help | View::NewMatch | View::History) {
+        let previous = game.view;
+        return view_action(game, action).filter(|()| game.view != previous);
     }
     if view_action(game, action).is_some() {
         return Some(());
@@ -1962,6 +2109,12 @@ mod tests {
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
     fn test_screen(game: &Game) -> Screen {
+        // Match runtime typography even when a layout test runs on its own.
+        static FONT: std::sync::Once = std::sync::Once::new();
+        FONT.call_once(|| {
+            let _runner = kobo_sdk::AppRunner::new(Game::default());
+            assert!(kobo_ui::has_typesetter());
+        });
         screen(
             game,
             Some(TilePicture::new(BOARD_PICTURE, BOARD_WIDTH, BOARD_HEIGHT)),
@@ -2349,7 +2502,7 @@ mod tests {
     fn numeric_renderer_caps_untrusted_values() {
         let mut pixels =
             vec![255; usize::try_from(BOARD_WIDTH * BOARD_HEIGHT).expect("board pixel count")];
-        number(&mut pixels, 2, 2, u8::MAX, 32);
+        number(&mut pixels, 40, 2, u8::MAX, 32);
         assert!(pixels.contains(&32));
     }
 
@@ -2434,8 +2587,9 @@ mod tests {
         let marked = |point: usize| {
             let (row, column) = point_slot(&game, point);
             let x = point_x(column) + POINT_WIDTH / 2;
-            let y = if row == 0 { 246 } else { 334 };
-            pixels[usize::try_from(y).expect("row") * usize::try_from(BOARD_WIDTH).expect("width")
+            // Drawn coordinates, below the band that numbers the top row.
+            let y = LABEL_BAND as usize + if row == 0 { 246 } else { 334 };
+            pixels[y * usize::try_from(BOARD_WIDTH).expect("width")
                 + usize::try_from(x).expect("column")]
         };
         // The checker in hand is marked solid; where it may go is marked with
@@ -2754,7 +2908,7 @@ mod tests {
             };
             game.roll();
             game.played.push("Black 13/8 24/23".into());
-            for view in [View::Board, View::Match, View::Help] {
+            for view in [View::Board, View::Match, View::Help, View::History] {
                 game.view = view;
                 let screen = test_screen(&game);
                 let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
@@ -2779,9 +2933,11 @@ mod tests {
                     }
                     View::Match => {
                         assert!(drawn.contains("Turn history"), "{drawn}");
+                    }
+                    View::History => {
                         assert!(drawn.contains("Black 13/8 24/23"), "{drawn}");
                     }
-                    View::Help => {}
+                    View::Help | View::NewMatch => {}
                 }
             }
         }
@@ -2922,12 +3078,72 @@ mod tests {
         game.roll();
         let pixels = board_pixels(&game);
         assert_eq!(
-            pixels[320 * usize::try_from(BOARD_WIDTH).expect("width") + 480],
+            pixels
+                [(320 + LABEL_BAND as usize) * usize::try_from(BOARD_WIDTH).expect("width") + 480],
             148
         );
         assert!(pixels.contains(&38));
         assert!(pixels.contains(&244));
         assert!(pixels.contains(&40));
         assert!(pixels.contains(&248));
+    }
+}
+
+#[cfg(test)]
+mod new_match_tests;
+
+#[cfg(test)]
+mod help_tests;
+
+#[cfg(test)]
+mod match_history_tests;
+
+#[cfg(test)]
+mod large_text_tests {
+    use super::*;
+
+    fn panels() -> impl Iterator<Item = kobo_sdk::DisplayMetrics> {
+        [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)]
+            .into_iter()
+            .flat_map(|(width, height, pixels_per_inch)| {
+                [kobo_ui::TextScale::Default, kobo_ui::TextScale::Largest]
+                    .into_iter()
+                    .map(move |text_scale| kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    })
+            })
+    }
+    fn fits(screen: &Screen, metrics: kobo_sdk::DisplayMetrics) {
+        let diagnostics = screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+        assert!(
+            !diagnostics.has_errors(),
+            "{metrics:?}: {:#?}",
+            diagnostics.issues
+        );
+    }
+
+    #[test]
+    fn rolled_board_picture_leaves_room_for_all_controls() {
+        for metrics in panels() {
+            let mut game = Game {
+                dice_source: Dice::scripted([(5, 3)]),
+                ..Game::default()
+            };
+            game.roll();
+            let runner = kobo_sdk::AppRunner::with_metrics(game, metrics);
+            let screen = screen_for(
+                runner.app(),
+                Some(TilePicture::new(BOARD_PICTURE, BOARD_WIDTH, BOARD_HEIGHT)),
+                &runner.context(),
+            );
+            fits(&screen, metrics);
+            let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+            for name in ["roll", "double", "undo"] {
+                assert!(layout.rect_of_action(action_id(name)).is_some());
+            }
+        }
     }
 }

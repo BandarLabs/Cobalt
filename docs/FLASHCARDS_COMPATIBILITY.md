@@ -167,7 +167,9 @@ installation steps instead of claiming that all import support is unavailable.
 
 The standalone importer requires Rust 1.88 or newer and its own lockfile. This
 allows the patched `time` parser (RUSTSEC-2026-0009) without changing the device
-workspace's Rust 1.85.1 requirement. CI tests and audits both lockfiles. Install
+workspace's Rust 1.85.1 requirement. The root `rust-toolchain.toml` pins 1.85.1
+and applies in the importer's directory too, so importer commands name their
+compiler with `cargo +1.88.0`. CI tests and audits both lockfiles. Install
 `protobuf-compiler` (or `protoc` on macOS) before building the companion.
 
 ## Media and image safety
@@ -252,7 +254,7 @@ never enter source control:
 
 ```sh
 COBALT_ANKI_EQUIVALENCE_APKG=/path/to/private.apkg \
-  cargo test --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+  cargo +1.88.0 test --manifest-path crates/kobo-flashcards-import/Cargo.toml \
   private_owner_deck_matches_pinned_rslib_aggregates_when_available
 ```
 

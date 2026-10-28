@@ -21,6 +21,7 @@ others. A branch that is not listed still runs, behind the notice.
 | Device | Exact tested identity | Evidence status | Installation status |
 |---|---|---|---|
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
+| Tolino Shine 5 (Kobo Clara BW conversion) | T302, code 391, firmware 4.45.23697, kernel 4.9.77 | Doctor matches Clara BW 391 hardware and software fields; owner-attended display, touch, power-button handback, exit, recovery, and Wi-Fi tests captured for maintainer review. Evidence on [issue #292](https://github.com/BandarLabs/Cobalt/issues/292) and [PR #293](https://github.com/BandarLabs/Cobalt/pull/293) | Read-only profile pending review |
 | Kobo Clara BW (2025 refresh) | P365, code 395, firmware 4.45.23697, kernel 4.9.77 | Read-only doctor matches the N365 panel, touch controller and ranges, firmware, and kernel exactly; write evidence inherited from the same official Clara BW product | Supported |
 | Kobo Clara Colour | N367, code 393, firmware 4.45.23697, kernel 4.9.77 | Read-only doctor match and owner-attended Cobalt launcher and application testing complete on the physical device. The measured framebuffer geometry, HWTCON interface, and touch controller match Clara BW; the device instead has a Kaleido 3 panel and dual-core MT8113T. Evidence and screenshots on [issue #30](https://github.com/BandarLabs/Cobalt/issues/30) and [PR #38](https://github.com/BandarLabs/Cobalt/pull/38) | Fully tested |
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
@@ -148,7 +149,7 @@ the single NickelMenu line the packaged `README.txt` gives you.
 
 **A stock device cannot launch either of those, and this is the prerequisite
 rather than a footnote.** Running `start.sh` needs a shell, and the NickelMenu
-line needs NickelMenu; Cobalt deliberately installs neither, because writing to
+line needs NickelMenu; Cobalt installs neither, because writing to
 the root filesystem is the one thing the packaging promises never to do.
 
 `kobo setup` is the answer, and it needs nothing on the device beforehand:
@@ -223,7 +224,7 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 password at all** and still does not give you `kobo deploy`.
 
 > [!NOTE]
-> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself — which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
+> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself, which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
 
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
@@ -284,7 +285,7 @@ it has, it writes NickelMenu's own uninstall flag, unless another mod still has
 a configuration file beside ours, in which case the plugin stays and only the
 Cobalt entry goes, because it is shared.
 
-The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has
+The entry starts Cobalt **on demand**, and not at boot. `kobod` has
 one mode and it is to stop `nickel` and take the panel, so starting it at boot
 would leave a device with no stock reader on it, and would spend the safety net
 every risky thing in this project leans on, which is that restarting always
@@ -359,6 +360,12 @@ reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
 before Nickel returns, then waits for Nickel's association and default route
 to remain healthy for ten seconds.
 
+On the N605 Elipsa 2E, hand-back also stops the captured firmware
+supplicant before Nickel starts its replacement. This uses the existing
+bounded cleanup; it does not initialize the radio or change saved networks.
+[PR #164](https://github.com/BandarLabs/Cobalt/pull/164) records the earlier
+device tests and their limits. Those tests have not been repeated on this beta.
+
 That immediate gate is not evidence that the handoff stays healthy minutes
 later. For the N365 investigation, the owner-attended
 [`KOBO_WIFI_HANDOFF_TRACE`](WIFI_HANDOFF_TRACE.md) mode records the process and
@@ -425,7 +432,7 @@ with buffered writes, so the last several seconds -- exactly the seconds that
 matter -- are never on the card when the device comes back.
 
 So `crates/kobod/src/blackbox.rs` writes to the book partition and calls
-`fsync` after every single line. That is deliberately expensive, and it is the
+`fsync` after every single line. That is expensive, and it is the
 only way to learn *when* the device died and *what it was doing* at the time.
 
 | | |

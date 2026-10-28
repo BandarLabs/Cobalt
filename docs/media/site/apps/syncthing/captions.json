@@ -1,0 +1,5 @@
+{
+  "first-sync.png": "The first sync, with what it imported",
+  "running.png": "A sync in progress",
+  "conflict.png": "A conflict, retried on the next sync"
+}

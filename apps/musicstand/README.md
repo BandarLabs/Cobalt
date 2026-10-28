@@ -1,38 +1,62 @@
 # Music Stand
 
-![A whole score page on a Kobo Clara BW panel](screenshots/stand.png)
+A score reader for a Kobo on a music stand, with setlists and half-page
+turns.
 
-Music Stand turns a Kobo on a folding stand into a score reader. Pages are
-prepared on your computer and pushed over USB or SSH; the reader keeps the
-panel awake, turns pages with the physical page buttons or the tap zones, and
-splits each page into two overlapping halves so the line you are reading is
-still in sight after a turn. A staff-width zoom keeps dense passages legible,
-and every score remembers its page, zoom and corner mark between sessions.
-Setlists keep rehearsal order and walk straight from one piece's last page
-into the next.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="A full page at reading size"><br>A full page at reading size</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/half-turn.png" alt="A half-page turn keeps the current line in view"><br>A half-page turn keeps the current line in view</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/zoom-staff.png" alt="Staff-width zoom for dense passages"><br>Staff-width zoom for dense passages</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/setlist.png" alt="A setlist resuming at its saved page"><br>A setlist resuming at its saved page</td>
+</tr>
+</table>
 
-Transfer is host-side:
+## Features
+
+- Keeps the screen on while you play.
+- Turn pages with the page buttons or by tapping the screen.
+- Half-page turns: each page is split into two overlapping halves, so the line
+  you are reading stays in view after a turn.
+- Staff-width zoom for dense passages.
+- Each score remembers its page, zoom and corner mark.
+- Setlists keep rehearsal order and continue from one piece's last page to the
+  next piece.
+
+## Setup
+
+Scores are prepared on your computer and sent over USB or SSH:
 
 ```sh
 kobo musicstand init --device IP
+kobo musicstand plan score.pdf --device IP   # what a push would send
 kobo musicstand push score.pdf --device IP
+kobo musicstand ls --device IP
+kobo musicstand rm ID --device IP
 ```
 
-PDF scores are rendered page by page with pdftoppm; folders of PNG or JPEG
-images transfer as they are. Only transfer scores you have the right to use.
+Use `--sim` instead of `--device IP` for the simulator.
 
-## On the device
+PDFs are rendered page by page with `pdftoppm`. Folders of PNG or JPEG images
+are sent as they are. Only send scores you have the right to use.
 
-Pushed with the companion CLI from a real public-domain score (BWV 1007,
-typeset by the Mutopia Project).
+## Permissions
 
-<table><tr>
-<td><img width="300" src="screenshots/stand.png" alt="A whole engraved score page filling the panel"><br>A whole page at reading size</td>
-<td><img width="300" src="screenshots/half-turn.png" alt="The bottom half of the same page, overlapping the last visible line"><br>A half-page turn keeps the line in sight</td>
-</tr><tr>
-<td><img width="300" src="screenshots/zoom-staff.png" alt="The same passage at staff width, notation crisp"><br>Staff-width zoom for dense passages</td>
-<td><img width="300" src="screenshots/setlist.png" alt="A setlist entry resuming at its saved page"><br>Setlists remember where each piece resumes</td>
-</tr></table>
+- `keep-awake`: keeps the screen on while a score is open.
 
-`drive.kobo` captures the empty shelf; the pushed-score journey lives in
-`scripts/quality/check-musicstand-shelf-sim.py`.
+## Development
+
+```sh
+cargo test -p kobo-musicstand
+python3 scripts/check-apps-sim.py musicstand
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-musicstand-shelf-sim.py` covers sending a score.
+
+## Credits
+
+The screenshots show Bach's Cello Suite No. 1 (BWV 1007), a public-domain
+engraving from the Mutopia Project.

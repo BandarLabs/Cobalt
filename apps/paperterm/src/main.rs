@@ -1012,10 +1012,10 @@ fn paperterm_terminal_keys(screen: ScreenBuilder, keys: &TerminalKeys) -> Screen
             })
             .collect::<Vec<_>>()
     };
-    let rows = match keyboard.layer() {
-        Layer::Letters => ["qwertyuiop", "asdfghjkl", "zxcvbnm"],
-        Layer::Symbols => ["1234567890", "-/:;()&@\"", ".,?!'+="],
-    };
+    // The keyboard's own rows, never a copy of them. A copy here fell behind
+    // when the underscore and the hash were added, and those keys were then
+    // decoded but never drawn.
+    let rows = keyboard.rows();
     let top = row(0, rows[0]);
     let mut home = row(1, rows[1]);
     home.push((
@@ -2661,6 +2661,44 @@ mod tests {
         );
         assert!(app.hello.is_none());
         assert!(app.poll.is_some());
+    }
+
+    #[test]
+    fn every_character_the_keys_send_has_a_key_drawn_for_it() {
+        // Paperterm draws its own terminal keys, and while that copy spelled
+        // the symbol rows out itself it fell behind the shared keyboard: the
+        // underscore and the hash were decoded but never drawn, so a shell
+        // mirrored here could take neither.
+        const PAGES: [&[&str]; 4] = [&[], &["kb.shift"], &["kb.layer"], &["kb.layer", "kb.shift"]];
+        for page in PAGES {
+            let mut keys = TerminalKeys::new();
+            for name in page {
+                let _changed = keys.press(action_id(name));
+            }
+            let drawn = paperterm_terminal_keys(ScreenBuilder::new("keys"), &keys)
+                .build()
+                .nodes
+                .into_iter()
+                .flat_map(|node| match node {
+                    kobo_ui::Node::Grid { cells, .. } => cells,
+                    _ => Vec::new(),
+                })
+                .map(|cell| (cell.action, cell.label))
+                .collect::<Vec<_>>();
+            for row in 0..3 {
+                for column in 0..16 {
+                    let action = action_id(&format!("kb.r{row}c{column}"));
+                    let Some(Typed::Send(bytes)) = keys.clone().press(action) else {
+                        continue;
+                    };
+                    let sent = String::from_utf8(bytes).expect("a key sends text");
+                    assert!(
+                        drawn.contains(&(action, sent.clone())),
+                        "{page:?}: {sent:?} is sent by a key that is not drawn"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

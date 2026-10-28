@@ -1,7 +1,7 @@
 # Developing Cobalt
 
-How to run the workspace, the simulator, and the loop that drives an
-application and photographs what it drew. Part of [Cobalt](../README.md).
+How to build and test Cobalt, run the simulator, and script an app and
+capture its screens.
 
 ```sh
 cargo test --workspace --all-features
@@ -35,12 +35,11 @@ failing rectangles. Run with `KOBO_TEXT_SCALE=large` or
 `KOBO_TEXT_SCALE=extra-large` to verify the 120% and 140% accessibility settings
 with the same metrics used for pagination.
 
-## Driving it, and photographing the result
+## Scripting the simulator and taking screenshots
 
-A layout assertion proves a button was placed. It does not prove the screen
-reads as a product, and it does not prove the button is reachable. Closing that
-loop, for a person or for something automating on their behalf, means
-driving the application the way a finger does and then looking at the result.
+Layout tests show that a button was placed, not that it can be reached or
+that the screen reads well. `kobo drive` taps through an app the way a finger
+does and saves screenshots to check.
 
 ```sh
 cargo run -p kobo-cli -- dev 127.0.0.1:8787          # in one terminal
@@ -149,7 +148,7 @@ cargo run -p kobo-cli -- build --device
 ```
 
 The cross-compiler the TLS stack needs is listed under
-[What you need](INSTALL.md#what-you-need); `build --device` finds it under any of its
+[Building from source](INSTALL.md#building-from-source); `build --device` finds it under any of its
 usual names and names the package to install when there is none. Rust code is
 linked by `rust-lld`, which ships with the toolchain. The resulting binaries
 are statically linked and need no library installed on the reader.
@@ -158,7 +157,29 @@ For the owner-attended Clara BW Wi-Fi handoff investigation, use the
 [bounded passive handoff trace](WIFI_HANDOFF_TRACE.md). It is opt-in, is not a
 fix, and includes the exact build, run, wait, and retrieval procedure.
 
-## Before you commit a credential by accident
+## Fuzzing the parsers
+
+Everything the runtime reads from a stranger's server, and the wire protocol
+every application speaks to it, is parsed by code in this workspace with
+`unsafe` forbidden. A malformed input cannot corrupt memory, but it can still
+panic, and release builds abort on panic, so a panic in any of those readers
+ends the runtime and the owner waits for the watchdog. The targets under
+[`fuzz/`](../fuzz/README.md) feed each reader arbitrary bytes and assert the
+property its documentation claims.
+
+```sh
+cargo install cargo-fuzz
+cd fuzz
+cargo +nightly fuzz list
+cargo +nightly fuzz run protocol_decode -- -max_total_time=60
+```
+
+`cargo fuzz` needs nightly for the sanitizer, and the root toolchain file pins
+stable, so nightly is named on the command line. The Fuzz workflow runs every
+target for a bounded time each night and keeps any crashing input as a run
+artifact. A reader that gains a new entry point gets a target beside these.
+
+## Keeping credentials out of commits
 
 A key must never reach a commit. `tools/pre-commit` refuses one, and is
 enabled per clone with:

@@ -2,10 +2,10 @@
   "id": "frame",
   "display_name": "Frame",
   "short_label": "Frame",
-  "summary": "Show computer-pushed monochrome photos in awake or scheduled slideshow modes.",
-  "page_description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
-  "version": "1.2.0",
-  "release_notes": "The photograph fills the screen; touch the top edge and the bar names the photo. Home lists album and taken date, padded photos keep their composition, and transfers verify against the bytes that landed.",
+  "summary": "Show photos from your computer as a slideshow, with the screen on or waking on a schedule.",
+  "page_description": "Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours.",
+  "version": "1.2.4",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "app",
   "capabilities": [
     "keep-awake",
@@ -14,16 +14,16 @@
   "setup": {
     "steps": [
       {
-        "text": "Enable Cobalt's owner-attended SSH path and install this computer's public key.",
-        "command": "kobo setup --enable-ssh"
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
       },
       {
-        "text": "Create Frame's private shelf through the established SSH connection.",
-        "command": "kobo frame init --device <address>"
+        "text": "Create Frame's photo folder on the reader.",
+        "command": "kobo frame init"
       },
       {
-        "text": "Prepare and atomically push a photo or folder from this computer.",
-        "command": "kobo frame push ~/Pictures/family --device <address>"
+        "text": "Send a photo or a folder of photos.",
+        "command": "kobo frame push ~/Pictures/family"
       }
     ]
   }

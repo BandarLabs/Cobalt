@@ -195,6 +195,8 @@ pub struct BookView {
     wanted: VecDeque<String>,
     /// The fetch in flight, and what it is for.
     fetching: Option<(TaskId, String)>,
+    /// Some formulas in the open HTML were left as text past the picture budget.
+    formulae_as_text: bool,
 }
 
 impl BookView {
@@ -261,6 +263,7 @@ impl BookView {
     /// the scanned bytes as well as the decoded greyscale meant every plate
     /// was paid for twice.
     pub fn open(&mut self, context: &mut Context, mut document: Document, memory: Memory) {
+        self.formulae_as_text = false;
         // Whatever the last document handed over is about to be replaced, so
         // it goes back first. Without this, a book reopened from the shelf
         // left its first set decoded in the runtime with nothing left that
@@ -369,15 +372,22 @@ impl BookView {
         origin: &str,
         memory: Memory,
     ) -> bool {
-        let document = kobo_doc::html::parse(html);
+        let (document, formulae_as_text) = kobo_doc::html::parse_noting_formula_fallback(html);
         if document.blocks.is_empty() {
             return false;
         }
         self.open(context, document, memory);
+        self.formulae_as_text = formulae_as_text;
         self.origin = Some(origin.to_owned());
         self.wanted = self.missing_pictures().into_iter().collect();
         self.fetch_next(context);
         true
+    }
+
+    /// Whether opening HTML left some formulas as text past the picture budget.
+    #[must_use]
+    pub const fn formulae_as_text(&self) -> bool {
+        self.formulae_as_text
     }
 
     /// Says the document stopped short of its own end.

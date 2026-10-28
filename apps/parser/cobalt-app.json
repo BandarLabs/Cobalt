@@ -3,9 +3,24 @@
   "display_name": "Parser",
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
-  "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
-  "version": "0.1.9",
-  "release_notes": "Save and restore slots stay on the panel at the largest text size.",
+  "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
+  "version": "0.1.14",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "book",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "First Light is bundled and plays offline. To add a story of your own:"
+      },
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Check the story, then send it.",
+        "command": "kobo parser push story.z5"
+      }
+    ]
+  }
 }

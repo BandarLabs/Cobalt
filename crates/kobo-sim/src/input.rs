@@ -117,6 +117,14 @@ impl Replay {
             millis,
         )
     }
+    /// Independently authored fixture coordinate, not a device event capture.
+    pub fn fixture_tap(
+        &mut self,
+        pose: &PanelPose<'_>,
+        millis: u64,
+    ) -> io::Result<Vec<(TouchEvent, bool)>> {
+        self.tap(pose.width() / 4, pose.height() / 3, pose, millis)
+    }
     pub fn is_quiescent(&self) -> bool {
         self.decoder.is_quiescent()
     }
@@ -169,6 +177,30 @@ fn parse(source: &str) -> io::Result<Vec<InputEvent32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fixture_taps_reach_same_display_position_on_three_profile_poses() {
+        for id in ["clara-hd-376", "libra-h2o-384", "libra-2-388"] {
+            let profile = kobo_profile::SUPPORTED_PROFILES
+                .iter()
+                .copied()
+                .find(|p| p.id == id)
+                .unwrap();
+            let pose = PanelPose::reference(profile);
+            let mut replay = Replay::new(&pose);
+            let events = replay.fixture_tap(&pose, 0).unwrap();
+            assert_eq!(
+                events.last(),
+                Some(&(
+                    TouchEvent::Up {
+                        x: pose.width() / 4,
+                        y: pose.height() / 3
+                    },
+                    false
+                ))
+            );
+            assert!(replay.is_quiescent());
+        }
+    }
     #[test]
     fn real_decoder_handles_taps_holds_lost_input_and_explicit_recovery() {
         let pose = &super::super::POSE;

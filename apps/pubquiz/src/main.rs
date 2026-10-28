@@ -8,7 +8,6 @@ use kobo_sdk::{
     ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, Task,
     TaskId, TaskOutcome,
 };
-use kobo_ui::TextScale;
 use std::fmt::Write;
 use std::process::ExitCode;
 
@@ -18,6 +17,14 @@ const SCORECARD: &str = "pubquiz-scorecard.csv";
 const LICENSE: &str = "pubquiz-content-license";
 const LICENSE_TEXT: &str = "Questions: Open Trivia DB (opentdb.com), CC-BY-SA 4.0. Cached question content remains under CC-BY-SA 4.0.";
 const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
+/// The longest round, and the fewest questions a round is worth starting with.
+///
+/// A synced pack spreads fifty questions over about twenty categories, so a
+/// single category often holds one or two. A round of one question used to
+/// start anyway and end on the podium before anybody but the first player had
+/// held the reader, which looked like the game had broken.
+const ROUND_LENGTH: usize = 10;
+const MIN_ROUND: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -80,6 +87,13 @@ fn question(
     }
 }
 
+/// The pack that plays before anything is synced.
+///
+/// Five questions in each of six categories, so any one category is a round
+/// of its own and a first evening without Wi-Fi is three rounds rather than
+/// one. Ten questions in nine categories made every category a round of one
+/// or two questions.
+#[allow(clippy::too_many_lines)]
 fn bundled_questions() -> Vec<Question> {
     [
         question(
@@ -90,24 +104,38 @@ fn bundled_questions() -> Vec<Question> {
             0,
         ),
         question(
-            "General knowledge",
+            "Science",
             Difficulty::Easy,
-            "What is the capital of Finland?",
-            ["Oslo", "Helsinki", "Tallinn", "Stockholm"],
+            "What is the chemical symbol for gold?",
+            ["Ag", "Gd", "Au", "Go"],
+            2,
+        ),
+        question(
+            "Science",
+            Difficulty::Easy,
+            "Which gas do plants take from the air to make sugar?",
+            ["Oxygen", "Nitrogen", "Carbon dioxide", "Helium"],
+            2,
+        ),
+        question(
+            "Science",
+            Difficulty::Medium,
+            "How many bones are in the adult human body?",
+            ["186", "206", "226", "246"],
             1,
         ),
         question(
-            "History",
-            Difficulty::Hard,
-            "Which ship carried Charles Darwin on his voyage?",
-            ["Beagle", "Endeavour", "Victory", "Resolution"],
-            0,
+            "Science",
+            Difficulty::Medium,
+            "What is the hardest natural mineral?",
+            ["Quartz", "Topaz", "Corundum", "Diamond"],
+            3,
         ),
         question(
-            "Arts",
-            Difficulty::Medium,
-            "Who painted The Persistence of Memory?",
-            ["Miró", "Dalí", "Picasso", "Kahlo"],
+            "Geography",
+            Difficulty::Easy,
+            "What is the capital of Finland?",
+            ["Oslo", "Helsinki", "Tallinn", "Stockholm"],
             1,
         ),
         question(
@@ -118,14 +146,75 @@ fn bundled_questions() -> Vec<Question> {
             1,
         ),
         question(
-            "Science",
+            "Geography",
             Difficulty::Easy,
-            "What is the chemical symbol for gold?",
-            ["Ag", "Gd", "Au", "Go"],
+            "Which is the largest ocean?",
+            ["Atlantic", "Indian", "Arctic", "Pacific"],
+            3,
+        ),
+        question(
+            "Geography",
+            Difficulty::Medium,
+            "What is the capital of Australia?",
+            ["Sydney", "Melbourne", "Canberra", "Perth"],
             2,
         ),
         question(
-            "Literature",
+            "Geography",
+            Difficulty::Hard,
+            "Which country has the most natural lakes?",
+            ["Canada", "Russia", "Finland", "United States"],
+            0,
+        ),
+        question(
+            "History",
+            Difficulty::Hard,
+            "Which ship carried Charles Darwin on his voyage?",
+            ["Beagle", "Endeavour", "Victory", "Resolution"],
+            0,
+        ),
+        question(
+            "History",
+            Difficulty::Medium,
+            "In which year did the Berlin Wall fall?",
+            ["1987", "1989", "1991", "1993"],
+            1,
+        ),
+        question(
+            "History",
+            Difficulty::Easy,
+            "Who was the first person to walk on the Moon?",
+            [
+                "Buzz Aldrin",
+                "Yuri Gagarin",
+                "Neil Armstrong",
+                "Michael Collins",
+            ],
+            2,
+        ),
+        question(
+            "History",
+            Difficulty::Medium,
+            "Which civilisation built Machu Picchu?",
+            ["Aztec", "Maya", "Inca", "Olmec"],
+            2,
+        ),
+        question(
+            "History",
+            Difficulty::Medium,
+            "Who was the first emperor of Rome?",
+            ["Julius Caesar", "Augustus", "Nero", "Caligula"],
+            1,
+        ),
+        question(
+            "Arts & Literature",
+            Difficulty::Medium,
+            "Who painted The Persistence of Memory?",
+            ["Miró", "Dalí", "Picasso", "Kahlo"],
+            1,
+        ),
+        question(
+            "Arts & Literature",
             Difficulty::Medium,
             "Who wrote Frankenstein?",
             [
@@ -137,25 +226,100 @@ fn bundled_questions() -> Vec<Question> {
             0,
         ),
         question(
-            "Music",
+            "Arts & Literature",
             Difficulty::Easy,
             "How many strings does a standard violin have?",
             ["Three", "Four", "Five", "Six"],
             1,
         ),
         question(
+            "Arts & Literature",
+            Difficulty::Medium,
+            "Who wrote One Hundred Years of Solitude?",
+            [
+                "Jorge Luis Borges",
+                "Gabriel García Márquez",
+                "Isabel Allende",
+                "Pablo Neruda",
+            ],
+            1,
+        ),
+        question(
+            "Arts & Literature",
+            Difficulty::Medium,
+            "In which city is the Rijksmuseum?",
+            ["Brussels", "Amsterdam", "Copenhagen", "Vienna"],
+            1,
+        ),
+        question(
             "Nature",
             Difficulty::Medium,
-            "Which animal is the largest living bird?",
+            "Which is the largest living bird?",
             ["Emu", "Albatross", "Ostrich", "Condor"],
             2,
         ),
         question(
-            "Sport",
+            "Nature",
             Difficulty::Easy,
-            "How many players start on a football team?",
+            "How many legs does a spider have?",
+            ["Six", "Eight", "Ten", "Twelve"],
+            1,
+        ),
+        question(
+            "Nature",
+            Difficulty::Easy,
+            "What is a baby kangaroo called?",
+            ["Cub", "Kit", "Joey", "Calf"],
+            2,
+        ),
+        question(
+            "Nature",
+            Difficulty::Easy,
+            "Which tree grows acorns?",
+            ["Oak", "Beech", "Maple", "Ash"],
+            0,
+        ),
+        question(
+            "Nature",
+            Difficulty::Easy,
+            "Which is the fastest land animal?",
+            ["Lion", "Pronghorn", "Cheetah", "Greyhound"],
+            2,
+        ),
+        question(
+            "Sport & Games",
+            Difficulty::Easy,
+            "How many players does a football team start with?",
             ["Nine", "Ten", "Eleven", "Twelve"],
             2,
+        ),
+        question(
+            "Sport & Games",
+            Difficulty::Easy,
+            "How many squares are on a chessboard?",
+            ["36", "49", "64", "81"],
+            2,
+        ),
+        question(
+            "Sport & Games",
+            Difficulty::Easy,
+            "In which sport does love mean a score of zero?",
+            ["Golf", "Tennis", "Squash", "Cricket"],
+            1,
+        ),
+        question(
+            "Sport & Games",
+            Difficulty::Medium,
+            "How many points is the black ball worth in snooker?",
+            ["Five", "Six", "Seven", "Eight"],
+            2,
+        ),
+        question(
+            "Sport & Games",
+            Difficulty::Medium,
+            "Which country hosted the first modern Olympic Games?",
+            ["France", "Greece", "England", "United States"],
+            1,
         ),
     ]
     .into()
@@ -170,8 +334,12 @@ struct Quiz {
     renaming: usize,
     entry: TextEntry,
     question: usize,
-    answer: Option<usize>,
+    /// What each player answered to the current question. Everyone answers
+    /// the same question in turn, so the reveal can say who got it.
+    answers: [Option<usize>; 4],
     scores: [u8; 4],
+    /// A reader pressed Back mid-round and is being asked whether to leave.
+    leaving: bool,
     packs: u8,
     note: Option<String>,
     rounds: u16,
@@ -199,8 +367,9 @@ impl Default for Quiz {
             renaming: 0,
             entry: TextEntry::new(),
             question: 0,
-            answer: None,
+            answers: [None; 4],
             scores: [0; 4],
+            leaving: false,
             packs: 0,
             note: None,
             rounds: 0,
@@ -279,21 +448,19 @@ impl Quiz {
         context.store().save(STATE, self.state_line().into_bytes());
     }
     fn setup_action(&mut self, action: ActionId, context: &Context) -> bool {
-        if action == action_id("diff-cycle") {
-            self.setup_difficulty = match self.setup_difficulty {
-                None => Some(Difficulty::Easy),
-                Some(Difficulty::Easy) => Some(Difficulty::Medium),
-                Some(Difficulty::Medium) => Some(Difficulty::Hard),
-                Some(Difficulty::Hard) => None,
-            };
+        if let Some(&(_, difficulty)) = DIFFICULTIES
+            .iter()
+            .find(|(name, _)| action == action_id(name))
+        {
+            self.setup_difficulty = difficulty;
         } else if action == action_id("cat-any") {
             self.setup_category = None;
         } else if action == action_id("next-page") {
-            let rows_per_page = setup_rows_per_page(context);
-            let pages = setup_categories(self).len().max(1).div_ceil(rows_per_page);
-            self.setup_page = (self.setup_page + 1).min(pages - 1);
+            let last = setup_pages(self, context).len().saturating_sub(1);
+            self.setup_page = (self.setup_page.min(last) + 1).min(last);
         } else if action == action_id("previous-page") {
-            self.setup_page = self.setup_page.saturating_sub(1);
+            let last = setup_pages(self, context).len().saturating_sub(1);
+            self.setup_page = self.setup_page.min(last).saturating_sub(1);
         } else if action == action_id("continue-setup") {
             if self.setup_party {
                 self.view = View::Players;
@@ -302,16 +469,12 @@ impl Quiz {
             }
         } else if action != ActionId::BACK && action != action_id("home") {
             let categories = setup_categories(self);
-            let rows_per_page = setup_rows_per_page(context);
-            let pages = categories.len().max(1).div_ceil(rows_per_page);
-            let page = self.setup_page.min(pages - 1);
-            let offset = usize::from(page == 0);
-            let Some(index) = (0..rows_per_page.saturating_sub(offset))
-                .find(|i| action == action_id(&format!("cat-{i}")))
+            let Some(index) =
+                (0..categories.len()).find(|i| action == action_id(&format!("cat-{i}")))
             else {
                 return false;
             };
-            if let Some(name) = categories.get(page * SETUP_ROWS + index) {
+            if let Some(name) = categories.get(index) {
                 self.setup_category = Some(name.clone());
             }
         } else {
@@ -320,23 +483,31 @@ impl Quiz {
         true
     }
 
-    fn begin(&mut self, party: bool) {
-        let pool: Vec<Question> = self
-            .questions
+    /// The questions the current setup would deal from.
+    fn pool(&self, category: Option<&str>) -> Vec<Question> {
+        self.questions
             .iter()
             .filter(|question| {
-                self.setup_category
-                    .as_ref()
-                    .is_none_or(|category| &question.category == category)
+                category.is_none_or(|category| question.category == category)
                     && self
                         .setup_difficulty
                         .is_none_or(|difficulty| question.difficulty == difficulty)
             })
             .cloned()
-            .collect();
-        if pool.is_empty() {
-            self.note =
-                Some("No questions match that mix yet. Sync packs or widen the choice.".into());
+            .collect()
+    }
+
+    fn begin(&mut self, party: bool) {
+        let pool = self.pool(self.setup_category.as_deref());
+        if pool.len() < MIN_ROUND {
+            self.note = Some(if pool.is_empty() {
+                "No questions match that mix yet. Sync packs or widen the choice.".to_owned()
+            } else {
+                format!(
+                    "Only {} matching. Choose Any category or sync packs for a full round.",
+                    questions_label(pool.len())
+                )
+            });
             self.view = View::Home;
             return;
         }
@@ -345,12 +516,13 @@ impl Quiz {
         self.view = View::Question;
         self.question = 0;
         self.player = 0;
-        self.answer = None;
+        self.answers = [None; 4];
         self.scores = [0; 4];
+        self.leaving = false;
         self.note = None;
         self.page = 0;
-        let offset = usize::from(self.rounds) * 10 % pool.len();
-        let length = pool.len().min(10);
+        let offset = usize::from(self.rounds) * ROUND_LENGTH % pool.len();
+        let length = pool.len().min(ROUND_LENGTH);
         self.round_questions = pool
             .iter()
             .cycle()
@@ -389,14 +561,51 @@ impl Quiz {
                 .map(|title| (title.as_str(), ""))
                 .collect::<Vec<_>>();
             context.paginate_rows(&rows, true).len()
+        } else if self.view == View::Reveal {
+            let question = &self.round_questions[self.question % self.round_questions.len()];
+            reveal_paged(self, question, context).map_or(1, |pages| pages.len())
         } else {
             context.paginate(&question_text(self), true).len()
         }
+    }
+    fn rename_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == ActionId::BACK && self.entry.is_open() {
+            self.entry.close();
+            self.show(context);
+            return true;
+        }
+        if let Some(event) = self.entry.handle(action) {
+            if let Typing::Submitted(name) = event {
+                if let Some(name) = clean_name(&name) {
+                    self.names[self.renaming] = name;
+                    self.save(context);
+                }
+            }
+            self.show(context);
+            return true;
+        }
+        false
     }
     fn show(&self, context: &mut Context) {
         context.set_screen(screen_with(self, context));
     }
 }
+/// The difficulty segments, each its own action so a tap names its value.
+const DIFFICULTIES: [(&str, Option<Difficulty>); 4] = [
+    ("diff-any", None),
+    ("diff-easy", Some(Difficulty::Easy)),
+    ("diff-medium", Some(Difficulty::Medium)),
+    ("diff-hard", Some(Difficulty::Hard)),
+];
+
+fn questions_label(count: usize) -> String {
+    if count == 1 {
+        "1 question".to_owned()
+    } else {
+        format!("{count} questions")
+    }
+}
+
 fn choice(index: usize) -> String {
     format!("answer-{index}")
 }
@@ -549,13 +758,7 @@ fn screen(quiz: &Quiz) -> Screen {
 
 fn question_text(quiz: &Quiz) -> String {
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
-    let mut text = format!(
-        "{} · question {} of {}\n\n{}",
-        question.category,
-        quiz.question + 1,
-        quiz.round_questions.len(),
-        question.text
-    );
+    let mut text = format!("{}\n\n{}", round_position(quiz, question), question.text);
     for (index, answer) in question.answers.iter().enumerate() {
         write!(text, "\n\n{} · {answer}", index + 1).expect("writing to a String");
     }
@@ -564,9 +767,175 @@ fn question_text(quiz: &Quiz) -> String {
 
 fn question_title(quiz: &Quiz) -> String {
     if quiz.party {
-        format!("{} answers", quiz.player_name())
+        format!("{}'s turn", quiz.player_name())
     } else {
         "Solo round".into()
+    }
+}
+
+/// The round's place, said the same way on every screen of it.
+fn round_position(quiz: &Quiz, question: &Question) -> String {
+    format!(
+        "{} · Question {} of {}",
+        question.category,
+        quiz.question + 1,
+        quiz.round_questions.len()
+    )
+}
+
+/// The hand-over between players, which shows nothing of the round.
+///
+/// It used to come after an answer and before that answer's result, so the
+/// next player was handed somebody else's result to reveal. Every player now
+/// answers the same question, so the one thing this screen has to protect is
+/// the previous answer, and it names only whose turn it is.
+fn pass_screen(quiz: &Quiz) -> Screen {
+    let next = quiz.player_name().to_owned();
+    let previous = quiz.name_for(quiz.player.saturating_sub(1)).to_owned();
+    ScreenBuilder::new("pubquiz-pass")
+        .top_bar(format!(
+            "Question {} of {}",
+            quiz.question + 1,
+            quiz.round_questions.len()
+        ))
+        .owns_back(true)
+        .splash(
+            Some(Glyph::Person),
+            format!("Pass to {next}"),
+            format!("{previous} has answered. {next}, tap below when only you can see the screen."),
+        )
+        .bottom_action("show-question", format!("Show {next}'s question"))
+        .compose(|b| leave_prompt(quiz, b))
+        .build()
+}
+
+fn join_names(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+fn podium_screen(quiz: &Quiz) -> Screen {
+    let count = if quiz.party { quiz.players } else { 1 };
+    let mut order: Vec<usize> = (0..count).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(quiz.scores[i]));
+    let best = quiz.scores[order[0]];
+    let winners: Vec<&str> = order
+        .iter()
+        .filter(|&&i| quiz.scores[i] == best)
+        .map(|&i| quiz.name_for(i))
+        .collect();
+    let headline = if !quiz.party {
+        format!("{best} of {}", quiz.round_questions.len())
+    } else if winners.len() == count && count > 1 {
+        "A draw".to_owned()
+    } else if winners.len() == 1 {
+        format!("{} wins", winners[0])
+    } else {
+        format!("{} share the win", join_names(&winners))
+    };
+    // Places, not a list in score order with nothing to say who came first:
+    // tied players share a place, the way a pub quiz master would read it out.
+    let mut place = 0;
+    let mut previous = None;
+    let rows: Vec<_> = order
+        .iter()
+        .enumerate()
+        .map(|(position, &i)| {
+            if previous != Some(quiz.scores[i]) {
+                place = position + 1;
+                previous = Some(quiz.scores[i]);
+            }
+            (
+                format!("player-{i}"),
+                quiz.name_for(i).to_owned(),
+                String::new(),
+                u16::try_from(place).unwrap_or(1),
+                points_label(quiz.scores[i]),
+            )
+        })
+        .collect();
+    ScreenBuilder::new("pubquiz-podium")
+        .top_bar("Results")
+        .top_bar_action(
+            "save-scorecard",
+            if quiz.scorecard_saved {
+                "Saved"
+            } else {
+                "Save scores"
+            },
+        )
+        .secondary(format!(
+            "Round {} · {}",
+            quiz.rounds,
+            questions_label(quiz.round_questions.len())
+        ))
+        .heading(headline)
+        .rows_with_trailing(rows)
+        .primary_button("play-again", "Play again")
+        .button("home", "Done")
+        .build()
+}
+
+fn home_screen(quiz: &Quiz) -> Screen {
+    let mut b = ScreenBuilder::new("pubquiz-home")
+        .top_bar("Pub Quiz")
+        .heading("Ready when you are")
+        .secondary(format!(
+            "{} · {} pack · {} rounds played",
+            questions_label(quiz.questions.len()),
+            quiz.source_label(),
+            quiz.rounds
+        ));
+    if let Some(note) = &quiz.note {
+        b = b.banner(BannerLevel::Info, note);
+    }
+    b.primary_button("party", "Play with friends")
+        .button("solo", "Play solo")
+        .section("More")
+        .rows([
+            (
+                "sync",
+                "Get more questions",
+                if quiz.sync_task.is_some() {
+                    "Downloading from Open Trivia DB…".to_owned()
+                } else {
+                    format!("{} · Needs Wi-Fi once", quiz.updated_label())
+                },
+                Glyph::Download,
+            ),
+            (
+                "how-to-play",
+                "How to play",
+                "Solo or passed around the table".to_owned(),
+                Glyph::Note,
+            ),
+            (
+                "about",
+                "About the questions",
+                "Open Trivia DB, CC BY-SA 4.0".to_owned(),
+                Glyph::Book,
+            ),
+        ])
+        .build()
+}
+
+/// Asks before Back throws a round away.
+///
+/// One press of Back mid-round used to drop every score on the table without a
+/// word. Every screen of a round owns Back and routes it here instead.
+fn leave_prompt(quiz: &Quiz, builder: ScreenBuilder) -> ScreenBuilder {
+    if quiz.leaving {
+        builder.confirm(
+            "Leave this round?",
+            "The scores so far will be lost.",
+            ("leave-round", "Leave round"),
+            ("keep-playing", "Keep playing"),
+        )
+    } else {
+        builder
     }
 }
 
@@ -607,29 +976,34 @@ fn about_screen(quiz: &Quiz) -> Screen {
 
 fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
-    let compact = ScreenBuilder::new("pubquiz-question")
-        .top_bar(question_title(quiz))
-        .secondary(format!(
-            "{} · question {} of {}",
-            question.category,
-            quiz.question + 1,
-            quiz.round_questions.len()
-        ))
-        .text(&question.text)
-        .rows(answer_rows(question))
-        .build();
-    if compact
+    // The question in the display serif, so it reads as the card a quiz
+    // master holds up rather than as one more line of interface.
+    let compact = || {
+        ScreenBuilder::new("pubquiz-question")
+            .top_bar(question_title(quiz))
+            .owns_back(true)
+            .secondary(round_position(quiz, question))
+            .heading_at_level(2, &question.text)
+            .rows(answer_rows(question))
+    };
+    // Measured without the leave prompt: a dialogue over the question is not
+    // the question failing to fit, and treating it as one swapped the page
+    // behind it for the paginated layout.
+    if compact()
+        .build()
         .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
         .issues
         .is_empty()
     {
-        return compact;
+        return compact().compose(|b| leave_prompt(quiz, b)).build();
     }
     // Long questions stay complete, including answers that share a prefix.
     // The same measured prose pagination as the reader keeps every word reachable.
     let pages = context.paginate(&question_text(quiz), true);
     let page = quiz.page.min(pages.len().saturating_sub(1));
-    let mut builder = ScreenBuilder::new("pubquiz-question").top_bar(question_title(quiz));
+    let mut builder = ScreenBuilder::new("pubquiz-question")
+        .top_bar(question_title(quiz))
+        .owns_back(true);
     for paragraph in &pages[page] {
         builder = builder.text(paragraph);
     }
@@ -643,6 +1017,7 @@ fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
             ("next-page", "Next"),
             ("choose", "Answer"),
         ])
+        .compose(|b| leave_prompt(quiz, b))
         .build()
 }
 
@@ -657,6 +1032,7 @@ fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
     let page = quiz.page.min(pages.len().saturating_sub(1));
     ScreenBuilder::new("pubquiz-choices")
         .top_bar("Choose an answer")
+        .owns_back(true)
         .rows(pages[page].iter().map(|&index| {
             (
                 choice(index),
@@ -674,6 +1050,7 @@ fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
             ("next-page", "Next"),
             ("question", "Question"),
         ])
+        .compose(|b| leave_prompt(quiz, b))
         .build()
 }
 
@@ -696,8 +1073,6 @@ fn clean_name(name: &str) -> Option<String> {
     }
 }
 
-const SETUP_ROWS: usize = 3;
-
 fn setup_categories(quiz: &Quiz) -> Vec<String> {
     let mut categories: Vec<String> = quiz
         .questions
@@ -709,146 +1084,342 @@ fn setup_categories(quiz: &Quiz) -> Vec<String> {
     categories
 }
 
-fn setup_screen_with(quiz: &Quiz, categories: &[String], rows_per_page: usize) -> Screen {
-    let pages = categories.len().max(1).div_ceil(rows_per_page);
-    let page = quiz.setup_page.min(pages - 1);
-    let window =
-        &categories[page * rows_per_page..categories.len().min((page + 1) * rows_per_page)];
-    let difficulty = quiz.setup_difficulty.map_or("Any", Difficulty::label);
-    let mut rows: Vec<(String, String, String, Glyph)> = vec![(
-        "diff-cycle".to_owned(),
-        "Difficulty".to_owned(),
-        difficulty.to_owned(),
-        Glyph::Grid,
-    )];
-    if page == 0 {
-        rows.push((
-            "cat-any".to_owned(),
-            "Any category".to_owned(),
-            if quiz.setup_category.is_none() {
-                "Chosen".to_owned()
-            } else {
-                "Choose".to_owned()
-            },
-            Glyph::Grid,
-        ));
-    }
-    for (index, name) in window.iter().enumerate() {
-        let title = if name.chars().count() > 18 {
-            format!("{}\u{2026}", name.chars().take(17).collect::<String>())
-        } else {
-            name.clone()
-        };
-        rows.push((
-            format!("cat-{index}"),
-            title,
-            if quiz.setup_category.as_ref() == Some(name) {
-                "Chosen".to_owned()
-            } else {
-                "Choose".to_owned()
-            },
-            Glyph::Grid,
-        ));
-    }
+fn setup_prefix(quiz: &Quiz) -> ScreenBuilder {
+    let selected = DIFFICULTIES
+        .iter()
+        .position(|&(_, difficulty)| difficulty == quiz.setup_difficulty)
+        .unwrap_or(0);
+    let matching = quiz.pool(quiz.setup_category.as_deref()).len();
     ScreenBuilder::new("pubquiz-setup")
-        .top_bar("Pub Quiz")
-        .heading("Round setup")
-        .rows(rows)
-        .page_position(
-            u16::try_from(page + 1).unwrap_or(u16::MAX),
-            u16::try_from(pages).unwrap_or(u16::MAX),
+        .top_bar(if quiz.setup_party {
+            "Pass-around round"
+        } else {
+            "Solo round"
+        })
+        .owns_back(true)
+        .section("Difficulty")
+        .segmented(
+            selected,
+            DIFFICULTIES
+                .iter()
+                .map(|&(name, difficulty)| (name, difficulty.map_or("Any", Difficulty::label))),
         )
-        .action_bar([("previous-page", "Previous"), ("next-page", "Next")])
-        .primary_button("continue-setup", "Continue")
-        .build()
+        // How many questions the choice leaves, before Continue rather than
+        // after: a category of one question is visible as one here instead of
+        // as a round that ends as soon as it starts.
+        .section_with_value("Category", format!("{} match", questions_label(matching)))
 }
 
-/// Bigger text leaves less vertical room: extra-large fits one category a
-/// page beside the difficulty row, large fits two, anything smaller three.
-fn setup_rows_per_page(context: &Context) -> usize {
-    match context.metrics().text_scale {
-        TextScale::Larger | TextScale::ExtraLarge => 1,
-        TextScale::Large | TextScale::Medium => 2,
-        _ => SETUP_ROWS,
-    }
+fn setup_rows(quiz: &Quiz, context: &Context) -> Vec<(String, String, String, Glyph, String)> {
+    let mark = |chosen: bool| if chosen { Glyph::Check } else { Glyph::Circle };
+    let mut rows = vec![(
+        "cat-any".to_owned(),
+        "Any category".to_owned(),
+        String::new(),
+        mark(quiz.setup_category.is_none()),
+        quiz.pool(None).len().to_string(),
+    )];
+    rows.extend(
+        setup_categories(quiz)
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let count = quiz.pool(Some(&name)).len().to_string();
+                (
+                    format!("cat-{index}"),
+                    context.clamped_row(&name, 2, true),
+                    String::new(),
+                    mark(quiz.setup_category.as_ref() == Some(&name)),
+                    count,
+                )
+            }),
+    );
+    rows
+}
+
+fn setup_pages(quiz: &Quiz, context: &Context) -> Vec<Vec<usize>> {
+    let rows = setup_rows(quiz, context);
+    let measured: Vec<_> = rows
+        .iter()
+        .map(|(_, title, detail, _, _)| (title.as_str(), detail.as_str()))
+        .collect();
+    context.paginate_rows_under(
+        &measured,
+        true,
+        kobo_sdk::Position::AtTheFoot,
+        &setup_prefix(quiz).build(),
+    )
 }
 
 fn setup_screen(quiz: &Quiz, context: &Context) -> Screen {
-    setup_screen_with(quiz, &setup_categories(quiz), setup_rows_per_page(context))
+    let rows = setup_rows(quiz, context);
+    let pages = setup_pages(quiz, context);
+    let page = quiz.setup_page.min(pages.len().saturating_sub(1));
+    let mut builder =
+        setup_prefix(quiz).rows_with_trailing(pages[page].iter().map(|&index| rows[index].clone()));
+    if pages.len() > 1 {
+        builder = builder
+            .page_turns("previous-page", "next-page")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+    }
+    builder
+        .bottom_action(
+            "continue-setup",
+            if quiz.setup_party {
+                "Choose players"
+            } else {
+                "Start round"
+            },
+        )
+        .build()
 }
 
 fn players_screen(quiz: &Quiz) -> Screen {
     ScreenBuilder::new("pubquiz-players")
-        .top_bar("Pub Quiz")
-        .heading("Pass-around players")
-        .secondary(format!("{} players take turns.", quiz.players))
-        .buttons([("count-2", "2"), ("count-3", "3"), ("count-4", "4")])
-        .rows((0..quiz.players).map(|i| {
-            (
-                format!("rename-{i}"),
-                quiz.names[i].as_str(),
-                "Rename",
-                Glyph::Person,
-            )
-        }))
-        .primary_button("start", "Start round")
+        .top_bar("Players")
+        .owns_back(true)
+        .section("How many")
+        .segmented(
+            quiz.players.saturating_sub(2),
+            [("count-2", "2"), ("count-3", "3"), ("count-4", "4")],
+        )
+        .section_with_value("Names", "Tap a name to rename")
+        .grid(
+            2,
+            false,
+            (0..quiz.players).map(|i| (format!("rename-{i}"), quiz.names[i].as_str())),
+        )
+        .bottom_action("start", "Start round")
         .build()
 }
 
-fn reveal_screen(quiz: &Quiz, question: &Question) -> Screen {
-    let right = quiz.answer == Some(question.correct);
-    let who = if quiz.party {
-        quiz.player_name()
-    } else {
-        "You"
-    };
-    let mut builder = ScreenBuilder::new("pubquiz-reveal")
-        .top_bar("Question result")
-        .heading(if right { "Correct" } else { "Not this time" })
-        .secondary(format!(
-            "{} · question {} of {}",
-            question.category,
-            quiz.question + 1,
-            quiz.round_questions.len()
-        ));
-    if right {
-        builder = builder.text(format!(
-            "{who} said {}.",
-            question.answers[question.correct]
-        ));
-    } else if let Some(chosen) = quiz.answer {
-        builder = builder.text(format!(
-            "{who} chose {}. The answer is {}.",
-            question.answers[chosen], question.answers[question.correct]
-        ));
-    }
+/// One piece of the reveal, in the order the table reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Revealed {
+    /// The category and the headline that says who got it.
+    Verdict,
+    /// The question, or as much of it as one page holds.
+    Question(String),
+    /// One answer, ticked when it was right, with who chose it.
+    Answer(usize),
+    /// The scores so far.
+    Scores,
+}
+
+/// The headline that says who got the question.
+fn verdict(quiz: &Quiz, question: &Question) -> String {
     let players = if quiz.party { quiz.players } else { 1 };
-    // Nobody has scored yet: four rows of zeroes say nothing, so the
-    // scoreboard stays away until the first point exists.
-    if quiz.scores[..players].iter().all(|&score| score == 0) {
-        if quiz.party {
-            builder = builder.text("No points yet.");
-        }
+    let right: Vec<&str> = (0..players)
+        .filter(|&i| quiz.answers[i] == Some(question.correct))
+        .map(|i| quiz.name_for(i))
+        .collect();
+    match (quiz.party, right.len()) {
+        (false, 0) => "Not this time".to_owned(),
+        (false, _) => "Correct".to_owned(),
+        (true, 0) => "Nobody got it".to_owned(),
+        (true, n) if n == players => "Everyone got it".to_owned(),
+        (true, _) => format!("{} got it", join_names(&right)),
+    }
+}
+
+/// One answer row: ticked when it was right, and saying who chose it.
+///
+/// The arguing screen, where the table can see exactly how everyone went
+/// wrong. Who chose it is in the row's summary rather than against its right
+/// edge: that edge is for a short value, and four players' names there left
+/// the answer itself a column a few pixels wide.
+fn reveal_row(quiz: &Quiz, question: &Question, index: usize) -> (String, String, String, Glyph) {
+    let players = if quiz.party { quiz.players } else { 1 };
+    let chose: Vec<&str> = (0..players)
+        .filter(|&i| quiz.answers[i] == Some(index))
+        .map(|i| quiz.name_for(i))
+        .collect();
+    let right = index == question.correct;
+    let who = if quiz.party {
+        join_names(&chose)
+    } else if chose.is_empty() {
+        String::new()
     } else {
-        builder =
-            builder.facts((0..players).map(|i| (quiz.name_for(i), points_label(quiz.scores[i]))));
+        "Your answer".to_owned()
+    };
+    let summary = match (right, who.is_empty()) {
+        (true, true) => "Right answer".to_owned(),
+        (true, false) => format!("Right answer · {who}"),
+        (false, _) => who,
+    };
+    (
+        format!("reveal-{index}"),
+        question.answers[index].clone(),
+        summary,
+        if right { Glyph::Check } else { Glyph::Circle },
+    )
+}
+
+/// The reveal's pieces, laid one after another on a page.
+///
+/// Answers next to each other are one list rather than a list each, so a page
+/// holding all four draws them exactly as the single list it always was.
+fn reveal_parts(
+    quiz: &Quiz,
+    question: &Question,
+    parts: &[Revealed],
+    mut builder: ScreenBuilder,
+) -> ScreenBuilder {
+    let mut index = 0;
+    while index < parts.len() {
+        match &parts[index] {
+            Revealed::Verdict => {
+                builder = builder
+                    .secondary(&question.category)
+                    .heading(verdict(quiz, question));
+            }
+            Revealed::Question(text) => builder = builder.text(text),
+            Revealed::Answer(_) => {
+                let mut rows = Vec::new();
+                while let Some(Revealed::Answer(answer)) = parts.get(index) {
+                    rows.push(reveal_row(quiz, question, *answer));
+                    index += 1;
+                }
+                builder = builder.rows(rows);
+                continue;
+            }
+            Revealed::Scores if quiz.party => {
+                builder = builder.section("Scores").facts(
+                    (0..quiz.players).map(|i| (quiz.name_for(i), points_label(quiz.scores[i]))),
+                );
+            }
+            Revealed::Scores => {
+                builder = builder.section_with_value(
+                    "Score",
+                    format!("{} of {}", quiz.scores[0], quiz.question + 1),
+                );
+            }
+        }
+        index += 1;
     }
     builder
-        .primary_button(
-            "continue",
-            if quiz.question + 1 == quiz.round_questions.len() {
-                "See podium"
-            } else {
-                "Next question"
-            },
-        )
+}
+
+/// One page of the reveal, without the leave prompt.
+///
+/// `pages` is `None` for the reveal that fits whole, which has no page
+/// controls to draw. Continue is the bottom action on every page, so a table
+/// that has seen enough never has to page to the end to move on.
+fn reveal_page(
+    quiz: &Quiz,
+    question: &Question,
+    parts: &[Revealed],
+    pages: Option<(usize, usize)>,
+) -> ScreenBuilder {
+    let mut builder = reveal_parts(
+        quiz,
+        question,
+        parts,
+        ScreenBuilder::new("pubquiz-reveal")
+            .top_bar(format!(
+                "Question {} of {}",
+                quiz.question + 1,
+                quiz.round_questions.len()
+            ))
+            .owns_back(true),
+    );
+    if let Some((page, count)) = pages {
+        builder = builder
+            .page_turns("previous-page", "next-page")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            );
+    }
+    builder.bottom_action(
+        "continue",
+        if quiz.question + 1 == quiz.round_questions.len() {
+            "See results"
+        } else {
+            "Next question"
+        },
+    )
+}
+
+/// Every piece of the reveal, whole.
+fn reveal_all(question: &Question, text: Vec<String>) -> Vec<Revealed> {
+    let mut parts = vec![Revealed::Verdict];
+    parts.extend(text.into_iter().map(Revealed::Question));
+    parts.extend((0..question.answers.len()).map(Revealed::Answer));
+    parts.push(Revealed::Scores);
+    parts
+}
+
+/// The reveal cut into pages that each fit this panel.
+///
+/// A synced question can run to 240 characters with four answers of 80, and
+/// the reveal shows all of it beside who chose what and the scores: at the
+/// largest text sizes on a small panel that ran off the foot with no way to
+/// reach the rest. Each piece goes on the current page while the page still
+/// measures clean with the runtime's own layout, and starts the next page when
+/// it would not. The question itself is first broken by the same prose
+/// pagination the question screen uses, so not even it is too tall for a page.
+fn reveal_pages(quiz: &Quiz, question: &Question, context: &Context) -> Vec<Vec<Revealed>> {
+    let fits = |parts: &[Revealed]| {
+        reveal_page(quiz, question, parts, Some((0, 2)))
+            .build()
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+            .issues
+            .is_empty()
+    };
+    let text = context.paginate(&question.text, true).into_iter().flatten();
+    let mut pages = Vec::new();
+    let mut page = Vec::new();
+    for part in reveal_all(question, text.collect()) {
+        page.push(part);
+        // A piece alone on a page stays there, because a page without it would
+        // be no closer to fitting; the layout tests are what keep that from
+        // ever being needed.
+        if page.len() > 1 && !fits(&page) {
+            let part = page.pop().expect("a piece was just placed");
+            pages.push(std::mem::take(&mut page));
+            page.push(part);
+        }
+    }
+    pages.push(page);
+    pages
+}
+
+/// The reveal's pages, or `None` when it fits whole on one screen.
+///
+/// Measured without the leave prompt, for the same reason as the question: a
+/// dialogue over the reveal is not the reveal failing to fit.
+fn reveal_paged(quiz: &Quiz, question: &Question, context: &Context) -> Option<Vec<Vec<Revealed>>> {
+    let whole = reveal_all(question, vec![question.text.clone()]);
+    let fits = reveal_page(quiz, question, &whole, None)
+        .build()
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .issues
+        .is_empty();
+    (!fits).then(|| reveal_pages(quiz, question, context))
+}
+
+fn reveal_screen(quiz: &Quiz, question: &Question, context: &Context) -> Screen {
+    let Some(pages) = reveal_paged(quiz, question, context) else {
+        let whole = reveal_all(question, vec![question.text.clone()]);
+        return reveal_page(quiz, question, &whole, None)
+            .compose(|b| leave_prompt(quiz, b))
+            .build();
+    };
+    let page = quiz.page.min(pages.len().saturating_sub(1));
+    reveal_page(quiz, question, &pages[page], Some((page, pages.len())))
+        .compose(|b| leave_prompt(quiz, b))
         .build()
 }
 
 fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
     if quiz.entry.is_open() {
         return ScreenBuilder::new("pubquiz-rename")
-            .top_bar("Pub Quiz")
+            .top_bar("Rename player")
+            .owns_back(true)
             .secondary("Letters and digits, twelve characters or fewer.")
             .text_entry(&quiz.entry, "Player name", "Done")
             .build();
@@ -857,82 +1428,19 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
     match quiz.view {
         View::Setup => setup_screen(quiz, context),
         View::Players => players_screen(quiz),
-        View::Home => {
-            let mut b = ScreenBuilder::new("pubquiz-home")
-                .top_bar("Pub Quiz")
-                .heading("Question packs")
-                .secondary(format!(
-                    "{} questions · {} · {} rounds completed",
-                    quiz.questions.len(),
-                    quiz.source_label(),
-                    quiz.rounds
-                ));
-            if let Some(note) = &quiz.note {
-                b = b.banner(BannerLevel::Info, note);
-            }
-            b.primary_button("party", "Start pass-around")
-                .buttons([
-                    ("solo", "Solo round"),
-                    (
-                        "sync",
-                        if quiz.sync_task.is_some() {
-                            "Working…"
-                        } else {
-                            "Sync packs"
-                        },
-                    ),
-                ])
-                .buttons([("how-to-play", "How to play"), ("about", "About")])
-                .build()
-        }
+        View::Home => home_screen(quiz),
         View::Question => question_screen(quiz, context),
         View::Choices => choices_screen(quiz, context),
-        View::Pass => {
-            let next = quiz.name_for((quiz.player + 1) % quiz.players).to_owned();
-            ScreenBuilder::new("pubquiz-pass")
-                .top_bar("Pass it on")
-                .heading(format!("Hand to {next}"))
-                .text(format!(
-                    "{} answered. {next} taps Show result when ready.",
-                    quiz.player_name()
-                ))
-                .primary_button("reveal", "Show result")
-                .build()
-        }
-        View::Reveal => reveal_screen(quiz, question),
-        View::Podium => {
-            let count = if quiz.party { quiz.players } else { 1 };
-            let mut order: Vec<usize> = (0..count).collect();
-            order.sort_by_key(|&i| std::cmp::Reverse(quiz.scores[i]));
-            ScreenBuilder::new("pubquiz-podium")
-                .top_bar("Pub Quiz")
-                .heading("Podium")
-                .rows(order.into_iter().map(|i| {
-                    (
-                        format!("player-{i}"),
-                        quiz.name_for(i),
-                        points_label(quiz.scores[i]),
-                        Glyph::Person,
-                    )
-                }))
-                .primary_button("home", "Finish round")
-                .button(
-                    "save-scorecard",
-                    if quiz.scorecard_saved {
-                        "Saved to reader"
-                    } else {
-                        "Save scorecard"
-                    },
-                )
-                .build()
-        }
+        View::Pass => pass_screen(quiz),
+        View::Reveal => reveal_screen(quiz, question, context),
+        View::Podium => podium_screen(quiz),
         View::HowTo => ScreenBuilder::new("pubquiz-help")
             .top_bar("How to play")
             .owns_back(true)
-            .heading("One Kobo, every player")
-            .text("Solo: choose an answer and see the result right away.")
-            .text("Pass-around: answer, pass the Kobo, then reveal the result.")
-            .text("Players take turns. The highest score after the last question wins.")
+            .section("Solo")
+            .text("Ten questions. See each answer straight away.")
+            .section("With friends")
+            .text("Two to four players, one reader. Each question goes round the table, then everyone sees who was right.")
             .bottom_action("home", "Play")
             .build(),
         View::About => about_screen(quiz),
@@ -1024,31 +1532,53 @@ impl KoboApp for Quiz {
         }
         self.show(context);
     }
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Setup && !self.entry.is_open() {
+            self.on_action(
+                context,
+                action_id(if forward {
+                    "next-page"
+                } else {
+                    "previous-page"
+                }),
+            );
+        }
+    }
+    #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if let Some(event) = self.entry.handle(action) {
-            if let Typing::Submitted(name) = event {
-                if let Some(name) = clean_name(&name) {
-                    self.names[self.renaming] = name;
-                    self.save(context);
-                }
-            }
-            self.show(context);
+        if self.rename_action(context, action) {
             return;
         }
-        if action == action_id("choose") && self.view == View::Question {
+        let in_round = matches!(
+            self.view,
+            View::Question | View::Choices | View::Pass | View::Reveal
+        );
+        if self.leaving {
+            // The confirmation is the only thing that answers while it is up.
+            if action == action_id("leave-round") {
+                self.leaving = false;
+                self.view = View::Home;
+            } else if action == action_id("keep-playing") || action == ActionId::BACK {
+                self.leaving = false;
+            }
+        } else if action == ActionId::BACK && in_round {
+            self.leaving = true;
+        } else if action == ActionId::BACK && self.view == View::Players {
+            self.view = View::Setup;
+        } else if action == action_id("choose") && self.view == View::Question {
             self.view = View::Choices;
             self.page = 0;
         } else if action == action_id("question") && self.view == View::Choices {
             self.view = View::Question;
             self.page = 0;
-        } else if matches!(self.view, View::Question | View::Choices)
+        } else if matches!(self.view, View::Question | View::Choices | View::Reveal)
             && action == action_id("next-page")
         {
             self.page = self
                 .page
                 .saturating_add(1)
                 .min(self.page_count(context).saturating_sub(1));
-        } else if matches!(self.view, View::Question | View::Choices)
+        } else if matches!(self.view, View::Question | View::Choices | View::Reveal)
             && action == action_id("previous-page")
         {
             self.page = self.page.saturating_sub(1);
@@ -1059,14 +1589,11 @@ impl KoboApp for Quiz {
         } else if self.view == View::Setup && self.setup_action(action, context) {
         } else if self.view == View::Players && action == action_id("start") {
             self.begin(true);
-        } else if self.view == View::Players && action == action_id("count-2") {
-            self.players = 2;
-            self.save(context);
-        } else if self.view == View::Players && action == action_id("count-3") {
-            self.players = 3;
-            self.save(context);
-        } else if self.view == View::Players && action == action_id("count-4") {
-            self.players = 4;
+        } else if let Some(count) = (self.view == View::Players)
+            .then(|| (2..=4).find(|n| action == action_id(&format!("count-{n}"))))
+            .flatten()
+        {
+            self.players = count;
             self.save(context);
         } else if self.view == View::Players {
             if let Some(index) =
@@ -1086,31 +1613,36 @@ impl KoboApp for Quiz {
                 .store()
                 .save(SCORECARD, self.scorecard_csv().into_bytes());
             self.scorecard_saved = true;
-        } else if action == action_id("about") {
+        } else if action == action_id("play-again") && self.view == View::Podium {
+            self.begin(self.party);
+        } else if action == action_id("about") && self.view == View::Home {
             self.view = View::About;
-        } else if action == action_id("how-to-play") {
+        } else if action == action_id("how-to-play") && self.view == View::Home {
             self.view = View::HowTo;
         } else if action == ActionId::BACK || action == action_id("home") {
             self.view = View::Home;
         } else if let Some(answer) = (0..4).find(|i| {
             matches!(self.view, View::Question | View::Choices) && action == action_id(&choice(*i))
         }) {
-            self.answer = Some(answer);
-            self.view = if self.party { View::Pass } else { View::Reveal };
+            self.answers[self.player] = Some(answer);
             if answer == self.round_questions[self.question % self.round_questions.len()].correct {
                 self.scores[self.player] += 1;
             }
-        } else if action == action_id("reveal") && self.view == View::Pass {
-            self.view = View::Reveal;
+            self.page = 0;
+            // Round the table, then everyone sees the answer together.
+            if self.party && self.player + 1 < self.players {
+                self.player += 1;
+                self.view = View::Pass;
+            } else {
+                self.view = View::Reveal;
+            }
+        } else if action == action_id("show-question") && self.view == View::Pass {
+            self.view = View::Question;
         } else if action == action_id("continue") && self.view == View::Reveal {
             self.question += 1;
-            self.player = if self.party {
-                (self.player + 1) % self.players
-            } else {
-                0
-            };
+            self.player = 0;
             self.page = 0;
-            self.answer = None;
+            self.answers = [None; 4];
             if self.question >= self.round_questions.len() {
                 self.view = View::Podium;
                 self.rounds = self.rounds.saturating_add(1);
@@ -1136,14 +1668,19 @@ mod tests {
     use super::*;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
     #[test]
-    fn locked_answer_hides_the_reveal() {
+    fn the_hand_over_shows_neither_the_question_nor_the_last_answer() {
         let mut quiz = Quiz::default();
         quiz.begin(true);
-        quiz.answer = Some(0);
+        quiz.answers[0] = Some(0);
+        quiz.player = 1;
         quiz.view = View::Pass;
-        let layout = screen(&quiz).layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        assert!(layout.rect_of_action(action_id("reveal")).is_some());
+        let shown = screen(&quiz);
+        let layout = shown.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(layout.rect_of_action(action_id("show-question")).is_some());
         assert!(layout.rect_of_action(action_id("answer-0")).is_none());
+        let text = format!("{shown:?}");
+        assert!(text.contains("Pass to Bert"));
+        assert!(!text.contains(&quiz.round_questions[0].text));
     }
     #[test]
     fn entities_decode_before_render() {
@@ -1173,7 +1710,12 @@ mod tests {
 
     #[test]
     fn a_round_has_ten_distinct_questions_and_short_help() {
-        assert_eq!(bundled_questions().len(), 10);
+        assert_eq!(bundled_questions().len(), 30);
+        // Every bundled category is a round of its own.
+        let quiz = Quiz::default();
+        for category in setup_categories(&quiz) {
+            assert!(quiz.pool(Some(&category)).len() >= MIN_ROUND, "{category}");
+        }
         let quiz = Quiz {
             view: View::HowTo,
             ..Quiz::default()
@@ -1219,9 +1761,15 @@ mod tests {
         assert_eq!(runner.app().view, View::Players);
         runner.action(action_id("start"));
         assert_eq!(runner.app().view, View::Question);
+        // Four players: each answers the same question, with a hand-over
+        // between them, and only then does the round reveal it.
+        for _ in 0..3 {
+            runner.action(action_id(&choice(0)));
+            assert_eq!(runner.app().view, View::Pass);
+            runner.action(action_id("show-question"));
+            assert_eq!(runner.app().view, View::Question);
+        }
         runner.action(action_id(&choice(0)));
-        assert_eq!(runner.app().view, View::Pass);
-        runner.action(action_id("reveal"));
         assert_eq!(runner.app().view, View::Reveal);
         runner.app_mut().question = 9;
         runner.action(action_id("continue"));
@@ -1287,7 +1835,7 @@ mod tests {
         runner.start();
         runner.action(action_id("party"));
         assert_eq!(runner.app().view, View::Setup);
-        runner.action(action_id("diff-cycle"));
+        runner.action(action_id("diff-easy"));
         assert_eq!(runner.app().setup_difficulty, Some(Difficulty::Easy));
         runner.action(action_id("continue-setup"));
         assert_eq!(runner.app().view, View::Players);
@@ -1401,21 +1949,32 @@ mod tests {
     }
 
     #[test]
-    fn reveal_names_the_result_and_the_right_answer() {
-        let mut quiz = Quiz::default();
+    fn the_reveal_ticks_the_right_answer_and_says_who_chose_what() {
+        let mut quiz = Quiz {
+            players: 3,
+            ..Quiz::default()
+        };
         quiz.begin(true);
         let question = quiz.round_questions[0].clone();
-        quiz.answer = Some((question.correct + 1) % 4);
-        let shown = format!("{:?}", reveal_screen(&quiz, &question));
-        assert!(shown.contains("Question result"));
-        assert!(shown.contains("Not this time"));
-        assert!(shown.contains("The answer is"));
-        assert!(shown.contains(&format!("question 1 of {}", quiz.round_questions.len())));
+        let wrong = (question.correct + 1) % 4;
+        quiz.answers = [Some(question.correct), Some(wrong), Some(wrong), None];
+        let shown = format!("{:?}", reveal_screen(&quiz, &question, &Context::default()));
+        assert!(shown.contains("Ada got it"));
+        assert!(shown.contains("Right answer"));
+        assert!(shown.contains("Bert and Cleo"));
+        assert!(shown.contains(&format!("Question 1 of {}", quiz.round_questions.len())));
 
-        quiz.answer = Some(question.correct);
-        let shown = format!("{:?}", reveal_screen(&quiz, &question));
+        quiz.answers = [Some(wrong); 4];
+        let shown = format!("{:?}", reveal_screen(&quiz, &question, &Context::default()));
+        assert!(shown.contains("Nobody got it"));
+
+        let mut solo = Quiz::default();
+        solo.begin(false);
+        let question = solo.round_questions[0].clone();
+        solo.answers[0] = Some(question.correct);
+        let shown = format!("{:?}", reveal_screen(&solo, &question, &Context::default()));
         assert!(shown.contains("Correct"));
-        assert!(shown.contains("said"));
+        assert!(shown.contains("Your answer"));
     }
 
     #[test]
@@ -1427,14 +1986,14 @@ mod tests {
         quiz.begin(false);
         quiz.question = quiz.round_questions.len() - 1;
         let question = quiz.round_questions[quiz.question].clone();
-        quiz.answer = Some(question.correct);
-        let shown = format!("{:?}", reveal_screen(&quiz, &question));
-        assert!(shown.contains("See podium"));
+        quiz.answers[0] = Some(question.correct);
+        let shown = format!("{:?}", reveal_screen(&quiz, &question, &Context::default()));
+        assert!(shown.contains("See results"));
         let mut full = Quiz::default();
         full.begin(false);
         let first = full.round_questions[0].clone();
-        full.answer = Some(first.correct);
-        let shown = format!("{:?}", reveal_screen(&full, &first));
+        full.answers[0] = Some(first.correct);
+        let shown = format!("{:?}", reveal_screen(&full, &first, &Context::default()));
         assert!(shown.contains("Next question"));
     }
 
@@ -1471,16 +2030,21 @@ mod tests {
         runner.action(action_id("start"));
         runner.app_mut().question = runner.app().round_questions.len() - 1;
         let correct = runner.app().round_questions[runner.app().question].correct;
+        for _ in 0..3 {
+            runner.action(action_id(&choice(correct)));
+            runner.action(action_id("show-question"));
+        }
         runner.action(action_id(&choice(correct)));
-        runner.action(action_id("reveal"));
         runner.action(action_id("continue"));
         assert_eq!(runner.app().view, View::Podium);
         let shown = format!("{:?}", screen(runner.app()));
-        assert!(shown.contains("Save scorecard"));
+        assert!(shown.contains("Save scores"));
+        // Everyone scored the one point: a four-way draw, all in first place.
+        assert!(shown.contains("A draw"));
         runner.action(action_id("save-scorecard"));
         assert!(runner.app().scorecard_saved);
         let shown = format!("{:?}", screen(runner.app()));
-        assert!(shown.contains("Saved to reader"));
+        assert!(shown.contains("Saved"));
     }
 
     #[test]
@@ -1554,16 +2118,17 @@ mod regression_tests {
         let correct = runner.app().round_questions[0].correct;
         runner.action(action_id(&choice(correct)));
         let pass = format!("{:?}", screen(runner.app()));
-        assert!(pass.contains("Sam answered."));
-        assert!(pass.contains("Hand to Bert"));
-        runner.action(action_id("reveal"));
-        runner.action(action_id("continue"));
-        let correct = runner.app().round_questions[1].correct;
+        assert!(pass.contains("Sam has answered."));
+        assert!(pass.contains("Pass to Bert"));
+        runner.action(action_id("show-question"));
+        assert!(format!("{:?}", screen(runner.app())).contains("Bert's turn"));
         runner.action(action_id(&choice(correct)));
-        let pass = format!("{:?}", screen(runner.app()));
-        // Two players: the turn comes back to Sam, never to Cleo or Dev.
-        assert!(pass.contains("Hand to Sam"));
-        assert!(!pass.contains("Cleo"));
+        // Two players: after Bert the question is revealed, never handed to
+        // Cleo or Dev, and the next one starts with Sam again.
+        assert_eq!(runner.app().view, View::Reveal);
+        assert!(!format!("{:?}", screen(runner.app())).contains("Cleo"));
+        runner.action(action_id("continue"));
+        assert!(format!("{:?}", screen(runner.app())).contains("Sam's turn"));
     }
 
     #[test]
@@ -1598,26 +2163,54 @@ mod regression_tests {
     }
 
     #[test]
-    fn zero_scoreboard_condenses_until_the_first_point() {
-        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+    fn every_player_answers_every_question_so_turns_are_even() {
+        let mut runner = kobo_sdk::AppRunner::new(Quiz {
+            players: 3,
+            ..Quiz::default()
+        });
         runner.start();
         runner.action(action_id("party"));
         runner.action(action_id("continue-setup"));
         runner.action(action_id("start"));
-        let correct = runner.app().round_questions[0].correct;
-        let wrong = (correct + 1) % 4;
-        runner.action(action_id(&choice(wrong)));
-        runner.action(action_id("reveal"));
-        let condensed = format!("{:?}", screen(runner.app()));
-        assert!(condensed.contains("No points yet."));
-        assert!(!condensed.contains("0 points"));
-        runner.action(action_id("continue"));
-        let correct = runner.app().round_questions[1].correct;
-        runner.action(action_id(&choice(correct)));
-        runner.action(action_id("reveal"));
-        let scored = format!("{:?}", screen(runner.app()));
-        assert!(scored.contains("points"));
-        assert!(!scored.contains("No points yet."));
+        let total = runner.app().round_questions.len();
+        for _ in 0..total {
+            let correct = runner.app().round_questions[runner.app().question].correct;
+            // Ada always right, Bert always wrong, Cleo right.
+            for (player, answer) in [correct, (correct + 1) % 4, correct]
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(runner.app().player, player);
+                runner.action(action_id(&choice(answer)));
+                if player < 2 {
+                    runner.action(action_id("show-question"));
+                }
+            }
+            assert_eq!(runner.app().view, View::Reveal);
+            runner.action(action_id("continue"));
+        }
+        let points = u8::try_from(total).unwrap();
+        assert_eq!(runner.app().scores, [points, 0, points, 0]);
+        assert_eq!(runner.app().view, View::Podium);
+        assert!(format!("{:?}", screen(runner.app())).contains("Ada and Cleo share the win"));
+    }
+
+    #[test]
+    fn back_mid_round_asks_before_throwing_the_scores_away() {
+        let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("solo"));
+        runner.action(action_id("continue-setup"));
+        runner.action(ActionId::BACK);
+        assert!(runner.app().leaving);
+        assert_eq!(runner.app().view, View::Question);
+        assert!(format!("{:?}", screen(runner.app())).contains("Leave this round?"));
+        runner.action(action_id("keep-playing"));
+        assert!(!runner.app().leaving);
+        assert_eq!(runner.app().view, View::Question);
+        runner.action(ActionId::BACK);
+        runner.action(action_id("leave-round"));
+        assert_eq!(runner.app().view, View::Home);
     }
 
     #[test]
@@ -1785,10 +2378,12 @@ mod regression_tests {
         assert_eq!(runner.app().round_questions[0].category, "New pack");
     }
 
-    #[test]
-    fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
+    /// A round whose first question is as long as a synced pack allows: 240
+    /// characters, and four answers of 80 that share everything but their
+    /// endings.
+    fn long_question_round(party: bool) -> Quiz {
         let mut quiz = Quiz::default();
-        quiz.begin(false);
+        quiz.begin(party);
         quiz.round_questions[0].text =
             "A long question about the people involved in a historical event. "
                 .repeat(4)
@@ -1808,6 +2403,63 @@ mod regression_tests {
             .rev()
             .collect()
         });
+        quiz
+    }
+
+    /// Pages through the reveal as the reader would, and checks that every
+    /// page fits, that Continue is on every one of them, and that the verdict,
+    /// the whole question, every answer and the scores are each on some page.
+    fn assert_the_reveal_pages_reach_everything(quiz: Quiz, metrics: DisplayMetrics) {
+        let question = quiz.round_questions[0].clone();
+        let mut runner = AppRunner::with_metrics(quiz, metrics);
+        runner.app_mut().view = View::Reveal;
+        runner.app_mut().page = 0;
+        let context = runner.context();
+        let pages = reveal_paged(runner.app(), &question, &context)
+            .unwrap_or_else(|| vec![reveal_all(&question, vec![question.text.clone()])]);
+        let mut answers = [false; 4];
+        for page in 0..pages.len() {
+            assert_eq!(runner.app().page, page, "{metrics:?}");
+            let screen = reveal_screen(runner.app(), &question, &context);
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{metrics:?} page {page}: {:?}",
+                diagnostics.issues
+            );
+            let layout = screen.layout_with(&metrics, &Chrome::default());
+            assert!(
+                layout.rect_of_action(action_id("continue")).is_some(),
+                "{metrics:?} page {page} has no way on"
+            );
+            for (index, found) in answers.iter_mut().enumerate() {
+                *found |= layout
+                    .rect_of_action(action_id(&format!("reveal-{index}")))
+                    .is_some();
+            }
+            runner.action(action_id("next-page"));
+        }
+        // Paging past the end stays on the last page rather than wrapping.
+        assert_eq!(runner.app().page, pages.len() - 1, "{metrics:?}");
+        assert!(answers.into_iter().all(|found| found), "{metrics:?}");
+        let parts = pages.concat();
+        assert!(parts.contains(&Revealed::Verdict), "{metrics:?}");
+        assert!(parts.contains(&Revealed::Scores), "{metrics:?}");
+        let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let asked = parts
+            .iter()
+            .filter_map(|part| match part {
+                Revealed::Question(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(words(&asked), words(&question.text), "{metrics:?}");
+    }
+
+    #[test]
+    fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
+        let mut quiz = long_question_round(false);
         for (width, height, pixels_per_inch) in
             [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
         {
@@ -1846,6 +2498,22 @@ mod regression_tests {
                     }
                 }
                 assert!(seen.into_iter().all(|found| found));
+
+                // The reveal adds who chose what and the scores to all of it.
+                // A solo round, and a full table of the longest names a player
+                // can have, every one of them on the same wrong answer so its
+                // row carries the longest list of who chose it.
+                let mut solo = long_question_round(false);
+                solo.answers[0] = Some(solo.round_questions[0].correct);
+                assert_the_reveal_pages_reach_everything(solo, metrics);
+                let mut table = long_question_round(true);
+                table.names =
+                    ["Wilhelmina A", "Bartholomew", "Maximiliana", "Christopher"].map(String::from);
+                let wrong = (table.round_questions[0].correct + 1) % 4;
+                table.answers = [Some(wrong); 4];
+                table.scores = [9; 4];
+                table.player = 3;
+                assert_the_reveal_pages_reach_everything(table, metrics);
             }
         }
     }
@@ -1888,3 +2556,6 @@ mod help_layout_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod setup_tests;

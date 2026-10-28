@@ -18,8 +18,8 @@ Corresponding-source retrieval and build instructions are in
 helper are in `LICENSE-Flashcards-host-dependencies.txt`; the linked Anki
 packages are covered separately by this notice, `LICENSE-Anki.txt`, and the
 source instructions. The device application's resolved dependency notices are
-in `LICENSE-Flashcards-device-dependencies.txt`. Atkinson Hyperlegible and
-DejaVu font terms are in the `kobo-text/fonts` licence files. Cobalt Japanese
+in `LICENSE-Flashcards-device-dependencies.txt`. Atkinson Hyperlegible,
+DejaVu and Literata font terms are in the `kobo-text/fonts` licence files. Cobalt Japanese
 font terms and the exact source/subsetting recipe are in the files named
 above.
 

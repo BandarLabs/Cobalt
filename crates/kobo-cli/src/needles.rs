@@ -36,61 +36,17 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             Err(USAGE.to_owned())
         };
     }
-    let verb = arguments.first().ok_or_else(|| USAGE.to_owned())?;
-    let input = arguments.get(1).ok_or_else(|| USAGE.to_owned())?;
-    let mut out = None;
-    let mut target = None;
-    let mut title = None;
-    let mut section = None;
-    let mut index = 2;
-    while index < arguments.len() {
-        match arguments[index].as_str() {
-            "--out" => {
-                out = Some(
-                    arguments
-                        .get(index + 1)
-                        .ok_or_else(|| USAGE.to_owned())?
-                        .as_str(),
-                );
-                index += 2;
-            }
-            "--title" => {
-                title = Some(
-                    arguments
-                        .get(index + 1)
-                        .ok_or_else(|| USAGE.to_owned())?
-                        .as_str(),
-                );
-                index += 2;
-            }
-            "--section" => {
-                section = Some(
-                    arguments
-                        .get(index + 1)
-                        .ok_or_else(|| USAGE.to_owned())?
-                        .as_str(),
-                );
-                index += 2;
-            }
-            "--sim" => {
-                target = Some("");
-                index += 1;
-            }
-            flag if super::is_device_flag(flag) => {
-                target = Some(
-                    arguments
-                        .get(index + 1)
-                        .ok_or_else(|| USAGE.to_owned())?
-                        .as_str(),
-                );
-                index += 2;
-            }
-            _ => return Err(USAGE.to_owned()),
-        }
-    }
+    let Options {
+        verb,
+        input,
+        out,
+        target,
+        title,
+        section,
+    } = parse_options(arguments)?;
     let input_path = Path::new(input);
     let report = prepare_any(input_path, title, section)?;
-    match verb.as_str() {
+    match verb {
         "prepare" => write_pattern(
             Path::new(out.ok_or_else(|| USAGE.to_owned())?),
             &report.markdown,
@@ -120,6 +76,92 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         },
         _ => Err(USAGE.to_owned()),
     }
+}
+
+struct Options<'a> {
+    verb: &'a str,
+    input: &'a str,
+    out: Option<&'a str>,
+    target: Option<&'a str>,
+    title: Option<&'a str>,
+    section: Option<&'a str>,
+}
+
+fn parse_options(arguments: &[String]) -> Result<Options<'_>, String> {
+    let verb = arguments.first().ok_or_else(|| USAGE.to_owned())?;
+    let input = arguments.get(1).ok_or_else(|| USAGE.to_owned())?;
+    let mut out = None;
+    let mut target = None;
+    let mut title = None;
+    let mut section = None;
+    let mut index = 2;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--out" => {
+                if out.is_some() || target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                out = Some(
+                    arguments
+                        .get(index + 1)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 2;
+            }
+            "--title" => {
+                title = Some(
+                    arguments
+                        .get(index + 1)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 2;
+            }
+            "--section" => {
+                section = Some(
+                    arguments
+                        .get(index + 1)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 2;
+            }
+            "--sim" => {
+                if target.is_some() || out.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                target = Some("");
+                index += 1;
+            }
+            flag if super::is_device_flag(flag) => {
+                if target.is_some() || out.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                let host = arguments.get(index + 1).ok_or_else(|| USAGE.to_owned())?;
+                if !super::valid_device_host(host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                target = Some(host.as_str());
+                index += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    match verb.as_str() {
+        "prepare" if out.is_some() && target.is_none() => {}
+        "preview" if target.is_none() => {}
+        "push" if target.is_some() || out.is_some() => {}
+        _ => return Err(USAGE.to_owned()),
+    }
+    Ok(Options {
+        verb,
+        input,
+        out,
+        target,
+        title,
+        section,
+    })
 }
 
 fn converter_command(arguments: &[String]) -> Result<(), String> {
@@ -734,9 +776,68 @@ fn has_text_extension(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flag_like_hosts_fail_before_input_or_network() {
+        let base = ["push", "/nonexistent", "--title", "fixture"]
+            .map(str::to_owned)
+            .to_vec();
+        for flag in ["--device", "-s"] {
+            for host in ["--sim", "--device", "-s", "-reader", ""] {
+                for first in [false, true] {
+                    let mut arguments = base.clone();
+                    let index = if first { 2 } else { arguments.len() };
+                    arguments.splice(index..index, [flag.to_owned(), host.to_owned()]);
+                    let error = super::parse_options(&arguments)
+                        .err()
+                        .expect("invalid host rejected");
+                    assert!(error.contains("device host"), "{arguments:?}: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn output_destinations_are_exclusive_and_single_targets_work() {
+        for flags in [
+            &["--out", "pattern.md", "--sim"][..],
+            &["--sim", "--out", "pattern.md"],
+            &["--out", "a", "--out", "b"],
+            &["--out", "a", "--device", "fixture"],
+        ] {
+            let mut arguments = vec!["push".to_owned(), "/nonexistent".to_owned()];
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert_eq!(command(&arguments).unwrap_err(), USAGE);
+        }
+        for flags in [
+            &["--sim"][..],
+            &["--device", "fixture"],
+            &["--out", "pattern.md"],
+        ] {
+            let mut arguments = vec!["push".to_owned(), "/nonexistent".to_owned()];
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert!(super::parse_options(&arguments).is_ok());
+        }
+    }
+    #[test]
+    fn ambiguous_destinations_fail_before_input_is_read() {
+        for flags in [
+            &["--sim", "--sim"][..],
+            &["--sim", "--device", "fixture"],
+            &["--device", "fixture", "--sim"],
+            &["--device", "fixture", "--device", "fixture"],
+        ] {
+            let mut arguments: Vec<String> = ["push", "/nonexistent"]
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect();
+            arguments.extend(flags.iter().map(|value| (*value).to_owned()));
+            assert_eq!(command(&arguments).unwrap_err(), USAGE);
+        }
+    }
+
     use super::{
         command, completion, has_extension, has_text_extension, prepare_any, read_limited,
-        read_pattern, select_section, transfer_sim, CopyState, BLOB,
+        read_pattern, select_section, transfer_sim, CopyState, BLOB, USAGE,
     };
     use std::io::Cursor;
     use std::path::{Path, PathBuf};

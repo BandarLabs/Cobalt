@@ -117,6 +117,17 @@ pub fn record(
 pub fn notice(standing: Standing, profile: &DeviceProfile, firmware: &str) -> Option<Notice> {
     match standing {
         Standing::Measured => None,
+        Standing::AwaitingReview => Some(Notice {
+            title: "Awaiting review".to_owned(),
+            body: vec![
+                format!(
+                    "Support for this reader was tested by its owner on {firmware} and is awaiting review. Every hardware check passed."
+                ),
+                "Cobalt does not change how your Kobo starts up. Restart to return to the normal reader.".to_owned(),
+                "Provided without warranty, at your own risk.".to_owned(),
+            ],
+            touch_may_be_wrong: false,
+        }),
         Standing::UntestedFirmware => Some(Notice {
             title: "Untested firmware".to_owned(),
             body: vec![
@@ -176,6 +187,20 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_awaiting_review_is_not_called_untested_firmware() {
+        let notice = notice(
+            Standing::AwaitingReview,
+            &kobo_profile::TOLINO_SHINE_5_T302,
+            "4.45.23697",
+        )
+        .expect("a notice is owed");
+        assert_eq!(notice.title, "Awaiting review");
+        assert!(notice.body[0].contains("4.45.23697"));
+        assert!(!notice.body.join(" ").contains("Untested"));
+        assert!(!notice.touch_may_be_wrong);
+    }
+
+    #[test]
     fn an_unmeasured_device_is_told_that_taps_may_land_in_the_wrong_place() {
         // The notice on unmeasured hardware has to survive being read on a
         // panel whose touch mapping is itself a guess, so the owner is told
@@ -189,7 +214,11 @@ mod tests {
 
     #[test]
     fn every_notice_disclaims_warranty_without_claiming_the_session_is_safe() {
-        for standing in [Standing::UntestedFirmware, Standing::Unmeasured] {
+        for standing in [
+            Standing::AwaitingReview,
+            Standing::UntestedFirmware,
+            Standing::Unmeasured,
+        ] {
             let notice = notice(standing, &CLARA_BW_391, "4.46.23836").expect("a notice is owed");
             let text = notice.body.join(" ");
             assert!(text.contains("without warranty"), "{text}");

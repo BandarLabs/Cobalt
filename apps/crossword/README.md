@@ -1,53 +1,67 @@
 # Crossword
 
-Four offline mini crosswords with separate saved progress. **Odds and ends** uses
-joined white squares, solid black blocks and small corner clue numbers. Three
-word squares offer Starter, Easy and Medium vocabulary. Ratings are editorial
-guides, not measured solving times. The previous 5×5 puzzle remains available as
-**Heart of the matter**, with its original answer and saved letters intact.
+Four offline mini crosswords, each with its own saved progress.
 
-![Numbered crossword in the simulator](screenshots/crossword-play.png)
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/crossword-play.png" alt="A numbered grid with the active word shaded"><br>A numbered grid with the active word shaded</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/clue-entry.png" alt="Entering an answer below its clue"><br>Entering an answer below its clue</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle"><br>A completed puzzle</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/save-recovery.png" alt="Retrying a save that failed"><br>Retrying a save that failed</td>
+</tr>
+</table>
 
-![Entering an answer against its clue](screenshots/clue-entry.png)
+## Puzzles
 
-Crossword opens in portrait. Tap a square or choose an Across or Down clue.
-The board shades the active word. While entering an answer, the full clue stays
-above the word and keyboard; the outlined square is the target. The arrow in
-the top bar changes direction. Enter one letter to advance within the word, or
-enter the whole word to fill it from the first square. Back cancels unsubmitted
-text. Letters are checked only when you ask.
+- **Odds and ends**: a grid with black blocks and corner clue numbers.
+- Three word squares at Starter, Easy and Medium difficulty. Difficulty is an
+  editorial guide, not a measured solving time.
+- **Heart of the matter**: the earlier 5×5 puzzle, with its saved letters kept.
 
-**More** provides Undo, Clear, Check, Reveal and Restart. Check reports incorrect
-and empty letters in the active word without changing them. Reveal fills one
-square after confirmation. Restart also asks first. Both can be undone. Each
-puzzle retains up to 32 undo steps, its target, direction, completion history,
-check count and reveal count. Undo does not erase assistance counts. Completed
-in the puzzle list means solved at least once, even after restarting.
+All clues were written for Cobalt.
 
-A save is confirmed only after storage acknowledges it. If storage is full,
-keep the app open, make room and choose **Retry save**. The latest letters stay
-in memory and the app prevents a clean suspend until saved. Unreadable, future
-or oversized records remain untouched; Retry reads them again. The old save
-format is read without rewriting it until the next change. No terminal,
-network account, third-party puzzle service or external puzzle data is needed.
+## Playing
 
-This edition includes a local corpus; `.puz` and `.ipuz` imports, rebuses and
-large Sunday grids are not supported. The old test-only `.puz` header parser
-was removed because it was not an importer. Clues for this pack were written
-for Cobalt; no external puzzle pack, artwork or source code was copied.
+Tap a square, or choose an Across or Down clue. The active word is shaded, and
+while you type the full clue stays above the word and keyboard. The arrow in
+the top bar switches direction. Type one letter to move through the word, or
+the whole word to fill it from the first square. **Back** cancels text you
+have not entered.
 
-The numbered board requires the matching beta runtime from the quality PR.
-Older grid messages retain their existing format. Screenshots show the actual
-Clara BW simulator at extra-large text; physical Clara BW acceptance follows
-the three-PR program.
+**More** holds Undo, Clear, Check, Reveal and Restart:
 
-Run `scripts/quality/check-crossword-sim.py --output /tmp/crossword-check` with
-`CARGO_TARGET_DIR` pointing to a target containing the current `kobo` binary.
-It uses private simulator storage and exercises completion, reopen, undo,
-failed writes, explicit retry and both clue directions without network effects.
+- **Check** marks wrong and empty letters in the active word without changing
+  them.
+- **Reveal** fills one square, after confirmation.
+- **Restart** asks first. Reveal and Restart can both be undone.
 
-Completed boards clear the active-word shading. Editing an answer restores
-it. Black squares remain blocked cells, as in a newspaper crossword; they are
-not another game mode.
+Each puzzle keeps up to 32 undo steps, its position and direction, and its
+check and reveal counts. A puzzle stays marked Completed once solved, even
+after a restart.
 
-![Completed crossword without an active-answer highlight](screenshots/completed.png)
+## Saving
+
+Progress is marked saved only once storage confirms it. If storage is full,
+keep the app open, free some space and choose **Retry save**. Your latest
+letters stay in memory, and the reader will not suspend until they are saved.
+Saves that cannot be read are left untouched.
+
+## Limits
+
+`.puz` and `.ipuz` imports, rebuses and large Sunday grids are not supported.
+
+## Permissions
+
+None. Crossword runs offline.
+
+## Development
+
+```sh
+cargo test -p kobo-crossword
+python3 scripts/check-apps-sim.py crossword
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-crossword-sim.py --output /tmp/crossword-check` also covers completion, reopening, undo, failed saves and both clue directions.

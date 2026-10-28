@@ -859,6 +859,56 @@ mod tests {
     }
 
     #[test]
+    fn shift_on_the_symbol_layer_reaches_pipes_and_home_directories() {
+        // Without these a shell on the reader could not run `ls | wc`,
+        // `cd ~` or `echo $HOME`.
+        let mut keys = TerminalKeys::new();
+        tap(&mut keys, "kb.layer");
+        for (key, sent) in [("kb.r1c7", "|"), ("kb.r1c8", "~"), ("kb.r0c3", "$")] {
+            tap(&mut keys, "kb.shift");
+            assert_eq!(tap(&mut keys, key), Some(Typed::Send(sent.into())));
+        }
+    }
+
+    #[test]
+    fn every_character_the_keys_send_is_drawn_on_the_key_that_sends_it() {
+        // The keys are drawn here and decoded by the keyboard, and shift on
+        // the symbol layer changes every label at once, so a page drawn from
+        // the wrong rows would send one character from under another.
+        const PAGES: [&[&str]; 4] = [&[], &["kb.shift"], &["kb.layer"], &["kb.layer", "kb.shift"]];
+        for page in PAGES {
+            let mut keys = TerminalKeys::new();
+            for name in page {
+                tap(&mut keys, name);
+            }
+            let drawn = crate::ScreenBuilder::new("terminal")
+                .terminal_keys(&keys)
+                .build()
+                .nodes
+                .into_iter()
+                .flat_map(|node| match node {
+                    kobo_ui::Node::Grid { cells, .. } => cells,
+                    _ => Vec::new(),
+                })
+                .map(|cell| (cell.action, cell.label))
+                .collect::<Vec<_>>();
+            for row in 0..3 {
+                for column in 0..16 {
+                    let action = action_id(&format!("kb.r{row}c{column}"));
+                    let Some(Typed::Send(bytes)) = keys.clone().press(action) else {
+                        continue;
+                    };
+                    let sent = String::from_utf8(bytes).expect("a key sends text");
+                    assert!(
+                        drawn.contains(&(action, sent.clone())),
+                        "{page:?}: {sent:?} is sent by a key that is not drawn"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn shift_reaches_capitals_here_too() {
         let mut keys = TerminalKeys::new();
         tap(&mut keys, "kb.shift");

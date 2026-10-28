@@ -4,8 +4,24 @@
   "short_label": "Fieldbook",
   "summary": "Log bird sightings anywhere and build your life list.",
   "page_description": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
-  "version": "0.3.0",
-  "release_notes": "Species photos on the detail screen: packs prepared with `kobo fieldbook photos` show a licensed photo with its creator and license, and the README credits every source.",
+  "version": "0.3.3",
+  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
   "glyph": "search",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
+        "command": "kobo pair"
+      },
+      {
+        "text": "Send a field pack of the species you expect to see.",
+        "command": "kobo fieldbook push PACK.json"
+      },
+      {
+        "text": "Later, bring your outings back as an eBird checklist.",
+        "command": "kobo fieldbook export --out outings.csv"
+      }
+    ]
+  }
 }

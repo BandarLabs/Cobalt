@@ -14,7 +14,8 @@ and community use reveal better answers.
 - Give applications only the access they require.
 - Build shared platform capabilities when several applications need the same
   behavior.
-- Support only hardware that has completed the required device testing.
+- Call hardware supported only after device testing, and tell owners
+  plainly what is untested on anything else.
 
 ## Now
 

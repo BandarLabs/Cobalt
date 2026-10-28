@@ -1,73 +1,52 @@
-# Chat
+# AI Command Center
 
-A chat client for a device with no keyboard worth the name.
+Ask OpenAI, Anthropic or Google Gemini a question and read the answer on your
+Kobo.
 
-Three screens and one rule. The rule is that the reader should have to type as
-little as possible: typing here means hunting for keys on a panel that takes
-tens of milliseconds a repaint. When a question genuinely has tappable
-answers, the reply carries them, and they are drawn with the same
-`ScreenBuilder::choose` a native screen would use — but not every turn,
-because a conversation that answers every remark with a menu is a form.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/answer.png" alt="An answer, set for reading"><br>An answer, set for reading</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/service.png" alt="Choosing the service"><br>Choosing the service</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/start.png" alt="A new conversation"><br>A new conversation</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/type.png" alt="The keyboard"><br>The keyboard</td>
+</tr>
+</table>
 
-| A real answer, over the radio | Choosing the service |
-| --- | --- |
-| ![The question "how does e ink hold an image" and OpenAI's reply, on an E Ink panel](screenshots/answer.png) | ![OpenAI, Anthropic and Google Gemini, with OpenAI selected](screenshots/service.png) |
+## Features
 
-| Nothing said yet | The keyboard |
-| --- | --- |
-| ![The empty state, centred on the panel](screenshots/start.png) | ![A four-row keyboard with a Send key](screenshots/type.png) |
+- Choose OpenAI, Anthropic or Google Gemini.
+- Long answers are paged for reading.
+- When a question has a set of possible answers, they appear as buttons, so
+  most turns need no typing.
+- Remembers the conversation across restarts and can save a copy for a paired
+  computer.
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`, except the
-answer, which is a frame of the recorded tour: the question was typed on the
-panel with the keyboard above it. The reply is a real one either way. The key
-was installed with `kobo secret set openai`, and this application never saw it.*
+## Setup
 
-## The key
-
-This application never holds it. `Task::Post` carries the *name* of a secret;
-the runtime resolves that against its own directory and attaches the
-`Authorization` header itself. Nothing here reads it, holds it, logs it, or
-could put it in a crash dump, and a test asserts the request body contains
-nothing key-shaped.
-
-Install one before you use this:
+Install a key for the service you want to use:
 
 ```sh
 kobo secret set openai --from ~/.openai --device <ip>
 ```
 
-Choosing a service on the third screen chooses which stored key is used and
-which address the request goes to, so the same application talks to OpenAI,
-Anthropic or Gemini without any of them being a special case in the code.
+The runtime attaches the key to requests itself. The app never sees it, and a
+test checks that no request body contains anything that looks like a key.
 
-## Why nothing moves
+## Permissions
 
-There is no spinner and no animation, here or anywhere in this system. Waiting
-is stated once with `ScreenBuilder::activity` and the panel then holds that
-image at zero power until there is something new to say.
+- `network`: sends questions to the chosen service.
 
-## Running it
+## Development
 
 ```sh
-kobo run --sim --app chat               # in the browser simulator
-kobo deploy --device <ip>               # onto a reader over Wi-Fi
+cargo test -p kobo-chat
+kobo run --sim --app chat      # in the browser simulator
+python3 scripts/check-apps-sim.py chat
+kobo deploy --device <ip>       # onto a reader over Wi-Fi
 ```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

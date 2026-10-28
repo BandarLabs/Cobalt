@@ -1,172 +1,96 @@
 # Paperterm
 
-Paperterm is the reader half of `kobo stream`: a terminal session rendered on
-e-ink while its pty, shell, command, and credentials remain on the computer.
-The app has only the `network` capability; it cannot run a shell and does not
-store terminal content.
+Show a terminal session from your computer on your Kobo, and type into it from
+either side.
 
-<img width="300" src="screenshots/welcome.png" alt="Paperterm first run offering a computer connection or an offline preview">
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/terminal.png" alt="A shared terminal with the keyboard open"><br>A shared terminal with the keyboard open</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/welcome.png" alt="First launch"><br>First launch</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/connection-check.png" alt="The connection check, typed from both sides"><br>The connection check, typed from both sides</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/input-paused.png" alt="Typing paused after a timeout"><br>Typing paused after a timeout</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/reconnecting.png" alt="Reconnecting, with the output kept"><br>Reconnecting, with the output kept</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/preview.png" alt="The offline preview"><br>The offline preview</td>
+</tr>
+</table>
 
-On first launch, **Try a preview** shows original sample output without making
-network requests or saving changes. **Connect a computer** walks through host
-setup, trust installation and starting a session, one command per page. Run
-`kobo devices` on the computer to find the reader's address for trust installation.
+The shell, its programs and your credentials stay on the computer. Paperterm
+only displays the session and sends keys. It cannot run commands on the
+reader and does not save terminal output.
 
-The address accepts a host name, IPv4 or bracketed IPv6, with port 9332 as the
-default. Invalid entries remain editable. Codes require six letters or numbers;
-uppercase entry is normalized to the lowercase printed by the host. **Help**
-returns to the steps, and **Address** lets you revise the address without losing
-an unfinished code. Unreadable saved pairing is left untouched.
+## Features
 
-Start the host once with `kobo stream init`, install its root with
-`kobo trust set stream --device READER_IP`, then run:
+- Three modes, chosen on the computer:
+  - **Read only**: the reader watches.
+  - **Controls**: arrows, Enter, Esc, y, n and Ctrl-C.
+  - **Keyboard**: a full on-screen keyboard, opened with **Keyboard** and
+    hidden with **Close keys**.
+- The terminal grid is sized to the screen and your text size. A Clara BW at
+  the default size shows 75 columns by 47 rows, or 75 by 25 with the keyboard
+  open. Larger text means fewer columns, not squashed letters.
+- Only changed rows are redrawn.
+- If the computer stops answering, the last output stays on screen under a
+  **Reconnecting** notice.
+- If a key might not have arrived, typing pauses until you check the terminal
+  and choose **Resume typing**.
+- **Try a preview** shows sample output offline.
+
+## Setup
+
+**Connect a computer** in the app walks through these steps one at a time.
+
+1. On the computer, create its identity and install its certificate on the
+   reader. `kobo devices` finds the reader's address.
+
+   ```sh
+   kobo stream init
+   kobo trust set stream --device READER_IP
+   ```
+
+2. Check the connection. Type on either screen and the text appears on both.
+   Type `exit` to finish.
+
+   ```sh
+   kobo stream demo
+   ```
+
+3. On the reader, enter the computer's address and six-character code. The
+   default port is 9332. `kobo stream pairing` shows them again.
+
+## Sharing a session
 
 ```sh
-kobo stream --interactive -- /bin/sh
+kobo stream terminal                   # your login shell
+kobo stream monitor                    # top
+kobo stream --interactive -- /bin/sh   # any command, with the full keyboard
+kobo stream --controls -- COMMAND      # navigation keys only
+kobo stream -- COMMAND                 # read only
 ```
 
-Paperterm uses portrait on every supported reader. The shared terminal uses
-a smaller monospace size than interface labels, scaled by the panel's physical
-resolution and the owner's text setting. On Clara BW at Default, the measured
-grid is **75 columns × 47 rows**, or **75 × 25** with the keyboard open. Larger
-text settings reduce the column count instead of compressing the glyphs. Other
-readers negotiate their own measured grid; 80 columns is not forced.
+All of them accept `--port PORT`. Keep the computer awake while sharing.
 
-A line above the terminal shows connection state and the reader's mode: Read only,
-Controls or Keyboard. Reconnect notices remain above the retained output, and
-the keyboard can be opened or closed while reconnecting.
+To stop sharing, press **Ctrl+]** in the computer's terminal. This ends the
+shared command and restores your terminal settings. Ctrl-C still goes to the
+shared program.
 
-The app sends this grid in `/hello`,
-and holds the last received rows behind a `Connection lost. Reconnecting.` banner when the host
-cannot be reached. The banner paints once on the offline transition; unchanged
-retries do not repaint, and the first successful response clears it once.
-Read-only sessions show no terminal input. Controls mode
-offers only arrows, Enter, Esc, y, n, and Ctrl-C; full mode also exposes the
-terminal keyboard. Full sessions start with the keyboard hidden so the terminal
-uses the whole content area. **Keyboard** in the top bar opens a compact
-four-row keyboard; **Close keys** hides it without replacing the
-session, rows, or cursor. Each change renegotiates the terminal grid in place.
-After the host reports its input mode, Paperterm repeats `/hello` only when the
-measured controls require a different grid. The host accepts at most 64 input
-bytes per request and checks that control-mode input is in this same closed
-list.
+The computer reports **waiting for a reader**, **Reader connected**,
+**waiting for the reader to reconnect** after 45 seconds without contact, and
+**command stopped**, when the final screen stays up for one minute.
 
-The mirror uses the platform terminal node and its measured grid. Received
-deltas update only changed rows; an empty poll paints nothing. Text styling is
-discarded except for the cursor. Unsupported glyphs become neutral
-width-preserving marks, while VT box drawing, alternate-screen transitions,
-and cursor-only changes retain their terminal structure. The responsive
-terminal layout clips excess rows before layout, so controls and every enabled
-keyboard key remain visible.
+## Permissions
 
+- `network`: connects to the computer sharing the session.
 
-The laptop and reader share the same session: either can type while the other
-watches the output. Use `--controls` for the limited navigation keys or omit
-both input flags for a read-only reader. The computer must remain awake and
-reachable. Closing the keyboard keeps the session and gives its space back to
-the terminal.
+## Development
 
-<img width="300" src="screenshots/terminal.png" alt="Portrait Paperterm sharing a real laptop terminal, with the reader keyboard open">
+```sh
+cargo test -p kobo-paperterm
+python3 scripts/check-apps-sim.py paperterm
+```
 
-The screenshots and live test use an original local Python fixture, a real
-host PTY and private trusted TLS credentials. They verify both input directions,
-resizing, wide output, Ctrl-C and restoring the laptop terminal settings.
-Physical readability and refresh behavior await Clara BW hardware acceptance.
-
-
-If a key request times out, Paperterm cannot know whether the computer received
-it. It discards queued keystrokes and pauses input. Check the terminal, then
-choose **Resume typing**; successful background polling never resumes typing
-for you. The same pause applies if the computer falls behind and the bounded
-queue fills. Read-only sessions cannot send input.
-
-<img width="300" src="screenshots/input-paused.png" alt="Paperterm retaining terminal output and asking the user to check it before resuming typing">
-
-Malformed screen deltas leave the last output intact and trigger reconnect.
-The live simulator route includes an injected input timeout, explicit resume
-and successful typing in both directions afterward.
-
-
-<img width="300" src="screenshots/preview.png" alt="Read-only offline terminal preview with a clear sample-output notice">
-<img width="300" src="screenshots/reconnecting.png" alt="Paperterm reconnecting while keeping its terminal output and keyboard visible">
-
-The live fixture's `--pair-on-reader` option enters the address and private code
-through the actual keyboard and verifies the saved pairing before exercising
-the terminal. Hardware trust transfer and physical acceptance remain separate checks.
-
-If saved pairing cannot be read, choose **Retry reading** or **Continue without
-saving**. The latter keeps the stored data untouched for the entire run. A new
-connection is saved only after the computer confirms pairing. If saving fails,
-the terminal remains usable and its status shows **Not saved**. Open **Pairing**
-to choose **Retry saving**, return to the session, or change computers.
-Reconnecting and resizing do not retry a failed save automatically.
-
-<img width="300" src="screenshots/read-failed.png" alt="Paperterm offering to retry reading saved pairing or continue without saving">
-<img width="300" src="screenshots/pairing-not-saved.png" alt="Paperterm explaining that pairing was not saved while the terminal session can continue">
-
-The live fixture supports `--load-failure --save-failure` for explicit recovery,
-or `--load-failure --temporary-pairing` to verify a temporary connection. Both
-require `--pair-on-reader` and exercise the same two-way terminal journey.
-
-## First connection check
-
-After setting up the computer identity and installing its trust certificate,
-run `kobo stream demo` on the computer. Connect from Paperterm, type a short
-message and press Enter. The message appears on both screens. Type a second
-message on the computer to check input in the other direction.
-
-This built-in check does not run typed text as commands. Type `exit` on either
-screen to finish; the final screen remains for one minute. Keep the computer
-awake while sharing. Once the check works, use `kobo stream --interactive --
-COMMAND` to share a terminal program you choose.
-
-![The same connection check receiving reader and laptop input](screenshots/connection-check.png)
-
-To see the saved address and pairing code again, use `kobo stream pairing`.
-This reads the existing identity without replacing its keys or code. If you
-choose another port, use `kobo stream pairing --port 9123` and
-`kobo stream demo --port 9123` so the displayed address matches the service.
-The demo also displays these details when it starts. An older setup without
-a saved address explains how to add the computer address with `stream init`.
-
-## Stop sharing from the computer
-
-Press **Ctrl+]** (hold Control and press the closing square bracket) in the
-computer terminal running Paperterm. This ends the shared command and its
-child processes, closes sharing, and restores your terminal settings. Save
-any work in the shared program first. Ctrl+C still goes to the shared program
-as its usual interrupt; it is not the stop-sharing shortcut.
-
-Keep the computer awake and connected while sharing. The Kobo displays a
-session running on that computer; it cannot keep the command available when
-the computer sleeps. The connection check can also finish with `exit`; its
-final screen remains available for a minute, or Ctrl+] followed by Enter closes it early after terminal settings have been
-restored.
-The Ctrl+] byte is reserved locally while sharing.
-
-## Choose a session
-
-Run `kobo stream` to see the starting commands. Use `kobo stream demo` first
-to check typing between the computer and reader. After that:
-
-- `kobo stream terminal` opens your default login shell (`SHELL`, or `/bin/sh`).
-  The reader can type into this shell, just like the computer terminal.
-- `kobo stream monitor` runs `top` to show this computer’s processes. `top`
-  must be installed and available on the computer's PATH.
-
-Both accept `--port PORT` and use the saved pairing identity. They start only
-when explicitly requested. Custom commands remain available under
-`kobo stream --help`; you do not need to enter one for the connection check
-or either preset. Named reader selection is not yet available in this flow.
-
-## Connection messages
-
-The computer reports **waiting for a reader** until an authenticated reader
-establishes its session. **Reader connected** means the reader has sent an
-accepted session or screen request. After 45 seconds without an accepted
-request, it reports **waiting for the reader to reconnect**. This timeout
-does not diagnose Wi-Fi or sleep; keep both devices connected and the
-computer awake. Accepted requests return the status to connected.
-
-When the command finishes, the message says **command stopped** and explains
-the one-minute final-screen window. Status is printed only when it changes.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. The screenshots come from a live check against a local session with private test certificates. Its `--pair-on-reader`, `--load-failure`, `--save-failure` and `--temporary-pairing` options cover pairing and recovery.

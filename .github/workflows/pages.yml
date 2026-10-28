@@ -52,6 +52,9 @@ jobs:
           mkdir -p _site
           cp -R docs/. _site/
           rm -f _site/install/*.test.mjs
+          # Test evidence and review notes belong to the repository, not the
+          # site. Served here they were indexed beside the app pages.
+          rm -rf _site/quality _site/testing
           test -f _site/install.sh
           test -f _site/index.html
 
@@ -174,11 +177,6 @@ jobs:
           cp apps-index.json _site/install/apps.json
           du -sh _site/install/apps | sed 's/^/  applications: /'
 
-      # The reviewed devices, taken from the profiles the runtime enforces
-      # rather than from a list kept beside the page. A copy would go stale
-      # against the one that matters, and a device list that is quietly wrong
-      # tells somebody their working reader is untested. Anything this cannot
-      # read stops the build instead of publishing a gap.
       # The reviewed devices, taken from the profiles the runtime enforces rather
       # than from a list kept beside the page. A copy would go stale against the
       # one that matters, and a device list that is quietly wrong tells somebody

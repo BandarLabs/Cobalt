@@ -717,72 +717,45 @@ pub fn battery(percent: Percent, charging: bool) -> Vec<Shape> {
 
 /// The radio, drawn at the strength it is actually running at.
 ///
-/// Arcs are added from the bottom up, so a weak signal is a dot and one arc
-/// and a strong one is a dot and three. An unlit arc is left out rather than
-/// drawn faintly: this panel has no colour to spare and a ghosted arc at eight
-/// pixels is indistinguishable from a lit one.
+/// All three arcs are always drawn: lit ones at full weight, unlit ones as a
+/// hairline. Leaving unlit arcs out made a weak signal a lone dot that read as
+/// nothing at all, and made the mark change shape, so the eye could not find
+/// it in the strip. The hairline keeps the silhouette constant and lets the
+/// weight carry the strength, the way phones draw it. It stays pure ink, so
+/// it is as sharp as the lit arcs rather than a grey ghost of them.
 ///
-/// The geometry is placed so that the *full* three-arc mark is centred in the
-/// design box, which is what puts it on the same line as the Bluetooth mark
-/// beside it. Centring each strength on its own would be worse: the dot would
-/// then jump up the strip every time the signal dropped an arc, and a status
-/// icon that moves when the news changes is harder to read than one that is
-/// slightly light at the top.
+/// The geometry is placed so that the full mark is centred in the design box,
+/// which puts it on the same line as the headphones mark and the battery beside
+/// it, and nothing moves when the strength changes.
 #[must_use]
 pub fn wifi(strength: Signal) -> Vec<Shape> {
-    const W: i32 = 70;
-    let stroke = |path: Path| Shape::Stroke { path, width: W };
-    if strength == Signal::Off {
-        // The mark for "no radio" has to be different in shape, not just in
-        // quantity, or it reads as a weak signal. A struck-through dot is
-        // unambiguous and stays legible when it is eight pixels tall.
-        return vec![
-            Shape::Fill(Path::circle(500, 760, 90)),
-            stroke(Path::line(180, 180, 820, 820)),
-        ];
-    }
-    let mut shapes = vec![Shape::Fill(Path::circle(500, 780, 60))];
+    const LIT: i32 = 118;
+    const UNLIT: i32 = 40;
     let arcs = [
-        Path::new().move_to(400, 660).quad_to(500, 580, 600, 660),
-        Path::new().move_to(270, 510).quad_to(500, 330, 730, 510),
-        Path::new().move_to(120, 350).quad_to(500, 50, 880, 350),
+        Path::new().move_to(360, 640).quad_to(500, 520, 640, 640),
+        Path::new().move_to(225, 485).quad_to(500, 285, 775, 485),
+        Path::new().move_to(90, 330).quad_to(500, 40, 910, 330),
     ];
     let lit = match strength {
-        Signal::Off => 0,
+        Signal::Off | Signal::Disconnected => 0,
         Signal::Weak => 1,
         Signal::Fair => 2,
         Signal::Strong => 3,
     };
-    for arc in arcs.into_iter().take(lit) {
-        shapes.push(stroke(arc));
+    let mut shapes = Vec::with_capacity(5);
+    for (index, arc) in arcs.into_iter().enumerate() {
+        let width = if index < lit { LIT } else { UNLIT };
+        shapes.push(Shape::Stroke { path: arc, width });
+    }
+    match strength {
+        // Struck through, and with no dot: nothing is being sent or received.
+        Signal::Off => shapes.push(Shape::Stroke {
+            path: Path::line(170, 150, 830, 850),
+            width: LIT,
+        }),
+        _ => shapes.push(Shape::Fill(Path::circle(500, 790, 75))),
     }
     shapes
-}
-
-/// The Bluetooth rune, drawn only when something is actually connected.
-///
-/// One continuous stroke: a vertical spine with two crossing arms that meet it
-/// at the quarter points. Drawn as a single path rather than a spine plus four
-/// arms so that the joins stay closed when it is rasterised at eight pixels,
-/// where four separate strokes come apart into a smudge.
-///
-/// There is no "on but not connected" mark. The reason to look at this strip
-/// is to know where the sound is about to come out, and a controller that is
-/// powered with nothing paired answers that question the same way as one that
-/// is switched off.
-#[must_use]
-pub fn bluetooth() -> Vec<Shape> {
-    const W: i32 = 70;
-    vec![Shape::Stroke {
-        path: Path::new()
-            .move_to(330, 330)
-            .line_to(670, 670)
-            .line_to(500, 840)
-            .line_to(500, 160)
-            .line_to(670, 330)
-            .line_to(330, 670),
-        width: W,
-    }]
 }
 
 #[cfg(test)]
@@ -838,11 +811,13 @@ mod tests {
         // the eye but invisible to a test that only asks whether the glyph
         // drew anything. The wifi mark was exactly that for a long time: its
         // dot was pinned to the bottom of the box and the arcs grew upward
-        // from there, so the whole mark sat low beside the Bluetooth rune.
+        // from there, so the whole mark sat low beside the Bluetooth mark.
         let marks = [
-            ("bluetooth", super::bluetooth()),
+            ("headphones", super::shapes(Glyph::Headphones)),
             ("wifi", super::wifi(Signal::Strong)),
             ("wifi off", super::wifi(Signal::Off)),
+            ("wifi disconnected", super::wifi(Signal::Disconnected)),
+            ("wifi weak", super::wifi(Signal::Weak)),
         ];
         for (name, shapes) in marks {
             let (top, bottom) = ink_band(&shapes);

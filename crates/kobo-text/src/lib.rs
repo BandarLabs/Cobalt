@@ -38,7 +38,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use fontdue::{Font, FontSettings};
 use kobo_ui::{BreakOpportunity, DisplayMetrics, Face, FontSize, Typesetter};
@@ -91,6 +91,30 @@ pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regul
 /// Same family, same licence, same file as the regular travels under; see
 /// `fonts/LICENSE-AtkinsonHyperlegible.txt`.
 pub const DISPLAY_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
+
+/// The serif for titles, headings and books where the reader carries none.
+///
+/// Stock Kobo sets its section headings and book titles in a serif and its
+/// chrome in a sans, and that contrast is most of why its screens read as
+/// composed. Ours had a serif only where the firmware carried Bitter or
+/// Vollkorn; everywhere else, the simulator included, every heading and every
+/// poem fell back to Atkinson, so what was previewed was a flatter page than
+/// what shipped.
+///
+/// The reader's own serif still comes first. Applications measure text in
+/// their own process with these same faces, so the face a runtime draws with
+/// has to be the face an installed application measured with: a runtime that
+/// preferred this over the panel's Bitter would draw every heading of every
+/// application built before it in a face it was not measured in, and refuse
+/// the screens that no longer fit.
+///
+/// Literata was drawn for Google Play Books to be read on screens for hours,
+/// e-ink included. Subset to Latin to keep it small; the recipe is in
+/// `licenses/SOURCE-Literata.md` and the licence in `fonts/LICENSE-Literata.txt`.
+pub const SERIF_FONT: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
+
+/// The semibold cut of the same serif, for the size that heads a screen.
+pub const SERIF_HEADING_FONT: &[u8] = include_bytes!("../fonts/Literata-SemiBold.ttf");
 
 /// Bold is looked for on the device first, so a firmware that carries the cut
 /// is used rather than the compiled-in copy, exactly as the regular is.
@@ -294,10 +318,19 @@ impl Typeface {
                 }
             }
         }
-        // Not an error. A machine with no serif still reads perfectly well in
-        // the interface face, and refusing to start over typography would be
-        // absurd.
-        Self::discover(metrics)
+        // Not an error. A machine with no serif of its own reads in the
+        // bundled one, and if even that will not load, in the interface face.
+        Self::bundled_serif(metrics, false).map_or_else(|| Self::discover(metrics), Ok)
+    }
+
+    /// The compiled-in serif.
+    fn bundled_serif(metrics: DisplayMetrics, heading: bool) -> Option<Self> {
+        let (bytes, name) = if heading {
+            (SERIF_HEADING_FONT, "Literata-SemiBold.ttf")
+        } else {
+            (SERIF_FONT, "Literata-Regular.ttf")
+        };
+        Self::from_bytes(bytes, name, metrics).ok()
     }
 
     /// Loads one specific face.
@@ -389,6 +422,15 @@ impl Typeface {
     /// catching before it reaches a panel.
     fn has(&self, character: char) -> bool {
         self.font.lookup_glyph_index(character) != 0
+    }
+
+    /// Whether [`Self::pick`] would look in another face for `character`.
+    fn lacks(&self, character: char) -> bool {
+        !self.has(character)
+            && !is_invisible(character)
+            && substitute(character)
+                .filter(|glyph| self.has(*glyph))
+                .is_none()
     }
 
     /// Which face draws `character`, and what it draws.
@@ -598,12 +640,20 @@ impl Typeface {
 /// same moment: a screen laid out with one face and drawn with another is a
 /// screen that overlaps itself.
 pub struct SystemFonts {
+    metrics: DisplayMetrics,
     text: Typeface,
-    legacy_display: Typeface,
-    display_title: Typeface,
+    /// Parsed the first time an application on the old typography asks for a
+    /// title. Nothing else uses it.
+    legacy_display: OnceLock<Typeface>,
+    /// The same face as `reading` wherever both come from one file, which is
+    /// every reader with a serif of its own and every jail without one.
+    display_title: Arc<Typeface>,
     display_heading: Typeface,
-    mono: Typeface,
-    reading: Typeface,
+    /// Parsed the first time a grid is laid out or a letter falls back to it.
+    /// Its outlines are about two thirds of what the whole set costs to hold,
+    /// and most processes never draw a grid or a letter outside Latin.
+    mono: OnceLock<Typeface>,
+    reading: Arc<Typeface>,
 }
 
 /// A bounded publisher face used only for book prose.
@@ -699,29 +749,96 @@ impl SystemFonts {
         // bitmap for every character on the device, which is a far worse one.
         // That is not hypothetical -- it is what shipped, because the first
         // prose candidate turned out not to be a font.
-        let reading = match Typeface::discover_reading(metrics) {
+        let reading = Arc::new(match Typeface::discover_reading(metrics) {
             Ok(face) => face,
             Err(_) => Typeface::discover(metrics)?,
+        });
+        // The regular title face is searched for in the same files as the
+        // prose face, in the same order, with the same compiled-in fallback,
+        // so wherever the prose face came from one of them it is the title
+        // face too. It used to be parsed a second time.
+        let display_title = if Self::reading_serves_as_title(&reading) {
+            Arc::clone(&reading)
+        } else {
+            // The panel's own serif, then the bundled one, then Atkinson Bold.
+            Arc::new(
+                Typeface::discover_display_serif(metrics, DISPLAY_SERIF_REGULAR_CANDIDATES)
+                    .ok()
+                    .or_else(|| Typeface::bundled_serif(metrics, false))
+                    .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+            )
         };
         Ok(Self {
+            metrics,
             text,
-            legacy_display: Typeface::discover_display(metrics)
-                .or_else(|_| Typeface::discover(metrics))?,
-            // Each display cut falls back independently. A simulator sees
-            // Atkinson Bold; a panel with Bitter/Vollkorn sees its own serif.
-            display_title: Typeface::discover_display_serif(
-                metrics,
-                DISPLAY_SERIF_REGULAR_CANDIDATES,
-            )
-            .or_else(|_| Typeface::discover_display(metrics))?,
+            legacy_display: OnceLock::new(),
+            display_title,
             display_heading: Typeface::discover_display_serif(
                 metrics,
                 DISPLAY_SERIF_BOLD_CANDIDATES,
             )
-            .or_else(|_| Typeface::discover_display(metrics))?,
-            mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
+            .ok()
+            .or_else(|| Typeface::bundled_serif(metrics, true))
+            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+            mono: OnceLock::new(),
             reading,
         })
+    }
+
+    /// Where the grid face comes from, without building it to ask.
+    fn mono_source(&self) -> &Path {
+        self.mono
+            .get()
+            .map_or(Path::new("DejaVuSansMono.ttf"), Typeface::source)
+    }
+
+    /// Where the old interface bold comes from, without building it to ask.
+    fn legacy_display_source(&self) -> &Path {
+        if let Some(face) = self.legacy_display.get() {
+            return face.source();
+        }
+        DEVICE_DISPLAY_FONT_CANDIDATES
+            .iter()
+            .map(Path::new)
+            .find(|path| path.exists())
+            .unwrap_or(Path::new("AtkinsonHyperlegible-Bold.ttf"))
+    }
+
+    /// Whether the title search would have found the face the prose search
+    /// did. Only when no override chose the prose face and both searches walk
+    /// the same list: `KOBO_READING_FONT` is for prose alone, and pointing it at
+    /// Vollkorn on a reader with Bitter must not reset every title in Vollkorn.
+    fn reading_serves_as_title(reading: &Typeface) -> bool {
+        std::env::var_os(READING_FONT_OVERRIDE).is_none()
+            && READING_FONT_CANDIDATES == DISPLAY_SERIF_REGULAR_CANDIDATES
+            && (reading.source() == Path::new("Literata-Regular.ttf")
+                || DISPLAY_SERIF_REGULAR_CANDIDATES
+                    .iter()
+                    .any(|candidate| reading.source() == Path::new(candidate)))
+    }
+
+    /// The grid face, parsed on first use. The compiled-in bytes are checked by
+    /// a test, so the interface face standing in is a backstop, not a path.
+    fn mono(&self) -> &Typeface {
+        if let Some(face) = self.mono.get() {
+            return face;
+        }
+        match Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", self.metrics) {
+            Ok(face) => self.mono.get_or_init(|| face),
+            Err(_) => &self.text,
+        }
+    }
+
+    /// The old interface bold, parsed on first use.
+    fn legacy_display(&self) -> &Typeface {
+        if let Some(face) = self.legacy_display.get() {
+            return face;
+        }
+        match Typeface::discover_display(self.metrics).or_else(|_| Typeface::discover(self.metrics))
+        {
+            Ok(face) => self.legacy_display.get_or_init(|| face),
+            Err(_) => &self.text,
+        }
     }
 
     /// The file the proportional face was read from.
@@ -733,7 +850,7 @@ impl SystemFonts {
     fn face(&self, face: Face) -> &Typeface {
         match face {
             Face::Text => &self.text,
-            Face::Mono => &self.mono,
+            Face::Mono => self.mono(),
             Face::Reading => &self.reading,
         }
     }
@@ -755,7 +872,7 @@ impl SystemFonts {
             && face == Face::Text
             && matches!(size, FontSize::Title | FontSize::Heading)
         {
-            return &self.legacy_display;
+            return self.legacy_display();
         }
         match (face, size) {
             (Face::Text, FontSize::Title) => &self.display_title,
@@ -783,22 +900,30 @@ impl SystemFonts {
     ///
     /// Nothing stands behind the grid face itself. It is the end of the chain,
     /// and there is nothing here that covers more than it does.
-    const fn fallback(&self, face: Face) -> Option<&Typeface> {
+    ///
+    /// It is offered only for text with a letter `chosen` cannot draw. Every
+    /// run asks, and most runs are Latin the interface face carries, so asking
+    /// must not build the grid face: that would cost its outlines in every
+    /// process for text that never borrows a letter from it.
+    fn fallback(&self, chosen: &Typeface, text: &str, face: Face) -> Option<&Typeface> {
         match face {
-            Face::Text | Face::Reading => Some(&self.mono),
-            Face::Mono => None,
+            Face::Text | Face::Reading if text.chars().any(|letter| chosen.lacks(letter)) => {
+                Some(self.mono())
+            }
+            Face::Text | Face::Reading | Face::Mono => None,
         }
     }
 }
 
 impl Typesetter for SystemFonts {
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
-        self.cut(size, face).measure_run(
+        let chosen = self.cut(size, face);
+        chosen.measure_run(
             text,
             size,
             face,
             self.cell(size, face),
-            self.fallback(face),
+            self.fallback(chosen, text, face),
         )
     }
 
@@ -830,14 +955,15 @@ impl Typesetter for SystemFonts {
         face: Face,
         plot: &mut dyn FnMut(i32, i32, u8),
     ) {
-        self.cut(size, face).draw_run(
+        let chosen = self.cut(size, face);
+        chosen.draw_run(
             text,
             x,
             y,
             size,
             face,
             self.cell(size, face),
-            self.fallback(face),
+            self.fallback(chosen, text, face),
             plot,
         );
     }
@@ -849,8 +975,12 @@ impl Typesetter for SystemFonts {
         // reporting it as missing would condemn text that comes out perfectly
         // readable.
         let typeface = self.face(face);
+        let mut letter = [0; 4];
         typeface
-            .pick(character, self.fallback(face))
+            .pick(
+                character,
+                self.fallback(typeface, character.encode_utf8(&mut letter), face),
+            )
             .is_none_or(|(drawn, glyph)| drawn.has(glyph))
     }
 
@@ -875,10 +1005,10 @@ impl Typesetter for SystemFonts {
     fn cell_width(&self, size: FontSize) -> i32 {
         // Falls back to measuring rather than refusing, so a future face that
         // is very nearly fixed pitch still produces a usable grid.
-        self.mono
+        self.mono()
             .fixed_advance(size, Face::Mono)
             .unwrap_or_else(|| {
-                self.mono
+                self.mono()
                     .measure_run("0", size, Face::Mono, None, None)
                     .0
                     .max(1)
@@ -949,22 +1079,29 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
 ///
 /// Returns an error when no face can be found or loaded.
 pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
+    // Installed once per process, whoever asks. An application start reaches
+    // here three times on its way to the first screen, and each of the later
+    // calls used to discover and parse the whole set again only to lose the
+    // race for the slot and throw it away: three times the allocations and the
+    // peak memory of the one set that is kept.
+    if let Some(source) = INSTALLED_PATH.get() {
+        return Ok(source.clone());
+    }
     let fonts = SystemFonts::discover(metrics)?;
     let source = fonts.text_source().to_path_buf();
     let sources = [
-        ("interface", &fonts.text),
-        ("display-title", &fonts.display_title),
-        ("display-heading", &fonts.display_heading),
-        ("display-bold", &fonts.legacy_display),
-        ("reading", &fonts.reading),
-        ("mono", &fonts.mono),
+        ("interface", fonts.text.source()),
+        ("display-title", fonts.display_title.source()),
+        ("display-heading", fonts.display_heading.source()),
+        ("display-bold", fonts.legacy_display_source()),
+        ("reading", fonts.reading.source()),
+        ("mono", fonts.mono_source()),
     ]
     .into_iter()
-    .map(|(role, face)| {
+    .map(|(role, path)| {
         (
             role.to_owned(),
-            face.source()
-                .file_name()
+            path.file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
@@ -974,11 +1111,14 @@ pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
     // Only the successfully installed font set may describe captures.
     if kobo_ui::install_typesetter(Box::new(fonts)).is_ok() {
         let _ = INSTALLED_SOURCES.set(sources);
+        let _ = INSTALLED_PATH.set(source.clone());
     }
     Ok(source)
 }
 
-static INSTALLED_SOURCES: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+static INSTALLED_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+static INSTALLED_SOURCES: OnceLock<Vec<(String, String)>> = OnceLock::new();
 
 /// Sources of the font set installed by this crate. Unknown for a custom
 /// externally installed typesetter, rather than guessing the bundled fonts.
@@ -1038,13 +1178,13 @@ mod tests {
         // With the status bar the device actually draws. Without it the
         // content starts high enough that the shelf fits and the test agrees
         // with the bug, which is how this shipped.
-        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status {
-            clock: "20:36".to_string(),
-            signal: kobo_ui::Signal::Strong,
-            battery: Some(kobo_ui::Percent::new(74)),
-            charging: false,
-            bluetooth: false,
-        });
+        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status::standard(
+            "20:36",
+            Some(kobo_ui::Percent::new(74)),
+            false,
+            kobo_ui::Signal::Strong,
+            false,
+        ));
         let layout = screen.layout_with(&kobo_ui::CLARA_BW_METRICS, &chrome);
         let position = layout
             .nodes
@@ -1191,6 +1331,25 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn latin_text_never_builds_the_grid_face_and_a_cyrillic_name_does() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let _ = fonts.measure("Settings and Wi-Fi", FontSize::Body, Face::Text);
+        let _ = fonts.has_glyph('e', Face::Text);
+        assert!(fonts.mono.get().is_none(), "Latin needs nothing borrowed");
+        let _ = fonts.measure("Евгений Онегин", FontSize::Body, Face::Text);
+        assert!(
+            fonts.mono.get().is_some(),
+            "Cyrillic borrows from the grid face"
+        );
+    }
+
+    #[test]
+    fn the_prose_and_title_faces_are_one_parse_when_they_are_one_file() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        assert!(Arc::ptr_eq(&fonts.reading, &fonts.display_title));
     }
 
     #[test]
@@ -1933,13 +2092,13 @@ mod tests {
         let inked = |clock: &str| {
             let chrome = kobo_ui::Chrome {
                 back: false,
-                status: Some(kobo_ui::Status {
-                    clock: clock.to_owned(),
-                    signal: kobo_ui::Signal::Strong,
-                    battery: Some(kobo_ui::Percent::new(50)),
-                    charging: false,
-                    bluetooth: true,
-                }),
+                status: Some(kobo_ui::Status::standard(
+                    clock,
+                    Some(kobo_ui::Percent::new(50)),
+                    false,
+                    kobo_ui::Signal::Strong,
+                    true,
+                )),
             };
             let screen = kobo_ui::Screen::new(
                 1,

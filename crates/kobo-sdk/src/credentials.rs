@@ -6,7 +6,6 @@ use std::fmt;
 
 const ENTER: &str = "credential.enter";
 const CLI: &str = "credential.cli";
-const BACK: &str = "credential.back";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -37,6 +36,7 @@ pub struct CredentialSetup {
     basic: bool,
     username: String,
     server: Option<String>,
+    guidance: Option<String>,
 }
 
 impl fmt::Debug for CredentialSetup {
@@ -69,7 +69,20 @@ impl CredentialSetup {
             basic: false,
             username: String::new(),
             server: None,
+            guidance: None,
         }
+    }
+
+    /// Say where this service's key comes from, in place of the generic line.
+    ///
+    /// "Add the account key for this service" is enough when the owner already
+    /// holds one. A token that has to be created on the provider's site first
+    /// needs that said on the screen that asks for it, because the reader has
+    /// no browser to look it up in.
+    #[must_use]
+    pub fn with_guidance(mut self, guidance: impl Into<String>) -> Self {
+        self.guidance = Some(guidance.into());
+        self
     }
 
     /// Collect HTTP Basic account details as separate username and password
@@ -140,11 +153,11 @@ impl CredentialSetup {
                 let mut screen = ScreenBuilder::new("credential-required")
                     .top_bar(app_title)
                     .heading(format!("Connect {}", self.service))
-                    .text(if self.basic {
+                    .text(self.guidance.as_deref().unwrap_or(if self.basic {
                         "Use your server username and password."
                     } else {
                         "Add the account key for this service."
-                    });
+                    }));
                 if let Some(problem) = &self.problem {
                     screen = screen.banner(crate::BannerLevel::Attention, problem);
                 }
@@ -175,12 +188,15 @@ impl CredentialSetup {
                 "Type your account key",
                 "Account key entered",
             ),
+            // The top bar's back returns to the prompt. A second Back button
+            // beside it would leave two controls that look alike and go to
+            // different places when an app owns back for the whole flow.
             View::Cli => ScreenBuilder::new("credential-cli")
                 .top_bar(app_title)
+                .owns_back(true)
                 .heading("Set it from a computer")
                 .text(command)
                 .secondary("After the command succeeds, close and reopen this app.")
-                .button(BACK, "Back")
                 .build(),
             View::Saving => ScreenBuilder::new("credential-saving")
                 .top_bar(app_title)
@@ -262,6 +278,10 @@ impl CredentialSetup {
         if self.view == View::Saving {
             return Some(CredentialEvent::Changed);
         }
+        if self.view == View::Cli && action == ActionId::BACK {
+            self.view = View::Prompt;
+            return Some(CredentialEvent::Changed);
+        }
         if action == ActionId::BACK {
             self.close();
             return Some(CredentialEvent::Cancelled);
@@ -278,10 +298,6 @@ impl CredentialSetup {
             }
             (View::Prompt, value) if value == action_id(CLI) && self.server.is_none() => {
                 self.view = View::Cli;
-                Some(CredentialEvent::Changed)
-            }
-            (View::Cli, value) if value == action_id(BACK) => {
-                self.view = View::Prompt;
                 Some(CredentialEvent::Changed)
             }
             _ => None,
@@ -408,6 +424,41 @@ mod tests {
             Command::Device(DeviceRequest::SetSecret { name, value })
                 if name == "zotero" && value.as_str() == "visible-secret"
         )));
+    }
+
+    #[test]
+    fn guidance_tells_the_owner_where_the_key_comes_from_instead_of_the_generic_line() {
+        let mut setup = CredentialSetup::new("lichess", "Lichess")
+            .with_guidance("Create a token at lichess.org first.");
+        setup.open();
+        let drawn = format!("{:?}", setup.screen("Lichess"));
+        assert!(
+            drawn.contains("Create a token at lichess.org first."),
+            "{drawn}"
+        );
+        assert!(!drawn.contains("Add the account key"), "{drawn}");
+        assert!(drawn.contains("Enter account key"), "{drawn}");
+    }
+
+    #[test]
+    fn the_computer_route_has_one_way_back_and_it_returns_to_the_prompt() {
+        let mut setup = CredentialSetup::new("zotero", "Zotero");
+        let mut context = Context::default();
+        setup.open();
+        setup.on_action(&mut context, action_id("credential.cli"));
+        let screen = setup.screen("Zotero");
+        assert!(screen.owns_back, "{screen:?}");
+        assert!(
+            !format!("{screen:?}").contains("label: \"Back\""),
+            "{screen:?}"
+        );
+
+        assert_eq!(
+            setup.on_action(&mut context, crate::ActionId::BACK),
+            Some(CredentialEvent::Changed)
+        );
+        assert!(setup.is_open());
+        assert!(format!("{:?}", setup.screen("Zotero")).contains("Use computer"));
     }
 
     #[test]

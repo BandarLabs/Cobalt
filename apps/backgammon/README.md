@@ -1,11 +1,56 @@
 # Backgammon
 
-![Opening Backgammon board on a Kobo](screenshots/backgammon-opening.png)
-![A checker in hand, with its legal destinations ringed](screenshots/backgammon-selected.png)
-![The match, its dice and the record of play](screenshots/backgammon-match.png)
+Solo or pass-and-play backgammon on one Kobo, with full match rules.
 
-This is a portrait 24-point board for the 1072×1448 Clara BW. The board, opposing triangular points, grayscale checker stacks, central bar, dice, and doubling cube are one app-owned picture, so it needs no backgammon-specific runtime primitives. Legal checker or destination point controls appear below it only when they can be tapped. On the board the checker in hand is marked solid and every place it may go is ringed, so the two are never the same mark. Whose move it is is said above the board in words and drawn in the centre bar as that side's own checker. The dice and the cube are written out under the board as well as drawn on it: the board is 52 mm wide, and a die drawn there is two millimetres across. Pass-and-play reverses the board so the active player is nearest the reader. Tap **Roll**, a numbered legal checker (or the active bar), then a numbered hollow destination or **Off**. Legal-turn generation enforces forced moves, maximum dice use, the higher-die rule, bar-entry priority, blocks, hits, doubles, exact and oversize bear-offs, and automatic no-move turns.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/backgammon-opening.png" alt="The opening board"><br>The opening board</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/backgammon-selected.png" alt="A checker in hand, with its legal destinations ringed"><br>A checker in hand, with its legal destinations ringed</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/backgammon-match.png" alt="The match screen, with dice, cube and the record of play"><br>The match screen, with dice, cube and the record of play</td>
+</tr>
+</table>
 
-Who is playing and how long the match runs are set on the **Match** screen rather than beside the controls that play a move. That screen also keeps the record of play: each finished turn is written down the way a board writes it, "White 8/5 6/5" or "bar/20", and the last eight survive a restart. Matches may be 1, 3, 5, or 7 points. The doubling cube has an explicit offer/take/drop sequence, owner discipline, and Crawford-game restriction; beavers remain off. Games score singles, gammons, and backgammons. Every action is autosaved and a move may be undone before the turn ends. Solo mode includes a deliberately modest positional computer player; pass-and-play reverses the board for the next player.
+## Features
 
-The dice come from the operating system's entropy source. Before this they came off a counter that advanced by one each roll, so every game dealt the same sequence in the same order, which is a recital rather than a game. Setting `KOBO_BACKGAMMON_SEED` to a number plays a fixed sequence for fixtures and captures, and the Match screen says so whenever a seed is in use: a recorded game that reads as chance and is not would be a lie about the dice. A source that cannot be opened is reported on the board and rolls nothing. GNU Backgammon is deliberately not used. The computer is a modest one-ply heuristic, not a bot-market GM.
+- A portrait 24-point board with the bar, dice and doubling cube.
+- Full move rules: forced moves, maximum dice use, the higher-die rule, bar
+  entry, blocks, hits, doubles, exact and oversize bear-offs, and automatic
+  passes when no move is possible.
+- Matches of 1, 3, 5 or 7 points, with gammons and backgammons. The doubling
+  cube supports offer, take and drop, cube ownership and the Crawford rule.
+  Beavers are not used.
+- Solo play against a modest one-ply computer player, or pass-and-play with the
+  board turned towards the active player.
+- The Match screen sets the players and match length, and keeps the last eight
+  turns in board notation, such as "White 8/5 6/5" or "bar/20".
+- Every action is saved. A move can be undone until the turn ends.
+
+## Playing
+
+Tap **Roll**, then a numbered checker (or the bar), then a ringed destination
+or **Off**. The checker in hand is drawn solid and its destinations are
+ringed. The side to move is named above the board, and the dice and cube are
+written out under it as well as drawn.
+
+## Dice
+
+Dice come from the operating system's entropy source. If that source cannot
+be opened, the board says so and does not roll. For tests and screenshots,
+`KOBO_BACKGAMMON_SEED` fixes the sequence, and the Match screen shows that a
+seed is in use.
+
+## Permissions
+
+None. Backgammon runs offline.
+
+## Development
+
+```sh
+cargo test -p kobo-backgammon
+python3 scripts/check-apps-sim.py backgammon
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.

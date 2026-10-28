@@ -1,35 +1,84 @@
 # Fieldbook
 
-Log bird sightings offline and keep a life list on the reader. Field packs pushed from a computer give species lookup by common name, scientific name or banding code. A sighting is one tap during an outing, and finished outings export as an eBird Checklist Format CSV.
+Log bird sightings offline and keep a life list on your Kobo.
 
-![Field packs](screenshots/packs.png)
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Today, with recent outings"><br>Today, with recent outings</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/packs.png" alt="Field packs on the reader"><br>Field packs on the reader</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/search.png" alt="Searching a pack"><br>Searching a pack</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/detail-photo.png" alt="A species with its licensed photo"><br>A species with its licensed photo</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/tally.png" alt="Tallying during an outing"><br>Tallying during an outing</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/export.png" alt="Exporting a checklist"><br>Exporting a checklist</td>
+</tr>
+</table>
 
-## Field packs
+## Features
 
-A pack is a regional species list prepared on a computer and published to the reader with `kobo fieldbook push`. Packs live on the shelf, so logging works with no connection and even with no pack at all: type the species name and it joins the outing by name. A pack that fails to import is named on the packs screen with the reason.
+- Look up species by common name, scientific name or banding code from a field
+  pack.
+- Log a sighting with one tap during an outing. Species not in a pack can be
+  typed by name.
+- Review an outing's log, remove entries and undo a removal.
+- A life list of every species logged on the reader.
+- Export finished outings as a CSV in eBird's Checklist Format.
 
-![Searching a pack](screenshots/search.png)
+## Setup
 
-## Species photos
+Field packs are regional species lists prepared on a computer and sent to the
+reader:
 
-A pack prepared with `kobo fieldbook photos` carries a licensed photo for every species it can match, shown on the detail screen with the photographer and license. Photos come from Avicommons and ship only under licenses that allow redistribution; a species without an eligible photo stays text-only.
+```sh
+kobo fieldbook inspect PACK.json                     # check a pack
+kobo fieldbook photos PACK.json --out PACK_DIR       # add licensed species photos
+kobo fieldbook push PACK.json --device IP            # send a pack to the reader
+kobo fieldbook ls --device IP                        # list packs on the reader
+kobo fieldbook export --device IP --out FILE.csv     # fetch the checklist CSV
+```
 
-![Species detail with photo](screenshots/detail-photo.png)
+Use `--sim` instead of `--device IP` to work with the simulator. Pack files
+are limited to 512 KiB.
 
-The photo in the screenshot is the Northern Cardinal by Adam Jackson, CC0 2.0, via Avicommons. Each pack carries attribution records for its own photos, and the detail screen shows the credit alongside the photo.
+Packs are stored on the reader, so logging works without a connection. A pack
+that fails to import is listed with the reason.
 
 ## Logging an outing
 
-**Start an outing** asks for a place name, then stamps the date and start time from the reader's clock. Tapping a species tallies it; **Review sightings** lists the outing's log, where a tap removes an entry and **Undo delete** restores it. **Finish outing** files it on Today. The life list totals every species on the reader.
+1. **Start an outing** and enter a place name. The date and start time come
+   from the reader's clock.
+2. Tap a species to add it to the tally.
+3. **Review sightings** lists the log. Tap an entry to remove it, or
+   **Undo delete** to restore it.
+4. **Finish outing** files it under Today.
 
-![Tallying during an outing](screenshots/tally.png)
+**Write checklist file** prepares the CSV, with one column per outing. The
+file follows eBird's published format. Importing it into eBird has not been
+tested.
 
-## Export
+## Permissions
 
-**Write checklist file** prepares one CSV in eBird's published Checklist Format: one column per outing, effort rows on top, counts per species. `kobo fieldbook export` fetches it to a computer. The layout follows the published format; eBird-side import acceptance is not verified.
+None. Fieldbook runs offline.
 
-![Export](screenshots/export.png)
+## Development
 
-![Today](screenshots/home.png)
+```sh
+cargo test -p kobo-fieldbook
+python3 scripts/check-apps-sim.py fieldbook
+```
 
-eBird and the Cornell Lab of Ornithology are credited trademarks; Fieldbook is an unofficial companion.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+Species photos come from Avicommons and are included only when their licence
+allows redistribution. Each pack carries attribution for its photos, and the
+detail screen shows the credit. The photo above is a Northern Cardinal by Adam
+Jackson (CC0), via Avicommons.
+
+eBird and the Cornell Lab of Ornithology are trademarks of their owners.
+Fieldbook is an unofficial companion.

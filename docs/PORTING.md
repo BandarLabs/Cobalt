@@ -3,15 +3,14 @@
 Part of [Cobalt](../README.md).
 
 Cobalt selects a device profile at runtime. The Clara BW, Clara Colour,
-Elipsa 2E, Clara HD, Libra 2, Libra Colour, and Libra H2O profiles are fully
-hardware-tested at their recorded identity and firmware boundaries. The
-current status and exact boundaries are recorded in the
+Elipsa 2E, Clara HD, Libra 2, Libra Colour and Libra H2O profiles are tested
+on hardware at the firmware recorded in the
 [device support matrix](DEVICES.md#device-support-matrix).
 
-Display and synthetic-touch write entry points demand an exact hardware and
-firmware match, so an unknown reader is refused rather than guessed at. A
-read-only match is only a porting milestone, not permission to ship or install
-the profile. Review every other path that takes device ownership against the
+On a model or firmware without a tested profile, Cobalt derives a profile from
+the device, lists what is untested and asks the owner before starting.
+Developer display and touch tools still require an exact profile match. A
+read-only match is a porting milestone, not permission to ship the profile. Review every other path that takes device ownership against the
 same identity boundary.
 
 Open or join a device issue before writing code. Check for an existing pull
@@ -60,7 +59,7 @@ and every application are device-independent. What is measured is:
    current examples.
 2. **A controller backend**, when the device does not use one already present.
    Cobalt currently supports MediaTek HWTCON and Mark 7 MXCFB v2. Their ioctl
-   structures and waveform numbers are deliberately separate.
+   structures and waveform numbers are separate.
 3. **`DisplayMetrics`**, in `crates/kobo-ui/src/lib.rs`. Size and DPI, which is
    what the layout engine reasons about.
 4. **Runtime profile registration.** `SUPPORTED_PROFILES` in `kobo-profile`
@@ -163,17 +162,21 @@ as unsupported after its raw fields are printed, making that report the
 starting evidence for a new profile. The touch probe then checks a physical
 touch at a known corner against the proposed rotated transform.
 
-The full serial number is deliberately never read past its four-character
+The full serial number is never read past its four-character
 model prefix.
 
 ## What will refuse to work until the profile is right
 
-By design, all of it. `validate` returns `Rejected` on any mismatch, and every
-ordinary write or exclusive-ownership path uses `write_ready_profile`, which
-also demands an exact device code, serial prefix, firmware version, kernel
-release, and completed attended evidence. A profile that is merely close is
-treated as a different device. That is the whole point: geometry alone is not
-proof of identity, and the failure mode of guessing is somebody else's reader.
+All of it. `validate` returns `Rejected` on any mismatch, and developer write
+tools use `write_ready_profile`, which also requires an exact device code,
+serial prefix, firmware version, kernel release and completed attended
+evidence. A profile that is merely close is treated as a different device,
+because geometry alone does not prove identity.
+
+When the owner accepts the untested-device notice, Cobalt waives two things
+only: an unmeasured firmware branch, and a panel no one has watched take a
+write. A device code, serial prefix or kernel that disagrees with the profile
+is never waived, and firmware 5.x is always refused.
 
 The bounded `kobo smoke-display` operation is the only exception while evidence
 is being gathered. The HAL owns its fixed regions, waveform choices,
