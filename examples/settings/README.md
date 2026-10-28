@@ -24,7 +24,10 @@ Wi-Fi, Bluetooth, battery details and Cobalt updates.
   temperature, voltage, current and charge figures from the fuel gauge.
   **Read again** refreshes them.
 - **Software update**: checks for and installs Cobalt updates, and switches
-  between the Stable and Beta channels.
+  between the Stable and Beta channels. A check with no network offers
+  **Join Wi-Fi**.
+- **About**: the model and versions, the reader's Wi-Fi address when the
+  runtime provides it, and how `kobo` on a computer finds the reader.
 
 Brightness, time zone, accounts and firmware stay in the Kobo's own settings.
 
