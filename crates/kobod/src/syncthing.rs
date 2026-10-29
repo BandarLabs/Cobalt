@@ -155,7 +155,11 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 }
 
 /// Why the runtime should start a window now, if it should.
+///
+/// Only the device runtime starts windows; a host build of `kobod` carries
+/// this module for its `--syncthing` commands and never asks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub enum Due {
     /// The owner tapped Sync now, or turned Sync on.
     Owner,
@@ -163,6 +167,7 @@ pub enum Due {
     Scheduled,
 }
 
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 impl Due {
     /// The `kobod` arguments that run this window in a process of its own.
     ///
@@ -185,10 +190,12 @@ impl Due {
 /// Cobalt is open. An owner's request comes first. A schedule is due once its
 /// interval has passed since the last attempt, or straight away if there has
 /// never been one, so turning Sync on with a schedule starts a sync at once.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn due() -> Option<Due> {
     due_in(Path::new(APP_STATE), epoch_now())
 }
 
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 fn due_in(app_state: &Path, now: u64) -> Option<Due> {
     let settings = Settings::load(app_state).ok()?;
     if !settings.enabled {
@@ -207,6 +214,7 @@ fn due_in(app_state: &Path, now: u64) -> Option<Due> {
 /// The runtime looks at the schedule once a minute. These two are looked at
 /// at once, because they are taps: Sync now, and Sync turned on or its
 /// schedule changed.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn asks_for_a_window(key: &str) -> bool {
     key == REQUEST || key == "sync-config"
 }
@@ -216,6 +224,7 @@ pub fn asks_for_a_window(key: &str) -> bool {
 /// The request is kept, so the sync starts by itself once the reader is on
 /// Wi-Fi. Written once rather than every time the runtime looks, because each
 /// write wakes the app to show the same thing again.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn waiting_for_wifi() {
     let app_state = Path::new(APP_STATE);
     if read_status(app_state).lines().next() == Some("offline") {
@@ -230,6 +239,7 @@ pub fn waiting_for_wifi() {
     );
 }
 
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 fn read_epoch(app_state: &Path, name: &str) -> u64 {
     fs::read_to_string(app_state.join(name))
         .ok()

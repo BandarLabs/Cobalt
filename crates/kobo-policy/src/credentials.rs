@@ -884,7 +884,9 @@ mod tests {
             })
         );
         // A link is never followed by a request, so it never counts here.
+        // Making one on Windows needs a privilege, so only Unix plants it.
         std::fs::remove_file(root.join("exa")).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(root.join("openai"), root.join("exa")).unwrap();
         install_app_secret(&root, "audiobook", "exa", "typed-on-the-reader")
             .expect("install the app's own copy");

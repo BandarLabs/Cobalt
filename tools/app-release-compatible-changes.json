@@ -508,7 +508,7 @@
     {
      "path": "crates/kobo-policy/src/credentials.rs",
      "base_blob": "8fe14ad961bdf06f68066e010b80dbcb56ec7460",
-     "compatible_blob": "f6720b4ae8bc570223f606c4380c6f0e157f9e6f"
+     "compatible_blob": "cc31ae77b64f8b0fac3d267e080975d6d5690c0e"
     },
     {
      "path": "crates/kobo-policy/src/persistence.rs",

@@ -1005,6 +1005,7 @@ fn package_directory(home: &Path, folder: &str) -> Result<PathBuf, String> {
         fs::create_dir_all(directory)
             .map_err(|error| format!("create {}: {error}", directory.display()))?;
         reject_symlink_components(directory, "Sync package folder")?;
+        #[cfg(unix)]
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
             .map_err(|error| format!("protect {}: {error}", directory.display()))?;
     }
