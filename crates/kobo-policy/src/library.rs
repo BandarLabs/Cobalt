@@ -50,7 +50,8 @@ use std::path::{Path, PathBuf};
 /// publish their shelves.
 pub const ROOTS: &[&str] = &["/mnt/onboard", "/mnt/onboard/.adds/cobalt/data", "/mnt/sd"];
 
-/// Directory names never descended into, matched at any depth.
+/// Directory names never descended into, matched at any depth, besides every
+/// hidden directory.
 ///
 /// The stock reader's state, our own program files, and the noise that
 /// desktop operating systems leave on removable media.
@@ -343,7 +344,7 @@ fn walk(
             continue;
         };
         if kind.is_dir() {
-            if SKIPPED.contains(&name) {
+            if skipped_directory(name) {
                 continue;
             }
             walk(root, &path, root_index, depth + 1, listing, seen);
@@ -506,10 +507,30 @@ pub fn resolve_in(roots: &[PathBuf], id: &str) -> Option<PathBuf> {
     let candidate = root.join(relative);
     let real = fs::canonicalize(&candidate).ok()?;
     let real_root = fs::canonicalize(root).ok()?;
-    if !real.starts_with(&real_root) || !real.is_file() {
+    if !real.is_file() {
         return None;
     }
-    Some(real)
+    // Only what a listing could have named. A root is a folder of books, but
+    // it is not only books: Cobalt's data root holds every application's own
+    // files, and a simulator's holds its secrets. Reading anything under the
+    // root handed any of those to any application allowed to read a book.
+    let mut parts = real
+        .strip_prefix(&real_root)
+        .ok()?
+        .components()
+        .map(|part| part.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    let name = parts.pop()?;
+    if parts.iter().any(|part| skipped_directory(part)) {
+        return None;
+    }
+    (Kind::from_name(name).is_some() || is_unnamed_epub(&real, name)).then_some(real)
+}
+
+/// Whether the walk leaves a directory alone: every hidden one, and the
+/// visible names in [`SKIPPED`].
+fn skipped_directory(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED.contains(&name)
 }
 
 /// The path an identifier names under the compiled-in [`ROOTS`].
@@ -945,6 +966,44 @@ mod tests {
             [("0/gutenbird/book-1a2b3c4d", "The Time Machine", Kind::Epub)]
         );
         assert!(read_in(&[root], "0/gutenbird/book-1a2b3c4d").is_some());
+    }
+
+    #[test]
+    fn only_what_a_listing_could_name_can_be_read() {
+        let root = scratch("readable");
+        let shelf = root.join("readlater");
+        let secrets = root.join(".secrets");
+        fs::create_dir_all(&shelf).expect("an application's folder");
+        fs::create_dir_all(&secrets).expect("a hidden folder");
+        fs::write(shelf.join("Notes.md"), b"# Notes").expect("a listed note");
+        fs::write(shelf.join("book-1a2b3c4d"), a_book_called("Kept")).expect("a kept book");
+        fs::write(shelf.join("articles.json"), b"{}").expect("an app's own file");
+        fs::write(shelf.join("token"), b"hunter2").expect("an app's own blob");
+        fs::write(secrets.join("lichess.epub"), b"not a book").expect("a secret");
+        let roots = [root];
+
+        let listed: Vec<_> = list_in(&roots)
+            .entries
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(
+            listed,
+            ["0/readlater/book-1a2b3c4d", "0/readlater/Notes.md"]
+        );
+        for id in &listed {
+            assert!(
+                read_in(&roots, id).is_some(),
+                "{id} was listed and not readable"
+            );
+        }
+        for id in [
+            "0/readlater/articles.json",
+            "0/readlater/token",
+            "0/.secrets/lichess.epub",
+        ] {
+            assert!(read_in(&roots, id).is_none(), "{id} was readable");
+        }
     }
 
     #[test]
