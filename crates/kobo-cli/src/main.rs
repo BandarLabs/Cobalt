@@ -5606,19 +5606,21 @@ fn reader_still_connected(expected: &setup::Mounted) -> Result<(), String> {
 fn confirmed_setup(
     options: &SetupOptions,
     reader: &setup::Mounted,
-    profile: &kobo_profile::DeviceProfile,
+    identified: &setup::Identified,
     payload: &SetupPayload,
 ) -> Result<bool, String> {
+    let tested = match identified.untested(reader) {
+        Some(note) if options.mode != SetupMode::Undo => format!("  Tested: {note}\n"),
+        _ => String::new(),
+    };
     println!(
-        "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+        "\nReady to {}:\n  Model: {}\n  Firmware: {}\n{tested}  Mount: {}\n  Release: {}\n  Changes: {}\n",
         if options.mode == SetupMode::Undo {
             "remove Cobalt"
         } else {
             "install Cobalt"
         },
-        profile.model,
-        profile.device_code,
-        profile.id,
+        identified.describe(reader),
         reader.firmware,
         reader.volume.display(),
         payload.description(),
@@ -5704,14 +5706,14 @@ fn setup_device_with_confirmation(
     confirm: impl FnOnce(
         &SetupOptions,
         &setup::Mounted,
-        &kobo_profile::DeviceProfile,
+        &setup::Identified,
         &SetupPayload,
     ) -> Result<bool, String>,
 ) -> Result<(), String> {
     let options = parse_setup(arguments)?;
     let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
-    let profile = if options.mode == SetupMode::Undo {
-        setup::undo_profile(&reader)?
+    let identified = if options.mode == SetupMode::Undo {
+        setup::undo_profile(&reader)
     } else {
         setup::install_profile(&reader)?
     };
@@ -5720,15 +5722,7 @@ fn setup_device_with_confirmation(
     } else {
         setup_payload(&options)?
     };
-    println!(
-        "found {} ({}, profile {}, device code {}) at {} · firmware {}",
-        profile.model,
-        reader.model_code(),
-        profile.id,
-        profile.device_code,
-        reader.volume.display(),
-        reader.firmware
-    );
+    println!("{}", identified.found(&reader));
 
     if options.dry_run {
         println!(
@@ -5736,9 +5730,15 @@ fn setup_device_with_confirmation(
             dry_run_plan(&options, &reader),
             payload.description()
         );
+        if let Some(note) = identified
+            .untested(&reader)
+            .filter(|_| options.mode != SetupMode::Undo)
+        {
+            println!("tested: {note}");
+        }
         return Ok(());
     }
-    if !confirm(&options, &reader, profile, &payload)? {
+    if !confirm(&options, &reader, &identified, &payload)? {
         println!("Declined; nothing was written.");
         return Ok(());
     }

@@ -2095,6 +2095,35 @@ mod preparing {
     }
 
     #[test]
+    fn an_untested_model_reaches_the_confirmation_instead_of_a_refusal() {
+        let volume = TempVolume::new("untested-model");
+        let system = volume.path.join(".kobo");
+        std::fs::create_dir_all(&system).expect("system folder");
+        std::fs::write(
+            system.join("version"),
+            "N999000000000,4.1.15,4.38.23828,4.1.15\n",
+        )
+        .expect("version");
+        let mut said = None;
+        setup_device_with_confirmation(
+            &arguments(&[
+                "--volume",
+                volume.path.to_str().expect("path"),
+                "--source",
+                "--no-eject",
+            ]),
+            |_, reader, identified, _| {
+                said = identified.untested(reader);
+                Ok(false)
+            },
+        )
+        .expect("declined cleanly");
+        let note = said.expect("the confirmation says what is untested");
+        assert!(note.starts_with("untested model."), "{note}");
+        assert!(!volume.path.join(setup::INSTALL_FOLDER).exists());
+    }
+
+    #[test]
     fn several_readers_are_refused_without_printing_full_serials() {
         let first = mounted(PathBuf::from("/Volumes/ONE"));
         let mut second = mounted(PathBuf::from("/Volumes/TWO"));
