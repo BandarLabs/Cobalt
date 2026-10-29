@@ -105,6 +105,9 @@ def seed_stock_library(card):
     that is in the account but not downloaded.
     """
     kobo = card / '.kobo'
+    if (kobo / 'KoboReader.sqlite').exists():
+        # A kept --state-dir, or a --seed-root that brought its own database.
+        return
     kepubs = kobo / 'kepub'
     kepubs.mkdir(parents=True, exist_ok=True)
     kepub = kepubs / '5f1c7e2a-0d3b-4a8e-9c61-7b2d4e8f9a10'
