@@ -76,12 +76,12 @@ pub fn from_png(bytes: &[u8]) -> Option<Thumb> {
 
 /// The store key a book's cover is kept under.
 ///
-/// Named by the book and its size, so a file replaced by a new edition under
-/// the same name gets its own cover rather than the old one, and digested so
-/// that no path from the card is written into the store.
+/// Named by the book, its size and the name it was listed under, so a file
+/// replaced by another book gets its own cover rather than the old one, and
+/// digested so that no path from the card is written into the store.
 #[must_use]
-pub fn key(id: &str, bytes: u32) -> String {
-    let digest = kobo_bookview::positions::identity(&format!("cover:{id}:{bytes}"));
+pub fn key(id: &str, bytes: u32, listed: &str) -> String {
+    let digest = kobo_bookview::positions::identity(&format!("cover:{id}:{bytes}:{listed}"));
     format!("cover-{}", &digest[..32])
 }
 
@@ -203,12 +203,22 @@ pub enum Cover {
 /// What reading a book once told the shelf about it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Described {
-    /// The size the book was when it was read, so a replaced file is read
-    /// again rather than shown under the old book's name.
+    /// The size the book was when it was read, and the name the runtime
+    /// listed it under then, so a replaced file is read again rather than
+    /// shown under the old book's name.
     pub bytes: u32,
+    pub listed: String,
     pub title: Option<String>,
     pub author: Option<String>,
     pub cover: Cover,
+}
+
+impl Described {
+    /// Whether this record was made from the version of the book now listed.
+    #[must_use]
+    pub fn is_of(&self, bytes: u32, listed: &str) -> bool {
+        self.bytes == bytes && self.listed == listed
+    }
 }
 
 /// The record of described books, as bytes: one per line, tab-separated.
@@ -228,8 +238,9 @@ pub fn encode_described(books: &BTreeMap<String, Described>) -> Vec<u8> {
         };
         let _ = writeln!(
             out,
-            "{id}\t{}\t{}\t{}\t{cover}",
+            "{id}\t{}\t{}\t{}\t{}\t{cover}",
             book.bytes,
+            clean(&Some(book.listed.clone())),
             clean(&book.title),
             clean(&book.author)
         );
@@ -248,6 +259,7 @@ pub fn decode_described(bytes: &[u8]) -> BTreeMap<String, Described> {
             let mut fields = line.split('\t');
             let id = fields.next()?.to_owned();
             let bytes = fields.next()?.parse().ok()?;
+            let listed = fields.next()?.to_owned();
             let title = named(fields.next()?);
             let author = named(fields.next()?);
             let cover = match fields.next()? {
@@ -260,6 +272,7 @@ pub fn decode_described(bytes: &[u8]) -> BTreeMap<String, Described> {
                 id,
                 Described {
                     bytes,
+                    listed,
                     title,
                     author,
                     cover,
@@ -331,15 +344,17 @@ mod tests {
             "1/gutenbird/book-1a2b3c4d".to_owned(),
             Described {
                 bytes: 535_571,
+                listed: "book-1a2b3c4d".to_owned(),
                 title: Some("The Time\tMachine".to_owned()),
                 author: Some("H. G. Wells".to_owned()),
-                cover: Cover::Kept(key("1/gutenbird/book-1a2b3c4d", 535_571)),
+                cover: Cover::Kept(key("1/gutenbird/book-1a2b3c4d", 535_571, "book-1a2b3c4d")),
             },
         );
         books.insert(
             "0/notes.epub".to_owned(),
             Described {
                 bytes: 80,
+                listed: "notes".to_owned(),
                 title: None,
                 author: None,
                 cover: Cover::Missing,
@@ -379,11 +394,12 @@ mod tests {
 
     #[test]
     fn a_cover_key_fits_the_store_and_changes_with_the_file() {
-        let first = key("0/a.epub", 10);
+        let first = key("0/a.epub", 10, "a");
         // The store refuses a key longer than 64 bytes.
         assert!(first.len() <= 64);
         assert!(kobo_sdk::is_valid_key(&first));
-        assert_ne!(first, key("0/a.epub", 11));
+        assert_ne!(first, key("0/a.epub", 11, "a"));
+        assert_ne!(first, key("0/a.epub", 10, "Another book"));
     }
 
     #[test]

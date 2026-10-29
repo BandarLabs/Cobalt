@@ -132,6 +132,13 @@ impl Kind {
 struct Document {
     id: String,
     title: String,
+    /// What the runtime listed it as, before its own name replaced that.
+    ///
+    /// With its size, the only sign the file is still the one that was read:
+    /// the listing says nothing else about it. A stock-database title or a
+    /// package title changes with the book, so a file replaced by another of
+    /// exactly the same size is still noticed.
+    listed: String,
     /// From the book's own package, once it has been read.
     author: Option<String>,
     kind: Kind,
@@ -170,6 +177,7 @@ fn fixtures() -> Vec<Document> {
     let document = |id: &str, title: &str, kind, preview: &str, body: &str| Document {
         id: id.to_owned(),
         title: title.to_owned(),
+        listed: title.to_owned(),
         author: None,
         kind,
         preview: preview.to_owned(),
@@ -366,13 +374,13 @@ impl Books {
         self.documents = documents;
     }
 
-    /// The name and author a book's package gave it, when Books has read it
-    /// at this size.
+    /// The name and author a book's package gave it, when Books has read this
+    /// version of it.
     fn name(&self, document: &mut Document) {
         let Some(known) = self.described.get(&document.id) else {
             return;
         };
-        if known.bytes != document.bytes {
+        if !known.is_of(document.bytes, &document.listed) {
             return;
         }
         if let Some(title) = &known.title {
@@ -919,7 +927,7 @@ impl Books {
             return;
         }
         match self.described.get(&document.id) {
-            Some(known) if known.bytes == document.bytes => match &known.cover {
+            Some(known) if known.is_of(document.bytes, &document.listed) => match &known.cover {
                 Cover::Kept(key) => {
                     if !self.loading.contains_key(key) {
                         self.loading.insert(key.clone(), document.id.clone());
@@ -972,6 +980,7 @@ impl Books {
             return;
         };
         let size = self.documents[index].bytes;
+        let listed = self.documents[index].listed.clone();
         let description = kobo_doc::epub::describe(bytes).unwrap_or_default();
         let (width, height) = tile_pixels(context);
         let thumb = description
@@ -989,7 +998,7 @@ impl Books {
                 .filter(|png| kept < KEPT_COVERS && png.len() <= MAX_STORE_VALUE)
             {
                 Some(png) => {
-                    let key = covers::key(id, size);
+                    let key = covers::key(id, size, &listed);
                     context.store().save(key.clone(), png);
                     Cover::Kept(key)
                 }
@@ -1003,6 +1012,7 @@ impl Books {
             id.to_owned(),
             Described {
                 bytes: size,
+                listed,
                 title: description.title,
                 author: description.author,
                 cover,
@@ -1202,15 +1212,18 @@ impl Books {
     fn on_document_refused(&mut self, context: &mut Context) {
         if let Some(id) = self.describing.take() {
             // Not read, and not worth asking about again on every repaint.
-            let bytes = self
+            let (bytes, listed) = self
                 .documents
                 .iter()
                 .find(|document| document.id == id)
-                .map_or(0, |document| document.bytes);
+                .map_or((0, String::new()), |document| {
+                    (document.bytes, document.listed.clone())
+                });
             self.described.insert(
                 id,
                 Described {
                     bytes,
+                    listed,
                     title: None,
                     author: None,
                     cover: Cover::Missing,
@@ -1506,6 +1519,7 @@ fn from_entry(entry: LibraryEntry) -> Option<Document> {
     Some(Document {
         id: entry.id,
         preview: entry.title.clone(),
+        listed: entry.title.clone(),
         title: entry.title,
         author: None,
         kind,
@@ -1628,6 +1642,7 @@ mod tests {
         Document {
             id: "0/long-letter.txt".to_owned(),
             title: "A Long Letter".to_owned(),
+            listed: "A Long Letter".to_owned(),
             author: None,
             kind: Kind::Text,
             preview: "Line 1".to_owned(),
@@ -1838,7 +1853,7 @@ mod tests {
             id: "0/sea.epub".to_owned(),
             bytes: book,
         });
-        let key = covers::key("0/sea.epub", size);
+        let key = covers::key("0/sea.epub", size, "sea");
         let kept = saved(&commands, &key).expect("the cover was kept in the store");
         assert!(
             covers::from_png(&kept).is_some(),
@@ -1872,6 +1887,41 @@ mod tests {
             )),
             "the kept cover was not asked for"
         );
+    }
+
+    #[test]
+    fn a_book_replaced_by_another_of_the_same_size_is_read_again() {
+        let mut described = std::collections::BTreeMap::new();
+        described.insert(
+            "0/book.epub".to_owned(),
+            covers::Described {
+                bytes: 4096,
+                listed: "The First Book".to_owned(),
+                title: Some("The First Book".to_owned()),
+                author: None,
+                cover: covers::Cover::Missing,
+            },
+        );
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(
+            &mut runner,
+            None,
+            Some(covers::encode_described(&described)),
+            None,
+        );
+        let asked = runner.device_result(DeviceResult::Library {
+            entries: vec![entry("0/book.epub", "The Second Book", 1, 4096, true)],
+            truncated: false,
+        });
+        assert!(
+            asked.iter().any(|command| matches!(
+                command,
+                Command::Device(DeviceRequest::ReadLibrary { id }) if id == "0/book.epub"
+            )),
+            "a different book at the same path and size kept the first one's record"
+        );
+        assert_eq!(runner.app().documents[0].title, "The Second Book");
     }
 
     #[test]
