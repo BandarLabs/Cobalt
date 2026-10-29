@@ -2315,7 +2315,10 @@ mod tests {
         // Out is the owner's own folder; Vault is its package in the Sync
         // home, so nothing is ever written beside the owner's notes.
         assert_eq!(folders[0]["path"], json!(out));
-        assert_eq!(folders[1]["path"], json!(home.join("packages/vault")));
+        assert_eq!(
+            folders[1]["path"],
+            json!(home.join("packages").join("vault"))
+        );
         for folder in folders {
             assert_eq!(folder["devices"][0]["deviceID"], host_id);
             assert_eq!(folder["devices"][1]["deviceID"], kobo_id);
