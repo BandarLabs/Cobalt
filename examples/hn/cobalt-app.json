@@ -3,10 +3,10 @@
   "display_name": "Hacker News",
   "short_label": "Hacker News",
   "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "glyph": "news",
   "capabilities": [
     "network"
   ],
-  "release_notes": "A discussion that could not be fetched says why with Try again or Join Wi-Fi on the message, and the saved list offers Retry saving when it could not be written."
+  "release_notes": "On a Kobo Clara Colour or Libra Colour the bar across the top is Hacker News orange, and the buttons and the mark under the current list follow it. Black-and-white readers look exactly as before."
 }

@@ -348,6 +348,12 @@ struct DisplayEntry {
 }
 
 impl KoboApp for Launcher {
+    /// The platform's own blue: this screen is Cobalt itself rather than an
+    /// application running on it, and it wears the colour of the logo.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Cobalt)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.applications().installed();
         context.device().read_identity();
