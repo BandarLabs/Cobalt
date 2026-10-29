@@ -218,6 +218,50 @@ pub fn read(id: &str) -> Option<Vec<u8>> {
     read_in(&ROOTS.iter().map(PathBuf::from).collect::<Vec<_>>(), id)
 }
 
+/// Where the stock reader keeps its database, relative to the card.
+const STOCK_DATABASE: &str = ".kobo/KoboReader.sqlite";
+
+/// The documents under `roots`, plus the stock library a copy of the card
+/// holds at its first root.
+///
+/// The reader lists the stock reader's database from its card. A simulator's
+/// library folder stands in for the card, so a database kept where the card
+/// keeps one is read the same way, and the shelf of Kobo Store books can be
+/// seen and tried without a reader.
+#[must_use]
+pub fn list_with_stock_in(roots: &[PathBuf]) -> Listing {
+    let mut listing = list_in(roots);
+    if let Some(card) = roots.first() {
+        let database = card.join(STOCK_DATABASE);
+        if database.is_file() {
+            nickel::merge_from(&mut listing, &database, roots);
+        }
+    }
+    listing
+}
+
+/// The bytes of a document [`list_with_stock_in`] listed.
+///
+/// A stock-library book is named by its path. On the reader that path comes
+/// from the reader's own database; here the database is a copy anybody could
+/// have written, so a book it names is read only from inside one of `roots`.
+#[must_use]
+pub fn read_with_stock_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
+    let Some(path) = id.strip_prefix("n/") else {
+        return read_in(roots, id);
+    };
+    let real = Path::new(path).canonicalize().ok()?;
+    let inside = roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .any(|root| real.starts_with(root));
+    if inside {
+        nickel::read(id)
+    } else {
+        None
+    }
+}
+
 /// The wire form of one listing entry.
 #[must_use]
 pub fn to_wire(entry: Entry) -> kobo_protocol::LibraryEntry {
@@ -929,6 +973,60 @@ mod tests {
             .map(|entry| entry.title.as_str())
             .collect();
         assert_eq!(titles, ["Pride and Prejudice"], "listed once, by its title");
+    }
+
+    #[test]
+    fn a_copy_of_the_card_lists_and_reads_its_stock_library_but_only_inside_the_roots() {
+        let card = scratch("stock-card");
+        let kepubs = card.join(".kobo").join("kepub");
+        fs::create_dir_all(&kepubs).expect("the stock reader's folders");
+        let kepub = kepubs.join("1f7e9c2a");
+        fs::write(&kepub, a_book_called("Piranesi")).expect("a store book");
+        let elsewhere = scratch("stock-elsewhere").join("secret.epub");
+        fs::write(&elsewhere, a_book_called("Not a card book")).expect("a file off the card");
+        let database = card.join(".kobo").join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES
+                    ('file://{}', 'Piranesi', 'application/x-kobo-epub+zip', 'true', 9, '6'),
+                    ('file://{}', 'Outside', 'application/epub+zip', 'true', 9, '6'),
+                    ('7a866127', 'Cloud Atlas', 'application/x-kobo-epub+zip', 'false', 0, '6');",
+                kepub.canonicalize().expect("a real path").display(),
+                elsewhere.canonicalize().expect("a real path").display(),
+            ))
+            .expect("the rows");
+        drop(connection);
+        let roots = [card];
+        let listing = super::list_with_stock_in(&roots);
+        let found: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.kind, entry.on_card))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Cloud Atlas", Kind::Kepub, false),
+                ("Outside", Kind::Epub, true),
+                ("Piranesi", Kind::Kepub, true),
+            ]
+        );
+        let id = |title: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.title == title)
+                .map(|entry| entry.id.clone())
+                .expect("listed")
+        };
+        assert!(super::read_with_stock_in(&roots, &id("Piranesi")).is_some());
+        assert!(
+            super::read_with_stock_in(&roots, &id("Outside")).is_none(),
+            "a copied database named a file outside the card and it was read"
+        );
     }
 
     #[test]

@@ -7,11 +7,13 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import sqlite3
 import contextlib
 import shutil
 import subprocess
 import tempfile
 import time
+import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -66,8 +68,58 @@ def seed(app, state, kobo, env, log):
         library = Path(state) / 'cobalt-sim-data' / 'library'
         library.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'apps/calibre-web/fixtures/river.epub', library / 'River.epub')
+        seed_stock_library(library)
     elif app == 'parser':
         run('parser', 'push', str(ROOT / 'apps/parser/fixtures/lamplight.z3'), '--sim')
+
+
+def write_epub(path, title, author, words):
+    """The smallest EPUB a reader accepts: a stored mimetype, a container,
+    a package and one chapter."""
+    package = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f'<dc:title>{title}</dc:title><dc:creator>{author}</dc:creator></metadata>'
+        '<manifest><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/></manifest>'
+        '<spine><itemref idref="one"/></spine></package>')
+    container = (
+        '<?xml version="1.0"?><container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/book.opf" media-type="application/oebps-package+xml"/>'
+        '</rootfiles></container>')
+    with zipfile.ZipFile(path, 'w') as book:
+        book.writestr(zipfile.ZipInfo('mimetype'), 'application/epub+zip',
+                      compress_type=zipfile.ZIP_STORED)
+        book.writestr('META-INF/container.xml', container, compress_type=zipfile.ZIP_DEFLATED)
+        book.writestr('OEBPS/book.opf', package, compress_type=zipfile.ZIP_DEFLATED)
+        book.writestr('OEBPS/one.xhtml',
+                      f'<html><body><h1>{title}</h1><p>{words}</p></body></html>',
+                      compress_type=zipfile.ZIP_DEFLATED)
+
+
+def seed_stock_library(card):
+    """A stock reader's database on the simulated card, as the reader keeps one.
+
+    Books lists Kobo Store titles from it on a shelf of their own: one whose
+    file is on the card, kept where the stock reader keeps downloads, and one
+    that is in the account but not downloaded.
+    """
+    kobo = card / '.kobo'
+    kepubs = kobo / 'kepub'
+    kepubs.mkdir(parents=True, exist_ok=True)
+    kepub = kepubs / '5f1c7e2a-0d3b-4a8e-9c61-7b2d4e8f9a10'
+    write_epub(kepub, 'The Lighthouse Keeper', 'A. Keeper',
+               'The lamp was lit at dusk, as it had been every night for forty years.')
+    with sqlite3.connect(kobo / 'KoboReader.sqlite') as database:
+        database.execute(
+            'CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT, '
+            'IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT)')
+        database.executemany('INSERT INTO content VALUES (?, ?, ?, ?, ?, ?)', [
+            (f'file://{kepub.resolve()}', 'The Lighthouse Keeper',
+             'application/x-kobo-epub+zip', 'true', kepub.stat().st_size, '6'),
+            ('7a866127-8d49-4541-ac08-4a279e0f07cd', 'A Winter Crossing',
+             'application/x-kobo-epub+zip', 'false', 0, '6'),
+        ])
 
 
 def route_directive(route):
