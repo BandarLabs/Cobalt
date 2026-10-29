@@ -4,8 +4,8 @@
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.9",
-  "release_notes": "When the collage is stale, the menu now says Out of date and when it last changed, in a plain sentence.",
+  "version": "0.1.10",
+  "release_notes": "On a Kobo Clara Colour or Libra Colour the bar across the top is green and the buttons follow it. Black-and-white readers look exactly as before.",
   "glyph": "app",
   "capabilities": [
     "keep-awake"

@@ -1722,8 +1722,8 @@ impl Hn {
 }
 
 impl KoboApp for Hn {
-    /// Hacker News has been orange since the site was a day old. A reader who
-    /// has seen it once knows whose bar this is before reading the title.
+    /// Hacker News is orange. A reader who has seen the site once knows whose
+    /// bar this is before reading the title.
     fn accent(&self) -> Option<kobo_sdk::Accent> {
         Some(kobo_sdk::Accent::Orange)
     }

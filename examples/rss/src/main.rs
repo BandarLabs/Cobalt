@@ -1855,8 +1855,8 @@ fn indexed(action: ActionId, prefix: &str, count: usize) -> Option<usize> {
 }
 
 impl KoboApp for Feeds {
-    /// The feed mark has been orange since Firefox drew it in 2004, and it is
-    /// the one colour every feed reader since has kept.
+    /// The feed icon is orange, and has been since Firefox introduced it in
+    /// 2004.
     fn accent(&self) -> Option<kobo_sdk::Accent> {
         Some(kobo_sdk::Accent::Orange)
     }

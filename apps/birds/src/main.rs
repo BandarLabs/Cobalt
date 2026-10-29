@@ -362,6 +362,12 @@ impl Birds {
 }
 
 impl KoboApp for Birds {
+    /// Green, for a field guide to birds. The collage it shows is already
+    /// drawn in colour on a reader that can show it.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Green)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         self.panel_width = u32::try_from(context.metrics().width).unwrap_or_default();
         self.panel_height = u32::try_from(context.metrics().height).unwrap_or_default();
