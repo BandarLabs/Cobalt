@@ -5,7 +5,6 @@ use super::tests::private_temp_dir;
 use super::{read_protocol_frame, write_protocol_frame, AppServer, AppSession};
 use kobo_protocol::{DeviceRequest, DeviceResult, Frame, Message, SecretTarget, TextOutcome};
 use kobo_ui::{ActionId, FieldKind, LayoutKind, NodeId, Screen, TopBar};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -38,7 +37,7 @@ fn application(
 ) -> thread::JoinHandle<(u32, DeviceResult)> {
     let socket = socket.to_path_buf();
     thread::spawn(move || {
-        let mut stream = UnixStream::connect(socket).expect("connect");
+        let mut stream = kobo_protocol::channel::connect(&socket).expect("connect");
         write_protocol_frame(
             &mut stream,
             &frame(
