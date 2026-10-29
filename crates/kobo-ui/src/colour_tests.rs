@@ -652,3 +652,237 @@ fn text_is_never_painted_in_a_colour_of_its_own() {
         );
     }
 }
+
+fn status(level: u8, charging: bool, signal: Signal) -> Status {
+    Status::standard("09:41", Some(Percent::new(level)), charging, signal, false)
+}
+
+fn painted_with_status(status: Status, appearance: Appearance) -> Surface {
+    let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Status"));
+    let chrome = Chrome::with_back(false)
+        .with_status(status)
+        .with_appearance(appearance);
+    let mut surface = Surface::new(
+        CLARA_BW_METRICS.width as usize,
+        CLARA_BW_METRICS.height as usize,
+    );
+    render_with(&screen, &CLARA_BW_METRICS, &chrome, &mut surface, None);
+    surface
+}
+
+#[test]
+fn the_battery_mark_is_red_when_low_green_when_charging_and_ink_otherwise() {
+    let red = Accent::Red.shades().strong;
+    let green = Accent::Green.shades().strong;
+    let low = painted_with_status(
+        status(LOW_BATTERY_PERCENT, false, Signal::Strong),
+        Appearance::Colour,
+    );
+    assert!(count_colour(&low, red) > 0, "a low battery is not red");
+    assert_eq!(count_colour(&low, green), 0);
+    let charging = painted_with_status(
+        status(LOW_BATTERY_PERCENT, true, Signal::Strong),
+        Appearance::Colour,
+    );
+    assert!(
+        count_colour(&charging, green) > 0,
+        "a charging battery is not green"
+    );
+    assert_eq!(count_colour(&charging, red), 0, "charging outranks low");
+    let fine = painted_with_status(status(72, false, Signal::Strong), Appearance::Colour);
+    assert!(fine.chroma.is_none(), "an ordinary battery took a colour");
+    // The number beside the mark stays ink: it is text.
+    let band = low
+        .pixels
+        .iter()
+        .zip(low.chroma.as_ref().expect("a colour band"))
+        .count();
+    assert!(band > 0);
+}
+
+#[test]
+fn the_radio_mark_is_amber_only_when_the_radio_is_on_and_nothing_gets_through() {
+    let amber = Accent::Amber.shades().strong;
+    let stuck = painted_with_status(status(72, false, Signal::Disconnected), Appearance::Colour);
+    assert!(
+        count_colour(&stuck, amber) > 0,
+        "a disconnected radio is not amber"
+    );
+    for signal in [Signal::Off, Signal::Weak, Signal::Fair, Signal::Strong] {
+        let surface = painted_with_status(status(72, false, signal), Appearance::Colour);
+        assert!(surface.chroma.is_none(), "{signal:?} took a colour");
+    }
+}
+
+#[test]
+fn the_status_band_stays_ink_on_a_grey_panel_whatever_the_battery_does() {
+    for (level, charging, signal) in [
+        (5, false, Signal::Disconnected),
+        (10, true, Signal::Strong),
+        (100, false, Signal::Off),
+    ] {
+        let surface = painted_with_status(status(level, charging, signal), Appearance::Grey);
+        assert!(surface.chroma.is_none());
+    }
+}
+
+fn square_grid(columns: u8, selected: Option<usize>) -> Node {
+    // One man on the board, which is what tells the layout this square grid
+    // is a draughts board with dark squares rather than a plain grid.
+    let cells = (0..usize::from(columns) * usize::from(columns))
+        .map(|index| {
+            let mut cell = Cell::new(ActionId(100 + index as u32), "");
+            if index == 0 {
+                cell.glyph = Some(Glyph::WhiteDraughtsMan);
+            }
+            cell.with_selected(selected == Some(index))
+        })
+        .collect();
+    Node::Grid {
+        id: NodeId(200),
+        columns,
+        square: true,
+        cells,
+    }
+}
+
+#[test]
+fn a_board_keeps_brown_squares_whatever_the_applications_accent_and_marks_the_square_in_hand() {
+    let brown = Accent::Brown.shades().tint;
+    for accent in [None, Some(Accent::Orange)] {
+        let board = Screen::new(1, vec![square_grid(8, None)]).with_accent(accent);
+        let painted = paint(&board, Appearance::Colour);
+        assert!(
+            count_colour(&painted, brown) > 0,
+            "no dark squares in brown"
+        );
+        assert_eq!(
+            count_colour(&painted, Accent::Orange.shades().tint),
+            0,
+            "the board took the application's colour"
+        );
+    }
+    // The selected light square takes the accent's tint, the only place the
+    // accent reaches a board.
+    let selected = Screen::new(1, vec![square_grid(8, Some(2))]).with_accent(Some(Accent::Teal));
+    let painted = paint(&selected, Appearance::Colour);
+    assert!(count_colour(&painted, Accent::Teal.shades().tint) > 0);
+    // Grey panels draw the surface grey they always did.
+    assert!(paint(&selected, Appearance::Grey).chroma.is_none());
+}
+
+#[test]
+fn a_plain_grids_selected_cells_keep_their_grey_because_selection_there_is_the_apps_to_define() {
+    // Minesweeper marks every covered square as selected. Fifteen tinted
+    // squares out of sixteen would be a field of colour, not a mark, so a
+    // grid without a board's light and dark squares keeps the quiet grey.
+    let cells = (0..16)
+        .map(|index| Cell::new(ActionId(600 + index), "").with_selected(index != 0))
+        .collect();
+    let covered = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(601),
+            columns: 4,
+            square: true,
+            cells,
+        }],
+    )
+    .with_accent(Some(Accent::Teal));
+    assert!(paint(&covered, Appearance::Colour).chroma.is_none());
+}
+
+#[test]
+fn a_crossword_lights_the_word_being_solved_in_the_accents_tint() {
+    let mut cells: Vec<Cell> = (0..9)
+        .map(|index| Cell::new(ActionId(300 + index), "A"))
+        .collect();
+    for cell in &mut cells {
+        cell.corner = Some(1);
+    }
+    cells[4].selected = true;
+    let crossword = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(301),
+            columns: 3,
+            square: true,
+            cells,
+        }],
+    );
+    let plain = paint(&crossword, Appearance::Colour);
+    assert!(
+        count_colour(&plain, Accent::Cobalt.shades().tint) > 0,
+        "no selection field"
+    );
+    assert!(paint(&crossword, Appearance::Grey).chroma.is_none());
+}
+
+#[test]
+fn a_selected_pencil_cell_is_the_boards_one_filled_control() {
+    let board = PencilBoard {
+        columns: 3,
+        rows: 3,
+        cell_tenth_mm: 90,
+        marks: (0..9)
+            .map(|index| PencilMark {
+                column: index % 3,
+                row: index / 3,
+                kind: PencilMarkKind::Digit {
+                    value: 1 + index,
+                    given: false,
+                },
+                action: Some(ActionId(400 + u32::from(index))),
+                selected: index == 4,
+                peer: index == 3 || index == 5,
+            })
+            .collect(),
+        edges: Vec::new(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![Node::PencilBoard {
+            id: NodeId(401),
+            board,
+        }],
+    )
+    .with_accent(Some(Accent::Purple));
+    let painted = paint(&screen, Appearance::Colour);
+    assert!(count_colour(&painted, Accent::Purple.shades().strong) > 0);
+    assert_eq!(
+        count_colour(&painted, Accent::Purple.shades().tint),
+        0,
+        "peers took a colour; they stay on the quiet grey"
+    );
+    assert!(paint(&screen, Appearance::Grey).chroma.is_none());
+}
+
+#[test]
+fn a_refused_field_is_tinted_red_under_its_note_and_an_accepted_one_is_not() {
+    let field = |error: Option<&str>| {
+        Screen::new(
+            1,
+            vec![Node::Field {
+                id: NodeId(500),
+                action: ActionId(501),
+                value: "nonsense".to_owned(),
+                placeholder: String::new(),
+                clear: None,
+                label: Some("Address".to_owned()),
+                hint: None,
+                error: error.map(str::to_owned),
+                kind: FieldKind::Text,
+            }],
+        )
+    };
+    let refused = paint(&field(Some("Not an address")), Appearance::Colour);
+    assert!(
+        count_colour(&refused, Accent::Red.shades().tint) > 0,
+        "no red field"
+    );
+    let accepted = paint(&field(None), Appearance::Colour);
+    assert!(accepted.chroma.is_none());
+    assert!(paint(&field(Some("Not an address")), Appearance::Grey)
+        .chroma
+        .is_none());
+}

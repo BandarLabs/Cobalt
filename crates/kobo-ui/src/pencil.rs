@@ -452,6 +452,7 @@ pub(super) fn draw_mark(
     kind: PencilMarkKind,
     style: MarkStyle,
     metrics: &DisplayMetrics,
+    palette: crate::Palette,
     clip: Rect,
 ) {
     let MarkStyle {
@@ -485,15 +486,18 @@ pub(super) fn draw_mark(
         }
         PencilMarkKind::Block => fill_clipped(surface, rect, tone::INK, clip),
         PencilMarkKind::Digit { .. } | PencilMarkKind::Candidates(_) => {
+            // The selected cell is the one filled control of the board, and
+            // takes the accent the way a primary button does; its digit is
+            // reversed out in paper either way. Peers stay on the quiet grey.
             fill_clipped(
                 surface,
                 rect,
                 if selected {
-                    tone::INK
+                    palette.emphasis()
                 } else if peer {
-                    tone::SURFACE
+                    crate::Paint::Grey(tone::SURFACE)
                 } else {
-                    tone::PAPER
+                    crate::Paint::Grey(tone::PAPER)
                 },
                 clip,
             );

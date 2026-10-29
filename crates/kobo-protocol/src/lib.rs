@@ -738,6 +738,11 @@ pub enum Message {
         /// The reader's accessibility preference. Applications receive this
         /// before laying out or paginating any content.
         text_scale: TextScale,
+        /// Whether the panel can show colour, so an application that has a
+        /// picture in colour knows whether sending it in colour buys anything
+        /// for three times the bytes. Carried from protocol 17; an older
+        /// application never reads it and is told nothing.
+        colour_panel: bool,
     },
     SetScreen(Screen),
     /// Selects the application's logical viewport for subsequent screens.
@@ -2239,11 +2244,17 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             height,
             pixels_per_inch,
             text_scale,
+            colour_panel,
         } => {
             push_u16(&mut payload, *width);
             push_u16(&mut payload, *height);
             push_u16(&mut payload, *pixels_per_inch);
             payload.push(text_scale.wire_value());
+            // After everything a protocol-16 application reads, and only for
+            // one that reads further.
+            if frame.version >= ACCENT_VERSION {
+                payload.push(u8::from(*colour_panel));
+            }
         }
         Message::SetScreen(screen) => {
             let mut count = 0;
@@ -2868,7 +2879,7 @@ fn begin_picture_layout(
 fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
-        Message::Welcome { .. } => Ok((2, 7)),
+        Message::Welcome { .. } => Ok((2, if version >= ACCENT_VERSION { 8 } else { 7 })),
         Message::SetScreen(screen) => {
             let mut count = 0;
             Ok((3, encoded_screen_len(screen, 0, &mut count, version)?))
@@ -5110,6 +5121,15 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             pixels_per_inch: reader.u16()?,
             text_scale: TextScale::from_wire(reader.u8()?)
                 .ok_or(ProtocolError::InvalidValue("text scale"))?,
+            colour_panel: if version >= ACCENT_VERSION {
+                match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("colour panel flag")),
+                }
+            } else {
+                false
+            },
         },
         3 => {
             let mut count = 0;

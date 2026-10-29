@@ -104,3 +104,40 @@ fn every_protocol_from_the_dictionary_on_is_still_accepted() {
     assert!(!accepted_version(VERSION + 1));
     assert!(!accepted_version(DICTIONARY_VERSION - 1));
 }
+
+#[test]
+fn the_welcome_names_the_panel_only_to_an_application_that_can_read_it() {
+    let welcome = |version: u8, colour_panel: bool| Frame {
+        version,
+        request_id: 1,
+        message: Message::Welcome {
+            width: 1072,
+            height: 1448,
+            pixels_per_inch: 300,
+            text_scale: TextScale::Default,
+            colour_panel,
+        },
+    };
+    let current = encode(&welcome(VERSION, true)).expect("encodes");
+    let older = encode(&welcome(BEFORE, true)).expect("encodes");
+    assert_eq!(current.len(), older.len() + 1);
+    assert_eq!(
+        decode(&current).expect("decodes").message,
+        welcome(VERSION, true).message
+    );
+    // A protocol-16 application is told nothing, and reads nothing.
+    assert_eq!(
+        decode(&older).expect("decodes").message,
+        welcome(BEFORE, false).message
+    );
+    assert_eq!(
+        encode(&welcome(BEFORE, false)).expect("encodes"),
+        older,
+        "the flag changed the bytes of a protocol-16 welcome"
+    );
+    // The flag is a flag: anything but zero or one is a malformed frame.
+    let mut bytes = current;
+    let last = bytes.len() - 1;
+    bytes[last] = 7;
+    assert!(decode(&bytes).is_err());
+}

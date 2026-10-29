@@ -816,6 +816,7 @@ impl AppServer {
                     height: u16::try_from(PROFILE.height).unwrap_or(u16::MAX),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: profile_metrics().text_scale,
+                    colour_panel: PROFILE.colour_panel,
                 },
             },
         )?;
@@ -6177,6 +6178,7 @@ mod tests {
                     height: u16::try_from(PROFILE.height).expect("profile height"),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: kobo_ui::TextScale::Default,
+                    colour_panel: PROFILE.colour_panel,
                 }
             );
             write_protocol_frame(

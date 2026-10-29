@@ -814,7 +814,7 @@ mod colour;
 mod environment;
 pub mod vector;
 
-pub use colour::{Accent, Appearance, Paint, Palette, Shades, PANEL_LEVEL};
+pub use colour::{Accent, Appearance, Paint, Palette, Shades, LOW_BATTERY_PERCENT, PANEL_LEVEL};
 
 /// Grayscale values used by the built-in monochrome design system.
 ///
@@ -1295,6 +1295,12 @@ pub enum CellStyle {
     Board,
     /// A shaded playable square on a conventional draughts board.
     BoardDark,
+    /// A light square on a chess or draughts board, where selection means
+    /// the square in hand and is shown as a tinted field. Kept apart from
+    /// [`Self::Board`] because a plain grid's selection means whatever its
+    /// application says it means, Minesweeper's covered squares among them,
+    /// and a field of colour under fifteen covered squares is not a mark.
+    BoardLight,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
@@ -4914,8 +4920,10 @@ pub enum LayoutKind {
     /// A row's overflow mark: a finger-wide target against the right edge,
     /// hit-tested ahead of the row it sits in because it is pushed after it.
     RowMenu(ActionId),
-    /// A text field's border and its tap target.
-    Field(ActionId),
+    /// A text field's border and its tap target, and whether its value was
+    /// refused, which a colour panel shows as a tinted field under the note
+    /// that says why.
+    Field(ActionId, bool),
     /// What is in the field, or its placeholder when it is empty. The bool is
     /// which, because the two are drawn in different tones and the drawing
     /// pass must not have to consult the tree to find out.
@@ -5151,7 +5159,7 @@ impl LayoutKind {
             | Self::NavDestination(action, ..)
             | Self::NavDestinationSelected(action, ..)
             | Self::Tile(action, ControlState::Enabled)
-            | Self::Field(action)
+            | Self::Field(action, _)
             | Self::FieldClear(action)
             | Self::Chip(action, _)
             | Self::Tab(action, _)
@@ -5455,7 +5463,7 @@ impl Layout {
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(..)
                         | LayoutKind::Tile(_, ControlState::Enabled)
-                        | LayoutKind::Field(_)
+                        | LayoutKind::Field(..)
                         | LayoutKind::FieldClear(_)
                         | LayoutKind::Chip(_, _)
                         | LayoutKind::Tab(_, _)
@@ -6759,7 +6767,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Field(*action),
+                kind: LayoutKind::Field(*action, error.is_some()),
                 text_lines: Vec::new(),
             });
             // The cross is a control in its own right and must clear a finger,
@@ -7734,6 +7742,8 @@ fn layout_node(
                     CellStyle::Plain
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
+                } else if draughts_board || chess_board {
+                    CellStyle::BoardLight
                 } else {
                     style
                 };
@@ -13745,7 +13755,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(..)
             | LayoutKind::Tile(..)
-            | LayoutKind::Field(_)
+            | LayoutKind::Field(..)
             | LayoutKind::FieldClear(_)
             | LayoutKind::Chip(_, _)
             | LayoutKind::Tab(_, _)
@@ -14465,13 +14475,18 @@ fn render_all_with_selected_font(
             // The border is the whole control: a field with only a baseline
             // under it reads as an underlined word, and one with a fill reads
             // as a button that has already been pressed.
-            LayoutKind::Field(_) => stroke_clipped(
-                surface,
-                node.rect,
-                tone::RULE,
-                metrics.rule_thickness(),
-                clip,
-            ),
+            LayoutKind::Field(_, error) => {
+                if error {
+                    fill_clipped(surface, node.rect, palette.field_error(), clip);
+                }
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
             LayoutKind::FieldValue(empty) => draw_lines(
                 surface,
                 &node.text_lines,
@@ -14812,7 +14827,7 @@ fn render_all_with_selected_font(
             // looks like a mistake.
             LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
                 if selected {
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
                 }
                 // Two edges rather than four. Crossword squares are drawn
                 // touching, so a box around each one puts two rules along
@@ -14853,6 +14868,27 @@ fn render_all_with_selected_font(
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
             }
+            // The square in hand on a board with light and dark squares takes
+            // the accent's tint. A plain grid's selected cell keeps the quiet
+            // grey, because what selection means there is the application's
+            // business and is not always one cell.
+            LayoutKind::Cell(_, CellStyle::BoardLight, true) => {
+                fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::BoardLight, false) => stroke_clipped(
+                surface,
+                node.rect,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -14871,7 +14907,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                fill_clipped(surface, node.rect, palette.board_dark(), clip);
                 stroke_clipped(
                     surface,
                     node.rect,
@@ -14881,10 +14917,10 @@ fn render_all_with_selected_font(
                 );
             }
             LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
-                draw_backgammon_point(surface, node.rect, true, metrics, clip);
+                draw_backgammon_point(surface, node.rect, true, metrics, palette, clip);
             }
             LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
-                draw_backgammon_point(surface, node.rect, false, metrics, clip);
+                draw_backgammon_point(surface, node.rect, false, metrics, palette, clip);
             }
             LayoutKind::BackgammonStack(glyph, count, from_top) => {
                 draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
@@ -14955,6 +14991,7 @@ fn render_all_with_selected_font(
                         box_mask,
                     },
                     metrics,
+                    palette,
                     clip,
                 );
             }
@@ -15253,7 +15290,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::StatusMark(mark) => {
-                draw_status_mark(surface, mark, node.rect, metrics, clip);
+                draw_status_mark(surface, mark, node.rect, metrics, palette, clip);
             }
             LayoutKind::TopBarTitle => draw_lines(
                 surface,
@@ -16679,6 +16716,7 @@ fn draw_status_mark(
     mark: StatusMark,
     rect: Rect,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let size = rect.height * 7 / 10;
@@ -16690,7 +16728,14 @@ fn draw_status_mark(
     };
     match mark {
         StatusMark::Signal(strength) => {
-            blit_vector_crisp(surface, &vector::wifi(strength), size, square, clip);
+            blit_vector_crisp_in(
+                surface,
+                &vector::wifi(strength),
+                size,
+                square,
+                clip,
+                palette.signal(strength),
+            );
         }
         StatusMark::Bluetooth => {
             blit_vector_crisp(
@@ -16712,7 +16757,14 @@ fn draw_status_mark(
                 ..square
             };
             let shapes = vector::battery(level, charging);
-            blit_vector_crisp(surface, &shapes, glyph.width, glyph, clip);
+            blit_vector_crisp_in(
+                surface,
+                &shapes,
+                glyph.width,
+                glyph,
+                clip,
+                palette.battery(level, charging),
+            );
             // Set against the battery, so a short number leaves its spare room
             // on the side away from the glyph rather than between them.
             let text = format!("{}%", level.get());
@@ -16807,11 +16859,12 @@ fn blit_vector_crisp_in(
     size: i32,
     rect: Rect,
     clip: Rect,
-    tone: u8,
+    paint: impl Into<Paint>,
 ) {
     if size <= 0 {
         return;
     }
+    let paint = paint.into();
     let coverage = vector::render(shapes, size);
     let origin_x = rect.x + (rect.width - size) / 2;
     let origin_y = rect.y + (rect.height - size) / 2;
@@ -16824,7 +16877,10 @@ fn blit_vector_crisp_in(
             if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
                 continue;
             }
-            surface.blend(x, y, tone, 255);
+            match paint {
+                Paint::Grey(tone) => surface.blend(x, y, tone, 255),
+                Paint::Colour(colour) => surface.blend_colour(x, y, colour, 255),
+            }
         }
     }
 }
@@ -17007,13 +17063,14 @@ fn draw_backgammon_point(
     rect: Rect,
     from_top: bool,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let paper_point = (rect.x / rect.width.max(1)).rem_euclid(2) == 0;
     let fill = if paper_point {
-        tone::SURFACE
+        palette.board_dark()
     } else {
-        tone::PAPER
+        Paint::Grey(tone::PAPER)
     };
     let height = rect.height.max(1);
     let centre = rect.x + rect.width / 2;

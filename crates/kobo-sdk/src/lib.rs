@@ -542,6 +542,10 @@ pub struct Context {
     next_task: u32,
     in_flight: usize,
     metrics: DisplayMetrics,
+    /// Whether the reader's panel shows colour, as the runtime said when this
+    /// application connected. False under a runner that never connected, so
+    /// an application's own tests see a greyscale reader unless they ask.
+    colour_panel: bool,
     /// Work the runner should try once more if it comes back retryable.
     ///
     /// Collected here and drained by the runner, because a context is built
@@ -569,6 +573,41 @@ impl Context {
     #[must_use]
     pub const fn metrics(&self) -> DisplayMetrics {
         self.metrics
+    }
+
+    /// Whether the reader's panel shows colour.
+    ///
+    /// For the one decision an application makes about colour: whether to
+    /// read a picture in colour and send it that way, which costs three times
+    /// the bytes and buys nothing on a greyscale reader. Everything else that
+    /// is coloured on a colour panel, the accent and the controls, is the
+    /// runtime's doing and needs no asking.
+    #[must_use]
+    pub const fn panel_shows_colour(&self) -> bool {
+        self.colour_panel
+    }
+
+    /// [`Self::put_picture`] or [`Self::put_colour_picture`], whichever the
+    /// panel can show.
+    ///
+    /// The grey plane is always needed, because it is what a greyscale
+    /// reader draws and what the runtime plans refreshes from; the colour
+    /// plane is sent only when it exists and the panel has a filter to show
+    /// it through. One call, so an application that reads with
+    /// `kobo_image::decode_colour` on a colour reader and `decode` elsewhere
+    /// has nothing else to decide.
+    pub fn put_picture_shown(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+        colour: Option<Vec<u8>>,
+    ) -> Option<TilePicture> {
+        match colour {
+            Some(rgb) if self.colour_panel => self.put_colour_picture(handle, width, height, rgb),
+            _ => self.put_picture(handle, width, height, grey),
+        }
     }
 
     /// The same panel, measured at a different text size.
@@ -2954,6 +2993,9 @@ pub const RETRY_DELAY_SECONDS: u32 = 3;
 pub struct AppRunner<A> {
     app: A,
     metrics: DisplayMetrics,
+    /// What the runtime said about the panel at the handshake; see
+    /// [`Context::panel_shows_colour`].
+    colour_panel: bool,
     started: bool,
     pending: VecDeque<DeviceRequest>,
     /// Text fields the runtime is holding open for this application. Kept
@@ -3017,6 +3059,7 @@ impl<A: KoboApp> AppRunner<A> {
         Self {
             app,
             metrics: DisplayMetrics::default(),
+            colour_panel: false,
             started: false,
             pending: VecDeque::new(),
             pending_text: 0,
@@ -3070,8 +3113,17 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: self.next_task,
             in_flight: self.in_flight,
             metrics: self.metrics,
+            colour_panel: self.colour_panel,
             retrying: Vec::new(),
         }
+    }
+
+    /// Tells the runner what the runtime said about the panel, so every
+    /// context it builds can answer [`Context::panel_shows_colour`].
+    #[must_use]
+    pub const fn showing_colour(mut self, colour_panel: bool) -> Self {
+        self.colour_panel = colour_panel;
+        self
     }
 
     pub fn start(&mut self) -> Vec<Command> {
@@ -3333,6 +3385,7 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: self.next_task,
             in_flight: self.in_flight,
             metrics: self.metrics,
+            colour_panel: self.colour_panel,
             retrying: Vec::new(),
         };
         if std::mem::take(&mut self.settled) {
@@ -3505,6 +3558,7 @@ pub struct Client {
     next_request: u32,
     metrics: DisplayMetrics,
     simulator_callbacks: bool,
+    colour_panel: bool,
 }
 
 impl Client {
@@ -3542,6 +3596,7 @@ impl Client {
             height,
             pixels_per_inch,
             text_scale,
+            colour_panel,
         } = response.message
         else {
             return Err(ClientError::UnexpectedMessage);
@@ -3556,7 +3611,14 @@ impl Client {
                 pixels_per_inch: i32::from(pixels_per_inch),
                 text_scale,
             },
+            colour_panel,
         })
+    }
+
+    /// Whether the runtime said its panel shows colour.
+    #[must_use]
+    pub const fn colour_panel(&self) -> bool {
+        self.colour_panel
     }
 
     /// The panel this application is running on.
@@ -4088,6 +4150,7 @@ mod tests {
             next_task: 1,
             in_flight: 0,
             metrics: DisplayMetrics::default(),
+            colour_panel: false,
             retrying: Vec::new(),
         }
     }
@@ -4734,6 +4797,7 @@ mod tests {
                     version: kobo_protocol::VERSION,
                     request_id: hello.request_id,
                     message: Message::Welcome {
+                        colour_panel: false,
                         width: 1072,
                         height: 1448,
                         pixels_per_inch: 300,
@@ -4766,6 +4830,7 @@ mod tests {
                     version: kobo_protocol::VERSION,
                     request_id: hello.request_id,
                     message: Message::Welcome {
+                        colour_panel: false,
                         width: 1072,
                         height: 1448,
                         pixels_per_inch: 300,
@@ -4833,6 +4898,7 @@ mod tests {
             next_task: 1,
             in_flight: 0,
             metrics: CLARA_BW_METRICS,
+            colour_panel: false,
             retrying: Vec::new(),
         };
         assert!(context
@@ -5334,7 +5400,8 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
     // still one shared answer rather than two different ones.
     #[cfg(feature = "text")]
     let _ = kobo_text::install(client.metrics());
-    let mut runner = AppRunner::with_metrics(app, client.metrics());
+    let mut runner =
+        AppRunner::with_metrics(app, client.metrics()).showing_colour(client.colour_panel());
     client.send_commands(runner.start())?;
 
     // A test harness needs the application to settle and leave rather than wait

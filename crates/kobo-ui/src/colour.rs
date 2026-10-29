@@ -13,7 +13,7 @@
 //! colour at half the resolution of the greys. Three things follow and shape
 //! everything in this module. Colours are pale, because the filter sits over
 //! ink that is never brighter than paper, so a palette tuned for a phone comes
-//! out as mud; every shade below is one of the 4096 the panel can resolve, so
+//! out dull; every shade below is one of the 4096 the panel can resolve, so
 //! what is sent is what is drawn rather than what a controller rounds it to.
 //! Colour is coarse, so it goes on bands and fills a few millimetres across
 //! and never on text, whose tone is always decided by what it sits on. And
@@ -21,7 +21,13 @@
 //! keeps its bar, because a reader who cannot tell red from green, or whose
 //! panel has faded, loses nothing.
 
-use crate::{tone, BannerLevel};
+use crate::{tone, BannerLevel, Percent, Signal};
+
+/// The charge at or below which the battery mark turns red on a colour
+/// panel. A fifth is where every phone platform draws the line, and it is
+/// the point at which a reader who has not looked at the number all day
+/// should find out before the panel goes dark mid-chapter.
+pub const LOW_BATTERY_PERCENT: u8 = 20;
 
 /// How the panel in front of the painter shows the roles a screen is drawn in.
 ///
@@ -53,8 +59,8 @@ pub enum Appearance {
 ///
 /// An accent is the application's own colour, the way Hacker News is orange,
 /// and it is one decision rather than several: the top bar, the primary
-/// control and every selected state follow it together, so a Store of
-/// applications reads as one platform rather than a bag of themes. A screen
+/// control and every selected state follow it together, so the Store's
+/// applications read as one platform rather than a set of themes. A screen
 /// that names none is drawn in the platform's own [`Accent::Cobalt`], with
 /// its bar left on paper. A greyscale panel ignores the accent entirely.
 ///
@@ -314,6 +320,90 @@ impl Palette {
     #[must_use]
     pub const fn banner_edge(self) -> Paint {
         if self.colour() {
+            Paint::Colour(Accent::Amber.shades().strong)
+        } else {
+            Paint::Grey(tone::INK)
+        }
+    }
+
+    /// Where the reader is working: the word a crossword is solving, the
+    /// square a finger is on, a cell picked out of a grid.
+    ///
+    /// The quiet surface grey on a greyscale panel, as it always was, and the
+    /// accent's tint on a colour one. A tint rather than the strong shade
+    /// because the marks on these cells are letters and digits that stay in
+    /// ink, and ink wants a light field under it.
+    #[must_use]
+    pub const fn selection_field(self) -> Paint {
+        if self.colour() {
+            Paint::Colour(self.shades().tint)
+        } else {
+            Paint::Grey(tone::SURFACE)
+        }
+    }
+
+    /// The dark squares of a board, and the shaded points of a backgammon
+    /// table.
+    ///
+    /// Brown rather than the application's accent, whatever the accent is,
+    /// because a board is a board: chess has been played on light and dark
+    /// wood for as long as it has been played, and a reader opening a game on
+    /// this panel should see the board they know rather than the application's
+    /// colour. Surface grey on a greyscale panel.
+    #[must_use]
+    pub const fn board_dark(self) -> Paint {
+        if self.colour() {
+            Paint::Colour(Accent::Brown.shades().tint)
+        } else {
+            Paint::Grey(tone::SURFACE)
+        }
+    }
+
+    /// The field under a text entry whose value was refused.
+    ///
+    /// The platform's red tint on a colour panel, so the field itself says
+    /// what the note under it says in words. Paper on a greyscale panel, which
+    /// is what the inside of a field has always been, so painting it changes
+    /// nothing there.
+    #[must_use]
+    pub const fn field_error(self) -> Paint {
+        if self.colour() {
+            Paint::Colour(Accent::Red.shades().tint)
+        } else {
+            Paint::Grey(tone::PAPER)
+        }
+    }
+
+    /// The battery mark in the status band.
+    ///
+    /// Red at [`LOW_BATTERY_PERCENT`] and below, green while charging, and
+    /// ink the rest of the time, which is most of the time: the colour is for
+    /// the two states that mean something is happening to the reader, not a
+    /// gauge. Ink on a greyscale panel, where the number beside the mark
+    /// carries the whole message, as it always has.
+    #[must_use]
+    pub const fn battery(self, level: Percent, charging: bool) -> Paint {
+        if !self.colour() {
+            return Paint::Grey(tone::INK);
+        }
+        if charging {
+            Paint::Colour(Accent::Green.shades().strong)
+        } else if level.get() <= LOW_BATTERY_PERCENT {
+            Paint::Colour(Accent::Red.shades().strong)
+        } else {
+            Paint::Grey(tone::INK)
+        }
+    }
+
+    /// The radio mark in the status band.
+    ///
+    /// Amber when the radio is on and nothing gets through, which is the one
+    /// state a reader has to act on and the one that is otherwise easiest to
+    /// mistake for a working connection. Off is drawn struck through and
+    /// stays ink: it is a choice, not a fault. Every working strength is ink.
+    #[must_use]
+    pub const fn signal(self, signal: Signal) -> Paint {
+        if self.colour() && matches!(signal, Signal::Disconnected) {
             Paint::Colour(Accent::Amber.shades().strong)
         } else {
             Paint::Grey(tone::INK)

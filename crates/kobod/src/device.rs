@@ -4948,6 +4948,9 @@ fn greet(
                 pixels_per_inch: u16::try_from(crate::device_metrics().pixels_per_inch)
                     .unwrap_or(u16::MAX),
                 text_scale: crate::device_metrics().text_scale,
+                // Known from the same verified profile as the metrics, so an
+                // application is told about the panel it is actually on.
+                colour_panel: crate::device_colour_panel(),
             },
         },
     )
