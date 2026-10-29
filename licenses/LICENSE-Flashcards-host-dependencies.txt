@@ -8903,7 +8903,7 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ===============================================================================
 GNU Affero General Public License v3.0 [AGPL-3.0]
-Used by: anki 0.0.0, anki_i18n 0.0.0, anki_io 0.0.0, anki_proto 0.0.0, anki_proto_gen 0.0.0, kobo-doc 0.3.30, kobo-flashcards-format 0.3.30, kobo-flashcards-import 0.3.10, kobo-html 0.3.30, kobo-image 0.3.30, kobo-text 0.3.30, kobo-ui 0.3.30
+Used by: anki 0.0.0, anki_i18n 0.0.0, anki_io 0.0.0, anki_proto 0.0.0, anki_proto_gen 0.0.0, kobo-doc 0.3.31, kobo-flashcards-format 0.3.31, kobo-flashcards-import 0.3.10, kobo-html 0.3.31, kobo-image 0.3.31, kobo-text 0.3.31, kobo-ui 0.3.31
 -------------------------------------------------------------------------------
 GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007
@@ -10267,7 +10267,7 @@ SOFTWARE.
 
 ===============================================================================
 MIT License [MIT]
-Used by: difflib 0.4.0, libm 0.2.16
+Used by: difflib 0.4.0, libm 0.2.16, qrcodegen 1.8.0
 -------------------------------------------------------------------------------
 MIT License
 
