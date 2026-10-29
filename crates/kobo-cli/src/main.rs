@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{IsTerminal, Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -1896,8 +1897,8 @@ fn stream_authority() -> Result<PathBuf, String> {
     let root = if let Some(value) = std::env::var_os("KOBO_STREAM_CONFIG_DIR") {
         PathBuf::from(value)
     } else {
-        let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-        PathBuf::from(home).join(".config").join("kobo")
+        let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+        home.join(".config").join("kobo")
     };
     stream_authority_in(&root)
 }
@@ -1934,7 +1935,11 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     eprintln!("{pairing}\n");
-    let (command, title) = stream_preset(&arguments[0], std::env::var("SHELL").ok().as_deref())?;
+    #[cfg(unix)]
+    let shell = std::env::var("SHELL").ok();
+    #[cfg(windows)]
+    let shell = std::env::var("COMSPEC").ok();
+    let (command, title) = stream_preset(&arguments[0], shell.as_deref())?;
     eprintln!(
         "Open Paperterm on your reader and connect to this computer. Keep the computer awake."
     );
@@ -1969,13 +1974,32 @@ fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'stat
             ))
         }
         "terminal" => {
-            let shell = shell.unwrap_or("/bin/sh");
+            // The login-shell flag is a Unix convention; cmd.exe takes none,
+            // and its home is COMSPEC rather than SHELL.
+            #[cfg(unix)]
+            let fallback = "/bin/sh";
+            #[cfg(windows)]
+            let fallback = "C:\\Windows\\System32\\cmd.exe";
+            let shell = shell.unwrap_or(fallback);
             if !Path::new(shell).is_absolute() || !Path::new(shell).is_file() {
+                #[cfg(unix)]
                 return Err("Your default shell is unavailable. Set SHELL to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
+                #[cfg(windows)]
+                return Err("Your default shell is unavailable. Set COMSPEC to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
             }
-            Ok((vec![shell.into(), "-l".into()], "Terminal"))
+            #[cfg(unix)]
+            return Ok((vec![shell.into(), "-l".into()], "Terminal"));
+            #[cfg(windows)]
+            return Ok((vec![shell.into()], "Terminal"));
         }
+        #[cfg(unix)]
         "monitor" => Ok((vec!["top".into()], "System monitor")),
+        // top(1) has no Windows equivalent; fail loudly rather than spawn a
+        // missing program.
+        #[cfg(windows)]
+        "monitor" => Err(
+            "the monitor preset runs top(1), which has no Windows equivalent; use kobo stream -- <command> with an explicit command".into(),
+        ),
         _ => Err(
             "Choose demo, terminal or monitor. Use kobo stream --help for custom commands.".into(),
         ),
@@ -2111,7 +2135,7 @@ fn parse_host_update(arguments: &[String]) -> Result<HostUpdateChannel, String> 
 
 fn update_host(arguments: &[String]) -> Result<(), String> {
     let channel = parse_host_update(arguments)?;
-    let home = env::var_os("HOME").ok_or("HOME is not set")?;
+    let home = kobo_abi::home_directory().ok_or("HOME is not set")?;
     let data = env::var_os("XDG_DATA_HOME")
         .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
     let root = data.join("kobo");
@@ -3136,6 +3160,9 @@ impl DevSessionGuard {
             socket: root.join("app.sock"),
             root,
         };
+        // Windows has no mode bits; the temp directory inherits the user
+        // profile ACL, which is the same account boundary.
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&session.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", session.root.display());
             drop(session);
@@ -4581,8 +4608,7 @@ fn remote_artifact_session(artifact: &RemoteArtifact) -> Result<RemoteArtifactSe
 fn remote_owner_token() -> Result<String, String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut bytes = [0_u8; 16];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("create remote cleanup ownership token: {error}"))?;
     let mut token = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -4818,8 +4844,8 @@ fn remote_session_failure(
 pub const DEVICE_KEY_NAME: &str = "kobo_cobalt";
 
 fn default_device_key_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".ssh").join(DEVICE_KEY_NAME))
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".ssh").join(DEVICE_KEY_NAME))
 }
 
 /// The dedicated key used for reader connections, when it exists.
@@ -5101,7 +5127,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     // independently installed copy before its rename transaction.
     let mut members = vec![package::Member {
         path: package::LAUNCH_BOOTSTRAP.to_owned(),
-        bytes: bootstrap::CONTENT.as_bytes().to_vec(),
+        bytes: bootstrap::content().as_bytes().to_vec(),
         program: true,
     }];
     for (name, features) in INSTALLED_PACKAGES {
@@ -5553,7 +5579,7 @@ fn load_release_package_from_manifest(
 }
 
 fn managed_release_directory() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
+    let home = kobo_abi::home_directory()?;
     let data = env::var_os("XDG_DATA_HOME")
         .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
     let state = fs::read_to_string(data.join("kobo/install-state")).ok()?;
@@ -5636,25 +5662,58 @@ fn confirmed_setup(
             "noninteractive setup was not explicitly confirmed with --yes",
         ));
     }
-    let tty = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .map_err(|error| {
-            format!(
-                "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
-            )
-        })?;
-    let mut writer = &tty;
+    // The prompt bypasses stdio so redirected input cannot approve a device
+    // write. /dev/tty is the Unix controlling terminal; CONIN$/CONOUT$ are
+    // the corresponding Windows console devices and fail closed when this
+    // process has no attached console.
+    #[cfg(unix)]
+    {
+        let tty = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .map_err(|error| {
+                format!(
+                    "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(&tty, &tty)
+    }
+    #[cfg(windows)]
+    {
+        let input = fs::OpenOptions::new()
+            .read(true)
+            .open("CONIN$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        let output = fs::OpenOptions::new()
+            .write(true)
+            .open("CONOUT$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(input, output)
+    }
+}
+
+fn prompt_confirmation(
+    reader: impl std::io::Read,
+    mut writer: impl std::io::Write,
+) -> Result<bool, String> {
     writer
         .write_all(b"Continue? [y/N] ")
         .map_err(|error| format!("write confirmation prompt: {error}"))?;
     writer
         .flush()
         .map_err(|error| format!("flush confirmation prompt: {error}"))?;
-    let mut reader_tty = std::io::BufReader::new(tty);
+    let mut buffered = std::io::BufReader::new(reader);
     let mut answer = String::new();
-    std::io::BufRead::read_line(&mut reader_tty, &mut answer)
+    std::io::BufRead::read_line(&mut buffered, &mut answer)
         .map_err(|error| format!("read confirmation: {error}"))?;
     Ok(confirmation_answer(&answer))
 }
@@ -6540,7 +6599,7 @@ fn members_outside_install_root(
                 && entry.path == package::LAUNCH_BOOTSTRAP
                 && entry.kind == b'0'
                 && entry.mode == 0o755
-                && entry.size == bootstrap::CONTENT.len();
+                && entry.size == bootstrap::content().len();
             !(path.starts_with(root) || root.starts_with(path) || reviewed_bootstrap)
         })
         .map(|(_, entry)| entry.path.clone())
@@ -6557,7 +6616,7 @@ fn validated_release_archive(
     if first.path != package::LAUNCH_BOOTSTRAP
         || first.kind != b'0'
         || first.mode != 0o755
-        || first.size != bootstrap::CONTENT.len()
+        || first.size != bootstrap::content().len()
     {
         return Err(
             "standalone launch bootstrap must be the first regular 0755 archive member".to_owned(),
@@ -6577,7 +6636,7 @@ fn validated_release_archive(
         .ok_or("release archive has no standalone launch bootstrap")?;
     if !package::is_launch_bootstrap(bootstrap_member)
         || !bootstrap_member.program
-        || bootstrap_member.bytes != bootstrap::CONTENT.as_bytes()
+        || bootstrap_member.bytes != bootstrap::content().as_bytes()
     {
         return Err("standalone launch bootstrap differs from the reviewed executable".to_owned());
     }
@@ -6650,21 +6709,60 @@ fn parse_package(arguments: &[String]) -> Result<(PathBuf, Option<PathBuf>), Str
 ///
 /// `-n` keeps the name and timestamp out of the header, so the same input
 /// produces the same file and the checksum an owner compares is stable.
+#[cfg(unix)]
 fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     pipe_through(Command::new("gzip").args(["-n", "-9", "-c"]), bytes)
 }
 
+#[cfg(unix)]
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     pipe_through(Command::new("gzip").args(["-d", "-c"]), bytes)
 }
 
 /// The integrity check `rcS` runs before it extracts anything.
+#[cfg(unix)]
 fn gzip_test(bytes: &[u8]) -> Result<(), String> {
     pipe_through(Command::new("gzip").arg("-t"), bytes)
         .map(|_| ())
         .map_err(|error| format!("the package fails the check the device runs first: {error}"))
 }
 
+/// Windows ships no `gzip`. The GitHub runner only looked as if it did
+/// because Git for Windows puts one on that image's path, and an owner's
+/// machine has none, so setup failed there before it wrote anything. The
+/// Windows arm compresses in-process instead, with no name and a zero
+/// timestamp in the header, which is what `-n` asks for: the same input
+/// still produces the same file.
+#[cfg(windows)]
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder
+        .write_all(bytes)
+        .and_then(|()| encoder.finish())
+        .map_err(|error| format!("gzip: {error}"))
+}
+
+/// Every member, as `gzip -d` reads them, with each member's CRC and length
+/// checked against its trailer.
+#[cfg(windows)]
+fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut decompressed = Vec::new();
+    flate2::read::MultiGzDecoder::new(bytes)
+        .read_to_end(&mut decompressed)
+        .map_err(|error| format!("gzip: {error}"))?;
+    Ok(decompressed)
+}
+
+/// The integrity check `rcS` runs before it extracts anything: a full
+/// decompression whose trailers all verify, which is what `gzip -t` does.
+#[cfg(windows)]
+fn gzip_test(bytes: &[u8]) -> Result<(), String> {
+    gunzip(bytes)
+        .map(|_| ())
+        .map_err(|error| format!("the package fails the check the device runs first: {error}"))
+}
+
+#[cfg(unix)]
 fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> {
     let mut child = command
         .stdin(Stdio::piped())
@@ -6826,6 +6924,7 @@ impl SimulationGuard {
             daemon: None,
             daemon_frame_temporary: None,
         };
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&guard.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", guard.root.display());
             drop(guard);
@@ -6901,21 +7000,35 @@ fn find_rust_lld() -> Result<PathBuf, String> {
     for entry in
         fs::read_dir(&rustlib).map_err(|error| format!("read {}: {error}", rustlib.display()))?
     {
-        let candidate = entry
-            .map_err(|error| error.to_string())?
-            .path()
-            .join("bin/rust-lld");
+        let candidate = rust_lld_candidate(&entry.map_err(|error| error.to_string())?.path());
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err("rust-lld was not found in the active Rust toolchain".to_owned())
+    // rust-lld is part of the rustc component, so a rustup toolchain always
+    // carries it; a from-source or repackaged rustc may not.
+    Err(format!(
+        "rust-lld was not found in the active Rust toolchain under {}; a rustup-managed toolchain carries it in the rustc component",
+        root.display()
+    ))
+}
+
+/// The linker executable is `rust-lld.exe` on Windows; probing the bare Unix
+/// name there always misses.
+fn rust_lld_candidate(target_dir: &Path) -> PathBuf {
+    target_dir
+        .join("bin")
+        .join(format!("rust-lld{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// The C cross-compiler `ring` needs to build its own sources for the reader.
 ///
 /// Several distributions and taps spell the same toolchain differently, so
-/// every name in use is tried before the build is refused.
+/// every name in use is tried. When none of them exists, `zig cc` is the
+/// fallback: zig is a single download on every host (winget on Windows), and
+/// it cross-compiles C for armv7 musl out of the box. cc-rs appends a
+/// Rust-style `--target` triple that zig rejects, so the zig path is offered
+/// through a small wrapper script that drops that flag.
 fn find_device_cc() -> Result<String, String> {
     const NAMES: [&str; 4] = [
         "armv7-unknown-linux-musleabihf-gcc",
@@ -6923,23 +7036,25 @@ fn find_device_cc() -> Result<String, String> {
         "arm-linux-musleabihf-gcc",
         "arm-linux-gnueabihf-gcc",
     ];
-    for name in NAMES {
-        let found = Command::new(name)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if found {
-            return Ok(name.to_owned());
-        }
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (cc, _) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(cc.to_string_lossy().into_owned());
     }
     Err(format!(
         "no ARM C cross-compiler was found, and one is needed because the TLS \
-         stack builds C for the reader. Tried: {}.\n  macOS:  brew install \
-         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf\n  \
-         Debian: sudo apt-get install gcc-arm-linux-gnueabihf\nSet \
-         CC_armv7_unknown_linux_musleabihf to override.",
+         stack builds C for the reader. Tried: {}, and zig.\n  Windows: winget \
+         install zig.zig, then open a new terminal. If winget itself is \
+         missing, install App Installer from the Microsoft Store first, or \
+         download zig from https://ziglang.org/download/ and put it on PATH.\n  \
+         macOS:  brew install \
+         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf (or: \
+         brew install zig)\n  Debian: sudo apt-get install \
+         gcc-arm-linux-gnueabihf (or: download zig from \
+         https://ziglang.org/download/)\nSet CC_armv7_unknown_linux_musleabihf \
+         to override.",
         NAMES.join(", ")
     ))
 }
@@ -6951,7 +7066,28 @@ fn find_device_ar() -> Result<String, String> {
         "arm-linux-musleabihf-ar",
         "arm-linux-gnueabihf-ar",
     ];
-    for name in NAMES {
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (_, ar) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(ar.to_string_lossy().into_owned());
+    }
+    Err(format!(
+        "no ARM cross-archiver was found, and one is needed for C dependencies. \
+         Tried: {}, and zig.\n  Windows: winget install zig.zig (if winget \
+         itself is missing, install App Installer from the Microsoft Store \
+         first, or download zig from https://ziglang.org/download/ and put it \
+         on PATH), then open a new terminal\n  macOS:  brew install zig\n  \
+         Debian: download zig from \
+         https://ziglang.org/download/\nSet AR_armv7_unknown_linux_musleabihf \
+         to override.",
+        NAMES.join(", ")
+    ))
+}
+
+fn probe_tool(names: &[&str]) -> Option<String> {
+    for name in names {
         let found = Command::new(name)
             .arg("--version")
             .stdout(Stdio::null())
@@ -6959,14 +7095,63 @@ fn find_device_ar() -> Result<String, String> {
             .status()
             .is_ok_and(|status| status.success());
         if found {
-            return Ok(name.to_owned());
+            return Some((*name).to_owned());
         }
     }
-    Err(format!(
-        "no ARM cross-archiver was found, and one is needed for C dependencies. \
-         Tried: {}.\nSet AR_armv7_unknown_linux_musleabihf to override.",
-        NAMES.join(", ")
-    ))
+    None
+}
+
+fn zig_available() -> bool {
+    Command::new("zig")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn zig_device_wrapper_dir() -> PathBuf {
+    workspace_target_directory().join("device-toolchain")
+}
+
+/// Zig speaks its own target spelling (`arm-linux-musleabihf`), while cc-rs
+/// appends the Rust triple as `--target=armv7-unknown-linux-musleabihf`, which
+/// zig rejects outright. The `cc` wrapper filters that flag out and supplies
+/// zig's target itself, with `UBSan` off: current zig instruments by default
+/// and does not link its runtime, which leaves C dependencies referencing
+/// undefined `__ubsan_handle_*` symbols. The `ar` wrapper only adapts the name. Written under
+/// the target directory so a stale wrapper is never picked up across
+/// checkouts. Returns the (cc, ar) wrapper paths.
+fn write_zig_device_wrappers(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    fs::create_dir_all(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+    let (cc_name, ar_name, cc_body, ar_body) = if cfg!(windows) {
+        (
+            "zig-cc.cmd",
+            "zig-ar.cmd",
+            "@echo off\r\nrem cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\r\nset kept=\r\n:filter\r\nif \"%~1\"==\"\" goto build\r\nset arg=%~1\r\nif not \"%arg:~0,9%\"==\"--target=\" set kept=%kept% \"%~1\"\r\nshift\r\ngoto filter\r\n:build\r\nzig cc -target arm-linux-musleabihf -fno-sanitize=undefined %kept%\r\nexit /b %errorlevel%\r\n",
+            "@echo off\r\nzig ar %*\r\n",
+        )
+    } else {
+        (
+            "zig-cc",
+            "zig-ar",
+            "#!/bin/sh\n# cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\ncount=$#\nwhile [ $count -gt 0 ]; do\n    arg=$1\n    shift\n    case $arg in\n        --target=*) ;;\n        *) set -- \"$@\" \"$arg\" ;;\n    esac\n    count=$((count - 1))\ndone\nexec zig cc -target arm-linux-musleabihf -fno-sanitize=undefined \"$@\"\n",
+            "#!/bin/sh\nexec zig ar \"$@\"\n",
+        )
+    };
+    let cc = dir.join(cc_name);
+    let ar = dir.join(ar_name);
+    fs::write(&cc, cc_body).map_err(|error| format!("write {}: {error}", cc.display()))?;
+    fs::write(&ar, ar_body).map_err(|error| format!("write {}: {error}", ar.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&cc, &ar] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("chmod {}: {error}", path.display()))?;
+        }
+    }
+    Ok((cc, ar))
 }
 
 fn verify_arm_elf(path: &Path) -> Result<(), String> {
@@ -7740,8 +7925,7 @@ fn secret_source_candidates(name: &str) -> Vec<PathBuf> {
     if let Some(directory) = std::env::var_os("KOBO_SECRETS_DIR") {
         candidates.push(PathBuf::from(directory).join(name));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    if let Some(home) = kobo_abi::home_directory() {
         candidates.push(
             home.join(".config")
                 .join("cobalt")
@@ -8011,16 +8195,19 @@ fn typed_copies_removed(stdout: &[u8]) -> usize {
 }
 
 fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt as _;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("Invalid credential name")?;
     let partial = path.with_file_name(format!(".{name}.writing"));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("Prepare credential (previous value unchanged): {error}"))?;
     let result = writeln!(file, "{value}")
@@ -8400,12 +8587,12 @@ fn parse_trust(arguments: &[String]) -> Result<(SecretAction, SecretTarget), Str
 /// trust directory every host runtime already reads, which is where
 /// `kobo-sidekick init` writes its certificate.
 fn trust_source(name: &str) -> Result<PathBuf, String> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some(home) = kobo_abi::home_directory() else {
         return Err(format!(
             "no HOME to look in; pass --from PATH\n{TRUST_USAGE}"
         ));
     };
-    let candidate = PathBuf::from(home)
+    let candidate = home
         .join(".config")
         .join("kobo")
         .join("trust")

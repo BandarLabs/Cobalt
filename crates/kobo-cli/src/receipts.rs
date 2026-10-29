@@ -146,11 +146,8 @@ pub fn receipts_path() -> PathBuf {
     if let Some(value) = std::env::var_os("KOBO_CONFIG_DIR") {
         return PathBuf::from(value).join("receipts");
     }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("receipts")
+    let home = kobo_abi::home_directory().unwrap_or_default();
+    home.join(".config").join("kobo").join("receipts")
 }
 
 /// The content hash of a file about to be sent.
@@ -286,11 +283,8 @@ pub fn pending_path() -> PathBuf {
     if let Some(value) = std::env::var_os("KOBO_CONFIG_DIR") {
         return PathBuf::from(value).join("pending-send");
     }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("pending-send")
+    let home = kobo_abi::home_directory().unwrap_or_default();
+    home.join(".config").join("kobo").join("pending-send")
 }
 
 #[cfg(test)]

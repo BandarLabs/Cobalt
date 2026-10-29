@@ -1,4 +1,6 @@
-use command_group::{CommandGroup, GroupChild, Signal, UnixChildExt};
+use command_group::{CommandGroup, GroupChild};
+#[cfg(unix)]
+use command_group::{Signal, UnixChildExt};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -417,9 +419,15 @@ fn bump(inner: &mut Inner) {
 }
 
 fn run_command(command: &str, home: &Path, limit: Duration, grace: Duration) -> ResultRecord {
-    let mut process = Command::new("/bin/sh");
+    // Deck commands are shell lines; the shell is the platform's stock one,
+    // exactly as in kobo-shell.
+    #[cfg(unix)]
+    let (shell, flag) = ("/bin/sh", "-c");
+    #[cfg(windows)]
+    let (shell, flag) = ("cmd.exe", "/C");
+    let mut process = Command::new(shell);
     process
-        .args(["-c", command])
+        .args([flag, command])
         .current_dir(home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -520,6 +528,7 @@ fn readers_finished(
 
 // The shell can exit and close both pipes while redirected descendants keep
 // running. Probe their group independently instead of using EOF as ownership.
+#[cfg(unix)]
 fn group_running(id: u32) -> bool {
     let Ok(id) = i32::try_from(id) else {
         return true;
@@ -565,11 +574,28 @@ fn group_running(id: u32) -> bool {
     true
 }
 
+/// Windows has no process group to probe by id. `readers_finished` still waits
+/// for every handle on the command's pipes, so a descendant holding them keeps
+/// the command open; one that let go of them is not waited for, as nothing
+/// was before the Unix probe existed.
+#[cfg(not(unix))]
+fn group_running(_id: u32) -> bool {
+    false
+}
+
+#[cfg(unix)]
 fn terminate(child: &mut GroupChild, grace: Duration) {
     // A reaped leader does not mean its descendants have exited. Give the
     // entire group its grace period, then kill it even if try_wait saw an exit.
     let _ = child.signal(Signal::SIGTERM);
     std::thread::sleep(grace);
+    let _ = child.kill();
+}
+
+/// Windows has no SIGTERM; command-group's kill ends the whole job-object
+/// tree, which is the same hard stop minus the graceful phase.
+#[cfg(not(unix))]
+fn terminate(child: &mut GroupChild, _grace: Duration) {
     let _ = child.kill();
 }
 
@@ -618,6 +644,10 @@ fn finished(status: &'static str, exit: i32, tail: String) -> ResultRecord {
 #[cfg(test)]
 mod tests {
 
+    // Windows has no process group to probe once the shell has exited (see
+    // `group_running`), so a descendant that let go of the output pipes is
+    // neither waited for nor killed there. These check the Unix tracking.
+    #[cfg(unix)]
     #[test]
     fn redirected_descendants_remain_subject_to_the_deadline() {
         let directory = directory();
@@ -639,6 +669,10 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(3));
     }
 
+    // Windows has no process group to probe once the shell has exited (see
+    // `group_running`), so a descendant that let go of the output pipes is
+    // neither waited for nor killed there. These check the Unix tracking.
+    #[cfg(unix)]
     #[test]
     fn short_lived_redirected_descendants_finish_before_reporting_success() {
         let directory = directory();
@@ -660,6 +694,10 @@ mod tests {
         );
     }
 
+    // Windows has no process group to probe once the shell has exited (see
+    // `group_running`), so a descendant that let go of the output pipes is
+    // neither waited for nor killed there. These check the Unix tracking.
+    #[cfg(unix)]
     #[test]
     fn descendants_ignoring_term_are_killed_after_grace() {
         let directory = directory();
@@ -679,11 +717,25 @@ mod tests {
     #[test]
     fn command_results_preserve_status_and_bound_noisy_output() {
         let directory = directory();
-        for (command, expected, code) in [
+        #[cfg(unix)]
+        let cases = [
             ("printf ok", "ok", 0),
             ("printf failed >&2; exit 7", "failed", 7),
             ("yes x | head -c 100000", "ok", 0),
-        ] {
+        ];
+        // The same three in cmd: a plain success, a failure with its own exit
+        // code on standard error, and far more output than the tail keeps.
+        #[cfg(windows)]
+        let cases = [
+            ("echo ok", "ok", 0),
+            ("echo failed 1>&2 & exit /b 7", "failed", 7),
+            (
+                "for /L %i in (1,1,300) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "ok",
+                0,
+            ),
+        ];
+        for (command, expected, code) in cases {
             let result = run_command(
                 command,
                 &directory,
@@ -799,9 +851,15 @@ confirm = {confirm}
     fn confirmation_busy_result_and_output_tail_are_enforced() {
         let directory = directory();
         let path = directory.join("deck.toml");
-        fs::write(&path, sample("printf secret; sleep 0.2; false", true)).unwrap();
+        #[cfg(unix)]
+        let run = "printf secret; sleep 0.2; false";
+        // The same shape in cmd: print, pause about a fifth of a second,
+        // fail.
+        #[cfg(windows)]
+        let run = "echo secret & ping -n 2 127.0.0.1 >nul & exit /b 1";
+        fs::write(&path, sample(run, true)).unwrap();
         let deck = Deck::new(path, directory.clone());
-        let id = stable_id("Build", "Test", "printf secret; sleep 0.2; false");
+        let id = stable_id("Build", "Test", run);
         assert_eq!(
             deck.press(&id, false, Duration::from_secs(2), Duration::ZERO),
             PressOutcome::NeedsConfirm
@@ -871,9 +929,13 @@ confirm = {confirm}
     fn timed_out_commands_are_killed_and_reported() {
         let directory = directory();
         let path = directory.join("deck.toml");
-        fs::write(&path, sample("sleep 5", false)).unwrap();
+        #[cfg(unix)]
+        let run = "sleep 5";
+        #[cfg(windows)]
+        let run = "ping -n 6 127.0.0.1 >nul";
+        fs::write(&path, sample(run, false)).unwrap();
         let deck = Deck::new(path, directory.clone());
-        let id = stable_id("Build", "Test", "sleep 5");
+        let id = stable_id("Build", "Test", run);
         assert_eq!(
             deck.press(
                 &id,

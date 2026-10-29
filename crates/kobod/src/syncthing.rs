@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -154,7 +155,11 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 }
 
 /// Why the runtime should start a window now, if it should.
+///
+/// Only the device runtime starts windows; a host build of `kobod` carries
+/// this module for its `--syncthing` commands and never asks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub enum Due {
     /// The owner tapped Sync now, or turned Sync on.
     Owner,
@@ -162,6 +167,7 @@ pub enum Due {
     Scheduled,
 }
 
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 impl Due {
     /// The `kobod` arguments that run this window in a process of its own.
     ///
@@ -184,10 +190,12 @@ impl Due {
 /// Cobalt is open. An owner's request comes first. A schedule is due once its
 /// interval has passed since the last attempt, or straight away if there has
 /// never been one, so turning Sync on with a schedule starts a sync at once.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn due() -> Option<Due> {
     due_in(Path::new(APP_STATE), epoch_now())
 }
 
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 fn due_in(app_state: &Path, now: u64) -> Option<Due> {
     let settings = Settings::load(app_state).ok()?;
     if !settings.enabled {
@@ -206,6 +214,7 @@ fn due_in(app_state: &Path, now: u64) -> Option<Due> {
 /// The runtime looks at the schedule once a minute. These two are looked at
 /// at once, because they are taps: Sync now, and Sync turned on or its
 /// schedule changed.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn asks_for_a_window(key: &str) -> bool {
     key == REQUEST || key == "sync-config"
 }
@@ -215,6 +224,7 @@ pub fn asks_for_a_window(key: &str) -> bool {
 /// The request is kept, so the sync starts by itself once the reader is on
 /// Wi-Fi. Written once rather than every time the runtime looks, because each
 /// write wakes the app to show the same thing again.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 pub fn waiting_for_wifi() {
     let app_state = Path::new(APP_STATE);
     if read_status(app_state).lines().next() == Some("offline") {
@@ -229,6 +239,7 @@ pub fn waiting_for_wifi() {
     );
 }
 
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 fn read_epoch(app_state: &Path, name: &str) -> u64 {
     fs::read_to_string(app_state.join(name))
         .ok()
@@ -388,6 +399,8 @@ fn initialize(home: &Path) -> Result<(), String> {
     ensure_engine(Path::new(ENGINE))?;
     verify_engine(Path::new(ENGINE))?;
     fs::create_dir_all(home).map_err(|error| format!("create Sync state: {error}"))?;
+    // Windows has no mode bits; the user profile ACL scopes the directory.
+    #[cfg(unix)]
     fs::set_permissions(home, fs::Permissions::from_mode(0o700))
         .map_err(|error| format!("protect Sync state: {error}"))?;
     if !home.join("cert.pem").is_file() || !home.join("key.pem").is_file() {
@@ -419,11 +432,8 @@ fn prepare(home: &Path) -> Result<(), String> {
     }
     let key_path = home.join("api-key");
     if !key_path.exists() {
-        let mut entropy =
-            File::open("/dev/urandom").map_err(|error| format!("open entropy: {error}"))?;
         let mut bytes = [0_u8; 32];
-        entropy
-            .read_exact(&mut bytes)
+        kobo_abi::entropy::random_bytes(&mut bytes)
             .map_err(|error| format!("read entropy: {error}"))?;
         let mut key = String::with_capacity(bytes.len() * 2);
         for byte in bytes {
@@ -572,10 +582,14 @@ fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value.as_bytes())
@@ -627,11 +641,12 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
     // never leaves a partial file at a path the next run would take for an
     // installed engine and hand to `verify_engine` as a checksum failure.
     let partial = engine.with_extension("part");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o755)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o755);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("create Sync engine: {error}"))?;
     file.write_all(&bytes)
@@ -649,12 +664,16 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
 fn verify_engine(engine: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(engine)
         .map_err(|_| "Sync engine is not installed. Check Wi-Fi and try again.".to_owned())?;
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.mode() & 0o111 == 0
-        || metadata.mode() & 0o022 != 0
-        || metadata.uid() != 0
-    {
+    // Ownership and permission hardening are Unix checks (root-owned, not
+    // group/world-writable, executable). std exposes neither owner nor mode
+    // on Windows, where the daemon does not run outside development; the
+    // digest pin below is the integrity check that still applies everywhere.
+    #[cfg(unix)]
+    let unsafe_metadata =
+        metadata.mode() & 0o111 == 0 || metadata.mode() & 0o022 != 0 || metadata.uid() != 0;
+    #[cfg(windows)]
+    let unsafe_metadata = false;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || unsafe_metadata {
         return Err(
             "Sync engine is unsafe or corrupt. Install the platform update again.".to_owned(),
         );
@@ -1111,17 +1130,23 @@ fn record_ingest(
     atomic_write(&path, &lines.join("\n"), 0o600)
 }
 
-fn atomic_bytes(path: &Path, value: &[u8], mode: u32) -> Result<(), String> {
+fn atomic_bytes(
+    path: &Path,
+    value: &[u8],
+    #[cfg_attr(not(unix), allow(unused))] mode: u32,
+) -> Result<(), String> {
     let temporary = path.with_extension("new");
     match fs::remove_file(&temporary) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value)

@@ -20,6 +20,7 @@ mod segmented_tests;
 mod selected_grid_tests;
 mod suspend;
 
+use kobo_protocol::channel;
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
     BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,
@@ -55,7 +56,6 @@ pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
@@ -3476,7 +3476,7 @@ impl From<StreamError> for ClientError {
 /// Synchronous client for one managed Kobo application.
 #[derive(Debug)]
 pub struct Client {
-    stream: UnixStream,
+    stream: channel::Stream,
     next_request: u32,
     metrics: DisplayMetrics,
     simulator_callbacks: bool,
@@ -3490,7 +3490,7 @@ impl Client {
     /// Returns a stream error when the socket cannot be opened or the handshake
     /// cannot be exchanged, and `UnexpectedMessage` for a non-welcome response.
     pub fn connect(path: impl AsRef<Path>, app_name: &str) -> Result<Self, ClientError> {
-        let stream = UnixStream::connect(path).map_err(StreamError::from)?;
+        let stream = channel::connect(path.as_ref()).map_err(StreamError::from)?;
         Self::from_stream(stream, app_name)
     }
 
@@ -3500,7 +3500,7 @@ impl Client {
     ///
     /// Returns a protocol or stream error, or `UnexpectedMessage` when the peer
     /// does not identify itself as `kobod`.
-    pub fn from_stream(mut stream: UnixStream, app_name: &str) -> Result<Self, ClientError> {
+    pub fn from_stream(mut stream: channel::Stream, app_name: &str) -> Result<Self, ClientError> {
         kobo_protocol::write_to(
             &mut stream,
             &Frame {
@@ -4699,7 +4699,7 @@ mod tests {
 
     #[test]
     fn client_handshake_and_screen_delivery() {
-        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("socket pair");
+        let (client_stream, mut daemon_stream) = channel::pair().expect("socket pair");
         let daemon = thread::spawn(move || {
             let hello = kobo_protocol::read_from(&mut daemon_stream).expect("hello");
             assert!(matches!(hello.message, Message::Hello { .. }));
@@ -4732,7 +4732,7 @@ mod tests {
 
     #[test]
     fn client_transparently_chunks_a_full_width_picture() {
-        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("socket pair");
+        let (client_stream, mut daemon_stream) = channel::pair().expect("socket pair");
         let daemon = thread::spawn(move || {
             let hello = kobo_protocol::read_from(&mut daemon_stream).expect("hello");
             kobo_protocol::write_to(

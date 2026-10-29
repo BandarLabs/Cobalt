@@ -218,11 +218,8 @@ pub fn store_path() -> PathBuf {
     if let Some(value) = std::env::var_os("KOBO_CONFIG_DIR") {
         return PathBuf::from(value).join("readers");
     }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("readers")
+    let home = kobo_abi::home_directory().unwrap_or_default();
+    home.join(".config").join("kobo").join("readers")
 }
 
 /// Resolves a saved nickname to an address that provably is that reader.

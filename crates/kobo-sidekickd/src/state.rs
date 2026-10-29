@@ -312,11 +312,9 @@ fn lan_address() -> Option<String> {
 /// no zero against o, no one against l.
 fn pairing_code() -> Result<String, String> {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-    use std::io::Read;
     let mut noise = [0_u8; 6];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut noise))
-        .map_err(|error| format!("read /dev/urandom: {error}"))?;
+    kobo_abi::entropy::random_bytes(&mut noise)
+        .map_err(|error| format!("read system randomness: {error}"))?;
     let mut code = String::new();
     for byte in noise {
         code.push(char::from(ALPHABET[usize::from(byte) % ALPHABET.len()]));
@@ -342,6 +340,6 @@ fn config_kobo() -> Result<PathBuf, String> {
     if let Some(directory) = std::env::var_os("KOBO_SIDEKICK_CONFIG_DIR") {
         return Ok(PathBuf::from(directory));
     }
-    let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-    Ok(PathBuf::from(home).join(".config").join("kobo"))
+    let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+    Ok(home.join(".config").join("kobo"))
 }

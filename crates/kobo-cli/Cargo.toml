@@ -11,6 +11,7 @@ name = "kobo"
 path = "src/main.rs"
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-sdk = { path = "../kobo-sdk", default-features = false }
 kobo-catalog = { path = "../kobo-catalog" }
 kobo-ui = { path = "../kobo-ui" }
@@ -37,6 +38,10 @@ kobo-wifi-trace = { path = "../kobo-wifi-trace" }
 ring = "0.17"
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
 serde_json = "1.0"
+
+# Windows has no system gzip to pipe through; see `gzip` in main.rs.
+[target.'cfg(windows)'.dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 [features]
 default = []

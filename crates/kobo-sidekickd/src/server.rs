@@ -15,7 +15,6 @@ use crate::http::{read_request, respond_json, Request};
 use crate::state;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,9 +79,7 @@ fn sample_question() -> Asking {
 fn run_mode(sample: bool) -> Result<(), String> {
     let identity = state::load()?;
     let directory = state::state_directory()?;
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or("no HOME in the environment")?;
+    let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
     let board = Arc::new(Board::new());
     let deck = (!sample).then(|| Deck::new(directory.join("deck.toml"), home));
@@ -700,15 +697,22 @@ mod tests {
     fn deck_routes_share_auth_and_run_only_configured_commands() {
         let directory = directory();
         let config = directory.join("deck.toml");
+        // A no-op that succeeds: `true` under sh, a comment line under cmd.
+        #[cfg(unix)]
+        let run = "true";
+        #[cfg(windows)]
+        let run = "rem";
         fs::write(
             &config,
-            r#"[[page]]
+            format!(
+                r#"[[page]]
 name = "Build"
 [[page.key]]
 label = "Test"
-run = "true"
+run = "{run}"
 confirm = true
-"#,
+"#
+            ),
         )
         .unwrap();
         let deck = Deck::new(config, directory.clone());

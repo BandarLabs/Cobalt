@@ -919,6 +919,8 @@ dependencies = [
 name = "kobo-cli"
 version = "0.3.31"
 dependencies = [
+ "flate2",
+ "kobo-abi",
  "kobo-app-store",
  "kobo-catalog",
  "kobo-comic",
@@ -1495,6 +1497,7 @@ dependencies = [
 name = "kobo-sdk"
 version = "0.3.31"
 dependencies = [
+ "kobo-abi",
  "kobo-json",
  "kobo-net",
  "kobo-policy",
@@ -1539,6 +1542,7 @@ name = "kobo-sidekickd"
 version = "0.3.31"
 dependencies = [
  "command-group",
+ "kobo-abi",
  "kobo-json",
  "kobo-net",
  "nix",
@@ -1721,6 +1725,7 @@ dependencies = [
 name = "kobo-wifi-trace"
 version = "0.3.31"
 dependencies = [
+ "kobo-abi",
  "kobo-json",
  "ring",
 ]

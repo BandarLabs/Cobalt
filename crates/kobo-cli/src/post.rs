@@ -306,6 +306,9 @@ mod tests {
         }
     }
 
+    // The install script runs under the reader's /bin/sh, and the fixture
+    // checks the Unix mode bits it leaves behind.
+    #[cfg(unix)]
     #[test]
     fn device_account_install_is_private_atomic_and_app_scoped() {
         use std::os::unix::fs::{symlink, PermissionsExt};

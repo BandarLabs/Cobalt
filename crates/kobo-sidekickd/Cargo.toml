@@ -12,6 +12,7 @@ name = "kobo-sidekickd"
 path = "src/main.rs"
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
 command-group = "5"

@@ -159,6 +159,7 @@ fn keyboard_cells_use_the_keyboard_feedback_window() {
 }
 #[test]
 fn app_secret_installation_is_scoped_private_and_replaceable() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     let directory = std::env::temp_dir().join(format!("kobo-app-secret-{}", std::process::id()));
@@ -169,22 +170,26 @@ fn app_secret_installation_is_scoped_private_and_replaceable() {
         std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read credential"),
         b"first"
     );
-    assert_eq!(
-        std::fs::metadata(&directory)
-            .expect("secret directory")
-            .permissions()
-            .mode()
-            & 0o777,
-        0o700
-    );
-    assert_eq!(
-        std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
-            .expect("secret file")
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
+    // Windows has no mode bits to assert; the profile ACL is the boundary.
+    #[cfg(unix)]
+    {
+        assert_eq!(
+            std::fs::metadata(&directory)
+                .expect("secret directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
+                .expect("secret file")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     kobo_policy::credentials::install_app_secret(&directory, "zotero-reader", "zotero", "second")
         .expect("replace credential");
     assert_eq!(

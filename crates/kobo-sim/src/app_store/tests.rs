@@ -4,6 +4,7 @@ use kobo_app_store::{
     build_bundle, derive_public_key, sign, Catalog, CatalogEntry, CatalogEntryInput, Manifest,
     ManifestInput,
 };
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +14,8 @@ impl Fixture {
         let root = crate::tests::private_temp_dir();
         for name in ["installed", "transport"] {
             fs::create_dir(root.join(name)).unwrap();
+            // Windows has no mode bits; the profile ACL scopes the directory.
+            #[cfg(unix)]
             fs::set_permissions(root.join(name), fs::Permissions::from_mode(0o700)).unwrap();
         }
         fs::write(root.join("format"), b"cobalt.simulator-app-store.v1\n").unwrap();
@@ -282,6 +285,10 @@ fn fixture_configuration_refuses_release_keys_oversized_files_and_links() {
     fs::write(fixture.0.join("key.hex"), "a".repeat(66)).unwrap();
     assert!(SignedStore::open(&fixture.0).is_err());
     fs::remove_file(fixture.0.join("key.hex")).unwrap();
-    std::os::unix::fs::symlink("format", fixture.0.join("key.hex")).unwrap();
-    assert!(SignedStore::open(&fixture.0).is_err());
+    // Symlink swapping is a Unix-specific attack surface for this fixture.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("format", fixture.0.join("key.hex")).unwrap();
+        assert!(SignedStore::open(&fixture.0).is_err());
+    }
 }
