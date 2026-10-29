@@ -475,11 +475,23 @@ fn run(arguments: &[String]) -> Result<(), String> {
             Err(format!("the helper exited with {status}"))
         };
     }
-    let child = Command::new(&helper)
+    let mut command = Command::new(&helper);
+    command
         .arg("run")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    // A Windows console program dies with the console it was started from,
+    // so closing the window that ran `kobo sidekick run` would take the
+    // helper with it. Detached, it outlives that window as it does on Unix.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    let child = command
         .spawn()
         .map_err(|error| format!("start {}: {error}", helper.display()))?;
     let pid = child.id();
@@ -567,8 +579,7 @@ fn stop() -> Result<(), String> {
             Ok(())
         };
     };
-    let signalled = Command::new("kill")
-        .arg(pid.to_string())
+    let signalled = stop_command(pid)
         .status()
         .map_err(|error| format!("stop PID {pid}: {error}"))?;
     if !signalled.success() {
@@ -587,6 +598,26 @@ fn stop() -> Result<(), String> {
     Err(format!(
         "PID {pid} was asked to stop and is still answering"
     ))
+}
+
+/// The command that asks process `pid` to end. Windows has no `kill`;
+/// `taskkill` ships with every edition, and needs `/F` because a helper with
+/// no window never receives the close message it sends without it.
+fn stop_command(pid: u32) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("taskkill");
+        command
+            .args(["/F", "/PID", &pid.to_string()])
+            .stdout(Stdio::null());
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("kill");
+        command.arg(pid.to_string());
+        command
+    }
 }
 
 /// Runs the helper's own sample, for a reader that has nothing set up yet.
@@ -724,29 +755,26 @@ fn listening() -> bool {
 ///
 /// Beside first because that is where a release puts them together, and an
 /// owner who has just unpacked one should not need a PATH entry to use it.
+/// PATH is searched here rather than through `command -v`, which is a shell
+/// builtin and not a program: starting it directly found nothing on Linux or
+/// Windows, and on Windows the helper is also named with `.exe`.
 fn locate() -> Result<PathBuf, String> {
-    if let Ok(here) = std::env::current_exe() {
-        if let Some(directory) = here.parent() {
-            let beside = directory.join("kobo-sidekickd");
-            if beside.is_file() {
-                return Ok(beside);
-            }
-        }
-    }
-    let found = Command::new("command")
-        .args(["-v", "kobo-sidekickd"])
-        .output()
+    let name = format!("kobo-sidekickd{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe()
         .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|path| !path.is_empty());
-    match found {
-        Some(path) => Ok(PathBuf::from(path)),
-        None => Err(
-            "kobo-sidekickd is not beside this binary or on PATH; install it from the release you are running"
-                .to_owned(),
-        ),
-    }
+        .and_then(|here| here.parent().map(|directory| directory.join(&name)));
+    let on_path = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    beside
+        .into_iter()
+        .chain(on_path.into_iter().map(|directory| directory.join(&name)))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            format!(
+                "{name} is not beside this binary or on PATH; install it from the release you are running"
+            )
+        })
 }
 
 /// The helper's own folder, found the way the helper finds it, so the two
