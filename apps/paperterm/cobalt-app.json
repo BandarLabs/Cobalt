@@ -2,26 +2,26 @@
   "id": "paperterm",
   "display_name": "Paperterm",
   "short_label": "Paperterm",
-  "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.12",
+  "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
+  "version": "0.1.13",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Opens already paired after kobo stream init, says Not connected yet instead of Connection lost before the first connection, and shows one set of setup steps.",
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Pair Paperterm. This trusts the computer and prints the address and code to enter on the reader.",
+        "text": "Pair this computer with the reader. There is nothing to type on the reader. The first time, close Cobalt and open it again afterwards.",
         "command": "kobo stream init"
       },
       {
-        "text": "Start a session and leave the terminal open.",
-        "command": "kobo stream --interactive -- /bin/sh"
+        "text": "Share a terminal and leave it open, then open Paperterm on the reader.",
+        "command": "kobo stream terminal"
       }
     ]
   },

@@ -89,7 +89,11 @@ def main():
                 def saved():
                     drive('wait-idle')
                     return json.loads(store.read_text())['payload']
-                def restart(expected="more"):
+                def played(payload, ident):
+                    # Version 2 records only the puzzles that have been played,
+                    # by id, rather than every puzzle by position.
+                    return next(game for game in payload['games'] if game['id']==ident)
+                def restart(expected="game-more"):
                     nonlocal address
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
@@ -97,8 +101,10 @@ def main():
                     drive('wait-for-id '+expected, 'wait-idle')
                 drive('wait-for-id puzzle-3')
                 capture('01-puzzles')
-                drive('tap-id puzzle-3', 'tap-id cell-1', 'type put', 'tap Enter', 'wait-idle')
-                assert saved()['games'][3]['position']['letters'].startswith('#PUT#')
+                drive('tap-id puzzle-3', 'expect Undo', 'expect-missing How to play', 'tap-id game-undo',
+                      'expect Nothing to undo yet.')
+                drive('tap-id cell-1', 'type put', 'tap Enter', 'wait-idle')
+                assert played(saved(), 'mini-v1')['position']['letters'].startswith('#PUT#')
                 capture('02-numbered-grid')
                 drive('tap-id cell-5', 'type minor')
                 capture('03-clue-and-entry')
@@ -107,37 +113,37 @@ def main():
                 restart()
                 assert saved()==before
                 capture('04-restored-grid')
-                drive('tap-id more', 'tap-id undo')
-                assert saved()['games'][3]['position']['letters'].startswith('#PUT#.....')
+                drive('tap-id game-undo')
+                assert played(saved(), 'mini-v1')['position']['letters'].startswith('#PUT#.....')
                 drive('tap-id cell-5', 'type minor', 'scenario storage-full', 'tap Enter', 'wait-idle', 'expect Progress is not saved')
                 capture('05-save-recovery')
-                assert saved()['games'][3]['position']['letters'].startswith('#PUT#.....')
-                drive('scenario normal', 'tap-id retry-save', 'wait-for-id more')
-                assert saved()['games'][3]['position']['letters'].startswith('#PUT#MINOR')
-                drive('tap-id cell-10', 'type wrong', 'tap Enter', 'tap-id more', 'tap-id check', 'expect incorrect')
+                assert played(saved(), 'mini-v1')['position']['letters'].startswith('#PUT#.....')
+                drive('scenario normal', 'tap-id retry-save', 'wait-for-id game-more')
+                assert played(saved(), 'mini-v1')['position']['letters'].startswith('#PUT#MINOR')
+                drive('tap-id cell-10', 'type wrong', 'tap Enter', 'tap-id game-more', 'tap-id check', 'expect incorrect')
                 capture('06-check-word')
-                drive('tap-id board', 'tap-id more', 'tap-id reveal')
+                drive('tap-id board', 'tap-id game-more', 'expect New game', 'tap-id reveal')
                 capture('07-reveal-confirmation')
                 drive('tap-id confirm-reveal', 'wait-idle')
-                assert saved()['games'][3]['reveals']==1
-                drive('tap-id more','tap-id undo','tap-id cell-10','type alike','tap Enter',
+                assert played(saved(), 'mini-v1')['reveals']==1
+                drive('tap-id game-undo','tap-id cell-10','type alike','tap Enter',
                       'tap-id cell-15','type noted','tap Enter','tap-id cell-21','type ten','tap Enter','expect Puzzle complete')
                 final = saved()
-                assert final['games'][3]['solved'] and final['games'][3]['checks']==1
+                assert played(final, 'mini-v1')['solved'] and played(final, 'mini-v1')['checks']==1
                 capture('08-completed-crossword')
                 restart()
                 assert saved()==final
                 capture('09-restored-completion')
-                drive('tap-id more','tap-id restart')
+                drive('tap-id game-more','tap-id restart')
                 capture('10-restart-confirmation')
-                drive('tap-id confirm-restart','tap-id more','tap-id undo','expect Puzzle complete')
-                drive('tap-id more','tap-id help')
+                drive('tap-id confirm-restart','tap-id game-undo','expect Puzzle complete')
+                drive('tap-id game-rules', 'expect Fill the white squares')
                 for page in range(16):
-                    capture(f'help-{page+1:02}')
+                    capture(f'rules-{page+1:02}')
                     old=get('layout')
-                    drive('tap-id help-next')
+                    drive('tap-id rules-next')
                     if old==get('layout'): break
-                else: raise AssertionError('Unbounded help')
+                else: raise AssertionError('Unbounded rules')
                 drive('tap Back', 'tap-id clues')
                 # Across and down clues share one paged screen; page until the
                 # first down clue (PILOT, row clue-5) is on the panel.
@@ -151,6 +157,11 @@ def main():
                 capture('11-down-clues')
                 drive('tap-id clue-5','type pilot','tap Enter')
                 capture('12-down-selection')
+                # New game moves to the next puzzle along the shelf that nobody
+                # has started, which after the hand-written crossword is the
+                # first word square.
+                drive('tap-id game-more', 'tap-id game-new', 'expect Small beginnings')
+                capture('12b-new-game')
                 drive('tap Back')
                 # The committed route assumes the shipped first-run state. The
                 # flows above left puzzle 3 solved with the down direction
@@ -167,11 +178,11 @@ def main():
                 legacy=b'H........................;0;1'
                 store.write_bytes(legacy)
                 address=start()
-                drive('wait-for-id more','expect Heart of the matter')
+                drive('wait-for-id game-more','expect Heart of the matter')
                 assert store.read_bytes()==legacy
                 capture('13-legacy-progress')
                 drive('tap-id cell-0','type e','tap Enter','wait-idle')
-                assert saved()['games'][2]['position']['letters'].startswith('E')
+                assert played(saved(), 'heart-v1')['position']['letters'].startswith('E')
                 restart()
                 capture('14-migrated-progress')
                 os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
@@ -186,7 +197,8 @@ def main():
                     source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
                     checks=['numbered blocked crossword','clue with word entry','exact restart','persistent undo',
                         'full-storage preservation','save retry','optional checking','confirmed reveal and undo',
-                        'full completion','completion restart','restart confirmation and undo','all help pages',
+                        'full completion','completion restart','restart confirmation and undo','all rules pages',
+                        'undo at the foot with a nothing-to-undo notice','new game from the menu',
                         'across clue pages','down clue and entry','committed drive route','legacy migration','unreadable-record preservation'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:

@@ -6,15 +6,22 @@ use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id,
     audio::{AudioMetadata, AudioPlayer},
-    Context, DeviceRequest, DeviceResult, Failure, Glyph, Heartbeat, KoboApp, PictureHandle,
-    Screen, ScreenBuilder, ShelfProgress, ShelfUpload, StandardState, StoreResult, TaskId,
-    TaskOutcome,
+    Context, DeviceRequest, DeviceResult, Failure, Glyph, Heartbeat, KoboApp, LogLevel,
+    PictureHandle, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StandardState,
+    StoreResult, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
 const AGAIN: &str = "again";
 const CANCEL: &str = "cancel";
 const NEW: &str = "new";
+/// Asks the runtime again which keys are installed, after the owner has run
+/// the commands the keys screen named.
+const CHECK: &str = "check";
+/// Back to the composer with the topic still typed.
+const EDIT: &str = "edit";
+/// Spends: the one control that starts the paid requests.
+const START: &str = "start";
 /// The firmware's container for a sideloaded audiobook.
 const ARCHIVE_SUFFIX: &str = ".mp3z";
 const SHELF: &str = "shelf";
@@ -46,12 +53,17 @@ const LIBRARY_KEY: &str = "library";
 
 /// Where the last interrupted creation is kept.
 ///
-/// A checkpoint is text only: the script and how far narration got through
-/// it. Audio already narrated lives in memory for an immediate retry; after
-/// a restart the script is what survives, and narration starts it again from
-/// the first part. That is the honest bound of what a key-value store can
-/// hold - the parts together are a spoken book, and the store is for facts.
+/// A checkpoint is text only: the script and how many of its parts are
+/// narrated and safe on the shelf. The audio of each part is written to the
+/// shelf as it arrives, under [`part_name`], so a restart reads those parts
+/// back rather than paying to narrate them a second time. The parts go once
+/// the finished book is saved, or once the owner starts a different one.
 const CHECKPOINT_KEY: &str = "checkpoint";
+
+/// The largest narrated part read back after a restart. A part is a thousand
+/// characters of speech, about a megabyte of MP3, and narration refuses
+/// anything over four.
+const MAX_PART_BYTES: usize = 4 * 1024 * 1024;
 
 /// One finished audiobook, on the reader, playable with the network off.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -87,13 +99,31 @@ enum Stage {
     /// Account setup is checked before the first paid request, so a
     /// missing key is reported before anything is spent.
     Setup,
+    /// A key is missing. The screen names the command that installs it and
+    /// keeps the topic, so fixing it is one command and one tap.
+    Keys,
+    /// Every key is there. What the book will cost and how long it will
+    /// take, shown before the first paid request rather than after.
+    Confirm,
     Research,
     Write,
     Narrate,
+    /// Reading parts narrated before a restart back off the shelf.
+    Restore,
     Package,
     Save,
     Player,
     Failed,
+}
+
+/// Whether narrated parts are written to the shelf as they arrive.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Keeping {
+    #[default]
+    Parts,
+    /// The shelf refused a part. The book still finishes from memory; only
+    /// a restart in the middle of it would pay for those parts again.
+    Refused,
 }
 
 #[derive(Default)]
@@ -114,6 +144,9 @@ struct Audiobook {
     saved: u32,
     total: u32,
     trouble: Option<(StandardState, String)>,
+    /// Whether trying the same topic again could help, so the failure
+    /// screen can offer that before a new topic.
+    retryable: bool,
     hint: Option<&'static str>,
     player: Option<AudioPlayer>,
     /// `None` until the shelf has answered, so the library can say it is
@@ -137,6 +170,21 @@ struct Audiobook {
     /// The upload in flight is the free sample, not a creation: saving it
     /// must not retire somebody's interrupted book.
     saving_sample: bool,
+    /// The accounts the keys screen asks for.
+    missing: Vec<&'static str>,
+    /// The narrated part being written to the shelf. One at a time, and
+    /// never beside the finished book's own upload, so every store answer
+    /// belongs to exactly one transfer.
+    part_upload: Option<ShelfUpload>,
+    /// How many narrated parts are safe on the shelf, which is what the
+    /// checkpoint promises a restart.
+    saved_parts: usize,
+    /// Whether narrated parts are still being written to the shelf.
+    keeping: Keeping,
+    /// The part being read back after a restart.
+    part_download: Option<ShelfDownload>,
+    /// How many saved parts a resume is reading back.
+    restoring: usize,
 }
 
 impl Audiobook {
@@ -201,6 +249,8 @@ impl Audiobook {
                 AudioPlayer::screen,
             ),
             Stage::Failed => self.failed_screen(),
+            Stage::Keys => self.keys_screen(),
+            Stage::Confirm => confirm_screen(),
             _ => {
                 let (label, percent) = self.progress();
                 let label = label.as_str();
@@ -246,42 +296,81 @@ impl Audiobook {
             (StandardState::Error, "The request failed."),
             |(state, advice)| (*state, advice.as_str()),
         );
-        let mut screen = ScreenBuilder::new("audiobook-failed")
-            .top_bar("Could not create audiobook")
-            .standard_state(state, advice);
-        // Resume is first because it is the cheaper way forward: the
-        // script survives in the store and, within a session, so do
-        // the parts already narrated.
-        let resume_label = if self.parts.is_empty() {
+        // Where a resume would carry on, said in the message rather than on
+        // the button. A title on the button wrapped onto three lines and
+        // squeezed its neighbours.
+        let resume_from = if self.parts.is_empty() {
             self.checkpoint
                 .as_ref()
-                .map(|checkpoint| format!("Resume '{}'", checkpoint.title))
+                .map(|checkpoint| (checkpoint.next_part, checkpoint.parts.len()))
         } else {
-            Some(format!("Resume '{}'", self.title))
+            Some((self.next_part, self.parts.len()))
         };
-        match (resume_label.is_some(), self.has_books()) {
-            (true, true) => {
-                screen = screen.buttons([
-                    (RESUME, resume_label.as_deref().unwrap_or("Resume")),
-                    (AGAIN, "Start over"),
-                    (SHELF, "Your audiobooks"),
-                ]);
-            }
-            (true, false) => {
-                screen = screen.buttons([
-                    (RESUME, resume_label.as_deref().unwrap_or("Resume")),
-                    (AGAIN, "Start over"),
-                ]);
-            }
-            (false, true) => {
-                screen = screen.buttons([(AGAIN, "Try another topic"), (SHELF, "Your audiobooks")]);
-            }
-            (false, false) => screen = screen.button(AGAIN, "Try another topic"),
+        let message = match resume_from {
+            Some((next, total)) => format!(
+                "{advice} Resume carries on from part {} of {total}.",
+                (next + 1).min(total.max(1))
+            ),
+            None => advice.to_owned(),
+        };
+        let screen = ScreenBuilder::new("audiobook-failed")
+            .top_bar("Could not create audiobook")
+            .standard_state(state, message);
+        // Resume first because it is the cheaper way forward. Then trying
+        // the same topic again when that could help, which keeps the topic:
+        // "Try another topic" was the only way out of a dropped connection
+        // and it threw away what had been typed.
+        let (first, second) = match (resume_from.is_some(), self.retryable) {
+            (true, _) => ((RESUME, "Resume"), (AGAIN, "Start over")),
+            (false, true) => ((CHECK, "Try again"), (AGAIN, "New topic")),
+            (false, false) => ((AGAIN, "New topic"), (SHELF, "Your audiobooks")),
+        };
+        let screen = screen.primary_button(first.0, first.1);
+        if second.0 != SHELF && self.has_books() {
+            screen.buttons([second, (SHELF, "Your audiobooks")]).build()
+        } else if second.0 == SHELF && !self.has_books() {
+            screen.build()
+        } else {
+            screen.button(second.0, second.1).build()
         }
-        screen.build()
     }
 
-    /// What is already on the reader, and the way back to it.
+    /// Which keys are missing and the exact command that installs each.
+    ///
+    /// This used to be a failure screen with one way out, "Try another
+    /// topic", which threw the topic away and led straight back to the same
+    /// refusal. Now it names the command, keeps the topic, and asks again.
+    fn keys_screen(&self) -> Screen {
+        let missing = self
+            .missing
+            .iter()
+            .map(|secret| provider_name(secret))
+            .collect::<Vec<_>>();
+        let named = match missing.as_slice() {
+            [] => String::new(),
+            [only] => (*only).to_owned(),
+            [first @ .., last] => format!("{} or {last}", first.join(", ")),
+        };
+        let mut screen = ScreenBuilder::new("audiobook-keys")
+            .top_bar("Add your keys")
+            .owns_back(true)
+            .secondary(format!(
+                "Exa researches, OpenAI writes and ElevenLabs narrates, each on your own \
+                 account. This reader has no key for {named} yet. On your computer, run:"
+            ));
+        for secret in &self.missing {
+            screen = screen.command(format!("kobo secret set {secret}"));
+        }
+        screen
+            .secondary(format!(
+                "Each command reads its key from a file such as ~/.{}. Nothing has been spent.",
+                self.missing.first().copied().unwrap_or("exa")
+            ))
+            .primary_button(CHECK, "Check again")
+            .button(EDIT, "Edit topic")
+            .build()
+    }
+
     /// What is already on the reader, and the way back to it.
     ///
     /// Everything here reads from disk. Nothing on this screen, and nothing
@@ -474,12 +563,12 @@ impl Audiobook {
     ///
     /// Within a session the parts already narrated are still in memory and
     /// only the part that failed is asked for again. After a restart the
-    /// script is what the store held, and narration begins it again from
-    /// the first part - re-narrating a part costs one call, re-writing the
-    /// book would cost every one of them.
+    /// parts that reached the shelf are read back first, and narration picks
+    /// up after the last of them. It used to begin again from the first
+    /// part, which paid for every part twice.
     fn resume(&mut self, context: &mut Context) {
         if self.parts.is_empty() {
-            let Some(checkpoint) = self.checkpoint.take() else {
+            let Some(checkpoint) = self.checkpoint.clone() else {
                 return;
             };
             self.topic = Keyboard::with_text(&checkpoint.topic);
@@ -489,7 +578,10 @@ impl Audiobook {
             self.archive_name = checkpoint.archive_name;
             self.parts = checkpoint.parts;
             self.next_part = 0;
+            self.saved_parts = 0;
+            self.keeping = Keeping::Parts;
             self.tracks.clear();
+            self.restoring = checkpoint.next_part.min(self.parts.len());
         }
         if self.parts.is_empty() {
             return;
@@ -497,12 +589,54 @@ impl Audiobook {
         self.upload = None;
         self.trouble = None;
         self.clock.start(context);
+        if self.tracks.len() < self.restoring {
+            self.stage = Stage::Restore;
+            self.read_next_part(context);
+        } else {
+            self.stage = Stage::Narrate;
+            self.start_next_voice(context);
+        }
+    }
+
+    /// Asks the shelf for the next part narrated before a restart.
+    fn read_next_part(&mut self, context: &mut Context) {
+        let mut download = ShelfDownload::new(part_name(&self.archive_name, self.tracks.len()))
+            .at_most(MAX_PART_BYTES);
+        download.start(context);
+        self.part_download = Some(download);
+    }
+
+    /// One saved part is back in memory, exactly as it was narrated.
+    fn restored_part(&mut self, context: &mut Context, audio: Vec<u8>) {
+        if audio.len() < 256 {
+            self.restored(context);
+            return;
+        }
+        self.tracks
+            .push((format!("{:03}.mp3", self.tracks.len() + 1), audio));
+        if self.tracks.len() < self.restoring {
+            self.read_next_part(context);
+        } else {
+            self.restored(context);
+        }
+    }
+
+    /// Narrates whatever the shelf could not give back.
+    ///
+    /// Also the answer to a part that is missing or damaged: the parts
+    /// before it are kept and narration starts at it, which pays only for
+    /// what was actually lost.
+    fn restored(&mut self, context: &mut Context) {
+        self.part_download = None;
+        self.restoring = 0;
+        self.next_part = self.tracks.len();
+        self.saved_parts = self.tracks.len();
         self.stage = Stage::Narrate;
         self.start_next_voice(context);
     }
 
     /// Records how far an interrupted creation got, at each boundary where
-    /// that answer changes: the script written, and each part narrated.
+    /// that answer changes: the script written, and each part saved.
     fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             topic: self.topic.text().to_owned(),
@@ -511,14 +645,42 @@ impl Audiobook {
             summary: self.summary.clone(),
             archive_name: self.archive_name.clone(),
             parts: self.parts.clone(),
-            next_part: self.next_part,
+            next_part: self.saved_parts,
         }
     }
 
-    fn save_checkpoint(&self, context: &mut Context) {
+    /// Writes the checkpoint, and keeps the copy in memory in step with it.
+    ///
+    /// The copy in memory is what a cancel leaves on the composer. When only
+    /// the store was updated, a cancel followed by Resume read the copy made
+    /// when the script arrived and narrated from the first part again.
+    fn save_checkpoint(&mut self, context: &mut Context) {
+        let checkpoint = self.checkpoint();
         context
             .store()
-            .save(CHECKPOINT_KEY, write_checkpoint(&self.checkpoint()));
+            .save(CHECKPOINT_KEY, write_checkpoint(&checkpoint));
+        self.checkpoint = Some(checkpoint);
+    }
+
+    /// Forgets an interrupted creation and the parts it saved.
+    ///
+    /// Covers both the creation in memory and the one the store offered,
+    /// which are usually the same book and are removed by name either way.
+    fn retire_checkpoint(&mut self, context: &mut Context) {
+        let mut books = Vec::new();
+        if !self.parts.is_empty() {
+            books.push((self.archive_name.clone(), self.parts.len()));
+        }
+        if let Some(checkpoint) = self.checkpoint.take() {
+            books.push((checkpoint.archive_name, checkpoint.parts.len()));
+        }
+        books.dedup();
+        for (archive_name, parts) in books {
+            for index in 0..parts {
+                context.shelf().remove(part_name(&archive_name, index));
+            }
+        }
+        context.store().forget(CHECKPOINT_KEY);
     }
 
     fn progress(&self) -> (String, u8) {
@@ -526,6 +688,14 @@ impl Audiobook {
             Stage::Setup => ("Checking account setup".to_owned(), 5),
             Stage::Research => ("Researching the topic".to_owned(), 10),
             Stage::Write => ("Writing the spoken script".to_owned(), 30),
+            Stage::Restore => (
+                format!(
+                    "Reading back part {} of {}",
+                    (self.tracks.len() + 1).min(self.restoring.max(1)),
+                    self.restoring.max(1)
+                ),
+                35,
+            ),
             Stage::Narrate => {
                 let total = self.parts.len().max(1);
                 let percent = 35 + (self.next_part.saturating_mul(50) / total).min(50);
@@ -539,9 +709,12 @@ impl Audiobook {
             }
             Stage::Package => ("Packaging Kobo audiobook".to_owned(), 88),
             Stage::Save => ("Saving audiobook".to_owned(), 94),
-            Stage::Library | Stage::Compose | Stage::Player | Stage::Failed => {
-                ("Preparing".to_owned(), 0)
-            }
+            Stage::Library
+            | Stage::Compose
+            | Stage::Keys
+            | Stage::Confirm
+            | Stage::Player
+            | Stage::Failed => ("Preparing".to_owned(), 0),
         }
     }
 
@@ -549,16 +722,13 @@ impl Audiobook {
         let topic = self.topic.text().trim();
         if topic.len() < 3 {
             self.hint = Some("That is too short. Add a few words.");
+            self.stage = Stage::Compose;
             self.show(context);
             return;
         }
         self.stage = Stage::Setup;
         self.hint = None;
         self.trouble = None;
-        // A new creation supersedes an interrupted one: the person read the
-        // offer to resume it and chose a fresh topic instead.
-        self.checkpoint = None;
-        context.store().forget(CHECKPOINT_KEY);
         // Every account this book will spend is checked before the first
         // request goes out. Research, writing and narration each have their
         // own key, and finding out the narration key is missing after the
@@ -567,55 +737,46 @@ impl Audiobook {
         self.show(context);
     }
 
-    /// The answer to the preflight: start spending, or say exactly which
-    /// accounts are missing while nothing has been spent yet.
+    /// The answer to the preflight: show what the book will cost, or say
+    /// exactly which keys are missing while nothing has been spent yet.
     fn checked_secrets(&mut self, context: &mut Context, present: &[String]) {
         if self.stage != Stage::Setup {
             return;
         }
-        let missing = SECRETS
+        self.missing = SECRETS
             .iter()
-            .filter(|name| !present.iter().any(|held| held == *name))
-            .collect::<Vec<_>>();
-        if missing.is_empty() {
-            self.stage = Stage::Research;
-            // One clock for the whole creation rather than one per stage. What
-            // somebody waiting wants to know is how long they have been waiting,
-            // not how long this particular provider has.
-            self.clock.start(context);
-            self.task = context.spawn(pipeline::research(self.topic.text().trim()));
-            if self.task.is_none() {
-                self.fail("The runtime is already busy.");
-            }
+            .copied()
+            .filter(|name| !present.iter().any(|held| held == name))
+            .collect();
+        self.stage = if self.missing.is_empty() {
+            Stage::Confirm
         } else {
-            let services = missing
-                .iter()
-                .map(|name| service_name(name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let names = missing
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect::<Vec<_>>()
-                .join(", ");
-            self.fail_as(
-                StandardState::PermissionDenied,
-                format!(
-                    "Account details for {services} are missing (secrets: {names}). Add them, then try again."
-                ),
-            );
-        }
+            Stage::Keys
+        };
         self.show(context);
     }
 
     /// The check itself could not run, so the flow continues and lets each
     /// stage report its own missing key the way it always has. An old
-    /// runtime answers this way; it is a degraded path, not a failure.
+    /// runtime answers this way; it is a degraded path, not a failure, and
+    /// the estimate is still shown before anything is spent.
     fn skip_preflight(&mut self, context: &mut Context) {
         if self.stage != Stage::Setup {
             return;
         }
+        self.stage = Stage::Confirm;
+        self.show(context);
+    }
+
+    /// The owner has read the estimate and chosen to spend.
+    fn start_creation(&mut self, context: &mut Context) {
+        // A new creation supersedes an interrupted one: the person read the
+        // offer to resume it and chose a fresh topic instead.
+        self.retire_checkpoint(context);
         self.stage = Stage::Research;
+        // One clock for the whole creation rather than one per stage. What
+        // somebody waiting wants to know is how long they have been waiting,
+        // not how long this particular provider has.
         self.clock.start(context);
         self.task = context.spawn(pipeline::research(self.topic.text().trim()));
         if self.task.is_none() {
@@ -650,14 +811,12 @@ impl Audiobook {
                 } else {
                     self.stage = Stage::Narrate;
                     self.next_part = 0;
+                    self.saved_parts = 0;
+                    self.keeping = Keeping::Parts;
                     self.tracks.clear();
                     // The script is the expensive thing two providers made;
                     // from here an interruption has something worth keeping.
-                    let checkpoint = self.checkpoint();
-                    self.checkpoint = Some(checkpoint.clone());
-                    context
-                        .store()
-                        .save(CHECKPOINT_KEY, write_checkpoint(&checkpoint));
+                    self.save_checkpoint(context);
                     self.start_next_voice(context);
                 }
             }
@@ -668,7 +827,7 @@ impl Audiobook {
 
     fn start_next_voice(&mut self, context: &mut Context) {
         let Some(text) = self.parts.get(self.next_part) else {
-            self.package(context);
+            self.package_when_saved(context);
             return;
         };
         self.stage = Stage::Narrate;
@@ -687,9 +846,154 @@ impl Audiobook {
         self.tracks
             .push((format!("{:03}.mp3", self.next_part + 1), audio));
         self.next_part += 1;
-        self.save_checkpoint(context);
+        self.save_next_part(context);
         self.start_next_voice(context);
         self.show(context);
+    }
+
+    /// Writes the oldest narrated part that is not on the shelf yet.
+    ///
+    /// The checkpoint moves only once a part is safely written, so it never
+    /// promises a restart audio that is not there.
+    fn save_next_part(&mut self, context: &mut Context) {
+        if self.part_upload.is_some() || self.keeping == Keeping::Refused {
+            return;
+        }
+        let Some((_, audio)) = self.tracks.get(self.saved_parts) else {
+            return;
+        };
+        let mut upload = ShelfUpload::new(
+            part_name(&self.archive_name, self.saved_parts),
+            audio.clone(),
+        );
+        upload.start(context);
+        self.part_upload = Some(upload);
+    }
+
+    /// Packages the book once its last part is narrated and no part is
+    /// still being written, so the book's own upload never shares the shelf
+    /// with a part's.
+    fn package_when_saved(&mut self, context: &mut Context) {
+        if self.part_upload.is_none() {
+            self.package(context);
+        }
+    }
+
+    /// A tap on the shelf: the sample, a new book, a page turn or a book.
+    fn on_library_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+        if action == action_id(SAMPLE) {
+            self.play_sample(context);
+            self.show(context);
+            return;
+        }
+        if action == action_id(NEW) {
+            self.stage = Stage::Compose;
+            self.show(context);
+            return;
+        }
+        if action == action_id(LIBRARY_BACK) {
+            self.page = self.page.saturating_sub(1);
+            self.show(context);
+            return;
+        }
+        if action == action_id(LIBRARY_NEXT) {
+            self.page = (self.page + 1).min(self.pages.len().saturating_sub(1));
+            self.show(context);
+            return;
+        }
+        for index in self.pages.get(self.page).cloned().unwrap_or_default() {
+            if action == action_id(&play_action(index)) {
+                self.play(context, index);
+                self.show(context);
+                return;
+            }
+        }
+    }
+
+    /// A tap on the keys screen or the estimate, the two screens between
+    /// typing a topic and paying for it. Back and Edit topic both return to
+    /// the composer with the topic still typed.
+    fn before_spending(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+        if action == kobo_sdk::ActionId::BACK || action == action_id(EDIT) {
+            self.stage = Stage::Compose;
+            self.show(context);
+        } else if action == action_id(CHECK) && self.stage == Stage::Keys {
+            self.begin(context);
+        } else if action == action_id(START) && self.stage == Stage::Confirm {
+            self.start_creation(context);
+        }
+    }
+
+    /// Feeds a store answer to a part being written or read back. Returns
+    /// whether it was one.
+    fn part_transfer(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        if let Some(download) = self.part_download.as_mut() {
+            match download.advance(context, result) {
+                ShelfProgress::Elsewhere => {}
+                ShelfProgress::Moving { .. } => return true,
+                ShelfProgress::Done => {
+                    let audio = self
+                        .part_download
+                        .take()
+                        .map(ShelfDownload::take)
+                        .unwrap_or_default();
+                    self.restored_part(context, audio);
+                    self.show(context);
+                    return true;
+                }
+                ShelfProgress::Failed(_) => {
+                    self.restored(context);
+                    self.show(context);
+                    return true;
+                }
+            }
+        }
+        if let Some(upload) = self.part_upload.as_mut() {
+            match upload.advance(context, result) {
+                ShelfProgress::Elsewhere => {}
+                ShelfProgress::Moving { .. } => return true,
+                // Saving a part changes nothing on the panel, so the panel
+                // is redrawn only when the book moves on to being packaged.
+                ShelfProgress::Done => {
+                    let stage = self.stage;
+                    self.part_upload = None;
+                    self.saved_parts += 1;
+                    self.save_checkpoint(context);
+                    self.save_next_part(context);
+                    self.package_if_ready(context);
+                    if self.stage != stage {
+                        self.show(context);
+                    }
+                    return true;
+                }
+                ShelfProgress::Failed(error) => {
+                    context.log(
+                        LogLevel::Warn,
+                        format!("audiobook part not kept for resuming: {error}"),
+                    );
+                    let stage = self.stage;
+                    self.part_upload = None;
+                    self.keeping = Keeping::Refused;
+                    self.package_if_ready(context);
+                    if self.stage != stage {
+                        self.show(context);
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Picks up a book whose last part was waiting on a part write.
+    fn package_if_ready(&mut self, context: &mut Context) {
+        if self.stage == Stage::Narrate
+            && self.task.is_none()
+            && !self.parts.is_empty()
+            && self.next_part >= self.parts.len()
+        {
+            self.package_when_saved(context);
+        }
     }
 
     fn package(&mut self, context: &mut Context) {
@@ -749,6 +1053,34 @@ impl Audiobook {
         self.fail_as(failure.state, failure.naming(self.secret_wanted()));
     }
 
+    /// A provider's refusal, told in that provider's name with the command
+    /// that fixes its key.
+    ///
+    /// Three providers, three keys, and the stage that failed is exactly the
+    /// thing that knows which one. The shared wording is kept for every
+    /// cause but one: these endpoints are fixed, so a refusal that is not
+    /// about the key or the pace is never "check the server address".
+    fn fail_task(&mut self, error: kobo_sdk::TaskError) {
+        let secret = self.secret_wanted();
+        let name = provider_name(secret);
+        let fix = format!("Replace the key from your computer: kobo secret set {secret}.");
+        let problem = kobo_sdk::failure::Service::new(name)
+            .fixed_by(&fix)
+            .explain(error);
+        let retryable = problem.retryable;
+        let message = if problem.cause == kobo_sdk::failure::Cause::NotFound {
+            format!(
+                "{name} turned the request down. The account may be out of credit, or {name} \
+                 may have retired what this app asks for. Check the account, or check Store \
+                 for an update."
+            )
+        } else {
+            problem.message
+        };
+        self.fail_as(problem.state, message);
+        self.retryable = retryable;
+    }
+
     /// The credential the stage in flight asked for.
     const fn secret_wanted(&self) -> &'static str {
         match self.stage {
@@ -762,6 +1094,7 @@ impl Audiobook {
         self.stage = Stage::Failed;
         self.task = None;
         self.upload = None;
+        self.retryable = false;
         self.trouble = Some((state, error.into()));
     }
 }
@@ -806,18 +1139,30 @@ impl KoboApp for Audiobook {
             self.show(context);
             return;
         }
+        if action == action_id(CHECK) && self.stage == Stage::Failed {
+            self.clock.stop(context);
+            self.begin(context);
+            return;
+        }
         if action == action_id(AGAIN) {
             if self.player.is_some() {
                 context.device().stop_audio();
             }
             self.clock.stop(context);
-            self.reset();
             // Starting over from a failure retires what was interrupted:
             // the person has seen it fail and chosen a different book.
-            self.checkpoint = None;
-            context.store().forget(CHECKPOINT_KEY);
+            // "Create another" under the player does not, because nothing
+            // about finishing one book says another should be thrown away.
+            if self.stage == Stage::Failed {
+                self.retire_checkpoint(context);
+            }
+            self.reset();
             self.stage = Stage::Compose;
             self.show(context);
+            return;
+        }
+        if matches!(self.stage, Stage::Keys | Stage::Confirm) {
+            self.before_spending(context, action);
             return;
         }
         // The player is always reached from the shelf, so the runtime's back
@@ -835,33 +1180,7 @@ impl KoboApp for Audiobook {
             return;
         }
         if self.stage == Stage::Library {
-            if action == action_id(SAMPLE) {
-                self.play_sample(context);
-                self.show(context);
-                return;
-            }
-            if action == action_id(NEW) {
-                self.stage = Stage::Compose;
-                self.show(context);
-                return;
-            }
-            if action == action_id(LIBRARY_BACK) {
-                self.page = self.page.saturating_sub(1);
-                self.show(context);
-                return;
-            }
-            if action == action_id(LIBRARY_NEXT) {
-                self.page = (self.page + 1).min(self.pages.len().saturating_sub(1));
-                self.show(context);
-                return;
-            }
-            for index in self.pages.get(self.page).cloned().unwrap_or_default() {
-                if action == action_id(&play_action(index)) {
-                    self.play(context, index);
-                    self.show(context);
-                    return;
-                }
-            }
+            self.on_library_action(context, action);
             return;
         }
         if self.stage == Stage::Compose {
@@ -890,7 +1209,12 @@ impl KoboApp for Audiobook {
         if self.clock.on_task(context, task, &outcome) {
             if matches!(
                 self.stage,
-                Stage::Research | Stage::Write | Stage::Narrate | Stage::Package | Stage::Save
+                Stage::Research
+                    | Stage::Write
+                    | Stage::Narrate
+                    | Stage::Restore
+                    | Stage::Package
+                    | Stage::Save
             ) {
                 self.show(context);
             }
@@ -916,24 +1240,38 @@ impl KoboApp for Audiobook {
                 _ => self.fail("A provider answered at the wrong stage."),
             },
             TaskOutcome::Failed(error) => {
-                if error == kobo_sdk::TaskError::NoCredential {
-                    let service = service_name(self.secret_wanted());
+                let secret = self.secret_wanted();
+                if error == kobo_sdk::TaskError::NoCredential && self.parts.is_empty() {
+                    // Nothing worth keeping has been made yet, so this is
+                    // the same moment as the preflight and gets its screen:
+                    // the command, and a way to check again.
+                    self.task = None;
+                    self.missing = vec![secret];
+                    self.stage = Stage::Keys;
+                } else if error == kobo_sdk::TaskError::NoCredential {
                     self.fail_as(
                         StandardState::PermissionDenied,
                         format!(
-                            "Account details for {service} are missing (secret: {}). Add them, then try again.",
-                            self.secret_wanted()
+                            "This reader has no {} key, which {} needs. On your computer, run \
+                             kobo secret set {secret}, then tap Resume.",
+                            provider_name(secret),
+                            service_name(secret)
                         ),
                     );
                 } else {
-                    self.fail_with(Failure::of(error));
+                    self.fail_task(error);
                 }
             }
             TaskOutcome::Cancelled => self.reset(),
         }
         if !matches!(
             self.stage,
-            Stage::Research | Stage::Write | Stage::Narrate | Stage::Package | Stage::Save
+            Stage::Research
+                | Stage::Write
+                | Stage::Narrate
+                | Stage::Restore
+                | Stage::Package
+                | Stage::Save
         ) {
             self.clock.stop(context);
         }
@@ -941,6 +1279,9 @@ impl KoboApp for Audiobook {
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if self.part_transfer(context, &result) {
+            return;
+        }
         if let Some(upload) = self.upload.as_mut() {
             match upload.advance(context, &result) {
                 ShelfProgress::Moving { done, total } => {
@@ -953,16 +1294,15 @@ impl KoboApp for Audiobook {
                     self.saved = self.total;
                     self.clock.stop(context);
                     self.upload = None;
+                    // Finished is the one end to an interruption: there is
+                    // nothing left to resume once the book is on the shelf,
+                    // and the parts it was saved in are inside it now. The
+                    // sample is not a creation, so saving it retires nothing.
+                    if !self.saving_sample {
+                        self.retire_checkpoint(context);
+                    }
                     self.tracks.clear();
                     self.parts.clear();
-                    // Finished is the one end to an interruption: there is
-                    // nothing left to resume once the book is on the shelf.
-                    // The sample is not a creation, so saving it retires
-                    // nothing.
-                    if !self.saving_sample {
-                        self.checkpoint = None;
-                        context.store().forget(CHECKPOINT_KEY);
-                    }
                     self.saving_sample = false;
                     self.remember(context);
                     context.shelf().list();
@@ -1032,6 +1372,65 @@ impl KoboApp for Audiobook {
             self.show(context);
         }
     }
+}
+
+/// What a new book will cost and how long it will take, before anything is
+/// spent.
+///
+/// The figures are ranges and say so. The script's length is the writer's
+/// choice and every account is on its own plan, so a single number would be
+/// a promise this application cannot keep; a range it can.
+fn confirm_screen() -> Screen {
+    let estimate = pipeline::Estimate::for_a_book();
+    let (short, long) = estimate.narration_thousands();
+    ScreenBuilder::new("audiobook-confirm")
+        .top_bar("Before you start")
+        .owns_back(true)
+        .facts([
+            (
+                "Time",
+                format!("{} to {} minutes", estimate.minutes.0, estimate.minutes.1),
+            ),
+            (
+                "Cost",
+                format!("${} to ${}", estimate.dollars.0, estimate.dollars.1),
+            ),
+            (
+                "Narration",
+                format!("{short} to {long} thousand ElevenLabs characters"),
+            ),
+            (
+                "Also",
+                "One Exa research run and one OpenAI script".to_owned(),
+            ),
+        ])
+        .secondary(
+            "An estimate, billed to your own accounts. If it stops part way, Resume \
+             does not pay again for what is done.",
+        )
+        .primary_button(START, "Create audiobook")
+        .button(EDIT, "Edit topic")
+        .build()
+}
+
+/// The company behind one secret, as the owner knows it.
+fn provider_name(secret: &str) -> &'static str {
+    match secret {
+        "exa" => "Exa",
+        "elevenlabs" => "ElevenLabs",
+        _ => "OpenAI",
+    }
+}
+
+/// The shelf name a narrated part waits under until the book is saved.
+///
+/// Not an `.mp3`, because this shelf is the folder the Kobo reader looks in
+/// for audiobooks, and a part must never be mistaken for a book.
+fn part_name(archive_name: &str, index: usize) -> String {
+    let stem = archive_name
+        .strip_suffix(ARCHIVE_SUFFIX)
+        .unwrap_or(archive_name);
+    format!("{stem}.part-{:03}", index + 1)
 }
 
 /// The service one secret pays for, in the words the compose screen used.
@@ -1230,11 +1629,12 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         archive_name, parse_index, play_action, read_checkpoint, size_on_disk, title_from_name,
-        write_checkpoint, Audiobook, Checkpoint, Saved, Stage, SAMPLE_NAME, SAMPLE_TITLE,
+        write_checkpoint, Audiobook, Checkpoint, Saved, Stage, CHECK, CHECKPOINT_KEY, SAMPLE_NAME,
+        SAMPLE_TITLE, SECRETS,
     };
     use crate::pipeline;
-    use kobo_sdk::Context;
-    use kobo_sdk::{action_id, Failure, StandardState, CLARA_BW_METRICS, MAX_ROWS};
+    use kobo_sdk::{action_id, StandardState, CLARA_BW_METRICS, MAX_ROWS};
+    use kobo_sdk::{Context, KoboApp, StoreResult};
 
     #[test]
     fn a_title_becomes_a_safe_kobo_filename() {
@@ -1426,10 +1826,10 @@ mod tests {
             .is_empty());
     }
 
-    /// The preflight answer names every missing account at once, while the
-    /// reader has spent nothing.
+    /// The preflight answer names every missing key at once, with the exact
+    /// command for each, while the reader has spent nothing.
     #[test]
-    fn a_missing_account_is_named_before_anything_is_spent() {
+    fn a_missing_key_is_named_with_the_command_that_installs_it() {
         let runner = kobo_sdk::AppRunner::new(Audiobook::default());
         let mut context = runner.context();
         let mut app = Audiobook {
@@ -1438,19 +1838,70 @@ mod tests {
             ..Audiobook::default()
         };
         app.checked_secrets(&mut context, &["openai".to_owned()]);
-        assert_eq!(app.stage, Stage::Failed);
-        let (state, advice) = app.trouble.clone().expect("a failure was recorded");
-        assert_eq!(state, StandardState::PermissionDenied);
-        assert!(advice.contains("research"), "{advice}");
-        assert!(advice.contains("narration"), "{advice}");
-        assert!(!advice.contains("writing"), "{advice}");
-        assert!(advice.contains("exa"), "{advice}");
-        assert!(advice.contains("elevenlabs"), "{advice}");
+        assert_eq!(app.stage, Stage::Keys);
         assert!(app.task.is_none(), "nothing was spent");
+        let drawn = format!("{:?}", app.screen(&Context::default()));
+        assert!(drawn.contains("secret set exa"), "{drawn}");
+        assert!(drawn.contains("secret set elevenlabs"), "{drawn}");
+        assert!(!drawn.contains("secret set openai"), "{drawn}");
+        assert!(drawn.contains("Check again"), "{drawn}");
         assert!(app
             .screen(&Context::default())
             .validate(&CLARA_BW_METRICS)
             .is_empty());
+    }
+
+    /// The dead end this replaced: the only way out threw the topic away.
+    /// Check again asks the runtime once more and keeps what was typed.
+    #[test]
+    fn checking_again_keeps_the_topic_and_asks_the_runtime_once_more() {
+        let mut runner = kobo_sdk::AppRunner::new(Audiobook {
+            stage: Stage::Keys,
+            missing: vec!["exa"],
+            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            ..Audiobook::default()
+        });
+        let commands = runner.action(action_id(CHECK));
+        assert_eq!(runner.app().stage, Stage::Setup);
+        assert_eq!(runner.app().topic.text(), "the moon");
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::CheckSecrets { .. })
+        )));
+    }
+
+    /// Every key present leads to the estimate, not to the first payment.
+    #[test]
+    fn the_cost_and_time_are_shown_before_anything_is_spent() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Setup,
+            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            ..Audiobook::default()
+        };
+        let all = SECRETS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>();
+        app.checked_secrets(&mut context, &all);
+        assert_eq!(app.stage, Stage::Confirm);
+        assert!(app.task.is_none(), "nothing is spent before Create");
+        let drawn = format!("{:?}", app.screen(&Context::default()));
+        assert!(drawn.contains("minutes"), "{drawn}");
+        assert!(drawn.contains("ElevenLabs characters"), "{drawn}");
+        let estimate = pipeline::Estimate::for_a_book();
+        assert!(
+            drawn.contains(&format!(
+                "${} to ${}",
+                estimate.dollars.0, estimate.dollars.1
+            )),
+            "{drawn}"
+        );
+        assert!(drawn.contains("An estimate"), "{drawn}");
+        app.start_creation(&mut context);
+        assert_eq!(app.stage, Stage::Research);
+        assert!(app.task.is_some(), "Create starts the research");
     }
 
     /// A runtime that cannot answer the check leaves the flow to find a
@@ -1465,7 +1916,12 @@ mod tests {
             ..Audiobook::default()
         };
         app.skip_preflight(&mut context);
-        assert_eq!(app.stage, Stage::Research);
+        assert_eq!(
+            app.stage,
+            Stage::Confirm,
+            "the estimate is still shown first"
+        );
+        assert!(app.task.is_none());
     }
 
     /// A checkpoint carries the script and the stopping point, and only a
@@ -1523,32 +1979,265 @@ mod tests {
         assert!(app.task.is_some(), "narration is back in flight");
     }
 
-    /// After a restart only the script survives, so a stored checkpoint
-    /// resumes the narration from its first part - not from a part whose
-    /// audio is gone.
-    #[test]
-    fn a_stored_checkpoint_resumes_the_script_from_the_top() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let checkpoint = Checkpoint {
+    fn store_requests(commands: &[kobo_sdk::Command]) -> Vec<kobo_sdk::StoreRequest> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Store(request) => Some(request.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn speech_requests(commands: &[kobo_sdk::Command]) -> Vec<String> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Spawn {
+                    work: kobo_sdk::Task::Post { url, body, .. },
+                    ..
+                } if url.contains("text-to-speech") => Some(body.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn moon_checkpoint(saved: usize) -> Checkpoint {
+        Checkpoint {
             topic: "the moon".to_owned(),
             language: pipeline::Language::default(),
             title: "The Moon".to_owned(),
             summary: String::new(),
             archive_name: "the-moon.mp3z".to_owned(),
             parts: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
-            next_part: 2,
-        };
+            next_part: saved,
+        }
+    }
+
+    /// After a restart the parts already narrated are read back off the
+    /// shelf, and only the part after them is paid for. This used to start
+    /// again from part one and pay for every part a second time.
+    #[test]
+    fn a_stored_checkpoint_reads_saved_parts_back_instead_of_narrating_them_again() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
         let mut app = Audiobook {
             stage: Stage::Compose,
-            checkpoint: Some(checkpoint),
+            checkpoint: Some(moon_checkpoint(2)),
             ..Audiobook::default()
         };
         app.resume(&mut context);
+        assert_eq!(app.stage, Stage::Restore);
+        let commands = context.take_commands();
+        assert!(
+            speech_requests(&commands).is_empty(),
+            "nothing is paid for yet"
+        );
+        assert!(store_requests(&commands).iter().any(|request| matches!(
+            request,
+            kobo_sdk::StoreRequest::ShelfRead { name, .. } if name == "the-moon.part-001"
+        )));
+        for (index, name) in ["the-moon.part-001", "the-moon.part-002"]
+            .iter()
+            .enumerate()
+        {
+            app.on_store(
+                &mut context,
+                StoreResult::ShelfRead {
+                    name: (*name).to_owned(),
+                    offset: 0,
+                    bytes: vec![u8::try_from(index).unwrap(); 300],
+                    size: 300,
+                },
+            );
+        }
         assert_eq!(app.stage, Stage::Narrate);
-        assert_eq!(app.next_part, 0, "the audio is gone, so the parts restart");
-        assert_eq!(app.title, "The Moon");
-        assert_eq!(app.parts.len(), 3);
+        assert_eq!(app.tracks.len(), 2, "both saved parts came back");
+        assert_eq!(app.next_part, 2);
+        let speech = speech_requests(&context.take_commands());
+        assert_eq!(speech.len(), 1, "{speech:?}");
+        assert!(speech[0].contains("three"), "only part three is narrated");
+    }
+
+    /// A part the shelf cannot give back is narrated again, and so is
+    /// everything after it, but nothing before it.
+    #[test]
+    fn a_saved_part_that_is_missing_is_narrated_again_from_there() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Compose,
+            checkpoint: Some(moon_checkpoint(2)),
+            ..Audiobook::default()
+        };
+        app.resume(&mut context);
+        app.on_store(
+            &mut context,
+            StoreResult::ShelfRead {
+                name: "the-moon.part-001".to_owned(),
+                offset: 0,
+                bytes: vec![1; 300],
+                size: 300,
+            },
+        );
+        let _ = context.take_commands();
+        app.on_store(
+            &mut context,
+            StoreResult::Denied(kobo_sdk::StoreError::Missing),
+        );
+        assert_eq!(app.stage, Stage::Narrate);
+        assert_eq!(app.next_part, 1);
+        let speech = speech_requests(&context.take_commands());
+        assert_eq!(speech.len(), 1);
+        assert!(speech[0].contains("two"), "{speech:?}");
+    }
+
+    /// Each narrated part is written to the shelf, and the checkpoint moves
+    /// only once it is there, so a restart is never promised audio that was
+    /// not saved.
+    #[test]
+    fn a_narrated_part_is_kept_on_the_shelf_before_the_checkpoint_counts_it() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Narrate,
+            title: "The Moon".to_owned(),
+            archive_name: "the-moon.mp3z".to_owned(),
+            parts: vec!["one".to_owned(), "two".to_owned()],
+            ..Audiobook::default()
+        };
+        app.received_voice(&mut context, vec![7; 300]);
+        let requests = store_requests(&context.take_commands());
+        assert!(requests.iter().any(|request| matches!(
+            request,
+            kobo_sdk::StoreRequest::ShelfWrite { name, last: true, .. } if name == "the-moon.part-001"
+        )));
+        assert!(
+            !requests.iter().any(|request| matches!(
+                request,
+                kobo_sdk::StoreRequest::Save { key, .. } if key == CHECKPOINT_KEY
+            )),
+            "the checkpoint counted a part before it was saved"
+        );
+        app.on_store(
+            &mut context,
+            StoreResult::ShelfWritten {
+                name: "the-moon.part-001".to_owned(),
+                size: 300,
+            },
+        );
+        let saved = store_requests(&context.take_commands())
+            .into_iter()
+            .find_map(|request| match request {
+                kobo_sdk::StoreRequest::Save { key, value } if key == CHECKPOINT_KEY => {
+                    read_checkpoint(&value)
+                }
+                _ => None,
+            })
+            .expect("the checkpoint moved");
+        assert_eq!(saved.next_part, 1);
+        assert_eq!(app.checkpoint.map(|kept| kept.next_part), Some(1));
+    }
+
+    /// The book's own upload waits for the last part's write, so the two
+    /// never answer on the same shelf at once.
+    #[test]
+    fn the_book_is_packaged_only_once_the_last_part_is_on_the_shelf() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Narrate,
+            title: "The Moon".to_owned(),
+            archive_name: "the-moon.mp3z".to_owned(),
+            parts: vec!["one".to_owned()],
+            ..Audiobook::default()
+        };
+        app.received_voice(&mut context, vec![7; 300]);
+        assert_eq!(
+            app.stage,
+            Stage::Narrate,
+            "packaged before the part was saved"
+        );
+        assert!(app.upload.is_none());
+        app.on_store(
+            &mut context,
+            StoreResult::ShelfWritten {
+                name: "the-moon.part-001".to_owned(),
+                size: 300,
+            },
+        );
+        assert_eq!(app.stage, Stage::Save);
+        assert!(app.upload.is_some());
+    }
+
+    /// Once the book is saved its parts are inside it, so they go.
+    #[test]
+    fn a_saved_book_removes_the_parts_it_was_made_from() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Save,
+            title: "The Moon".to_owned(),
+            archive_name: "the-moon.mp3z".to_owned(),
+            parts: vec!["one".to_owned(), "two".to_owned()],
+            checkpoint: Some(moon_checkpoint(2)),
+            upload: Some(kobo_sdk::ShelfUpload::new("the-moon.mp3z", vec![1; 10])),
+            ..Audiobook::default()
+        };
+        if let Some(upload) = app.upload.as_mut() {
+            upload.start(&mut context);
+        }
+        let _ = context.take_commands();
+        app.on_store(
+            &mut context,
+            StoreResult::ShelfWritten {
+                name: "the-moon.mp3z".to_owned(),
+                size: 10,
+            },
+        );
+        let removed = store_requests(&context.take_commands())
+            .into_iter()
+            .filter_map(|request| match request {
+                kobo_sdk::StoreRequest::ShelfRemove { name } => Some(name),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            removed.contains(&"the-moon.part-001".to_owned()),
+            "{removed:?}"
+        );
+        assert!(
+            removed.contains(&"the-moon.part-002".to_owned()),
+            "{removed:?}"
+        );
+        assert!(app.checkpoint.is_none());
+    }
+
+    /// A cancel after some parts are saved leaves the composer offering a
+    /// resume that reads those parts back, not one from the first part.
+    #[test]
+    fn a_cancel_keeps_the_saved_parts_resumable() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Narrate,
+            title: "The Moon".to_owned(),
+            archive_name: "the-moon.mp3z".to_owned(),
+            parts: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
+            ..Audiobook::default()
+        };
+        app.received_voice(&mut context, vec![7; 300]);
+        app.on_store(
+            &mut context,
+            StoreResult::ShelfWritten {
+                name: "the-moon.part-001".to_owned(),
+                size: 300,
+            },
+        );
+        app.reset();
+        assert_eq!(app.checkpoint.as_ref().map(|kept| kept.next_part), Some(1));
+        app.resume(&mut context);
+        assert_eq!(app.stage, Stage::Restore);
     }
 
     /// The failure screen leads with resuming when there is something to
@@ -1624,19 +2313,107 @@ mod tests {
         assert!(saved.upload.is_none(), "no second save for a saved sample");
     }
 
-    /// Missing account setup should use the shared customer-facing remedy.
+    /// A key that goes missing before the script exists gets the keys
+    /// screen; one that goes missing during narration keeps the resume and
+    /// names the command.
     #[test]
-    fn missing_account_setup_uses_consumer_copy() {
-        for stage in [Stage::Research, Stage::Write, Stage::Narrate] {
-            let mut app = Audiobook {
-                stage,
-                ..Audiobook::default()
-            };
-            app.fail_with(Failure::of(kobo_sdk::TaskError::NoCredential));
-            let (state, advice) = app.trouble.clone().expect("a failure was recorded");
-            assert_eq!(state, StandardState::PermissionDenied);
-            assert_eq!(advice, "Add account details to connect this service.");
-        }
+    fn a_key_missing_part_way_names_its_command_and_keeps_what_was_made() {
+        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+        let mut context = runner.context();
+        let mut app = Audiobook {
+            stage: Stage::Research,
+            ..Audiobook::default()
+        };
+        app.task = context.spawn(pipeline::research("the moon"));
+        let task = app.task.expect("research in flight");
+        app.on_task(
+            &mut context,
+            task,
+            kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
+        );
+        assert_eq!(app.stage, Stage::Keys);
+        assert_eq!(app.missing, vec!["exa"]);
+
+        let mut app = Audiobook {
+            stage: Stage::Narrate,
+            title: "The Moon".to_owned(),
+            parts: vec!["one".to_owned(), "two".to_owned()],
+            ..Audiobook::default()
+        };
+        app.task = context.spawn(pipeline::speech("one", pipeline::Language::default()));
+        let task = app.task.expect("narration in flight");
+        app.on_task(
+            &mut context,
+            task,
+            kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
+        );
+        assert_eq!(app.stage, Stage::Failed);
+        let (state, advice) = app.trouble.clone().expect("a failure was recorded");
+        assert_eq!(state, StandardState::PermissionDenied);
+        assert!(advice.contains("kobo secret set elevenlabs"), "{advice}");
+        assert!(format!("{:?}", app.screen(&Context::default())).contains("Resume"));
+    }
+
+    /// A dropped connection used to leave "Try another topic" as the only
+    /// way on, which threw the typed topic away.
+    #[test]
+    fn a_dropped_connection_offers_to_try_the_same_topic_again() {
+        let mut runner = kobo_sdk::AppRunner::new(Audiobook {
+            stage: Stage::Research,
+            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            ..Audiobook::default()
+        });
+        runner.app_mut().fail_task(kobo_sdk::TaskError::Offline);
+        let drawn = format!("{:?}", runner.app().screen(&Context::default()));
+        assert!(drawn.contains("Try again"), "{drawn}");
+        assert!(drawn.contains("New topic"), "{drawn}");
+        assert!(!drawn.contains("Try another topic"), "{drawn}");
+        runner.action(action_id(CHECK));
+        assert_eq!(runner.app().stage, Stage::Setup);
+        assert_eq!(runner.app().topic.text(), "the moon");
+    }
+
+    /// The resume button stays one short word, and the message says where
+    /// it carries on.
+    #[test]
+    fn a_failure_with_something_to_resume_says_which_part_it_carries_on_with() {
+        let app = Audiobook {
+            stage: Stage::Failed,
+            title: "A researched history of the night sky and the people who mapped it".to_owned(),
+            parts: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
+            next_part: 1,
+            trouble: Some((
+                StandardState::Error,
+                "ElevenLabs did not answer.".to_owned(),
+            )),
+            ..Audiobook::default()
+        };
+        let drawn = format!("{:?}", app.screen(&Context::default()));
+        assert!(drawn.contains("carries on from part 2 of 3"), "{drawn}");
+        assert!(!drawn.contains("Resume 'A researched"), "{drawn}");
+    }
+
+    /// A refused key names the provider and the command, and a refusal that
+    /// is not about the key never sends the owner to check an address these
+    /// fixed endpoints do not have.
+    #[test]
+    fn a_provider_refusal_names_the_provider_and_never_a_server_address() {
+        let mut app = Audiobook {
+            stage: Stage::Narrate,
+            ..Audiobook::default()
+        };
+        app.fail_task(kobo_sdk::TaskError::Unauthorized);
+        let (_, advice) = app.trouble.clone().expect("a failure");
+        assert!(advice.starts_with("ElevenLabs"), "{advice}");
+        assert!(advice.contains("kobo secret set elevenlabs"), "{advice}");
+        let mut app = Audiobook {
+            stage: Stage::Write,
+            ..Audiobook::default()
+        };
+        app.fail_task(kobo_sdk::TaskError::NotFound);
+        let (_, advice) = app.trouble.clone().expect("a failure");
+        assert!(advice.starts_with("OpenAI"), "{advice}");
+        assert!(!advice.contains("address"), "{advice}");
     }
 }
 

@@ -12,36 +12,40 @@ pub(super) fn welcome(error: Option<&str>) -> Screen {
         .secondary(error.unwrap_or("The computer runs the session. Keep it awake and on the same network."))
         .build()
 }
+// These three pages are the same recipe as `kobo stream` with no arguments,
+// the README and the Store steps, in the same order. They used to be three
+// recipes that disagreed: one trusted the computer by hand, one started a
+// shell with flags, and one ran a connection check first.
 pub(super) fn setup() -> Screen {
     ScreenBuilder::new("paperterm-setup")
         .top_bar("Connect a computer")
-        .heading("1. Pair the computer")
+        .heading("1. Pair once")
         .text("In a terminal on the computer, run:")
         .command("kobo stream init")
-        .secondary("It finds this Kobo on your network, trusts the computer, and prints an address and a pairing code to enter here.")
+        .secondary(
+            "It finds this Kobo and pairs Paperterm on it, so there is nothing to type here.",
+        )
         .buttons([("welcome", "Back"), ("trust", "Next")])
         .build()
 }
-/// The step `kobo stream init` already took when it found the reader. Kept as
-/// its own page for a reader it could not find, which is the one case where
-/// the owner has to do it by hand.
+/// The one step the computer cannot take for the owner: the runtime reads
+/// the computer's certificate when Cobalt opens, so a first pairing is only
+/// trusted after Cobalt has been opened again.
 pub(super) fn trust() -> Screen {
     ScreenBuilder::new("paperterm-trust")
         .top_bar("Connect a computer")
-        .heading("2. Trust the computer")
-        .text("Done already if the last step found this Kobo. If it did not:")
-        .command("kobo trust set stream --reader NAME")
-        .secondary("NAME is what kobo pair saved this Kobo as.")
+        .heading("2. Reopen Cobalt once")
+        .text("After the first pairing, close Cobalt and open it again so this Kobo trusts the computer.")
         .buttons([("setup", "Back"), ("start", "Next")])
         .build()
 }
 pub(super) fn start() -> Screen {
     ScreenBuilder::new("paperterm-start")
         .top_bar("Connect a computer")
-        .heading("3. Start a session")
+        .heading("3. Share a terminal")
         .text("Run this and leave the terminal open:")
-        .command("kobo stream --interactive -- /bin/sh")
-        .secondary("The session runs on the computer, so keep it awake.")
+        .command("kobo stream terminal")
+        .secondary("Keep the computer awake. If kobo stream init could not reach this Kobo, enter the address and code it printed.")
         .buttons([("trust", "Back"), ("enter-address", "Enter address")])
         .build()
 }
@@ -74,7 +78,7 @@ pub(super) fn entry(code: bool, keyboard: &Keyboard, error: Option<&str>) -> Scr
         (
             "paperterm-code",
             "Now the pairing code",
-            "Enter the six characters printed by kobo stream init.",
+            "Enter the six characters kobo stream init printed.",
             "code",
             "abc123",
             "Connect",
@@ -83,7 +87,7 @@ pub(super) fn entry(code: bool, keyboard: &Keyboard, error: Option<&str>) -> Scr
         (
             "paperterm-pairing",
             "Pair with your computer",
-            "Enter the address printed by kobo stream init.",
+            "Enter the address kobo stream init printed.",
             "address",
             "192.168.1.20:9332",
             "Next",

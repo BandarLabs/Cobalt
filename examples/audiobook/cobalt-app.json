@@ -2,8 +2,8 @@
   "id": "audiobook",
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
-  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-  "version": "1.0.17",
+  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.",
+  "version": "1.0.18",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,5 +11,31 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
+  "release_notes": "Names the exact command for a missing key, shows the time and cost before you start, and Resume no longer pays to narrate finished parts again, even after a restart.",
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "A book is researched by Exa, written by OpenAI and narrated by ElevenLabs, on your own accounts. Create an API key with each and save them in private files: ~/.exa, ~/.openai and ~/.elevenlabs."
+      },
+      {
+        "text": "Install the research key.",
+        "command": "kobo secret set exa"
+      },
+      {
+        "text": "Install the writing key.",
+        "command": "kobo secret set openai"
+      },
+      {
+        "text": "Install the narration key.",
+        "command": "kobo secret set elevenlabs"
+      },
+      {
+        "text": "Open Audiobook Studio and type a topic. It shows the time and cost before anything is spent: about 3 to 8 minutes and $1 to $5 a book. The free sample plays with no keys."
+      }
+    ]
+  }
 }

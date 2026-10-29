@@ -60,7 +60,9 @@ def main():
                 self.end_headers()
                 return
             authed.append(self.path)
-            if self.path.startswith("/api/recipes?"):
+            if self.path == "/api/users/self":
+                body = b'{"username": "cook"}'
+            elif self.path.startswith("/api/recipes?"):
                 body = (FIXTURES / "mealie-list.json").read_bytes()
             elif self.path == "/api/recipes" or self.path.strip("/") in ("api/recipes",):
                 body = (FIXTURES / "mealie-list.json").read_bytes()
@@ -130,7 +132,7 @@ def main():
 
             try:
                 start()
-                drive("wait-for Connect Mealie", "tap Add address", "wait-for Kitchen Card settings", "tap https://mealie.example")
+                drive("wait-for Connect Mealie", "expect kobo connect kitchencard", "tap Type the address here", "wait-for Kitchen Card settings", "tap https://mealie.example")
                 steps = []
                 layer = "letters"
                 for character in "demo.mealie.io":
@@ -156,6 +158,30 @@ def main():
                 drive("tap Ingredients", "expect whole chicken")
                 capture("kitchen-cook-ingredients")
                 result["checks"].append("synced real Mealie demo recipes through cook and ingredients views")
+                stop()
+
+                # The same setup from the computer: a wrong token is refused
+                # before anything reaches the reader, the right one installs
+                # the token and the address, and the app opens connected.
+                state = private / "cobalt-sim-state/kitchencard"
+                (state / "config").unlink()
+                (secrets / "mealie").unlink()
+
+                def connect(token):
+                    return subprocess.run([str(cli), "connect", "kitchencard", "--sim", "--server", f"https://{HOST}", "--stdin"],
+                                          cwd=ROOT, env=env, input=token, text=True, capture_output=True, timeout=120)
+
+                wrong = connect("not-the-token")
+                assert wrong.returncode != 0 and "did not accept the token" in wrong.stderr, wrong
+                assert not (state / "config").exists(), "a refused token was installed"
+                done = connect(TOKEN)
+                assert done.returncode == 0, done.stderr
+                assert (state / "config").read_text() == f"https://{HOST}\nmealie"
+                assert (secrets / "mealie").read_text().strip() == TOKEN
+                start()
+                drive("wait-for Lemon Herb Roasted Chicken")
+                capture("kitchen-connected-from-computer")
+                result["checks"].append("kobo connect kitchencard refused a wrong token and set the app up with the right one")
                 stop()
                 verify_cli(cli, provenance)
                 result["status"] = "passed"

@@ -21,39 +21,41 @@ A read-only, offline reader for your Obsidian notes.
 
 - Browse folders, filter by tag, see recent notes and search every note's
   text.
-- Wiki links (`[[Note]]` and `[[Note|label]]`) show as text and build a
-  backlinks view for each note.
-- Long notes are paged, and each note reopens where you left off.
+- Headings are set as headings.
+- Wiki links (`[[Note]]` and `[[Note|label]]`) open the note they name when it
+  is on the reader. Back returns to the page you followed the link from. Each
+  note also lists the notes that link to it.
+- Long notes are paged, and each note reopens where you left off. The page
+  buttons turn pages.
+- Notes you push appear the next time you come back to Vault.
 
 ## Setup
 
-Send a folder of notes from your computer:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. Send a folder of notes:
 
 ```sh
-kobo vault init --device 192.168.1.42
-kobo vault push ~/Notes --device 192.168.1.42
+kobo vault push ~/Notes
 ```
 
-Use `--sim` instead of `--device` to send notes to the simulator. Other
-commands:
+Push again whenever your notes change. Only changed notes are sent, a renamed
+note keeps its place, and the push ends by counting the notes on the reader.
+Commands use the reader `kobo setup` saved. Add `--device IP` for another
+reader, or `--sim` to try a command on the simulator.
+
+Other commands:
 
 ```sh
-kobo vault plan ~/Notes --device IP       # what a push would change
-kobo vault preview NOTE.md                # how one note will read
-kobo vault ls --device IP                 # notes on the reader
-kobo vault rm ID --device IP              # remove one note
+kobo vault plan ~/Notes                   # what a push would change
+kobo vault preview NOTE.md                # roughly how one note will page
+kobo vault ls                             # notes on the reader
+kobo vault rm ID                          # remove one note
 ```
 
-`--exclude TEXT` skips matching files, and can be repeated.
-
-Your computer's folder is the source. A push mirrors it: notes removed from
-the folder leave the reader, and a renamed note keeps its place. Edits made on
-the reader are not sent back.
-
-Notes delivered by [Sync](../syncthing/) are added with
-`kobo vault ingest SYNCED_DIR --device IP`. They appear alongside pushed notes,
-labelled with their source, and pushes and ingests never overwrite each
-other.
+- A push adds to what is on the reader. `--replace` makes the reader hold
+  exactly this folder, and removes pushed notes it no longer has.
+- `--exclude TEXT` skips matching files, and can be repeated.
+- Vault is for reading. Edits are made on your computer and pushed again.
 
 ## Permissions
 

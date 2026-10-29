@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -428,7 +428,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -450,7 +450,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -461,7 +461,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f394649a66bc235232478bb20240de9596390eff",
-     "compatible_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -472,7 +472,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "f1687dd3dd96d4f5394d9f13f1b30e99df82dfc1"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   }

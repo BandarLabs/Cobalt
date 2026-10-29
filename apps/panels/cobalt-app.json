@@ -4,8 +4,8 @@
   "short_label": "Panels",
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Read CBZ comics on your Kobo with zoom, spreads and right-to-left reading. Add comics over USB or download them from your Komga library.",
-  "version": "0.1.5",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.6",
+  "release_notes": "Comics sent from your computer go on your shelf by themselves, under their own titles, and a second push no longer replaces the first.",
   "glyph": "reader",
   "capabilities": [
     "network"
@@ -13,7 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Choose Try a sample comic to read offline, or Add comic for USB import instructions. CBZ files up to 32 MB are supported; CBR and PDF are not."
+        "text": "Choose Try a sample comic to read offline. CBZ files up to 32 MB are supported; CBR and PDF are not."
+      },
+      {
+        "text": "To send comics from your computer, set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Send one or more comics. Each push adds to what you sent before, and Panels puts them on its shelf under their own titles the next time you open it.",
+        "command": "kobo panels push ~/Comics/garden.cbz ~/Comics/harbour.cbz"
       },
       {
         "text": "To use Komga, choose Browse and enter your HTTPS server address. Add your username and password in Account details, then check the connection."

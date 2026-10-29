@@ -27,7 +27,8 @@ your own photos.
   never changes your marks. **Free** mode gives no warnings.
 - **Undo** reverses one square, a run or a restart. The last 64 steps survive
   reopening. **Restart** asks first.
-- **Earlier** opens the previous 60-puzzle pack, with existing progress kept.
+- Three tabs: **Pictures**, the 60 **Patterns** puzzles that shipped first
+  (progress kept), and **Photos**, your own.
 
 Each puzzle saves separately. If a save fails, your moves stay in memory and
 **More → Retry save** tries again. Finish saving before switching puzzles or
@@ -44,10 +45,12 @@ kobo nonograms push first.jpg --name Harbour --size 15 \
   --add second.jpg --name Garden --size 20 --device IP
 ```
 
+Set up the reader once over USB with `kobo setup`, if you have not already.
 `preview` shows the puzzle a photo would make before you send it. Sizes run
-from 5 to 25. Each push replaces the set of imported puzzles with the photos
-it names, so include every photo you want to keep. Re-importing an unchanged
-photo keeps its progress. On the reader, open **Photos**, then **Import**.
+from 5 to 25. Each push adds to the photo puzzles already on the reader and
+prints the list; the reader keeps up to 24. `--replace` keeps only the photos
+you name. Sending an unchanged photo again keeps its progress. The puzzles
+appear under **Photos** the next time Nonograms opens or the reader wakes.
 
 A photo is accepted only if it makes a puzzle with exactly one solution. The
 difficulty shown (Easy, Medium or Hard) reflects how many solving passes it

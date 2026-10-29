@@ -2,17 +2,31 @@
   "id": "readeck",
   "display_name": "Readeck",
   "short_label": "Readeck",
-  "summary": "Read and search your saved Readeck articles.",
-  "version": "0.1.0",
-  "release_notes": "Initial token-based reader with library search, reading positions, images and article actions.",
+  "summary": "Read and search your saved Readeck articles. Needs an account.",
+  "version": "0.1.1",
+  "release_notes": "Connects from your computer with kobo connect readeck, keeps the articles you open for reading offline, and says why a refresh failed instead of showing an empty inbox. Reopens a document on the page you left.",
   "minimum_cobalt_version": "0.3.25",
   "glyph": "bookmark",
-  "capabilities": ["network", "frontlight-control"],
+  "capabilities": [
+    "network",
+    "frontlight-control"
+  ],
   "setup": {
     "steps": [
-      {"text": "Use an HTTPS Readeck instance and create an API token that permits reading and updating bookmarks."},
-      {"text": "Close Cobalt normally. Install the token from a private file using the computer CLI.", "command": "kobo secret set readeck --app readeck --server https://<server> --from <token-file> --device <address>"},
-      {"text": "Open Readeck, enter the same HTTPS server address, and choose Use saved token. Alternatively, tap Next to enter the token on the Kobo."}
+      {
+        "text": "Set up the reader once over USB, if you have not already. Readeck must be reachable over HTTPS.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "In Readeck, create an API token that can read and update bookmarks (Settings, API tokens)."
+      },
+      {
+        "text": "Connect Readeck from your computer. It asks for the server and the token, checks them, and saves both on the reader while Cobalt runs. Open Readeck, or tap Check again if it is already open.",
+        "command": "kobo connect readeck"
+      },
+      {
+        "text": "Articles you open are kept on the reader, so they read the same without Wi-Fi."
+      }
     ]
   }
 }

@@ -55,7 +55,7 @@ jobs:
       - name: Test simulator runner failure and cleanup behavior
         run: python3 -B -m unittest discover -s scripts -p 'test_check_apps_sim.py'
       - name: Launch every catalog app and run every committed route
-        run: python3 scripts/check-apps-sim.py --out target/sim-check
+        run: python3 scripts/check-apps-sim.py --all-routes --out target/sim-check
       - name: Record simulator results
         if: always()
         run: |
@@ -72,7 +72,7 @@ jobs:
                       summary.write(f"| {result['app']} | {coverage} | {result['status']} |\n")
               for result in report["results"]:
                   if result["status"] != "pass":
-                      log = path.parent / (result["app"] + ".log")
+                      log = path.parent / (result["app"].replace(":", "-") + ".log")
                       print(log.read_text() if log.exists() else result)
           PYTHON
       - name: Upload simulator evidence
@@ -305,8 +305,10 @@ jobs:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
         run: |
-          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          cargo build --locked --release -p kobo-cli -p kobo-sidekickd \
+            --target "${{ matrix.target }}"
           test -x "target/${{ matrix.target }}/release/kobo"
+          test -x "target/${{ matrix.target }}/release/kobo-sidekickd"
           echo "built ${{ matrix.platform }}"
 
   advisories:

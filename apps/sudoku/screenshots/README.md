@@ -1,14 +1,14 @@
 # Sudoku screenshots
 
-Actual SDK app in the Clara BW simulator at 1072 × 1448 with extra-large interface text. These are ideal grayscale simulator frames, not physical-reader captures. All puzzles are original and bundled with the app.
+The SDK app in the Clara BW simulator at 1072 × 1448 with extra-large interface text, taken with `kobo drive --ideal` from fresh simulator storage. These are ideal grayscale simulator frames, not physical-reader captures. All puzzles are original and bundled with the app.
 
-| Image | Source and provenance |
+| Image | What it shows |
 | --- | --- |
-| game.png | [Pencil notes](../../../docs/quality/evidence/sudoku/02-pencil-notes.json) |
-| completed.png | [Completed puzzle](../../../docs/quality/evidence/sudoku/09-completed-puzzle.json) |
-| recovery.png | [Failed-save recovery](../../../docs/quality/evidence/sudoku/05-save-recovery.json) |
-| landscape.png | [Restored landscape game](../../../docs/quality/evidence/sudoku/16-landscape-restored.json) |
+| game.png | Hard 1 with pencil notes in the top band, Notes on |
+| completed.png | Easy 1 filled in, with the status naming New game |
+| landscape.png | The same Hard puzzle after More → Use landscape |
+| recovery.png | More open after a save failed, with Retry save under New game |
 
-The public app page uses `game.png` at `docs/media/site/apps/sudoku.png`. Each source capture records binary and source digests, fonts, profile, text scale, orientation and fixture identity. Landscape captures retain the physical panel orientation recorded by the CLI.
+To take them again, start `kobo dev` from `apps/sudoku` with `KOBO_TEXT_SCALE=extra-large` and an empty `TMPDIR`, then drive: finish Easy 1; choose More → New game → Hard; switch on Notes and add each square's possible numbers in the first eight empty squares of the top band; select the third; shoot `game`. Then More → Use landscape for `landscape`, back to portrait, `scenario storage-full`, add one note and open More for `recovery`.
 
-Build `kobo-cli` from this checkout, then run `scripts/quality/check-sudoku-sim.py --output /tmp/sudoku-check --scale extra-large` using the same cargo target directory. Capture metadata records dirty source accurately when a documentation update follows validation.
+The public app page uses `game.png` at `docs/media/site/apps/sudoku.png`.

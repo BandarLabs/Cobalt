@@ -24,17 +24,23 @@
 //! both for a logged-in reader and will keep neither for an application, and
 //! the alternative to keeping them here is asking somebody for their Hacker
 //! News password so that a list can be grey where they have already been.
+//!
+//! A story put aside keeps its article too: Save fetches the article, cuts it
+//! to the story, and writes it to the device with its pictures, so the Saved
+//! tab is the one that works on a train. Where each article was left, and the
+//! text size last chosen, are kept as well.
 
 mod model;
 
-use kobo_bookview::illustrations::Illustrations;
+use kobo_bookview::offline::{Heard, Keeper};
+use kobo_bookview::positions::{self, Progress};
 use kobo_bookview::BookView;
-use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Position, QuoteRole,
     RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -324,13 +330,23 @@ struct Hn {
     menu: Option<usize>,
     /// The article being read, when one is.
     book: BookView,
-    /// The pictures in that article.
-    illustrations: Illustrations,
-    /// The copy of the article kept on the device, so it reopens with the
-    /// radio off.
-    article: Option<Snapshot>,
-    /// The request fetching an article, when the device has no copy yet.
+    /// Saved stories' articles, kept whole on the device with their pictures.
+    keeper: Keeper,
+    /// Why an article could not be kept, by story, until it is kept or the
+    /// story is taken off the saved list.
+    keep_trouble: BTreeMap<String, &'static str>,
+    /// Where each article was left, and the text size last chosen.
+    progress: Progress,
+    /// The open article's identity in `progress`.
+    reading: Option<String>,
+    /// The request fetching an article, when the device has no copy.
     fetching: Option<TaskId>,
+    /// Why the discussion could not be fetched, when it could not.
+    ///
+    /// Kept apart from `problem` because an empty thread on a train is not a
+    /// thread with no comments, and saying "No comments yet" about one is
+    /// wrong in a way an owner can see.
+    thread_trouble: Option<Failure>,
 }
 
 impl Hn {
@@ -370,6 +386,8 @@ impl Hn {
         let mut screen = ScreenBuilder::new("hn").top_bar(self.list_title());
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
+        } else if self.tab == Tab::Saved && !self.stories.is_empty() {
+            screen = screen.banner(BannerLevel::Info, self.offline_line());
         }
         if self.tab == Tab::Saved && self.stories.is_empty() {
             return self.nothing_saved(screen);
@@ -468,14 +486,33 @@ impl Hn {
             .rows_with_menu(rows)
             .page_turns("list-back", "list-next");
         let screen = match self.menu {
-            Some(index) if indices.contains(&index) => screen.row_overflow(
-                format!("saved-menu-{index}"),
-                true,
-                [("saved-forget", "Take off this list", Glyph::Trash)],
-            ),
+            Some(index) if indices.contains(&index) => {
+                let mut entries = vec![("saved-forget", "Take off this list", Glyph::Trash)];
+                if self.stories.get(index).is_some_and(|story| {
+                    story.link.is_some()
+                        && !self.keeper.is_kept(&story.id)
+                        && !self.keeper.is_keeping(&story.id)
+                }) {
+                    entries.insert(0, ("saved-keep", "Save for offline again", Glyph::Download));
+                }
+                screen.row_overflow(format!("saved-menu-{index}"), true, entries)
+            }
             _ => screen,
         };
         self.with_tabs(screen).build()
+    }
+
+    /// What the saved list holds on the device, in the words every
+    /// application uses for it.
+    fn offline_line(&self) -> String {
+        let line = self.keeper.summary("article", "articles");
+        if self.keeper.is_busy() {
+            format!("{line}. Saving more now.")
+        } else if self.keeper.failed {
+            format!("{line}. The list of saved articles could not be written.")
+        } else {
+            line
+        }
     }
 
     /// Nothing saved, said where the saved stories would be.
@@ -485,8 +522,8 @@ impl Hn {
     /// has never been added to, so it says how stories get onto it.
     fn nothing_saved(&self, screen: ScreenBuilder) -> Screen {
         self.with_tabs(screen.empty_state(
-            "Nothing saved yet. Open a story and tap Save, and it waits here \
-             with its article, radio or no radio.",
+            "Nothing saved yet. Open a story and tap Save. Its article is kept \
+             on this reader, so it opens without Wi-Fi.",
         ))
         .build()
     }
@@ -500,6 +537,23 @@ impl Hn {
     /// that have been touched carry one at all.
     fn row_summary(&self, story: &Story) -> String {
         let summary = model::summary(story, self.now);
+        if self.tab == Tab::Saved {
+            // On the saved list the one thing worth knowing first is whether
+            // the article will open without the radio.
+            let state = if story.link.is_none() {
+                None
+            } else if self.keeper.is_kept(&story.id) {
+                Some("Offline")
+            } else if self.keeper.is_keeping(&story.id) || !self.keeper.is_loaded() {
+                Some("Saving for offline")
+            } else {
+                Some("Not saved offline")
+            };
+            return match state {
+                Some(state) => format!("{state} \u{b7} {summary}"),
+                None => summary,
+            };
+        }
         let read = self.marks.was_read(&story.id);
         // Not on the saved list itself, where every row is saved and the word
         // would be the same word thirty times.
@@ -564,10 +618,15 @@ impl Hn {
         // replies, and a reader four pages down a thread should not have to
         // page back to find out whose story they are arguing about.
         let mut screen = ScreenBuilder::new("hn-thread").top_bar(story.title.clone());
-        screen = if self.marks.was_saved(&story.id) {
-            screen.top_bar_action("save", "Saved")
-        } else {
+        // The word on the control is the acknowledgement. "Saving" while the
+        // article is still on its way to the device, so nobody switches the
+        // radio off believing it is already there.
+        screen = if !self.marks.was_saved(&story.id) {
             screen.top_bar_action("save", "Save")
+        } else if self.keeper.is_keeping(&story.id) {
+            screen.top_bar_action("save", "Saving")
+        } else {
+            screen.top_bar_action("save", "Saved")
         };
         if story.link.is_some() {
             screen = screen.top_bar_glyph("read-article", "Read the article", Glyph::Book);
@@ -675,7 +734,19 @@ impl Hn {
             paragraphs.push((0, 0, QuoteRole::Body, body.clone()));
         }
         if self.comments.is_empty() {
-            paragraphs.push((0, 0, QuoteRole::Body, "No comments yet.".to_owned()));
+            let said = match self.thread_trouble {
+                // The discussion is not kept on the device, only the article,
+                // so a saved story opened offline has no comments to show.
+                // Saying there are none would be untrue.
+                Some(failure) if self.keeper.is_kept(&story.id) => format!(
+                    "{} The article is saved on this reader, and the book at the top opens \
+                     it now.",
+                    failure.advice
+                ),
+                Some(failure) => format!("{} The discussion needs a connection.", failure.advice),
+                None => "No comments yet.".to_owned(),
+            };
+            paragraphs.push((0, 0, QuoteRole::Body, said));
             return paragraphs;
         }
         let ended = !self.more_to_take();
@@ -967,49 +1038,69 @@ impl Hn {
             );
             return;
         };
+        let id = story.id.clone();
         self.problem = None;
-        let saved =
-            Snapshot::new(&format!("hn-article:{link}")).at_most(Self::ARTICLE_BYTES as usize);
-        saved.start(context);
-        self.article = Some(saved);
+        self.reading = Some(article_identity(&link));
+        if !self.keeper.open(context, &id) {
+            self.fetch_article(context);
+        }
         self.show(context);
     }
 
-    /// A store answer that belongs to the article being read, or does not.
-    ///
-    /// Returns whether it was one of those. The pictures are asked first
-    /// because they arrive under their own names and answer for themselves.
-    fn article_result(&mut self, context: &mut Context, key: &str, result: &StoreResult) -> bool {
-        if self
-            .illustrations
-            .store(context, &mut self.book, key, result, false)
-        {
-            self.show(context);
-            return true;
-        }
-        let Some(article) = self.article.as_mut().filter(|saved| saved.key == key) else {
-            return false;
-        };
-        let event = article.stored(context, result);
-        self.article_event(context, event);
-        true
-    }
-
-    /// What the device said about its copy of the article.
-    fn article_event(&mut self, context: &mut Context, event: Option<SnapshotEvent>) {
-        match event {
-            Some(SnapshotEvent::Loaded) => {
-                let saved = self.article.as_ref().and_then(|saved| saved.bytes.clone());
-                match saved {
-                    Some(bytes) => self.open_article(context, &bytes),
-                    None => self.fetch_article(context),
+    /// What the keeper of saved articles said, acted on.
+    fn heard(&mut self, context: &mut Context, heard: Heard) {
+        match heard {
+            Heard::Elsewhere | Heard::Quiet => return,
+            Heard::Changed => {}
+            Heard::Opened(id, kept) => {
+                if self.open_id() == Some(id.as_str()) && self.view != View::Reading {
+                    let memory = self.memory();
+                    if self.book.open_kept(context, kept, memory) {
+                        self.view = View::Reading;
+                    } else {
+                        self.say_in_thread(context, "This article arrived empty.".to_owned());
+                        return;
+                    }
                 }
             }
-            Some(SnapshotEvent::Failed) => {
-                self.problem = Some("This article could not be kept on the device.".to_owned());
-                self.show(context);
+            Heard::Unreadable(id) => {
+                // The copy on the device would not read. The keeper has
+                // already stopped claiming it is there; the network is the
+                // way to the article now.
+                if self.open_id() == Some(id.as_str()) && self.view != View::Reading {
+                    self.fetch_article(context);
+                }
             }
-            Some(SnapshotEvent::Saved) | None => self.show(context),
+            Heard::Failed(id, advice) => {
+                self.keep_trouble.insert(id.clone(), advice);
+                if self.open_id() == Some(id.as_str()) && self.view == View::Thread {
+                    self.say_in_thread(
+                        context,
+                        format!("The article could not be saved for offline reading. {advice}"),
+                    );
+                    return;
+                }
+            }
+        }
+        if self.tab == Tab::Saved && self.view == View::List {
+            self.repaginate_saved(&*context);
+        }
+        self.show(context);
+    }
+
+    /// Where the open article was left, or the start of it at the size last
+    /// chosen.
+    fn memory(&self) -> kobo_read::Memory {
+        self.reading
+            .as_deref()
+            .map(|id| self.progress.memory(id))
+            .unwrap_or_default()
+    }
+
+    /// Writes down where the open article has got to.
+    fn keep_position(&mut self, context: &mut Context) {
+        if let (Some(id), Some(memory)) = (self.reading.clone(), self.book.memory()) {
+            self.progress.keep(context, id, memory.clone());
         }
     }
 
@@ -1035,22 +1126,32 @@ impl Hn {
         self.show(context);
     }
 
-    /// Puts the article in front of the reader.
+    /// Puts the article in front of the reader, cut to the story.
     fn open_article(&mut self, context: &mut Context, body: &[u8]) {
-        let link = self
-            .open
-            .and_then(|index| self.stories.get(index))
-            .and_then(|story| story.link.clone())
-            .unwrap_or_default();
+        let Some(story) = self.open.and_then(|index| self.stories.get(index)).cloned() else {
+            return;
+        };
+        let link = story.link.clone().unwrap_or_default();
         let source = String::from_utf8_lossy(body).into_owned();
-        self.book.close(context);
-        self.illustrations.close(context);
-        self.book.open(
-            context,
-            kobo_doc::html::parse(&source),
-            kobo_read::Memory::default(),
-        );
-        self.illustrations.open(context, &mut self.book, &link);
+        // A saved story whose article could not be kept earlier is kept now,
+        // from the copy that has just arrived, rather than fetched twice.
+        if self.marks.was_saved(&story.id)
+            && !self.keeper.is_kept(&story.id)
+            && !self.keeper.is_keeping(&story.id)
+        {
+            self.keep_trouble.remove(&story.id);
+            self.keeper.keep_markup(
+                context,
+                &story.id,
+                &link,
+                &kobo_html::article::main_content(&source),
+            );
+        }
+        let memory = self.memory();
+        if !self.book.open_article(context, &source, &link, memory) {
+            self.say_in_thread(context, "This article arrived empty.".to_owned());
+            return;
+        }
         self.view = View::Reading;
         self.problem = None;
         self.show(context);
@@ -1059,19 +1160,7 @@ impl Hn {
     /// What came back from the site the story points at.
     fn took_article(&mut self, context: &mut Context, outcome: TaskOutcome) {
         match outcome {
-            TaskOutcome::Completed(body) => {
-                // Kept before it is read, so the second opening costs nothing
-                // and works with the radio off.
-                if !self
-                    .article
-                    .as_mut()
-                    .is_some_and(|saved| saved.save(context, body.clone()))
-                {
-                    self.problem =
-                        Some("This article is open but not kept on the device.".to_owned());
-                }
-                self.open_article(context, &body);
-            }
+            TaskOutcome::Completed(body) => self.open_article(context, &body),
             TaskOutcome::Failed(error) => {
                 // The article, not the discussion. A site that will not answer
                 // says nothing about the thread, which is still here and is
@@ -1092,25 +1181,86 @@ impl Hn {
 
     /// Closes the article and goes back to the discussion it was reached from.
     fn close_article(&mut self, context: &mut Context) {
-        self.illustrations.close(context);
+        // The place goes down before the document it points into goes away.
+        self.keep_position(context);
         self.book.close(context);
-        self.article = None;
-        self.fetching = None;
+        self.keeper.stop_opening();
+        if let Some(task) = self.fetching.take() {
+            context.cancel(task);
+        }
+        self.reading = None;
         self.view = View::Thread;
         self.show(context);
     }
 
-    /// Puts the open story on the saved list, or takes it off again.
+    /// Puts the open story on the saved list with its article, or takes it
+    /// off again.
     fn save_open(&mut self, context: &mut Context) {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)).cloned() else {
             return;
         };
-        self.marks.toggle_saved(&story);
+        if self.marks.toggle_saved(&story) {
+            if let Some(link) = &story.link {
+                self.keep_trouble.remove(&story.id);
+                if !self.keeper.keep_page(context, &story.id, link) && self.keeper.is_full() {
+                    self.keep_trouble
+                        .insert(story.id.clone(), kobo_bookview::offline::NO_ROOM);
+                    self.remember(context);
+                    self.say_in_thread(
+                        context,
+                        format!(
+                            "The story is on the saved list, but its article could not be \
+                             saved for offline reading. {}",
+                            kobo_bookview::offline::NO_ROOM
+                        ),
+                    );
+                    return;
+                }
+            }
+        } else {
+            self.keep_trouble.remove(&story.id);
+            self.keeper.remove(context, &story.id);
+        }
         self.remember(context);
         // No message. The control that was tapped says what happened: it
-        // reads Save before and Saved after, which is the acknowledgement,
-        // and a banner saying the same thing on a page that is already full
-        // is a banner drawn through the edge of the panel.
+        // reads Save before, Saving while the article comes down, and Saved
+        // once it is on the device. A banner saying the same thing on a page
+        // that is already full is a banner drawn through the edge of the
+        // panel.
+        self.show(context);
+    }
+
+    /// A tap while an article is open, which the reader answers first.
+    fn act_in_article(&mut self, context: &mut Context, action: ActionId) {
+        match self.book.act(context, action) {
+            Some(kobo_read::Outcome::Close) => self.close_article(context),
+            Some(kobo_read::Outcome::Light(level)) => {
+                context.device().set_frontlight(level);
+                self.keep_position(context);
+            }
+            Some(kobo_read::Outcome::Save) => self.keep_position(context),
+            None if action == ActionId::BACK || action == action_id("close-article") => {
+                self.close_article(context);
+            }
+            _ => {}
+        }
+        self.show(context);
+    }
+
+    /// Tries again to keep the article of the story whose menu is open.
+    fn keep_saved_again(&mut self, context: &mut Context) {
+        let Some(story) = self.menu.and_then(|index| self.stories.get(index)).cloned() else {
+            return;
+        };
+        self.menu = None;
+        if let Some(link) = &story.link {
+            self.keep_trouble.remove(&story.id);
+            if self.keeper.failed {
+                self.keeper.retry(context);
+            }
+            self.keeper.keep_page(context, &story.id, link);
+        }
+        self.repaginate_saved(&*context);
         self.show(context);
     }
 
@@ -1143,6 +1293,8 @@ impl Hn {
             self.marks.toggle_saved(&story);
             self.remember(context);
         }
+        self.keep_trouble.remove(&story.id);
+        self.keeper.remove(context, &story.id);
         self.menu = None;
         // The list being shown is the saved list, so the row goes with it.
         self.take_saved(context);
@@ -1175,6 +1327,7 @@ impl Hn {
         self.note = None;
         self.problem = None;
         self.trouble = None;
+        self.thread_trouble = None;
         self.ask_thread(context);
         self.show(context);
     }
@@ -1338,7 +1491,10 @@ impl Hn {
             .zip(&summaries)
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect::<Vec<_>>();
-        self.pages = context.paginate_rows_with_menu(&rows, true);
+        // Measured under the line that says what is on the device, which is
+        // drawn above the rows whenever there are any.
+        let notice = self.problem.clone().unwrap_or_else(|| self.offline_line());
+        self.pages = context.paginate_rows_with_menu_below_notice(&rows, true, Some(&notice));
         self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
@@ -1473,35 +1629,61 @@ impl KoboApp for Hn {
         // Asked for before the network is: what has been read is what makes
         // the first list drawn look different from a stranger's.
         context.store().load(MARKS);
+        context.store().load(positions::KEY);
+        self.keeper.start(context);
+        // Earlier versions kept a copy of every article ever opened, and of
+        // every picture in it, each under a store key of its own. An
+        // application holds at most 256 keys, so a few months of reading
+        // filled the store and the marks stopped being written. Those copies
+        // are found and removed once, here.
+        context.store().list();
         self.ask_list(context);
         self.show(context);
     }
 
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key == positions::KEY {
+            self.progress.load(result);
+            return;
+        }
+        let heard = self.keeper.loaded(context, key, &result);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
+            return;
+        }
+        self.on_store(context, result);
+    }
+
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
-        self.article_result(context, key, &result);
+        if key == positions::KEY {
+            self.progress.saved(context, result);
+            return;
+        }
+        let heard = self.keeper.saved(context, key, &result);
+        self.heard(context, heard);
     }
 
     /// The piecework of moving an article on or off the device.
     ///
     /// A state file travels in one message; an article does not, so it goes
-    /// through the shelf a piece at a time and the snapshot is told about each
+    /// through the shelf a piece at a time and the keeper is told about each
     /// piece. Without this the copy is started and never finished, and the
     /// story that was put aside for the train is a story that is not there.
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
-        if self
-            .illustrations
-            .store(context, &mut self.book, name, &result, true)
-        {
-            self.show(context);
-            return;
-        }
-        if let Some(article) = self.article.as_mut().filter(|saved| saved.owns_file(name)) {
-            let event = article.shelf(context, &result);
-            self.article_event(context, event);
-        }
+        let heard = self.keeper.shelf(context, name, &result);
+        self.heard(context, heard);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Keys(keys) = &result {
+            for key in keys.iter().filter(|key| is_old_copy(key)) {
+                context.store().forget(key.clone());
+                for slot in 0..2 {
+                    context.shelf().remove(format!("{}.{slot}", &key[..60]));
+                }
+            }
+            return;
+        }
         if let StoreResult::Loaded { key, value } = &result {
             if key == MARKS {
                 if let Some(text) = value
@@ -1517,30 +1699,15 @@ impl KoboApp for Hn {
                     self.take_saved(context);
                 }
                 self.show(context);
-                return;
             }
         }
-        // Anything else belongs to the copy of an article kept on the device.
-        let key = match &result {
-            StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.clone(),
-            _ => String::new(),
-        };
-        self.article_result(context, &key, &result);
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         // An open article answers its own page turns and its own controls
         // before anything else looks at the tap.
         if self.view == View::Reading && self.book.memory().is_some() {
-            match self.book.act(context, action) {
-                Some(kobo_read::Outcome::Close) => self.close_article(context),
-                Some(kobo_read::Outcome::Light(level)) => context.device().set_frontlight(level),
-                None if action == ActionId::BACK || action == action_id("close-article") => {
-                    self.close_article(context);
-                }
-                _ => {}
-            }
-            self.show(context);
+            self.act_in_article(context, action);
             return;
         }
         if action == ActionId::BACK && self.menu.take().is_some() {
@@ -1573,6 +1740,10 @@ impl KoboApp for Hn {
         }
         if action == action_id("saved-forget") {
             self.forget_saved(context);
+            return;
+        }
+        if action == action_id("saved-keep") {
+            self.keep_saved_again(context);
             return;
         }
         for index in 0..self.stories.len() {
@@ -1631,14 +1802,20 @@ impl KoboApp for Hn {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        // The open article, its pictures, and the request that fetched it.
-        if self
-            .illustrations
-            .task(context, &mut self.book, task, &outcome)
-        {
-            self.show(context);
+        self.took_task(context, task, outcome);
+        // A lane the keeper could not have a moment ago may be free now.
+        self.keeper.pump(context);
+    }
+}
+
+impl Hn {
+    fn took_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        let heard = self.keeper.task(context, task, &outcome);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
             return;
         }
+        // The open article, its pictures, and the request that fetched it.
         if self.book.woke(context, task, &outcome) != kobo_bookview::Step::Elsewhere {
             if self.view == View::Reading {
                 self.show(context);
@@ -1654,11 +1831,14 @@ impl KoboApp for Hn {
             let (_, id) = self.lanes.remove(at);
             match outcome {
                 TaskOutcome::Completed(bytes) => self.took_item(context, &bytes, id),
-                TaskOutcome::Failed(_) => {
+                TaskOutcome::Failed(error) => {
                     // One comment that will not come is one comment missing,
                     // not a broken thread. Its slot goes so the rest carries
                     // on, and its own replies go with it because there is
                     // nothing left to hang them under.
+                    if self.open_id().and_then(|open| open.parse().ok()) == Some(id) {
+                        self.thread_trouble = Some(Failure::of(error));
+                    }
                     self.slots.retain(|slot| slot.id != id);
                     self.pump_thread(context);
                 }
@@ -1755,6 +1935,26 @@ impl Hn {
     }
 }
 
+/// The identity an article's place is kept under.
+///
+/// The link rather than the story number, so the same article reached from
+/// two stories opens where it was left.
+fn article_identity(link: &str) -> String {
+    positions::identity(&format!("hn-article:{link}"))
+}
+
+/// Whether a store key is a copy an earlier version kept of an article or a
+/// picture.
+///
+/// Those were named by a SHA-256 digest and nothing else this application
+/// writes is, so the shape alone tells them apart.
+fn is_old_copy(key: &str) -> bool {
+    key.len() == 64
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 /// The device clock, in seconds since the epoch.
 ///
 /// Only ever used to write "4h ago". A Kobo that has been asleep for a week
@@ -1823,7 +2023,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, LANES, TABS, TITLE_LINES};
-    use kobo_sdk::{action_id, ActionId, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
+    use kobo_sdk::{
+        action_id, ActionId, AppRunner, Command, StoreError, StoreRequest, StoreResult, Task,
+        TaskError, TaskId, TaskOutcome,
+    };
     use kobo_ui::{Chrome, LayoutKind, Rect, CLARA_BW_METRICS};
     use std::collections::BTreeMap;
 
@@ -3217,5 +3420,347 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A reader's storage, answering every request the way a healthy device
+    /// does, so a test can follow a story from Save to the train.
+    #[derive(Default)]
+    struct Device {
+        values: BTreeMap<String, Vec<u8>>,
+        shelf: BTreeMap<String, Vec<u8>>,
+        writing: BTreeMap<String, Vec<u8>>,
+    }
+
+    impl Device {
+        /// Answers every store request in `commands`, and every request those
+        /// answers lead to, in the order the application made them.
+        fn settle(&mut self, runner: &mut AppRunner<Hn>, commands: Vec<Command>) -> Vec<Command> {
+            let mut seen = Vec::new();
+            let mut queue = std::collections::VecDeque::new();
+            for command in commands {
+                if let Command::Store(request) = &command {
+                    queue.push_back(request.clone());
+                }
+                seen.push(command);
+            }
+            while let Some(request) = queue.pop_front() {
+                let answer = self.answer(request);
+                for command in runner.store_result(answer) {
+                    if let Command::Store(request) = &command {
+                        queue.push_back(request.clone());
+                    }
+                    seen.push(command);
+                }
+            }
+            seen
+        }
+
+        fn answer(&mut self, request: StoreRequest) -> StoreResult {
+            match request {
+                StoreRequest::Save { key, value } => {
+                    self.values.insert(key.clone(), value);
+                    StoreResult::Saved { key }
+                }
+                StoreRequest::Load { key } => StoreResult::Loaded {
+                    value: self.values.get(&key).cloned(),
+                    key,
+                },
+                StoreRequest::Forget { key } => {
+                    self.values.remove(&key);
+                    StoreResult::Forgotten { key }
+                }
+                StoreRequest::List => StoreResult::Keys(self.values.keys().cloned().collect()),
+                StoreRequest::ShelfWrite {
+                    name,
+                    offset,
+                    bytes,
+                    last,
+                } => {
+                    let blob = self.writing.entry(name.clone()).or_default();
+                    blob.truncate(offset as usize);
+                    blob.extend_from_slice(&bytes);
+                    let size = u32::try_from(blob.len()).unwrap();
+                    if last {
+                        let whole = self.writing.remove(&name).unwrap_or_default();
+                        self.shelf.insert(name.clone(), whole);
+                    }
+                    StoreResult::ShelfWritten { name, size }
+                }
+                StoreRequest::ShelfRead {
+                    name,
+                    offset,
+                    length,
+                } => match self.shelf.get(&name) {
+                    Some(blob) => {
+                        let from = (offset as usize).min(blob.len());
+                        let to = (from + length as usize).min(blob.len());
+                        StoreResult::ShelfRead {
+                            bytes: blob[from..to].to_vec(),
+                            size: u32::try_from(blob.len()).unwrap(),
+                            name,
+                            offset,
+                        }
+                    }
+                    None => StoreResult::Denied(StoreError::Missing),
+                },
+                StoreRequest::ShelfRemove { name } => {
+                    self.shelf.remove(&name);
+                    StoreResult::ShelfRemoved { name }
+                }
+                StoreRequest::ShelfList => StoreResult::Shelf(
+                    self.shelf
+                        .iter()
+                        .map(|(name, blob)| (name.clone(), u32::try_from(blob.len()).unwrap()))
+                        .collect(),
+                ),
+            }
+        }
+    }
+
+    /// A front page loaded on `device`, with every store request answered.
+    fn loaded_on(device: &mut Device) -> AppRunner<Hn> {
+        let mut runner = AppRunner::new(Hn::default());
+        let commands = runner.start();
+        device.settle(&mut runner, commands);
+        answer_list(&mut runner);
+        runner
+    }
+
+    /// The fetch the application has in flight for `url`.
+    fn fetch_for(commands: &[Command], url: &str) -> Option<TaskId> {
+        commands.iter().find_map(|command| match command {
+            Command::Spawn {
+                task,
+                work: Task::Fetch { url: asked, .. },
+            } if asked == url => Some(*task),
+            _ => None,
+        })
+    }
+
+    /// A two by two greyscale picture, whole and valid.
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x00, 0x00, 0x00, 0x00, 0x57,
+        0xdd, 0x52, 0xf8, 0x00, 0x00, 0x00, 0x0e, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x60,
+        0x70, 0x60, 0x68, 0xf8, 0x0f, 0x00, 0x03, 0x05, 0x01, 0xc0, 0x4e, 0x33, 0x5b, 0xe9, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    const ARTICLE: &str = "<html><body><nav><a href=/>Front page</a></nav>\
+        <article><h1>The headline</h1><p>The first paragraph of the story.</p>\
+        <img src=\"chart.png\" alt=\"A chart\"><p>The second paragraph.</p></article>\
+        <footer>Privacy and terms</footer></body></html>";
+
+    /// Opens the first story that has a link, and answers whatever it asks.
+    fn open_linked(runner: &mut AppRunner<Hn>, device: &mut Device) -> (usize, String) {
+        let index = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.link.is_some())
+            .expect("a captured story has a link");
+        let commands = runner.action(action_id(&format!("story-{index}")));
+        device.settle(runner, commands);
+        let link = runner.app().stories[index].link.clone().unwrap();
+        (index, link)
+    }
+
+    /// Saves the open story and answers everything that takes, the article
+    /// and its picture included.
+    fn save_open(runner: &mut AppRunner<Hn>, device: &mut Device, link: &str) {
+        let commands = runner.action(action_id("save"));
+        let commands = device.settle(runner, commands);
+        let page = fetch_for(&commands, link).expect("saving asked for the article");
+        let commands = runner.task_outcome(page, TaskOutcome::Completed(ARTICLE.into()));
+        let commands = device.settle(runner, commands);
+        let picture_url = kobo_bookview::picture_url(link, "chart.png").unwrap();
+        let picture = fetch_for(&commands, &picture_url).expect("saving asked for the picture");
+        let png = PNG.to_vec();
+        let commands = runner.task_outcome(picture, TaskOutcome::Completed(png));
+        device.settle(runner, commands);
+    }
+
+    #[test]
+    fn saving_a_story_keeps_its_article_and_pictures_on_the_device() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (index, link) = open_linked(&mut runner, &mut device);
+        let id = runner.app().stories[index].id.clone();
+        save_open(&mut runner, &mut device, &link);
+        assert!(runner.app().keeper.is_kept(&id));
+        let kept = device
+            .shelf
+            .values()
+            .find_map(|blob| kobo_bookview::offline::Kept::decode(blob))
+            .expect("the article is on the shelf");
+        assert!(kept.html.contains("The second paragraph."));
+        assert!(!kept.html.contains("Front page"), "the menu was kept");
+        assert!(!kept.html.contains("Privacy"), "the footer was kept");
+        assert_eq!(kept.pictures.len(), 1);
+        let bar = format!("{:?}", runner.app().thread().top_bar);
+        assert!(bar.contains("Saved"), "{bar}");
+    }
+
+    #[test]
+    fn a_saved_article_opens_with_the_radio_off() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (_, link) = open_linked(&mut runner, &mut device);
+        save_open(&mut runner, &mut device, &link);
+        let commands = runner.action(action_id("read-article"));
+        let commands = device.settle(&mut runner, commands);
+        assert!(
+            fetch_for(&commands, &link).is_none(),
+            "a saved article went to the network"
+        );
+        assert_eq!(runner.app().view, View::Reading);
+        let screen = runner.app().book.screen("t").expect("the article is open");
+        assert!(format!("{screen:?}").contains("first paragraph"));
+    }
+
+    #[test]
+    fn the_saved_list_says_what_will_open_offline() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (_, link) = open_linked(&mut runner, &mut device);
+        save_open(&mut runner, &mut device, &link);
+        let commands = runner.action(action_id("tab-saved"));
+        device.settle(&mut runner, commands);
+        let app = runner.app();
+        let summary = app.row_summary(&app.stories[0]);
+        assert!(summary.starts_with("Offline \u{b7} "), "{summary:?}");
+        assert!(app.offline_line().starts_with("Ready offline: 1 article, "));
+        let screen = format!("{:?}", app.list());
+        assert!(screen.contains("Ready offline: 1 article"), "{screen}");
+    }
+
+    #[test]
+    fn an_article_that_could_not_be_saved_says_so_and_can_be_tried_again() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (index, link) = open_linked(&mut runner, &mut device);
+        let commands = runner.action(action_id("save"));
+        let commands = device.settle(&mut runner, commands);
+        let page = fetch_for(&commands, &link).unwrap();
+        runner.task_outcome(page, TaskOutcome::Failed(TaskError::Offline));
+        let note = runner.app().note.clone().unwrap_or_default();
+        assert!(note.contains("could not be saved for offline"), "{note:?}");
+        let commands = runner.action(action_id("tab-saved"));
+        device.settle(&mut runner, commands);
+        let story = runner.app().stories[0].clone();
+        assert!(runner
+            .app()
+            .row_summary(&story)
+            .starts_with("Not saved offline"));
+        runner.action(action_id("saved-menu-0"));
+        let commands = runner.action(action_id("saved-keep"));
+        assert!(
+            fetch_for(&commands, &link).is_some(),
+            "it did not try again"
+        );
+        let _ = index;
+    }
+
+    #[test]
+    fn an_article_opens_at_the_menus_end_rather_than_on_them() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (_, link) = open_linked(&mut runner, &mut device);
+        let commands = runner.action(action_id("read-article"));
+        let commands = device.settle(&mut runner, commands);
+        let page = fetch_for(&commands, &link).expect("an unsaved article is fetched");
+        runner.task_outcome(page, TaskOutcome::Completed(ARTICLE.into()));
+        let screen = format!("{:?}", runner.app().book.screen("t").unwrap());
+        assert!(screen.contains("The headline"), "{screen}");
+        assert!(!screen.contains("Front page"), "{screen}");
+    }
+
+    #[test]
+    fn a_new_article_opens_at_the_text_size_last_chosen() {
+        let mut device = Device::default();
+        let larger = kobo_ui::TextScale::default().larger().unwrap();
+        let mut runner = loaded_on(&mut device);
+        runner.app_mut().progress.keep(
+            &mut kobo_sdk::Context::default(),
+            "a".repeat(64),
+            kobo_read::Memory {
+                scale: larger,
+                ..kobo_read::Memory::default()
+            },
+        );
+        let (_, link) = open_linked(&mut runner, &mut device);
+        let commands = runner.action(action_id("read-article"));
+        let commands = device.settle(&mut runner, commands);
+        let page = fetch_for(&commands, &link).unwrap();
+        runner.task_outcome(page, TaskOutcome::Completed(ARTICLE.into()));
+        assert_eq!(
+            runner.app().book.memory().map(|memory| memory.scale),
+            Some(larger)
+        );
+    }
+
+    #[test]
+    fn a_saved_story_opened_offline_does_not_claim_its_thread_has_no_comments() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (index, link) = open_linked(&mut runner, &mut device);
+        save_open(&mut runner, &mut device, &link);
+        runner.action(ActionId::BACK);
+        runner.action(action_id("tab-saved"));
+        runner.action(action_id("story-0"));
+        let (task, _) = *runner.app().lanes.first().expect("the thread is asked for");
+        // The SDK retries an item fetch once after a pause before the
+        // application hears of the failure, so the pause and the second
+        // attempt are answered too.
+        let mut failing = task;
+        for _ in 0..3 {
+            let commands = runner.task_outcome(failing, TaskOutcome::Failed(TaskError::Offline));
+            let next = commands.iter().find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            });
+            let Some(nap) = next else { break };
+            let commands = runner.task_outcome(nap, TaskOutcome::Completed(Vec::new()));
+            match commands.iter().find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            }) {
+                Some(again) => failing = again,
+                None => break,
+            }
+        }
+        let said: Vec<String> = runner
+            .app()
+            .thread_paragraphs()
+            .into_iter()
+            .map(|(_, _, _, text)| text)
+            .collect();
+        assert!(
+            !said.iter().any(|text| text == "No comments yet."),
+            "{said:?}"
+        );
+        assert!(
+            said.iter()
+                .any(|text| text.contains("The article is saved on this reader")),
+            "{said:?}"
+        );
+        let _ = index;
+    }
+
+    #[test]
+    fn copies_kept_by_earlier_versions_are_removed_at_start() {
+        let old = kobo_bookview::positions::identity("hn-article:https://example.com/");
+        let mut device = Device::default();
+        device.values.insert(old.clone(), b"0:abc".to_vec());
+        device
+            .values
+            .insert("hn-marks".into(), b"hn-marks-v1\n".to_vec());
+        device
+            .shelf
+            .insert(format!("{}.0", &old[..60]), b"<p>old</p>".to_vec());
+        let _runner = loaded_on(&mut device);
+        assert!(!device.values.contains_key(&old));
+        assert!(device.values.contains_key("hn-marks"));
+        assert!(device.shelf.is_empty());
     }
 }

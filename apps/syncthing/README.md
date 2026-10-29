@@ -1,7 +1,7 @@
 # Sync
 
-Sync folders between your computer and your Kobo with Syncthing, on a
-battery-friendly schedule.
+Sync folders between your computer and your Kobo with Syncthing. Sync when
+you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.
 
 <table>
 <tr>
@@ -10,44 +10,83 @@ battery-friendly schedule.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-running.png" alt="A sync in progress"><br>A sync in progress</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-conflict.png" alt="A conflict, retried on the next sync"><br>A conflict, retried on the next sync</td>
+<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-conflict.png" alt="Files that did not sync, tried again next time"><br>Files that did not sync, tried again next time</td>
 </tr>
 </table>
 
 ## Features
 
-- Four fixed folders. `vault`, `frame` and `books` come to the Kobo, and `out`
-  goes to the computer.
-- Sync manually, hourly, every four hours or daily. Pause stops scheduled
-  syncs.
-- The status screen shows transfer state, bytes left, peers online, the last
-  successful sync and the next one.
-- Files in `vault` open in [Vault](../vault/) and files in `frame` appear as a
+- Four fixed folders. Files in `vault`, `frame` and `books` come to the Kobo,
+  and changes made on the Kobo never go back. Files in `out` go to the
+  computer.
+- Sync now sends and receives for up to five minutes. A schedule (every
+  hour, every 4 hours or once a day) syncs while Cobalt is open on Wi-Fi, and
+  catches up when Cobalt next opens. Turn off Sync stops both.
+- The status screen shows what happened last time, when the next sync is due,
+  and the reason a sync did not finish, such as the computer not being found.
+- Notes in `vault` open in [Vault](../vault/) and photos in `frame` appear as a
   [Frame](../frame/) album. Deletions are not carried over, and each sync
-  lists what it imported.
-- Conflicts are shown separately and retried on the next sync.
+  lists what it added.
 
 ## Setup
 
-1. Install Syncthing on your computer with its package manager.
-2. Wake the Kobo on Wi-Fi.
-3. Link one directory to one Kobo folder:
+1. Set up the reader once over USB, if you have not already. Sync also needs
+   Syncthing on this computer, installed with its package manager.
 
    ```sh
-   kobo sync setup ~/Documents/notes --folder vault --device 192.168.1.2
-   kobo sync run
-   kobo sync status
-   kobo sync stop
+   kobo setup
    ```
+
+2. With the reader awake on Wi-Fi, pair one folder on this computer with a
+   folder on the reader. The first time, the reader downloads the Syncthing
+   engine.
+
+   ```sh
+   kobo sync setup ~/Documents/notes --folder vault
+   ```
+
+3. Start this computer's side of Sync and leave it running.
+
+   ```sh
+   kobo sync run
+   ```
+
+4. On the reader, open Sync and tap Turn on Sync. The first sync starts at
+   once and takes up to five minutes.
+
+`kobo sync status` shows each folder, and `kobo sync stop` stops this
+computer's side.
 
 `kobo sync` runs its own Syncthing identity under `~/.config/kobo/syncthing`
 and never changes another Syncthing installation. The directory for `out`
 must be empty the first time. Setup refuses symlinked or overlapping folders.
 
+### Notes for Vault
+
+Vault reads a package of your notes rather than the notes themselves.
+`kobo sync setup` and every `kobo sync run` pack the notes into
+`~/.config/kobo/syncthing/packages/vault`, and that package is what
+syncs. Nothing is written into your notes folder, so Obsidian sees only your
+own notes. To send edits made while `kobo sync run` is already running, run:
+
+```sh
+kobo sync publish --folder vault
+```
+
+If an older version of `kobo sync publish` left `synced-note-*.md` copies and
+a `synced.v1` file in your notes folder, the next publish removes the copies
+it can match to their original notes. A copy you edited since is left alone.
+
 ## How it runs on the reader
 
+Cobalt starts each sync itself: when you tap Sync now, when you turn Sync on,
+and when the schedule comes round while Cobalt is open on Wi-Fi. A sync runs
+for at most five minutes and finishes even if the reader goes back to the
+Kobo home screen. The reader cannot yet wake from sleep to sync, so a
+schedule missed while it slept runs the next time Cobalt opens.
+
 The Syncthing engine is not in the platform package. The reader downloads it
-the first time Sync is turned on and checks it against a digest built into
+the first time a computer is set up and checks it against a digest built into
 Cobalt before running it. Its API listens on the reader only, and apps cannot
 add folders or supply keys.
 
@@ -57,7 +96,8 @@ rebuild runs in `.github/workflows/syncthing-engine.yml`.
 
 ## Permissions
 
-- `scheduled-wake`: wakes the reader for scheduled syncs.
+- `scheduled-wake`: brings Sync's status up to date when a scheduled sync is
+  due.
 
 ## Development
 

@@ -22,7 +22,8 @@ shot projects
 tap-id project-0
 expect Row 0
 expect Sleeve
-tap Read synced pattern
+expect Read a pattern
+tap Read a pattern
 wait 1500
 clean
 shot reading-chart
@@ -36,3 +37,17 @@ shot project-imported
 tap Projects
 expect Winter socks
 expect Leg - row 0
+# The second sleeve: the section starts again at row 0, and Undo puts the
+# old count back.
+tap-id project-1
+wait-for Leg
+tap +1 row
+tap +1 row
+wait-for Row 2
+tap Start section again
+wait-for Undo brings back row 2
+expect Row 0
+clean
+shot project-restarted-section
+tap Undo
+wait-for Row 2

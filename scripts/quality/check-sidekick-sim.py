@@ -43,7 +43,7 @@ def main():
                    KOBO_SIM_FIXTURE='two-agents-asking', KOBO_SIM_SEED='0')
         config = private/'config'
         env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config/'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
+        subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'], cwd=ROOT,
                        env=env, check=True, capture_output=True, timeout=60)
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -62,6 +62,13 @@ def main():
             def do_GET(self):
                 requests.append(self.path)
                 assert f'token={CODE}' in self.path, self.path
+                if waiting.get('refuse'):
+                    # What a helper whose code has changed answers.
+                    self.send_response(403)
+                    self.send_header('Content-Length', '2')
+                    self.end_headers()
+                    self.wfile.write(b'{}')
+                    return
                 # A real daemon holds the request open until something is
                 # waiting, which is what makes one poll per question rather
                 # than one poll per moment.
@@ -174,7 +181,7 @@ def main():
                 # The command may be wrapped across two lines at the larger
                 # text sizes, which is what a long word does on a six inch
                 # panel; what matters is that the screen names it.
-                assert 'sidekickd init' in words(pairing).replace('- ', ''), words(pairing)
+                assert 'sidekick init' in words(pairing).replace('- ', ''), words(pairing)
                 checks.append('an unpaired reader is told what to run on the computer')
 
                 type_text(address)
@@ -183,6 +190,9 @@ def main():
                 assert 'pairing code' in words(code).lower(), words(code)
                 type_text(CODE)
                 drive('tap Pair', 'wait-idle')
+                # "Connecting" until the computer first answers, then
+                # "Watching": the splash no longer claims to watch before it is.
+                drive('wait-for Watching', 'wait-idle')
                 watching = capture('03-watching')
                 assert 'Watching' in words(watching), words(watching)
                 assert address in words(watching), words(watching)
@@ -252,6 +262,27 @@ def main():
                 gone = capture('11-gone-before-the-answer')
                 assert 'gone before the answer' in words(gone), words(gone)
                 checks.append('an answer the daemon no longer holds is not reported as a decision')
+
+                # The helper stops accepting the code: the splash stops
+                # claiming to watch and the banner names the code, not the
+                # network or the address.
+                waiting['refuse'] = True
+                drive('wait-for Not connected', 'wait-idle')
+                refused = capture('12-code-refused')
+                said = words(refused)
+                assert 'pairing code' in said and 'Watching' not in said, said
+                assert 'Wi-Fi' not in said and 'not answering' not in said, said
+                checks.append('a refused pairing code says Not connected and names the code')
+
+                # Coming back after a restart: the pairing is remembered and
+                # the reader watches again once the helper answers.
+                waiting['refuse'] = False
+                stop()
+                panel = start()
+                drive('wait-for Watching', 'wait-idle')
+                again = capture('13-after-restart')
+                assert address in words(again), words(again)
+                checks.append('a restarted reader comes back paired and watching')
 
                 (output/'result.json').write_text(json.dumps({
                     'status': 'passed', 'scale': args.scale,

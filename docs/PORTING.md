@@ -86,10 +86,9 @@ serial, and it only writes files to the USB storage partition, which is the
 same partition your books are on.
 
 ```sh
-cargo run -p kobo-cli -- setup --enable-ssh --no-menu   # over USB, then eject
-cargo run -p kobo-cli -- devices                        # find the address
-cargo run -p kobo-cli -- doctor --device <address>
-cargo run -p kobo-cli -- touch-probe --device <address> --seconds 30
+cargo run -p kobo-cli -- setup --no-menu               # over USB; waits and saves the reader
+cargo run -p kobo-cli -- doctor --reader kobo           # the saved reader
+cargo run -p kobo-cli -- touch-probe --seconds 30
 ```
 
 `--no-menu` leaves the reader's own menus alone, which is what you want here:

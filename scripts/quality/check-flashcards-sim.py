@@ -128,7 +128,7 @@ def main():
                 start()
                 drive("wait-for No collection yet")
                 capture("flashcards-first-use")
-                drive("wait-for kobo flashcards stage collection.cobfc")
+                drive("wait-for kobo flashcards push collection.cobfc")
                 drive("tap Start with the sample", "wait-for Getting started")
                 capture("flashcards-sample-decks")
                 result["checks"].append(dict(
@@ -156,13 +156,14 @@ def main():
                       "wait 800", "wait-for moons of Jupiter")
                 drive("tap-id answer", "wait-for Ganymede")
                 capture("flashcards-long-answer")
-                drive("tap-id good", "wait 1000", "wait-for Review complete")
+                drive("tap-id good", "wait 1000", "wait-for Done for today",
+                      "wait-for You reviewed 6 cards today.")
                 capture("flashcards-complete")
                 result["checks"].append(dict(
                     name="reveal and grade every card",
                     detail="all six sample cards revealed and graded Good, including the "
                            "Japanese greeting and the long multi-sentence answer, ending on "
-                           "the Review complete screen",
+                           "Done for today with the day the next cards are due",
                     status="passed"))
 
                 # The local review log survives a restart beside the collection.
@@ -174,7 +175,7 @@ def main():
                 assert len(digests) == 1, "sample reviews name more than one collection"
                 stop()
                 start()
-                drive("wait-for recorded locally")
+                drive("wait-for Done for today")
                 capture("flashcards-restored")
                 result["checks"].append(dict(
                     name="review log persistence",
@@ -201,7 +202,7 @@ def main():
                 run("verify", bundle)
                 shelf.mkdir(parents=True, exist_ok=True)
                 log_bytes = log_path.read_bytes()
-                (shelf / "collection.cobfc").write_bytes(bundle.read_bytes())
+                run("push", bundle, "--sim")
                 start()
                 drive("wait-for Default")
                 capture("flashcards-imported")
@@ -250,30 +251,48 @@ def main():
                 merged = private / "merged.cobfc"
                 run("import", second, "--merge", merged, "--merge-into", bundle)
                 run("verify", merged)
-                (shelf / "collection.cobfc").write_bytes(merged.read_bytes())
+                run("push", merged, "--sim")
                 start()
-                drive("wait-for Default", "wait-for 6 due")
+                # The compass card graded on the earlier push still carries
+                # the schedule it was graded against, so it is not due again.
+                drive("wait-for Default", "wait-for 5 due")
                 capture("flashcards-merged-decks")
-                drive("tap-id deck-0", "wait-for compass point toward")
-                for front, back in (("compass point toward", "Magnetic north."),
-                                    ("vapour", "Evaporation."),
-                                    ("hexagon", "Six.")):
-                    drive("tap-id answer", f"wait-for {back}", "tap-id good", "wait 800")
+                drive("tap-id deck-0", "wait-for vapour")
+                # Again sends the card to the end of the session.
+                drive("tap-id answer", "wait-for Evaporation.", "tap-id again", "wait 800",
+                      "wait-for hexagon")
+                drive("tap-id answer", "wait-for Six.", "tap-id good", "wait 800")
                 drive("wait-for compass needle settle")
                 capture("flashcards-media-question")
                 drive("tap-id answer", "wait-for Magnetic north.")
                 capture("flashcards-media-answer")
                 drive("tap-id good", "wait 800")
+                for back in ("Evaporation.", "Six.", "Evaporation."):
+                    drive("tap-id answer", f"wait-for {back}", "tap-id good", "wait 800")
+                drive("wait-for Done for today")
+                capture("flashcards-merged-done")
                 records = [json.loads(line)
                            for line in log_path.read_text().splitlines()]
-                assert len(records) == 11, f"expected 11 saved reviews, found {len(records)}"
+                assert len(records) == 13, f"expected 13 saved reviews, found {len(records)}"
                 assert len({r["bundle_sha256"] for r in records}) == 3
+                assert sum(r["grade"] == "again" for r in records) == 1
+                assert all(r["format"] == 3 and "day" in r for r in records)
+                stop()
+                start()
+                drive("wait-for Done for today")
+                capture("flashcards-merged-restarted")
                 result["checks"].append(dict(
                     name="companion import over the sample",
                     detail="the real flashcards-import helper converted an original "
                            "three-card package, the CLI verified it, the staged bundle "
                            "replaced the sample collection and one more Good review "
                            "appended to the untouched earlier log",
+                    status="passed"))
+                result["checks"].append(dict(
+                    name="missed cards return and progress survives a push",
+                    detail="a card answered Again came back after the rest of the "
+                           "session, a card graded before the merged collection was "
+                           "pushed stayed done, and the day stayed done after a restart",
                     status="passed"))
                 result["checks"].append(dict(
                     name="media cards through the companion pair",

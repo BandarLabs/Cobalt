@@ -1,0 +1,22 @@
+# sweep: --bare --seed-root examples/audiobook/fixtures/keys
+# The three keys are seeded as fake owner-wide files, so Create reaches the
+# estimate. Nothing is spent: the route stops at the estimate and goes back.
+wait-for Audiobooks
+tap Create
+wait-for Your topic
+tap Type any topic
+type the moon
+tap-id kb.enter
+wait-for Before you start
+expect 3 to 8 minutes
+expect $1 to $5
+expect 7 to 11 thousand ElevenLabs characters
+expect One Exa research run and one OpenAI script
+expect An estimate, billed to your own accounts
+expect Create audiobook
+expect-missing Add your keys
+clean
+shot audiobook-estimate
+tap Edit topic
+wait-for Your topic
+expect the moon

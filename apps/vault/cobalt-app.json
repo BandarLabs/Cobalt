@@ -2,24 +2,20 @@
   "id": "vault",
   "display_name": "Vault",
   "short_label": "Vault",
-  "summary": "Browse your notes by folder, tag, link, and backlink.",
+  "summary": "Browse your notes by folder, tag, link, and backlink. Needs your computer.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
-  "version": "0.1.6",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.7",
+  "release_notes": "Wiki links open the note they name, headings look like headings, and notes you push appear when you come back.",
   "glyph": "note",
   "capabilities": [],
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Create the note shelf on the reader.",
-        "command": "kobo vault init"
-      },
-      {
-        "text": "Send a folder of Markdown notes. Push again to update it.",
+        "text": "Send a folder of Markdown notes. Push again whenever your notes change: only changed notes are sent.",
         "command": "kobo vault push ~/Notes"
       }
     ]

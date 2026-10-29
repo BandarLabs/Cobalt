@@ -1,5 +1,7 @@
-# The empty list offers Add; a typed task lands on the list.
+# The empty list offers Add; typed tasks land on the list one after another
+# without the keyboard going away between them.
 wait-for Nothing to do
+expect Write down the first thing to do.
 clean
 shot todo-empty
 tap Add a task
@@ -9,7 +11,14 @@ expect water the fern
 clean
 shot todo-new
 tap Add
+wait-for Added
+expect New item
+type buy milk
+tap Add
+expect Todo: 2 left
+tap Done
 wait-for water the fern
+expect buy milk
 expect-missing Nothing to do
 clean
 shot todo-list

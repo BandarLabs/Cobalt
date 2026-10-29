@@ -1,11 +1,60 @@
 expect Lichess
 expect Puzzles
+wait-for Not connected
+expect Rapid · Rated
+clean
+shot home
 tap How to play
 expect Chess on Lichess
+expect Outlined squares show the last move.
+expect Choose rated or casual games in Account/Games.
 wait 250
 clean
 shot lichess-help
 tap Play
 expect Computer
+tap Puzzles
+wait-for Download 32 puzzles
+expect-missing Resume puzzle
+tap Back
+expect Computer
+tap 10+0
+wait-for Connect Lichess
+expect Connect a Lichess account to play people. Computer and Puzzles work without one.
+expect-missing Challenge player
 clean
-shot home
+shot time-tile-without-account
+tap-id seek-casual
+tap Back
+wait-for Rapid · Casual
+expect-missing Rapid · Rated
+clean
+shot home-casual
+tap-id play-computer
+wait-for Start game
+expect No clock
+expect Random
+tap-id computer-side-black
+tap-id start-computer
+wait-for Kobo
+expect Black · Your move · Casual · Nc3
+expect-missing 10:00
+clean
+shot computer-black-untimed
+tap-id square-e7
+expect e7 →
+tap-id square-e5
+wait-for Black · Your move · Casual · Nf3
+expect-missing e7 →
+expect-missing Move sent
+clean
+shot computer-reply-outlined
+tap-id game-menu
+tap-id confirm-resign
+tap-id resign
+wait-for New game
+expect See the board
+clean
+shot computer-result
+tap-id computer-again
+wait-for Start game

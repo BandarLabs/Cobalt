@@ -1,16 +1,21 @@
 //! Computer-side setup for runtime-owned, server-bound accounts.
+//!
+//! The same delivery `kobo connect` uses, for an owner who already has the
+//! token in a file and knows the secret's name. The token is checked against
+//! the server first when this command knows the service, and the app's own
+//! server setting is written beside it, so the address is typed once, here.
+use super::account::{self, Destination, Holding, Install};
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::time::Duration;
 
 const USAGE: &str =
-    "kobo secret set NAME --app APP --server HTTPS_URL (--from PATH | --stdin) --device HOST";
+    "kobo secret set NAME --app APP --server HTTPS_URL (--from PATH | --stdin) (--device HOST | --sim)";
 struct Options {
     name: String,
     app: String,
     server: String,
-    host: String,
+    destination: Destination,
     source: Option<PathBuf>,
 }
 
@@ -38,22 +43,38 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     } else {
         read_value(std::io::stdin().lock())?
     };
-    let script = install_script("/mnt/onboard/.adds/cobalt", &options, &token);
-    // Remote shell diagnostics can echo script input. Never display them.
-    let output = super::run_remote_shell(
-        &format!("root@{}", options.host),
-        &script,
-        Duration::from_secs(60),
-    )
-    .map_err(|_| "Account setup could not complete over SSH; no credential output is displayed.")?;
-    if !output.status.success() || output.stdout != b"SERVER_ACCOUNT_SAVED\n" {
-        return Err(match output.status.code() {
-            Some(20) => "Exit Cobalt normally and wait for recovery to finish, then retry. Do not kill the daemon.",
-            Some(21) => "Unsafe credential path or occupied setup lock. Inspect the reader before retrying.",
-            _ => "Account setup was not confirmed. Keep Cobalt closed and check the reader before retrying.",
-        }.into());
+    if options.destination == Destination::Sim {
+        account::prepare_sim()?;
     }
-    println!("Server-bound account installed. Configure the same server in the app; see its setup guide. The token was not printed or checked against the server.");
+    let known = account::for_secret(&options.app, &options.name);
+    let (server, state) = match known {
+        Some(service) => {
+            let server = service.server(&options.server)?;
+            let answer = account::check(service, &server, &token)?;
+            let state = service.state(&server, &answer)?;
+            (server, state)
+        }
+        None => (options.server.clone(), Vec::new()),
+    };
+    let binding = known.map_or_else(|| server.clone(), |service| service.binding(&server));
+    let install = Install {
+        app: &options.app,
+        secret: &options.name,
+        holding: Holding::Bound,
+        server: &binding,
+        value: &token,
+    };
+    account::deliver(&install, &options.destination, &state)?;
+    match known {
+        Some(service) => println!(
+            "Checked the token with {} and installed it for {} at {server}. {} has its server address too: open it, or tap Check again if it is already open.",
+            service.service, service.title, service.title
+        ),
+        None => println!(
+            "Installed the account for {} at {server}. This command cannot check this service, so the token was not checked. Set the same server in the app.",
+            options.app
+        ),
+    }
     Ok(())
 }
 
@@ -62,7 +83,7 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
         return Err(USAGE.into());
     }
     let name = arguments.get(1).ok_or(USAGE)?.clone();
-    let (mut app, mut server, mut host, mut source) = (None, None, None, None);
+    let (mut app, mut server, mut destination, mut source) = (None, None, None, None);
     let mut stdin = false;
     let mut args = arguments[2..].iter();
     while let Some(flag) = args.next() {
@@ -71,7 +92,14 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
             "--server" if server.is_none() => {
                 server = Some(args.next().ok_or(USAGE)?.trim_end_matches('/').to_owned());
             }
-            "--device" if host.is_none() => host = Some(args.next().ok_or(USAGE)?.clone()),
+            "--device" if destination.is_none() => {
+                let host = args.next().ok_or(USAGE)?.clone();
+                if !super::valid_device_host(&host) {
+                    return Err(USAGE.into());
+                }
+                destination = Some(Destination::Device(host));
+            }
+            "--sim" if destination.is_none() => destination = Some(Destination::Sim),
             "--from" if source.is_none() && !stdin => {
                 source = Some(PathBuf::from(args.next().ok_or(USAGE)?));
             }
@@ -81,7 +109,7 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
     }
     let app = app.ok_or(USAGE)?;
     let server = server.ok_or(USAGE)?;
-    let host = host.ok_or(USAGE)?;
+    let destination = destination.ok_or(USAGE)?;
     if !kobo_policy::credentials::servers::may_set(&app, &name) {
         return Err("This app/account pair is not approved for server-bound credentials.".into());
     }
@@ -90,14 +118,14 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
             "Use an HTTPS server without credentials, a query, fragment or encoded path.".into(),
         );
     }
-    if !super::valid_device_host(&host) || (source.is_none() && !stdin) {
+    if source.is_none() && !stdin {
         return Err(USAGE.into());
     }
     Ok(Options {
         name,
         app,
         server,
-        host,
+        destination,
         source,
     })
 }
@@ -117,70 +145,15 @@ fn read_value(reader: impl Read) -> Result<String, String> {
     }
     if bytes.is_empty() || bytes.len() > limit || !bytes.iter().all(u8::is_ascii_graphic) {
         return Err(format!(
-            "Use 1–{limit} printable ASCII bytes without spaces or embedded newlines."
+            "Use 1 to {limit} printable ASCII bytes without spaces or embedded newlines."
         ));
     }
     String::from_utf8(bytes).map_err(|_| "Invalid token encoding.".into())
 }
 
-fn quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn install_script(root: &str, options: &Options, token: &str) -> String {
-    let record = super::base64_encode(
-        format!("cobalt-server-account-v1\n{}\n{token}", options.server).as_bytes(),
-    );
-    format!(
-        r#"set -eu
-set +x
-umask 077
-root={root}
-app={app}
-name={name}
-command -v pidof >/dev/null 2>&1 || exit 22
-idle() {{
-  if pidof kobod >/dev/null 2>&1 || pidof recovery-kobod >/dev/null 2>&1 || pidof "kobo-$app" >/dev/null 2>&1; then exit 20; fi
-}}
-idle
-p="$root"
-while [ "$p" != / ]; do
-  [ ! -L "$p" ] && [ -d "$p" ] || exit 21
-  p=$(dirname "$p")
-done
-for suffix in secrets secrets/apps "secrets/apps/$app" "secrets/apps/$app/servers"; do
-  p="$root/$suffix"
-  [ ! -L "$p" ] || exit 21
-  if [ -e "$p" ]; then [ -d "$p" ] || exit 21; else mkdir "$p"; fi
-  chmod 700 "$p"
-done
-account="$root/secrets/apps/$app/servers/$name"
-[ ! -L "$account" ] || exit 21
-if [ -e "$account" ]; then [ -f "$account" ] || exit 21; fi
-lock="$root/.server-account-setup.lock"
-mkdir "$lock" 2>/dev/null || exit 21
-trap 'rm -rf "$lock"' EXIT
-trap 'exit 22' HUP INT TERM
-base64 -d > "$lock/new-account" <<'COBALT_SERVER_ACCOUNT'
-{record}
-COBALT_SERVER_ACCOUNT
-chmod 600 "$lock/new-account"
-sync
-idle
-mv -f "$lock/new-account" "$account"
-sync
-printf 'SERVER_ACCOUNT_SAVED\n'
-"#,
-        root = quote(root),
-        app = quote(&options.app),
-        name = quote(&options.name)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use std::process::{Command, Stdio};
 
     fn args() -> Vec<String> {
@@ -249,7 +222,17 @@ mod tests {
         assert!(read_value(&vec![b'x'; kobo_protocol::MAX_APP_SECRET_BYTES + 1][..]).is_err());
     }
     #[test]
-    fn shell_record_matches_runtime_and_refuses_busy_or_unsafe_paths() {
+    fn a_simulator_destination_is_accepted_in_place_of_a_reader() {
+        let mut input = args();
+        input.truncate(7);
+        input.push("--sim".into());
+        assert_eq!(parse(&input).unwrap().destination, Destination::Sim);
+        input.extend(["--device".to_owned(), "reader.local".to_owned()]);
+        assert!(parse(&input).is_err());
+    }
+
+    #[test]
+    fn the_record_installs_while_cobalt_runs_but_waits_out_an_update() {
         use std::os::unix::fs::{symlink, PermissionsExt};
         let root = std::env::temp_dir().join(format!(
             "server-secret-{}-{}",
@@ -263,33 +246,41 @@ mod tests {
         let bin = root.join("bin");
         fs::create_dir(&bin).unwrap();
         let pidof = bin.join("pidof");
-        fs::write(&pidof, "#!/bin/sh\nexit 1\n").unwrap();
+        // Cobalt and the app are running; no update is.
+        let running = "#!/bin/sh\ncase \"$1\" in recovery-kobod) exit 1;; *) exit 0;; esac\n";
+        fs::write(&pidof, running).unwrap();
         fs::set_permissions(&pidof, fs::Permissions::from_mode(0o700)).unwrap();
         // Resolve macOS /var symlinks: production rejects symlinked ancestors.
         let root = root.canonicalize().unwrap();
         let options = parse(&args()).unwrap();
+        let install = Install {
+            app: &options.app,
+            secret: &options.name,
+            holding: Holding::Bound,
+            server: &options.server,
+            value: "fixture-token",
+        };
+        let state = [("server", options.server.clone())];
         let run = || {
-            let mut child = Command::new("sh")
+            Command::new("sh")
+                .args([
+                    "-c",
+                    &account::device_script(root.to_str().unwrap(), &install, &state),
+                ])
                 .env(
                     "PATH",
                     format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
                 )
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            child
-                .stdin
-                .take()
+                .stdin(Stdio::null())
+                .output()
                 .unwrap()
-                .write_all(
-                    install_script(root.to_str().unwrap(), &options, "fixture-token").as_bytes(),
-                )
-                .unwrap();
-            child.wait_with_output().unwrap()
         };
-        assert!(run().status.success());
+        let done = run();
+        assert!(
+            done.status.success(),
+            "{}",
+            String::from_utf8_lossy(&done.stderr)
+        );
         let account = root.join("secrets/apps/readeck/servers/readeck");
         let expected = root.join("expected");
         kobo_policy::credentials::servers::install(
@@ -308,6 +299,10 @@ mod tests {
             fs::metadata(&account).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        assert_eq!(
+            fs::read_to_string(root.join("state/readeck/server")).unwrap(),
+            "https://read.example/library"
+        );
         let previous = b"previous-account";
         fs::write(&account, previous).unwrap();
         let mv = bin.join("mv");
@@ -315,13 +310,17 @@ mod tests {
         fs::set_permissions(&mv, fs::Permissions::from_mode(0o700)).unwrap();
         let failed = run();
         assert!(!failed.status.success());
-        assert!(failed.stdout.is_empty());
+        assert!(!failed.stdout.ends_with(b"ACCOUNT_CONNECTED\n"));
         assert_eq!(fs::read(&account).unwrap(), previous);
         assert!(!root.join(".server-account-setup.lock").exists());
         fs::remove_file(mv).unwrap();
         fs::write(&pidof, "#!/bin/sh\nexit 0\n").unwrap();
-        assert_eq!(run().status.code(), Some(20));
-        fs::write(&pidof, "#!/bin/sh\nexit 1\n").unwrap();
+        assert_eq!(
+            run().status.code(),
+            Some(20),
+            "an update in progress is waited out"
+        );
+        fs::write(&pidof, running).unwrap();
         fs::create_dir(root.join(".server-account-setup.lock")).unwrap();
         assert_eq!(run().status.code(), Some(21));
         fs::remove_dir(root.join(".server-account-setup.lock")).unwrap();

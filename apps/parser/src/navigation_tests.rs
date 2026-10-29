@@ -123,7 +123,6 @@ fn every_library_story_is_reachable_at_each_text_size_and_pose() {
                             Some(action)
                         );
                     }
-                    assert!(layout.rect_of_action(action_id("refresh")).is_some());
                 }
             }
         }

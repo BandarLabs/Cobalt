@@ -1,5 +1,5 @@
 //! One bounded record keeps puzzle identity, marks, settings and 64 undo steps.
-use super::game::{digit_text, digits, Game, Position, Puzzle, CELLS, HISTORY};
+use super::game::{digit_text, digits, Game, Level, Position, Puzzle, CELLS, HISTORY};
 use kobo_json::{ObjectBuilder, Value};
 use kobo_state::record::{Error, Schema};
 use std::collections::VecDeque;
@@ -35,12 +35,42 @@ pub fn encode(game: &Game, puzzles: &[Puzzle]) -> Result<Vec<u8>, Error> {
             .set("pencil", game.pencil)
             .set("checking", game.checking)
             .set("landscape", game.landscape)
+            .set("recent", recent_value(game))
             .set(
                 "undo",
                 Value::Array(game.undo.iter().map(position_value).collect()),
             )
             .build(),
     )
+}
+fn recent_value(game: &Game) -> Value {
+    Level::ALL
+        .into_iter()
+        .zip(game.recent)
+        .filter_map(|(level, last)| Some((level, last?)))
+        .fold(ObjectBuilder::new(), |object, (level, last)| {
+            object.set(&level.key(), last.to_string())
+        })
+        .build()
+}
+/// Reads where New game should carry on at each difficulty.
+///
+/// The field arrived with the larger pack and records from before it have
+/// none, so its absence is normal rather than damage. An entry that names a
+/// puzzle this pack does not have at that difficulty is dropped instead of
+/// refusing the whole game, because at worst it changes which puzzle comes
+/// next, and refusing would hide the board the player is part way through.
+fn recent(value: &Value, puzzle: usize, puzzles: &[Puzzle]) -> [Option<usize>; 3] {
+    let Some(recorded) = value.get("recent") else {
+        return Game::recent_before(puzzle, puzzles);
+    };
+    Level::ALL.map(|level| {
+        recorded
+            .get(&level.key())
+            .and_then(Value::as_str)
+            .and_then(|text| text.parse::<usize>().ok())
+            .filter(|&i| puzzles.get(i).is_some_and(|p| p.level == level))
+    })
 }
 fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, Error> {
     v.get(key).and_then(Value::as_str).ok_or(Error::Corrupt)
@@ -125,5 +155,6 @@ pub fn decode(bytes: &[u8], puzzles: &[Puzzle]) -> Result<Game, Error> {
         pencil: flag("pencil")?,
         checking: flag("checking")?,
         landscape: flag("landscape")?,
+        recent: recent(&value, puzzle, puzzles),
     })
 }

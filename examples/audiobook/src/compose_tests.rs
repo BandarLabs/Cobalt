@@ -133,3 +133,122 @@ fn correcting_a_short_topic_clears_the_old_hint_without_starting_work() {
         .iter()
         .any(|command| matches!(command, Command::Spawn { .. })));
 }
+
+#[test]
+fn the_keys_and_estimate_screens_fit_and_keep_their_controls_at_every_text_size() {
+    for metrics in interface_sizes() {
+        let text_scale = metrics.text_scale;
+        for (stage, controls) in [
+            (Stage::Keys, [CHECK, EDIT]),
+            (Stage::Confirm, [START, EDIT]),
+        ] {
+            let mut runner = AppRunner::with_metrics(
+                Audiobook {
+                    stage,
+                    missing: SECRETS.to_vec(),
+                    topic: Keyboard::with_text(
+                        "A researched history of the Moon and the people who learned to understand it",
+                    ),
+                    ..Audiobook::default()
+                },
+                metrics,
+            );
+            let drawn = screen(&runner);
+            let chrome = Chrome::for_screen(&drawn, false, Chrome::measuring(true).status);
+            let diagnostics = drawn.diagnostics(&metrics, &chrome);
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{stage:?} at {text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+            assert!(drawn.owns_back, "{stage:?}");
+            for control in controls {
+                let layout = drawn.layout_with(&metrics, &chrome);
+                assert!(
+                    layout.rect_of_action(action_id(control)).is_some(),
+                    "{stage:?} at {text_scale:?} lost {control}"
+                );
+            }
+            tap(&mut runner, EDIT);
+            assert_eq!(runner.app().stage, Stage::Compose);
+            assert!(runner
+                .app()
+                .topic
+                .text()
+                .starts_with("A researched history"));
+        }
+    }
+}
+
+#[test]
+fn every_failure_screen_fits_with_its_controls_at_every_text_size() {
+    let shelf = || {
+        Some(vec![Saved {
+            name: "old.mp3z".into(),
+            title: "An old book".into(),
+            bytes: 1000,
+        }])
+    };
+    let long_title = "A researched history of the Moon and the people who learned to understand it";
+    let cases = [
+        // Something to resume, with a shelf.
+        Audiobook {
+            stage: Stage::Failed,
+            title: long_title.into(),
+            parts: vec!["Part".into(); 9],
+            next_part: 4,
+            library: shelf(),
+            trouble: Some((
+                StandardState::Error,
+                "ElevenLabs did not answer, or its certificate is not one this reader trusts. Try again later.".into(),
+            )),
+            ..Audiobook::default()
+        },
+        // Nothing to resume, worth trying again, with a shelf.
+        Audiobook {
+            stage: Stage::Failed,
+            retryable: true,
+            library: shelf(),
+            trouble: Some((
+                StandardState::Offline,
+                "This reader is not on Wi-Fi. Join Wi-Fi and try again.".into(),
+            )),
+            ..Audiobook::default()
+        },
+        // Nothing to resume, not worth retrying, no shelf.
+        Audiobook {
+            stage: Stage::Failed,
+            trouble: Some((
+                StandardState::Error,
+                "OpenAI turned the request down. The account may be out of credit, or OpenAI may have retired what this app asks for. Check the account, or check Store for an update.".into(),
+            )),
+            ..Audiobook::default()
+        },
+    ];
+    for (index, case) in cases.into_iter().enumerate() {
+        for metrics in interface_sizes() {
+            let runner = AppRunner::with_metrics(
+                Audiobook {
+                    library: case.library.clone(),
+                    title: case.title.clone(),
+                    parts: case.parts.clone(),
+                    trouble: case.trouble.clone(),
+                    stage: case.stage,
+                    next_part: case.next_part,
+                    retryable: case.retryable,
+                    ..Audiobook::default()
+                },
+                metrics,
+            );
+            let drawn = screen(&runner);
+            let chrome = Chrome::for_screen(&drawn, false, Chrome::measuring(true).status);
+            let diagnostics = drawn.diagnostics(&metrics, &chrome);
+            assert!(
+                diagnostics.issues.is_empty(),
+                "case {index} at {:?}: {:?}",
+                metrics.text_scale,
+                diagnostics.issues
+            );
+        }
+    }
+}

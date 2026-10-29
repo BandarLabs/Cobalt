@@ -491,7 +491,8 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
         <table>
           <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
           <tbody>
-            <tr><td><code>setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]</code></td><td>Prepare or undo a reader over USB. Root SSH is an explicit development opt-in.</td></tr>
+            <tr><td><code>setup [--volume PATH] [--undo] [--no-ssh] [--no-key]</code></td><td>Prepare or undo a reader over USB. Turns on SSH with this computer's key as the only way in, then saves the reader so later commands need no address.</td></tr>
+            <tr><td><code>pair [NAME]</code></td><td>Save or rename a reader that is already on Wi-Fi.</td></tr>
             <tr><td><code>deploy --device IP [--package PATH]</code></td><td>Install over Wi-Fi without rebooting. Alias: <code>install</code>.</td></tr>
             <tr><td><code>devices [--subnet A.B.C]</code></td><td>Find readers on the local network and report hardware, firmware and Cobalt versions.</td></tr>
             <tr><td><code>doctor [--device IP]</code></td><td>Run read-only host or device diagnostics.</td></tr>

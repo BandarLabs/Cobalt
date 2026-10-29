@@ -24,6 +24,7 @@
 //! that relies on a clean exit loses data. Each write is atomic, so the worst
 //! a power loss can cost is the change that was in flight.
 
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, Context, ControlState, Glyph, KoboApp, LogLevel, Position,
@@ -42,6 +43,8 @@ const ITEMS: &str = "items";
 const MAX_ITEMS: usize = 60;
 
 const ADD: &str = "add";
+/// Puts the keyboard away after a run of adds, keeping anything still typed.
+const DONE_ADDING: &str = "done-adding";
 const CLEAR_DONE: &str = "clear-done";
 const UNDO_CLEAR: &str = "undo-clear";
 const PREVIOUS: &str = "previous";
@@ -60,9 +63,6 @@ const DELETE: &str = "delete";
 const EDIT_LIST: &str = "edit-list";
 const EDIT_PREVIOUS: &str = "edit-previous";
 const EDIT_NEXT: &str = "edit-next";
-
-/// Seconds in a day, for turning the clock into a day number.
-const DAY: i64 = 86_400;
 
 /// Whether a control can act, said the way the toolkit says it.
 const fn state_of(enabled: bool) -> ControlState {
@@ -83,19 +83,19 @@ fn edit_index(action: ActionId) -> Option<usize> {
     (0..MAX_ITEMS).find(|index| action_id(&edit_name(*index)) == action)
 }
 
-/// Today, as days since the epoch.
+/// Today, as days since the epoch on the reader's own calendar.
 ///
 /// A Kobo that has been asleep for a week comes back with whatever its clock
 /// says, which may be wrong. Nothing here is worse for that than a date shown
 /// a day out, which is why an overdue item is only ever drawn as overdue and
-/// never acted on.
+/// never acted on. Counted in UTC, "due today" turned into "a day late" at
+/// teatime in California.
 fn today() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemClock::reader()
+        .now()
         .ok()
-        .and_then(|since| i64::try_from(since.as_secs()).ok())
+        .and_then(Snapshot::local_day)
         .unwrap_or_default()
-        / DAY
 }
 
 /// What a date says on the row it belongs to.
@@ -224,7 +224,8 @@ struct Todo {
     /// "you have nothing to do" and "your list has not arrived yet" are
     /// different statements and only one of them is reassuring.
     loaded: bool,
-    /// Why this list should not be trusted to survive a restart.
+    /// Why this list should not be trusted to survive a restart, or why the
+    /// last thing typed is not on it.
     ///
     /// A refused save still leaves the words on screen, because throwing
     /// them away would be worse; the banner says the list is memory only
@@ -239,6 +240,10 @@ struct Todo {
     /// owner did not organise it.
     filter: Option<String>,
     entry: TextEntry,
+    /// What the last Add put on the list, while the keyboard stays up for the
+    /// next one. Shopping lists are written five items at a time, and
+    /// dropping back to the list after each one cost two taps an item.
+    added: Option<String>,
     /// Which screen is showing.
     view: View,
     /// The item whose words are being retyped, if any.
@@ -285,6 +290,7 @@ impl Default for Todo {
             page: 0,
             filter: None,
             entry: TextEntry::new().opened_by(ADD),
+            added: None,
             view: View::default(),
             renaming: None,
             pages: Vec::new(),
@@ -330,7 +336,15 @@ impl Todo {
                 Some(_) => ("Change the words", "Save"),
                 None => ("New item", "Add"),
             };
-            ScreenBuilder::new("Todo")
+            let mut screen = ScreenBuilder::new("Todo").top_bar(self.title());
+            if self.renaming.is_none() {
+                screen = screen.top_bar_action(DONE_ADDING, "Done");
+                if let Some(added) = &self.added {
+                    screen = screen.secondary(format!("Added \u{201c}{added}\u{201d}."));
+                }
+            }
+            screen
+                .owns_back(true)
                 .text_entry(&self.entry, prompt, submit)
                 .build()
         } else {
@@ -502,7 +516,7 @@ impl Todo {
             screen = screen.splash(
                 Some(Glyph::Check),
                 "Nothing to do",
-                "Tap Add to put something on the list.",
+                "Write down the first thing to do.",
             );
         } else {
             let tags = self.all_tags();
@@ -752,6 +766,38 @@ impl Todo {
         }
     }
 
+    /// Puts a new item on the list and turns to the page it landed on.
+    /// Returns false when the list is already full.
+    fn add(&mut self, context: &mut Context, text: String) -> bool {
+        if self.items.len() >= MAX_ITEMS {
+            self.notice = Some(format!(
+                "The list holds {MAX_ITEMS} items. Clear finished ones to add more."
+            ));
+            return false;
+        }
+        self.items.push(Item {
+            text,
+            done: false,
+            due: None,
+        });
+        // A new item is unfinished, so it may sort above the page the reader
+        // was on. Clear any filter and land on wherever it actually landed, or
+        // it looks as if nothing happened.
+        self.filter = None;
+        let added = self.items.len() - 1;
+        self.repaginate(&*context);
+        // Onto the page it actually landed on, which depends on how many rows
+        // this panel holds at this text size, so it is looked up rather than
+        // divided out.
+        self.page = self
+            .pages
+            .iter()
+            .position(|page| page.contains(&added))
+            .unwrap_or(0);
+        self.save(context);
+        true
+    }
+
     /// Writes the list back. Called after every change, never batched.
     fn save(&mut self, context: &mut Context) {
         let bytes = encode(&self.items);
@@ -876,8 +922,34 @@ impl KoboApp for Todo {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.entry.is_open() && action == ActionId::BACK {
+            // Back from the keyboard is Cancel, never "leave the list" with
+            // the keyboard still up behind it.
+            self.entry.close();
+            self.renaming = None;
+            self.added = None;
+            self.show(context);
+            return;
+        }
+        if self.entry.is_open() && action == action_id(DONE_ADDING) {
+            // Done keeps what was typed rather than throwing it away: the
+            // words on screen are the ones the owner expects to see listed.
+            let typed = self.entry.text().trim().to_owned();
+            self.entry.close();
+            self.added = None;
+            if !typed.is_empty() {
+                self.add(context, typed);
+            }
+            self.show(context);
+            return;
+        }
         // The field first, because while it is open it owns the panel.
         if let Some(event) = self.entry.handle(action) {
+            if !matches!(event, Typing::Submitted(_) | Typing::Changed) {
+                // A cancelled rename must not turn the next Add into a rename.
+                self.added = None;
+                self.renaming = None;
+            }
             if let Typing::Submitted(text) = event {
                 if let Some(index) = self.renaming.take() {
                     // The same words in the same place: renaming an item does
@@ -891,27 +963,13 @@ impl KoboApp for Todo {
                     self.show(context);
                     return;
                 }
-                if self.items.len() < MAX_ITEMS {
-                    self.items.push(Item {
-                        text,
-                        done: false,
-                        due: None,
-                    });
-                    // A new item is unfinished, so it may sort above the page
-                    // the reader was on. Clear any filter and land on wherever
-                    // it actually landed, or it looks as if nothing happened.
-                    self.filter = None;
-                    let added = self.items.len() - 1;
-                    self.repaginate(&*context);
-                    // Onto the page it actually landed on, which depends on
-                    // how many rows this panel holds at this text size, so it
-                    // is looked up rather than divided out.
-                    self.page = self
-                        .pages
-                        .iter()
-                        .position(|page| page.contains(&added))
-                        .unwrap_or(0);
-                    self.save(context);
+                if self.add(context, text.clone()) {
+                    // Straight back to an empty field for the next one. Done
+                    // in the top bar, or Cancel, puts the keyboard away.
+                    self.added = Some(text);
+                    self.entry.open();
+                } else {
+                    self.added = None;
                 }
             }
             self.show(context);
@@ -1387,13 +1445,74 @@ mod tests {
         }
         let _ignored = context.take_commands();
         todo.on_action(&mut context, action_id("kb.enter"));
-        assert!(!todo.entry.is_open(), "the keyboard stayed up after adding");
+        assert!(
+            todo.entry.is_open(),
+            "the keyboard went away after one item, when lists are written several at a time"
+        );
+        assert!(todo.entry.text().is_empty(), "the field kept the last item");
         assert_eq!(todo.items.len(), 1);
         assert_eq!(todo.items[0].text, "qw");
         assert_eq!(
             saved(&context.take_commands()).as_deref(),
             Some(b"- qw\n".as_slice())
         );
+    }
+
+    #[test]
+    fn done_puts_the_keyboard_away_and_keeps_what_was_still_typed() {
+        let mut todo = started(&[]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(ADD));
+        todo.on_action(&mut context, action_id("kb.r0c0"));
+        todo.on_action(&mut context, action_id("kb.enter"));
+        todo.on_action(&mut context, action_id("kb.r0c1"));
+        todo.on_action(&mut context, action_id(super::DONE_ADDING));
+        assert!(!todo.entry.is_open());
+        let texts: Vec<_> = todo.items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, ["q", "w"]);
+    }
+
+    #[test]
+    fn back_on_the_keyboard_cancels_and_a_cancelled_rename_leaves_add_as_add() {
+        let mut todo = started(&[("first", false)]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(super::EDIT_LIST));
+        todo.on_action(&mut context, action_id(&super::edit_name(0)));
+        todo.on_action(&mut context, action_id(super::EDIT));
+        assert!(todo.entry.is_open());
+        todo.on_action(&mut context, kobo_sdk::ActionId::BACK);
+        assert!(!todo.entry.is_open(), "back left the keyboard up");
+        assert!(matches!(todo.view, View::Item(0)), "back left the item");
+        todo.on_action(&mut context, action_id(super::EDIT));
+        todo.on_action(&mut context, action_id("kb.cancel"));
+        todo.on_action(&mut context, action_id(ADD));
+        todo.on_action(&mut context, action_id("kb.r0c0"));
+        todo.on_action(&mut context, action_id("kb.enter"));
+        let texts: Vec<_> = todo.items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, ["first", "q"], "the add renamed the item instead");
+    }
+
+    #[test]
+    fn the_compose_screen_is_titled_like_the_list_and_says_what_was_added() {
+        let mut todo = started(&[]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(ADD));
+        todo.on_action(&mut context, action_id("kb.r0c0"));
+        todo.on_action(&mut context, action_id("kb.enter"));
+        let screen = context
+            .take_commands()
+            .into_iter()
+            .rev()
+            .find_map(|command| match command {
+                kobo_sdk::Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .expect("a screen was drawn");
+        assert_eq!(screen.top_bar.expect("a top bar").title, "Todo: 1 left");
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Secondary { text, .. } if text.contains("Added")
+        )));
     }
 
     #[test]

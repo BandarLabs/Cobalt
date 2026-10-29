@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/birds.png">
 <meta name="twitter:image:alt" content="A labelled collage of public-domain bird plates filling a Kobo screen.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-JsKDg974/g83GMV9DC4W4BQW5ZTHsLU58eDuGcxPQ5g='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-S5v1gLfaGJJiWMuOFCAEUT5RMXV7BhS+GV58Ha65lPc='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.7",
+      "softwareVersion": "0.1.8",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,8 +99,8 @@
       <h1>Birds</h1>
       <p class="summary">See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.7</dd></div>
-        <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
+        <div><dt>Version</dt><dd>0.1.8</dd></div>
+        <div><dt>Permissions</dt><dd>keep-awake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
@@ -118,17 +118,17 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.7</h2>
-    <p>Rebuilt with the current Cobalt SDK.</p>
+    <h2>New in 0.1.8</h2>
+    <p>Asks the reader to stay awake while the birds are on screen, and says so in the menu when the reader cannot.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Run BirdNET-Go and Fugleramme on a Mac or Linux computer with a microphone. See apps/birds/README.md.</li>
-      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
-        <code class="setup-command">kobo pair</code></li>
-      <li>Start mirroring what BirdNET-Go hears to the reader.
+      <li>Birds needs BirdNET-Go and Fugleramme running on a Mac or Linux computer with a microphone. Install and start both first, as the Birds README describes. <a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/birds">Birds README</a></li>
+      <li>Set up the reader once over USB, if you have not already.
+        <code class="setup-command">kobo setup</code></li>
+      <li>Start sending what BirdNET-Go hears to the reader. It checks the station and the reader first, and says what to fix if either does not answer.
         <code class="setup-command">kobo birds listen --source http://localhost:8080</code></li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:

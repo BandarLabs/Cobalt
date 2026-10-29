@@ -82,9 +82,9 @@ impl SeekPreset {
         format!("{}+{}", self.minutes(), self.increment())
     }
 
-    pub fn body(self) -> String {
+    pub fn body(self, rated: bool) -> String {
         format!(
-            "rated=true&time={}&increment={}&variant=standard&color=random",
+            "rated={rated}&time={}&increment={}&variant=standard&color=random",
             self.minutes(),
             self.increment()
         )
@@ -98,10 +98,15 @@ impl SeekPreset {
         )
     }
 
-    pub fn matches_summary(self, game: &GameSummary) -> bool {
+    /// Whether a game the account is now playing is the one this seek made.
+    ///
+    /// Rated and casual seeks pair from separate pools, so a casual game that
+    /// starts while a rated seek waits is someone else's arrangement and must
+    /// not be opened as the owner's match.
+    pub fn matches_summary(self, game: &GameSummary, rated: bool) -> bool {
         let initial = u32::from(self.minutes()).saturating_mul(60);
         game.supported()
-            && game.rated
+            && game.rated == rated
             && game
                 .source
                 .as_deref()
@@ -112,9 +117,9 @@ impl SeekPreset {
                 .is_some_and(|seconds| (initial.saturating_sub(60)..=initial).contains(&seconds))
     }
 
-    pub fn matches_full(self, game: &FullGame) -> bool {
+    pub fn matches_full(self, game: &FullGame, rated: bool) -> bool {
         let increment_ms = u64::from(self.increment()).saturating_mul(1000);
-        game.rated
+        game.rated == rated
             && game.speed == self.speed()
             && game.state.white_increment_ms == increment_ms
             && game.state.black_increment_ms == increment_ms
@@ -152,10 +157,10 @@ pub fn board_stream(game_id: &str, action: &str) -> Option<Task> {
     })
 }
 
-pub fn seek(preset: SeekPreset) -> Task {
+pub fn seek(preset: SeekPreset, rated: bool) -> Task {
     Task::Post {
         url: "https://lichess.org/api/board/seek".to_owned(),
-        body: preset.body(),
+        body: preset.body(rated),
         content_type: FORM.to_owned(),
         credential: Some(Credential::bearer(SECRET)),
         headers: vec![Header::new(WAIT_HEADER, "1"), Header::new(RATE_HEADER, "1")],
@@ -587,7 +592,7 @@ mod tests {
             credential,
             headers,
             ..
-        } = seek(SeekPreset::Rapid10_0)
+        } = seek(SeekPreset::Rapid10_0, true)
         else {
             panic!("seek is a post")
         };
@@ -620,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn every_seek_preset_has_the_exact_rated_random_standard_body() {
+    fn every_seek_preset_has_the_exact_random_standard_body_in_the_chosen_pool() {
         let expected = [
             ("10", "0"),
             ("10", "5"),
@@ -629,15 +634,17 @@ mod tests {
             ("30", "20"),
         ];
         for (preset, (minutes, increment)) in SeekPreset::ALL.into_iter().zip(expected) {
-            let Task::Post { body, .. } = seek(preset) else {
-                panic!("seek is a post")
-            };
-            assert_eq!(
-                body,
-                format!(
-                    "rated=true&time={minutes}&increment={increment}&variant=standard&color=random"
-                )
-            );
+            for rated in [true, false] {
+                let Task::Post { body, .. } = seek(preset, rated) else {
+                    panic!("seek is a post")
+                };
+                assert_eq!(
+                    body,
+                    format!(
+                        "rated={rated}&time={minutes}&increment={increment}&variant=standard&color=random"
+                    )
+                );
+            }
         }
     }
 
@@ -678,17 +685,22 @@ mod tests {
                 variant: Some("standard".to_owned()),
                 seconds_left: Some(u32::from(preset.minutes()) * 60),
             };
-            assert!(preset.matches_summary(&summary), "{}", preset.label());
+            assert!(preset.matches_summary(&summary, true), "{}", preset.label());
+            assert!(!preset.matches_summary(&summary, false));
+            let mut casual = summary.clone();
+            casual.rated = false;
+            assert!(preset.matches_summary(&casual, false));
+            assert!(!preset.matches_summary(&casual, true));
             let mut legacy_lobby = summary.clone();
             legacy_lobby.source = Some("lobby".to_owned());
-            assert!(preset.matches_summary(&legacy_lobby));
+            assert!(preset.matches_summary(&legacy_lobby, true));
             let mut unrelated = summary.clone();
             unrelated.source = Some("friend".to_owned());
-            assert!(!preset.matches_summary(&unrelated));
+            assert!(!preset.matches_summary(&unrelated, true));
             let mut wrong_minutes = summary.clone();
             wrong_minutes.seconds_left =
                 Some(u32::from(preset.minutes().saturating_add(5)).saturating_mul(60));
-            assert!(!preset.matches_summary(&wrong_minutes));
+            assert!(!preset.matches_summary(&wrong_minutes, true));
 
             let full = FullGame {
                 id: "abcdEF12".to_owned(),
@@ -719,13 +731,14 @@ mod tests {
                     black_takeback: false,
                 },
             };
-            assert!(preset.matches_full(&full));
+            assert!(preset.matches_full(&full, true));
+            assert!(!preset.matches_full(&full, false));
             let mut wrong_increment = full;
             wrong_increment.state.black_increment_ms = wrong_increment
                 .state
                 .black_increment_ms
                 .saturating_add(1000);
-            assert!(!preset.matches_full(&wrong_increment));
+            assert!(!preset.matches_full(&wrong_increment, true));
         }
     }
 
@@ -766,7 +779,7 @@ mod tests {
         let Event::GameStart(started) = started else {
             panic!("game start")
         };
-        assert!(!SeekPreset::Rapid10_0.matches_summary(&started));
+        assert!(!SeekPreset::Rapid10_0.matches_summary(&started, true));
         let challenge = parse_event(
             br#"{"type":"challenge","challenge":{"id":"chall123","status":"created","direction":"in","challenger":{"name":"Other"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"type":"clock","limit":600,"increment":0}}}"#,
         )

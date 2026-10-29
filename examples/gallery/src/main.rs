@@ -168,8 +168,30 @@ impl Tab {
 }
 
 /// One part of a page: the controls it draws, added to whatever is already
-/// on the panel.
-type Part = fn(&Gallery, ScreenBuilder) -> ScreenBuilder;
+/// on the panel, and the builder calls that drew them.
+///
+/// The calls are printed under the sample. A reference that shows a control
+/// without its name sends whoever wants one like it into the source, to find
+/// which of sixty builder methods it was.
+#[derive(Clone, Copy)]
+struct Part {
+    draw: fn(&Gallery, ScreenBuilder) -> ScreenBuilder,
+    /// The `ScreenBuilder` methods behind the sample, comma separated.
+    calls: &'static str,
+}
+
+impl Part {
+    /// The line set under the sample, such as "Built with `.grid()`".
+    fn caption(self) -> String {
+        let calls = self
+            .calls
+            .split(", ")
+            .map(|call| format!(".{call}()"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("Built with {calls}")
+    }
+}
 
 /// Where the reader is in the one job this gallery carries out end to end.
 ///
@@ -348,58 +370,200 @@ impl Gallery {
     /// of them fit on a panel is not known here: it depends on the device and
     /// on how large the reader has asked for the type to be, and the only
     /// honest answer to "does this fit" is to measure it.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table of every sample and its calls reads better whole than split"
+    )]
     fn parts(tab: Tab, page: usize) -> &'static [Part] {
         match (tab, page) {
-            (Tab::Text, 0) => &[Gallery::type_page, Gallery::facts_page],
-            (Tab::Text, 1) => &[Gallery::quotes_page],
+            (Tab::Text, 0) => &[
+                Part {
+                    draw: Gallery::type_page,
+                    calls: "heading, text, secondary",
+                },
+                Part {
+                    draw: Gallery::facts_page,
+                    calls: "section_with_value, facts",
+                },
+            ],
+            (Tab::Text, 1) => &[Part {
+                draw: Gallery::quotes_page,
+                calls: "paged_list, quote, command",
+            }],
             (Tab::Text, 2) => &[
-                Gallery::marks_page,
-                Gallery::quoted_page,
-                Gallery::linked_text_page,
+                Part {
+                    draw: Gallery::marks_page,
+                    calls: "heading_at_level, byline, folding_byline",
+                },
+                Part {
+                    draw: Gallery::quoted_page,
+                    calls: "quote_as, table",
+                },
+                Part {
+                    draw: Gallery::linked_text_page,
+                    calls: "rich_text, text_linking, rich_text_linking, hold",
+                },
             ],
             (Tab::Text, _) => &[
-                Gallery::banners_page,
-                Gallery::tone_page,
-                Gallery::waiting_page,
+                Part {
+                    draw: Gallery::banners_page,
+                    calls: "banner",
+                },
+                Part {
+                    draw: Gallery::tone_page,
+                    calls: "picture, skeleton",
+                },
+                Part {
+                    draw: Gallery::waiting_page,
+                    calls: "progress, skeleton",
+                },
             ],
             (Tab::Lists, 0) => &[
-                Gallery::rows_page,
-                Gallery::checklist_page,
-                Gallery::long_labels_page,
+                Part {
+                    draw: Gallery::rows_page,
+                    calls: "rows_with_trailing",
+                },
+                Part {
+                    draw: Gallery::checklist_page,
+                    calls: "checklist",
+                },
+                Part {
+                    draw: Gallery::long_labels_page,
+                    calls: "rows_with_trailing, chips",
+                },
             ],
             (Tab::Lists, 1) => &[
-                Gallery::bleed_page,
-                Gallery::covers_page,
-                Gallery::marked_tiles,
-                Gallery::tiles_page,
+                Part {
+                    draw: Gallery::bleed_page,
+                    calls: "full_bleed_picture",
+                },
+                Part {
+                    draw: Gallery::covers_page,
+                    calls: "unframed_picture, picture_tiles",
+                },
+                Part {
+                    draw: Gallery::marked_tiles,
+                    calls: "contextual_tiles, apps",
+                },
+                Part {
+                    draw: Gallery::tiles_page,
+                    calls: "tile_grid",
+                },
             ],
             (Tab::Lists, 2) => &[
-                Gallery::boards_page,
-                Gallery::pads_page,
-                Gallery::crossword_page,
-                Gallery::pencil_page,
+                Part {
+                    draw: Gallery::boards_page,
+                    calls: "grid, grid_with_selection, board, board_with_selection",
+                },
+                Part {
+                    draw: Gallery::pads_page,
+                    calls: "pads",
+                },
+                Part {
+                    draw: Gallery::crossword_page,
+                    calls: "crossword_board",
+                },
+                Part {
+                    draw: Gallery::pencil_page,
+                    calls: "pencil_board, terminal",
+                },
             ],
-            (Tab::Lists, _) => &[Gallery::icons_page],
-            (Tab::Input, 0) => &[Gallery::buttons_page, Gallery::stepper_page],
-            (Tab::Input, 1) => &[Gallery::groups_page, Gallery::section_rows_page],
+            (Tab::Lists, _) => &[Part {
+                draw: Gallery::icons_page,
+                calls: "tiles, page_turns",
+            }],
+            (Tab::Input, 0) => &[
+                Part {
+                    draw: Gallery::buttons_page,
+                    calls: "primary_button, buttons, button_with_state, disabled_button",
+                },
+                Part {
+                    draw: Gallery::stepper_page,
+                    calls: "stepper, segmented, picker, toggles",
+                },
+            ],
+            (Tab::Input, 1) => &[
+                Part {
+                    draw: Gallery::groups_page,
+                    calls: "hero, band",
+                },
+                Part {
+                    draw: Gallery::section_rows_page,
+                    calls: "section_rows",
+                },
+            ],
             (Tab::Input, 2) => &[
-                Gallery::input_page,
-                Gallery::asking_page,
-                Gallery::choice_page,
+                Part {
+                    draw: Gallery::input_page,
+                    calls: "field, chips, controls, confirm",
+                },
+                Part {
+                    draw: Gallery::asking_page,
+                    calls: "confirmation",
+                },
+                Part {
+                    draw: Gallery::choice_page,
+                    calls: "choose, chosen, or_type",
+                },
             ],
-            (Tab::Input, _) => &[Gallery::overlay_page],
-            (Tab::States, 0) => &[Gallery::nothing_page],
-            (Tab::States, 1) => &[Gallery::offline_page],
+            (Tab::Input, _) => &[Part {
+                draw: Gallery::overlay_page,
+                calls: "top_bar_overflow, row_overflow, rows_with_menu, modal",
+            }],
+            (Tab::States, 0) => &[Part {
+                draw: Gallery::nothing_page,
+                calls: "empty_state",
+            }],
+            (Tab::States, 1) => &[Part {
+                draw: Gallery::offline_page,
+                calls: "failure_state",
+            }],
             (Tab::States, 2) => &[
-                Gallery::denied_page,
-                Gallery::offline_state_page,
-                Gallery::faulted_page,
+                Part {
+                    draw: Gallery::denied_page,
+                    calls: "permission_denied_state",
+                },
+                Part {
+                    draw: Gallery::offline_state_page,
+                    calls: "offline_state",
+                },
+                Part {
+                    draw: Gallery::faulted_page,
+                    calls: "error_state",
+                },
             ],
-            (Tab::States, _) => &[Gallery::trouble_page],
-            (Tab::Panel, 0) => &[Gallery::folio_page, Gallery::folio_tiles],
-            (Tab::Panel, 1) => &[Gallery::ghosting_page],
-            (Tab::Panel, 2) => &[Gallery::transfer_page, Gallery::unsized_transfer_page],
-            (Tab::Panel, _) => &[Gallery::request_page],
+            (Tab::States, _) => &[Part {
+                draw: Gallery::trouble_page,
+                calls: "standard_state, bottom_action_marked",
+            }],
+            (Tab::Panel, 0) => &[
+                Part {
+                    draw: Gallery::folio_page,
+                    calls: "section_link, page_rail",
+                },
+                Part {
+                    draw: Gallery::folio_tiles,
+                    calls: "tile_grid, popover, rows",
+                },
+            ],
+            (Tab::Panel, 1) => &[Part {
+                draw: Gallery::ghosting_page,
+                calls: "page_rail, tile_grid",
+            }],
+            (Tab::Panel, 2) => &[
+                Part {
+                    draw: Gallery::transfer_page,
+                    calls: "transfer, transfer_failed, transfer_retry, cancellable",
+                },
+                Part {
+                    draw: Gallery::unsized_transfer_page,
+                    calls: "transfer",
+                },
+            ],
+            (Tab::Panel, _) => &[Part {
+                draw: Gallery::request_page,
+                calls: "activity, cancellable",
+            }],
         }
     }
 
@@ -459,6 +623,20 @@ impl Gallery {
     /// One panel of the reference, whole: the bars, the strip, the parts that
     /// landed on this panel, and the page turns between panels.
     fn frame(&self, page: usize, parts: &[Part], total: usize) -> ScreenBuilder {
+        self.frame_with(page, parts, total, true)
+    }
+
+    /// The same, with or without the line naming each sample's builder calls.
+    /// A sample that takes a whole panel to itself at the largest text sizes
+    /// has no room for its caption, and drawing it anyway pushes the sample
+    /// off the panel.
+    fn frame_with(
+        &self,
+        page: usize,
+        parts: &[Part],
+        total: usize,
+        captions: bool,
+    ) -> ScreenBuilder {
         let screen = ScreenBuilder::new("gallery")
             .top_bar_action("about-gallery", "About")
             .top_bar(match self.tab {
@@ -485,7 +663,14 @@ impl Gallery {
         } else {
             screen
         };
-        let screen = parts.iter().fold(screen, |screen, part| part(self, screen));
+        let screen = parts.iter().fold(screen, |screen, part| {
+            let screen = (part.draw)(self, screen);
+            if captions {
+                screen.secondary(part.caption())
+            } else {
+                screen
+            }
+        });
         let screen = match self.pressed {
             Some(caption) => screen.text(caption),
             None => screen,
@@ -614,7 +799,9 @@ impl Gallery {
         let page = self.page();
         let panels = self.panels(context.metrics(), page);
         let panel = self.shown.min(panels.len().saturating_sub(1));
-        context.set_screen(self.frame(page, &panels[panel], panels.len()).build());
+        let parts = &panels[panel];
+        let captions = !Self::overflows(self.frame(page, parts, panels.len()), context.metrics());
+        context.set_screen(self.frame_with(page, parts, panels.len(), captions).build());
     }
 
     /// Every way the system sets words: the roles, the groupings and the
@@ -1989,6 +2176,27 @@ mod tests {
         action_id, Chrome, Command, Context, DiagnosticSeverity, DisplayMetrics, Glyph, KoboApp,
         Node, Screen, CLARA_BW_METRICS,
     };
+
+    #[test]
+    fn every_sample_names_the_builder_calls_that_drew_it() {
+        for (tab, _, _) in Tab::ALL {
+            for page in 0..tab.pages().len() {
+                for part in Gallery::parts(tab, page) {
+                    assert!(part.caption().starts_with("Built with ."), "{tab:?} {page}");
+                }
+            }
+        }
+        let gallery = Gallery {
+            tab: Tab::Lists,
+            page: [0, 2, 0, 0, 0],
+            ..Gallery::default()
+        };
+        let screen = painted(&gallery, CLARA_BW_METRICS);
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Secondary { text, .. } if text.contains(".board_with_selection()")
+        )));
+    }
 
     /// Paints one page and hands back what was drawn.
     ///

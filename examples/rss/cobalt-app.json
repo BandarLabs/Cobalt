@@ -3,10 +3,29 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "glyph": "rss",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
+  "setup": {
+    "steps": [
+      {
+        "text": "Nothing is needed on a computer to follow feeds: add them on the reader. These steps bring a subscription list over from another feed reader."
+      },
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Export your subscriptions from the other feed reader as an OPML file, and check it.",
+        "command": "kobo feeds check subscriptions.opml"
+      },
+      {
+        "text": "Send the file to the reader. Then open Feeds and choose Import OPML.",
+        "command": "kobo feeds push subscriptions.opml"
+      }
+    ]
+  },
+  "release_notes": "Refresh all updates every feed and keeps the newest illustrated articles whole for offline reading, starter feeds carry whole articles, and times are in your own time zone. Reopens a document on the page you left."
 }

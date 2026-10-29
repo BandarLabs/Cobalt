@@ -240,6 +240,21 @@ enum Scenario {
 }
 
 impl Scenario {
+    /// The scenario a session opens in.
+    ///
+    /// `KOBO_SIM_OFFLINE` used to remove the network backend, so a request
+    /// came back refused and an app showed its "service refused" wording
+    /// where an owner without Wi-Fi would see the offline one. Starting in
+    /// the offline scenario fails each request the way a reader with no
+    /// network does.
+    fn starting() -> Self {
+        if std::env::var_os(OFFLINE).is_some() {
+            Self::Offline
+        } else {
+            Self::Normal
+        }
+    }
+
     const ALL: [Self; 9] = [
         Self::Normal,
         Self::Offline,
@@ -785,7 +800,8 @@ impl AppServer {
             declared.clone(),
             kobo_policy::PowerPolicy::DEFAULT,
             kobo_policy::Backends::with(configured_backends()?.iter()),
-        );
+        )
+        .with_library_roots(vec![simulated_library_root()]);
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -1098,6 +1114,9 @@ struct AppState {
     last_touch: Option<SimulatedTouch>,
     apps: Arc<Mutex<SimulatedApps>>,
     runtime_navigation: bool,
+    /// Restarts asked for by `POST /restart` and not yet carried out by
+    /// whoever owns the app process.
+    restarts_pending: u8,
     navigation: std::collections::VecDeque<String>,
     back_offer: kobod::navigation::BackOffer,
     hosted: Vec<String>,
@@ -1147,7 +1166,7 @@ impl AppState {
             ),
             clock_snapshot,
             tasks: None,
-            secret_directory: std::env::temp_dir().join(SIM_SECRETS),
+            secret_directory: simulated_secrets_root(),
             chrome: kobo_ui::Chrome::default(),
             orientation: kobo_ui::Orientation::Portrait,
             paints: 0,
@@ -1156,7 +1175,7 @@ impl AppState {
             fonts: kobod::fonts::FontOwner::default(),
             pressure_pictures: kobo_ui::PictureCache::new(256 * 1024),
             panel: PanelPreview::new(),
-            scenario: Scenario::Normal,
+            scenario: Scenario::starting(),
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
@@ -1174,6 +1193,7 @@ impl AppState {
             power_status: kobo_json::Value::Null,
             suspend_reply: None,
             wake_until: 0,
+            restarts_pending: 0,
             scheduled_wake: None,
             terminal_open: false,
             page_keys: profile_facts().page_keys,
@@ -1269,20 +1289,28 @@ impl Default for SimulatedApps {
     }
 }
 
+/// The applications that ship inside the runtime rather than the Store.
+const RUNTIME_APPS: [&str; 5] = ["books", "launcher", "settings", "store", "terminal"];
+
 fn app_declaration(name: &str) -> kobo_policy::Declared {
     let catalog = SimulatedApps::default();
-    let names = catalog
-        .catalog
-        .iter()
-        .find(|app| app.id == name)
-        .map(|app| {
-            app.capabilities
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    kobo_policy::Declared::parse(names).expect("validated capabilities")
+    let Some(app) = catalog.catalog.iter().find(|app| app.id == name) else {
+        // Books, Settings and the other built-ins ship with the runtime and
+        // have no Store manifest. Without the runtime's own declaration for
+        // them they held nothing here, so Books was refused the library it
+        // reads on every reader and could only ever show an empty shelf. The
+        // runtime admits these the way `start_application` does: a managed
+        // built-in by its declaration, a system app with everything.
+        if let Some(declared) = kobod::app_store::builtin_declared(name) {
+            return declared;
+        }
+        if RUNTIME_APPS.contains(&name) {
+            return kobo_policy::Declared::all();
+        }
+        return kobo_policy::Declared::parse([]).expect("no capabilities");
+    };
+    kobo_policy::Declared::parse(app.capabilities.iter().map(String::as_str))
+        .expect("validated capabilities")
 }
 
 fn session_declaration(
@@ -1634,6 +1662,21 @@ pub struct AppSession {
 }
 
 impl AppSession {
+    /// Whether a drive script asked for the app to be stopped and started
+    /// again, clearing the request.
+    ///
+    /// "Comes back after a restart" is half of what an owner judges an app
+    /// by, and a script could only check it by killing `kobo dev` by hand.
+    /// The simulator cannot restart a process it does not own, so it records
+    /// the request for the owner of the process to act on.
+    #[must_use]
+    pub fn take_restart_request(&self) -> bool {
+        self.state
+            .lock()
+            .map(|mut state| std::mem::take(&mut state.restarts_pending) > 0)
+            .unwrap_or(false)
+    }
+
     /// Returns the most recently received SDK screen.
     #[must_use]
     pub fn screen(&self) -> Screen {
@@ -1739,8 +1782,8 @@ impl AppSession {
                         }
                     }
                 }
-                "gpio" => {
-                    if let Some(forward) = state.input.gpio(source)? {
+                "gpio" | "page" => {
+                    if let Some(forward) = page_turn(&mut state.input, kind, source)? {
                         state.note_page_press();
                         let layout = state.screen.layout_with(
                             &profile_metrics().oriented(state.orientation),
@@ -1760,7 +1803,11 @@ impl AppSession {
                     }
                 }
                 "resync" => state.input.resynchronize(source)?,
-                _ => return Err(io::Error::other("input expects touch, gpio or resync")),
+                _ => {
+                    return Err(io::Error::other(
+                        "input expects touch, gpio, page or resync",
+                    ))
+                }
             }
             state.record(format!("input: {command}"));
             if state.lifecycle == Lifecycle::Background {
@@ -2361,8 +2408,31 @@ impl AppSession {
                     b"invalid lifecycle",
                 ),
             },
+            ("POST", "/restart") => {
+                self.state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?
+                    .restarts_pending = 1;
+                write_response(&mut stream, 202, "text/plain; charset=utf-8", b"restarting")
+            }
             _ => write_response(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
         }
+    }
+}
+
+/// Which way a page key turned, if the input was a page key at all.
+///
+/// `page next` and `page back` press whichever key turns that way as the
+/// reader is held, so a route does not have to know that the forward key
+/// changes with the orientation. `gpio` takes the raw event, as before.
+fn page_turn(input: &mut input::Replay, kind: &str, source: &str) -> io::Result<Option<bool>> {
+    if kind == "gpio" {
+        return input.gpio(source);
+    }
+    match source.trim() {
+        "next" => Ok(Some(true)),
+        "back" => Ok(Some(false)),
+        _ => Err(io::Error::other("page expects next or back")),
     }
 }
 
@@ -3087,7 +3157,7 @@ fn read_app_messages(
     // Kept outside the process so state survives a reload, which is the whole
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
-    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state").join(name));
+    let store = Store::new(simulated_state_root(name));
     // The shelf is where an application keeps what will not fit in a message:
     // an audiobook, a downloaded book. Without one here every shelf request
     // came back `Unwritable`, so the one class of application that most needs
@@ -3617,14 +3687,16 @@ const SIM_SECRETS: &str = "cobalt-sim-secrets";
 /// everything all the time and teaching nothing.
 pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
 
-/// The task runner the browser simulator gives an application.
+/// Routes requests the way the simulator does: to the local fixture named by
+/// `KOBO_SIM_HTTP_FIXTURE`, trusting the owner roots in `KOBO_SIM_TRUST_DIR`.
 ///
-/// It performs real requests, for the same reason the simulator runs a real
-/// shell: an application that could only reach the network on the device could
-/// only be developed on the device, which is the one thing this project is
-/// arranged to avoid. Capabilities come from the app's publishing manifest;
-/// an unknown app has no implicit network or shell permission.
-fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
+/// The app under `kobo dev` and a computer-side command run with `--sim` must
+/// reach the same fixture, or `kobo connect APP --sim` checks a token against
+/// the real server while the app talks to the fixture. Returns false when a
+/// fixture was asked for and could not be installed; nothing may then reach
+/// the network.
+#[must_use]
+pub fn prepare_simulated_network() -> bool {
     // A fixture uses real TLS and HTTP, but cannot reach public hosts. Refuse
     // invalid configurations and release builds instead of silently going live.
     static FIXTURE_READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3667,9 +3739,36 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
         );
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });
+    fixture_ready
+}
+
+/// The task runner the browser simulator gives an application.
+///
+/// It performs real requests, for the same reason the simulator runs a real
+/// shell: an application that could only reach the network on the device could
+/// only be developed on the device, which is the one thing this project is
+/// arranged to avoid. Capabilities come from the app's publishing manifest;
+/// an unknown app has no implicit network or shell permission.
+fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
+    let fixture_ready = prepare_simulated_network();
     let runner = TaskRunner::simulated(simulated_data_root(name))
-        .with_app_secrets(std::env::temp_dir().join(SIM_SECRETS), name);
-    if !fixture_ready || std::env::var_os(OFFLINE).is_some() {
+        .with_app_secrets(simulated_secrets_root(), name);
+    if std::env::var_os(OFFLINE).is_some() {
+        // A reader with no network, not an application without permission.
+        // Left without its grants, the runner refused every request as
+        // Denied, and apps showed "This action isn't available" where an
+        // owner without Wi-Fi sees the offline copy. Nothing here can reach
+        // the network: every backend answers offline.
+        use kobo_protocol::TaskError;
+        return runner
+            .with_fetch(Arc::new(|_, _, _, _, _, _, _| Err(TaskError::Offline)))
+            .with_post(Arc::new(|_, _, _, _, _, _, _, _| Err(TaskError::Offline)))
+            .with_updates(Arc::new(|_, _, _, _, _, _, _, _, _| {
+                Err(TaskError::Offline)
+            }))
+            .with_capabilities(declared.iter());
+    }
+    if !fixture_ready {
         return runner;
     }
     // The same policy the device applies, from the same function, because a
@@ -3699,13 +3798,135 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
         .with_capabilities(declared.iter())
 }
 
+/// The variable that moves every simulated shelf into one chosen folder.
+///
+/// Two simulators running at once, whether two people or two test runs,
+/// otherwise share `$TMPDIR/cobalt-sim-data` and quietly overwrite each
+/// other's pushes. Set for both `kobo dev` and the companion command, it lets
+/// them agree on where the shelf is without either knowing the other's
+/// address.
+pub const SIM_DATA_VARIABLE: &str = "KOBO_SIM_DATA";
+
 /// Directory the host simulator uses for one application's shelf.
 ///
 /// Companion commands such as `kobo frame push --sim` write here so a `kobo
 /// dev` session sees the same files the reader would after an SSH push.
 #[must_use]
 pub fn simulated_data_root(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join("cobalt-sim-data").join(name)
+    data_root_under(std::env::var_os(SIM_DATA_VARIABLE), name)
+}
+
+fn data_root_under(chosen: Option<std::ffi::OsString>, name: &str) -> std::path::PathBuf {
+    chosen
+        .filter(|folder| !folder.is_empty())
+        .map_or_else(
+            || std::env::temp_dir().join("cobalt-sim-data"),
+            std::path::PathBuf::from,
+        )
+        .join(name)
+}
+
+/// The folder the simulator's credential store reads secrets from.
+///
+/// `kobo secret set NAME --sim` writes the owner-wide copy here, the same
+/// place `kobo secret set` fills on a reader, so an app under `kobo dev` can
+/// make the signed-in requests it would make for an owner.
+#[must_use]
+pub fn simulated_secrets_root() -> std::path::PathBuf {
+    simulated_folder(SIM_SECRETS, ".secrets")
+}
+
+/// The folder one application's saved state lives in under the simulator.
+///
+/// It follows `KOBO_SIM_DATA` with the shelves. When only the shelves moved,
+/// a "fresh" simulator still reopened yesterday's game, poem or progress from
+/// the shared temporary folder, and five people checking a first run had to
+/// invent a new `TMPDIR` each time to see one.
+#[must_use]
+pub fn simulated_state_root(name: &str) -> std::path::PathBuf {
+    simulated_folder("cobalt-sim-state", ".state").join(name)
+}
+
+/// A simulator folder: inside `KOBO_SIM_DATA` when it is set, under a name no
+/// application id can take, and otherwise in the temporary folder as before.
+fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
+    match std::env::var_os(SIM_DATA_VARIABLE).filter(|folder| !folder.is_empty()) {
+        Some(folder) => std::path::PathBuf::from(folder).join(chosen),
+        None => std::env::temp_dir().join(temporary),
+    }
+}
+
+/// The folder the simulator's library reads documents from.
+///
+/// Books, Fanshelf and the other library readers list what is in here, so a
+/// developer can drop an EPUB in and open it the way an owner would. It sits
+/// beside the per-app shelves, so `KOBO_SIM_DATA` moves it with them.
+#[must_use]
+pub fn simulated_library_root() -> std::path::PathBuf {
+    simulated_data_root("library")
+}
+
+/// The offset from UTC an application under the simulator should be told.
+///
+/// The runtime hands every application the reader's offset in
+/// `KOBO_UTC_OFFSET_MINUTES`, so the simulator does the same with the offset
+/// its own clock runs at, so an app's "today" and the status bar agree. A value
+/// already in the environment wins, which is how a test pins a zone far from
+/// the developer's to catch a day counted in UTC. `None` means the variable is
+/// already set and the child inherits it.
+#[must_use]
+pub fn reader_offset_for_app() -> Option<i16> {
+    if std::env::var_os(kobo_policy::clock::READER_OFFSET_VARIABLE).is_some() {
+        return None;
+    }
+    Some(session_offset_minutes())
+}
+
+/// The offset this session's clock runs at, and so the one its apps are told.
+///
+/// The band showed UTC while apps were handed the computer's zone, so a 21:04
+/// band sat over "Last sync 02:34", and with the simulator's own override set
+/// the band moved while the apps stayed on the computer's zone. With either
+/// variable set on its own, the band and the apps now agree; only a test that
+/// sets both on purpose can give them different zones.
+#[must_use]
+pub fn session_offset_minutes() -> i16 {
+    if std::env::var_os(kobo_policy::clock::READER_OFFSET_VARIABLE).is_some() {
+        return kobo_policy::clock::reader_offset_minutes();
+    }
+    std::env::var(SIM_OFFSET_VARIABLE)
+        .ok()
+        .and_then(|value| value.trim().parse::<i16>().ok())
+        .filter(|minutes| (-840..=840).contains(minutes))
+        .unwrap_or_else(host_offset_minutes)
+}
+
+/// The simulator's own override for the offset its clock runs at.
+pub const SIM_OFFSET_VARIABLE: &str = "KOBO_SIM_UTC_OFFSET_MINUTES";
+
+fn host_offset_minutes() -> i16 {
+    std::process::Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()
+        .and_then(|output| numeric_offset_minutes(std::str::from_utf8(&output.stdout).ok()?))
+        .unwrap_or(0)
+}
+
+/// Minutes east of UTC from the `+hhmm` form `date +%z` prints.
+fn numeric_offset_minutes(text: &str) -> Option<i16> {
+    let text = text.trim();
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(digits) => (-1, digits),
+        None => (1, text.strip_prefix('+')?),
+    };
+    if digits.len() != 4 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let hours = digits[..2].parse::<i16>().ok()?;
+    let minutes = digits[2..].parse::<i16>().ok()?;
+    let total = sign * (hours * 60 + minutes);
+    (-840..=840).contains(&total).then_some(total)
 }
 
 fn valid_app_name(name: &str) -> bool {
@@ -4175,6 +4396,30 @@ mod tests {
         assert_ne!(nonograms, panels);
         assert!(nonograms.ends_with("cobalt-sim-data/nonograms"));
         assert!(panels.ends_with("cobalt-sim-data/panels"));
+    }
+
+    #[test]
+    fn a_built_in_app_holds_what_the_runtime_declares_for_it() {
+        assert!(app_declaration("books").holds(kobo_policy::Capability::Library));
+        assert!(!app_declaration("no-such-app").holds(kobo_policy::Capability::Library));
+    }
+
+    #[test]
+    fn a_chosen_data_folder_keeps_two_simulators_from_sharing_a_shelf() {
+        let first = data_root_under(Some("/tmp/first".into()), "frame");
+        let second = data_root_under(Some("/tmp/second".into()), "frame");
+        assert_eq!(first, std::path::PathBuf::from("/tmp/first/frame"));
+        assert_ne!(first, second);
+        assert!(data_root_under(Some("".into()), "frame").ends_with("cobalt-sim-data/frame"));
+    }
+
+    #[test]
+    fn the_hosts_offset_reads_the_way_date_prints_it() {
+        assert_eq!(numeric_offset_minutes("+1100\n"), Some(660));
+        assert_eq!(numeric_offset_minutes("-0530"), Some(-330));
+        assert_eq!(numeric_offset_minutes("+0000"), Some(0));
+        assert_eq!(numeric_offset_minutes("+1500"), None);
+        assert_eq!(numeric_offset_minutes("AEDT"), None);
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;

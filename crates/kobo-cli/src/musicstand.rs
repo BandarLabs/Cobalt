@@ -14,11 +14,36 @@ use std::time::{Duration, UNIX_EPOCH};
 const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/musicstand";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_INPUT_BYTES: u64 = 256 * 1024 * 1024;
-const USAGE: &str = "usage: kobo musicstand init (--sim | --device IP)\n\
-                     \x20      kobo musicstand push SCORE.pdf|IMAGES_DIR (--sim | --device IP)\n\
-                     \x20      kobo musicstand plan SCORE.pdf|IMAGES_DIR (--sim | --device IP)\n\
-                     \x20      kobo musicstand ls (--sim | --device IP)\n\
-                     \x20      kobo musicstand rm ID (--sim | --device IP)";
+const USAGE: &str = concat!(
+    "usage: kobo musicstand push SCORE... ",
+    crate::targets::target_choice!(),
+    " [--replace]\n\
+                     \x20      kobo musicstand plan SCORE... ",
+    crate::targets::target_choice!(),
+    " [--replace]\n\
+                     \x20      kobo musicstand ls ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo musicstand rm ID ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo musicstand init ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \n\
+                     A SCORE is a PDF, a PNG or JPEG page, or a folder. Each PDF in a\n\
+                     folder becomes its own score; the page images directly in a\n\
+                     folder become one score named after it. A push adds to the\n\
+                     library; --replace makes the library exactly this push.\n\
+                     PDFs need Poppler's pdftoppm: brew install poppler on a Mac,\n\
+                     sudo apt install poppler-utils on Debian or Ubuntu.\n",
+    crate::targets::saved_reader_note!(),
+);
+/// What an owner without Poppler is told, before anything is read or sent.
+const NO_POPPLER: &str = "Music Stand needs Poppler to prepare PDF scores, and pdftoppm \
+                          is not installed on this computer. Install it with brew install \
+                          poppler on a Mac, or sudo apt install poppler-utils on Debian or \
+                          Ubuntu, then push again.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Target {
@@ -53,17 +78,58 @@ fn parse_target(arguments: &[String]) -> Result<Target, String> {
     }
 }
 
-fn parse_push(arguments: &[String]) -> Result<(String, Target), String> {
-    match arguments {
-        [input, flag] if flag == "--sim" => Ok((input.clone(), Target::Sim)),
-        [input, flag, host] if super::is_device_flag(flag) => {
-            if !super::valid_device_host(host) {
-                return Err("device host contains unsupported characters".to_owned());
+#[derive(Debug, Eq, PartialEq)]
+struct PushOptions {
+    inputs: Vec<String>,
+    target: Target,
+    replace: bool,
+}
+
+fn parse_push(arguments: &[String]) -> Result<PushOptions, String> {
+    let mut inputs = Vec::new();
+    let mut target = None;
+    let mut replace = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--sim" => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                target = Some(Target::Sim);
+                index += 1;
             }
-            Ok((input.clone(), Target::Device(host.clone())))
+            flag if super::is_device_flag(flag) => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                let host = arguments.get(index + 1).ok_or_else(|| USAGE.to_owned())?;
+                if !super::valid_device_host(host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                target = Some(Target::Device(host.clone()));
+                index += 2;
+            }
+            "--replace" => {
+                replace = true;
+                index += 1;
+            }
+            flag if flag.starts_with('-') => return Err(USAGE.to_owned()),
+            input => {
+                inputs.push(input.to_owned());
+                index += 1;
+            }
         }
-        _ => Err(USAGE.to_owned()),
     }
+    let target = target.ok_or_else(|| USAGE.to_owned())?;
+    if inputs.is_empty() {
+        return Err(USAGE.to_owned());
+    }
+    Ok(PushOptions {
+        inputs,
+        target,
+        replace,
+    })
 }
 
 fn init(arguments: &[String]) -> Result<(), String> {
@@ -110,6 +176,83 @@ fn bounded_file(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))
 }
 
+fn is_pdf(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+}
+
+/// The files directly in a folder, in name order.
+fn folder_entries(folder: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(folder)
+        .map_err(|error| format!("read {}: {error}", folder.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file())
+        .collect();
+    paths.sort();
+    Ok(paths)
+}
+
+/// One score's worth of input: a PDF, a single page image, or a folder whose
+/// page images make one score together.
+#[derive(Debug, Eq, PartialEq)]
+enum Source {
+    File(PathBuf),
+    Pages(PathBuf),
+}
+
+/// Turns what was named on the command line into scores.
+///
+/// A folder of page images has always been one score, and stays one. A
+/// folder of PDFs is a folder of scores, which is how most people keep a
+/// repertoire, so each PDF in it becomes its own; asking for them one push at
+/// a time was the reason a library took an evening to fill.
+fn sources(inputs: &[String]) -> Result<Vec<Source>, String> {
+    let mut found = Vec::new();
+    for input in inputs {
+        let path = PathBuf::from(input);
+        if path.is_dir() {
+            let entries = folder_entries(&path)?;
+            found.extend(
+                entries
+                    .iter()
+                    .filter(|entry| is_pdf(entry))
+                    .cloned()
+                    .map(Source::File),
+            );
+            if entries.iter().any(|entry| is_image(entry)) {
+                found.push(Source::Pages(path));
+            }
+        } else if path.exists() {
+            found.push(Source::File(path));
+        } else {
+            return Err(format!("{input} does not exist"));
+        }
+    }
+    if found.is_empty() {
+        return Err(
+            "nothing to send: name a PDF, a page image, or a folder holding them".to_owned(),
+        );
+    }
+    Ok(found)
+}
+
+/// Checks for Poppler before a PDF is read or the reader is asked for
+/// anything, so an owner without it hears the one thing to install rather
+/// than a failure per score after a wait.
+fn require_poppler(sources: &[Source]) -> Result<(), String> {
+    let needs = sources
+        .iter()
+        .any(|source| matches!(source, Source::File(path) if is_pdf(path)));
+    if !needs {
+        return Ok(());
+    }
+    match Command::new("pdftoppm").arg("-v").output() {
+        Ok(_) => Ok(()),
+        Err(_) => Err(NO_POPPLER.to_owned()),
+    }
+}
+
 fn is_image(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -131,9 +274,7 @@ fn pdf_pages(input: &Path, temporary: &Path) -> Result<Vec<PathBuf>, String> {
         .arg(input)
         .arg(&prefix)
         .output()
-        .map_err(|error| {
-            format!("could not start pdftoppm ({error}); install Poppler to prepare this PDF")
-        })?;
+        .map_err(|_| NO_POPPLER.to_owned())?;
     if !output.status.success() {
         return Err(format!(
             "pdftoppm could not rasterize {}; it may be encrypted or malformed",
@@ -206,9 +347,17 @@ fn collect_page_paths(
     }])
 }
 
-fn offer(input: &Path, panel: Panel) -> Result<IncomingScore, Vec<ImportFailure>> {
-    let title = input
-        .file_stem()
+fn offer(
+    input: &Path,
+    panel: Panel,
+    folder_of_pages: bool,
+) -> Result<IncomingScore, Vec<ImportFailure>> {
+    let name = if folder_of_pages {
+        input.file_name()
+    } else {
+        input.file_stem()
+    };
+    let title = name
         .and_then(|name| name.to_str())
         .map_or_else(|| "Untitled score".to_owned(), str::to_owned);
     let mut failures = Vec::new();
@@ -314,11 +463,16 @@ fn publish_local(push: &Push) -> Result<(), String> {
     Ok(())
 }
 
-fn print_plan(push: &Push) {
+fn print_plan(push: &Push, existing: &Manifest) {
     for score in &push.manifest.scores {
+        let state = if existing.scores.iter().any(|old| old.id == score.id) {
+            "keep"
+        } else {
+            "add"
+        };
         println!(
-            "score {} · {} · {} page(s) · {}x{}",
-            score.id, score.title, score.pages, score.width, score.height
+            "{state} {} · {} · {} page(s)",
+            score.id, score.title, score.pages
         );
     }
     for removed in &push.removed {
@@ -329,23 +483,50 @@ fn print_plan(push: &Push) {
     }
 }
 
+/// What the library holds after a push, so the command ends by naming what
+/// the reader will show.
+fn on_the_reader(manifest: &Manifest) -> String {
+    let count = manifest.scores.len();
+    let mut text = format!(
+        "Now on the reader: {count} score{}.\n",
+        if count == 1 { "" } else { "s" }
+    );
+    for score in &manifest.scores {
+        let plural = if score.pages == 1 { "" } else { "s" };
+        let _ = writeln!(text, "  {} ({} page{plural})", score.title, score.pages);
+    }
+    text
+}
+
 fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
-    let (input, target) = parse_push(arguments)?;
+    let options = parse_push(arguments)?;
+    let sources = sources(&options.inputs)?;
+    require_poppler(&sources)?;
+    let target = options.target;
     let (existing, panel) = match &target {
         Target::Device(host) => (read_manifest(host)?, reader_panel(host)?),
         Target::Sim => (read_local_manifest()?, sim_panel()),
     };
-    let incoming = match offer(Path::new(&input), panel) {
-        Ok(offer) => vec![offer],
-        Err(failures) => {
-            for failure in &failures {
-                eprintln!("could not import {}: {}", failure.input, failure.reason);
-            }
-            return Err("nothing readable to publish".to_owned());
+    let mut incoming = Vec::new();
+    let mut failures = Vec::new();
+    for source in &sources {
+        let (path, title) = match source {
+            Source::File(path) => (path.as_path(), None),
+            Source::Pages(folder) => (folder.as_path(), Some(folder)),
+        };
+        match offer(path, panel, title.is_some()) {
+            Ok(offer) => incoming.push(offer),
+            Err(mut failed) => failures.append(&mut failed),
         }
-    };
-    let push = plan(&existing, incoming, Vec::new())?;
-    print_plan(&push);
+    }
+    if incoming.is_empty() {
+        for failure in &failures {
+            eprintln!("could not import {}: {}", failure.input, failure.reason);
+        }
+        return Err("Nothing could be prepared, so nothing was sent.".to_owned());
+    }
+    let push = plan(&existing, incoming, failures, options.replace)?;
+    print_plan(&push, &existing);
     if push.manifest.scores.len() > MAX_SCORES {
         return Err(format!("Music Stand holds at most {MAX_SCORES} scores"));
     }
@@ -374,9 +555,12 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         }
     }
     println!(
-        "Published {} score(s) to the Music Stand shelf.",
-        push.manifest.scores.len()
+        "Sent {} new page file(s) and removed {} score(s).",
+        push.pages.len(),
+        push.removed.len()
     );
+    print!("{}", on_the_reader(&push.manifest));
+    println!("Music Stand shows new scores the next time you come back to it.");
     Ok(())
 }
 
@@ -498,5 +682,91 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
             ),
             &output,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arguments(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_push_takes_several_scores_and_adds_unless_asked_to_replace() {
+        let options = parse_push(&arguments(&["one.pdf", "two.pdf", "--sim"])).expect("parse");
+        assert_eq!(options.inputs, ["one.pdf", "two.pdf"]);
+        assert!(!options.replace);
+        let options = parse_push(&arguments(&[
+            "one.pdf",
+            "--replace",
+            "--device",
+            "kobo.local",
+        ]))
+        .expect("parse");
+        assert!(options.replace);
+        assert_eq!(options.target, Target::Device("kobo.local".to_owned()));
+        assert!(parse_push(&arguments(&["--sim"])).is_err());
+        assert!(parse_push(&arguments(&["one.pdf", "--sim", "--sim"])).is_err());
+    }
+
+    #[test]
+    fn a_folder_of_pdfs_is_a_folder_of_scores_and_its_page_images_are_one_more() {
+        let root = std::env::temp_dir().join(format!("musicstand-sources-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("folder");
+        for name in [
+            "Prelude.pdf",
+            "Gigue.PDF",
+            "page-1.png",
+            "page-2.jpg",
+            "notes.txt",
+        ] {
+            fs::write(root.join(name), b"x").expect("file");
+        }
+        let found = sources(&[root.display().to_string()]).expect("sources");
+        assert_eq!(
+            found,
+            [
+                Source::File(root.join("Gigue.PDF")),
+                Source::File(root.join("Prelude.pdf")),
+                Source::Pages(root.clone()),
+            ]
+        );
+        assert!(sources(&[root.join("missing.pdf").display().to_string()]).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_push_without_pdfs_never_asks_for_poppler() {
+        assert!(require_poppler(&[Source::File(PathBuf::from("page.png"))]).is_ok());
+        assert!(require_poppler(&[Source::Pages(PathBuf::from("pages"))]).is_ok());
+    }
+
+    #[test]
+    fn missing_poppler_names_the_package_to_install_on_each_system() {
+        assert!(NO_POPPLER.contains("brew install poppler"));
+        assert!(NO_POPPLER.contains("poppler-utils"));
+    }
+
+    #[test]
+    fn a_push_ends_by_naming_every_score_on_the_reader() {
+        let manifest = Manifest {
+            scores: vec![kobo_music_host::Score {
+                id: "score-a".to_owned(),
+                title: "Prelude".to_owned(),
+                digest: "d".to_owned(),
+                pages: 3,
+                width: 2144,
+                height: 3000,
+                added: 1,
+            }],
+            failures: Vec::new(),
+        };
+        assert_eq!(
+            on_the_reader(&manifest),
+            "Now on the reader: 1 score.\n  Prelude (3 pages)\n"
+        );
     }
 }

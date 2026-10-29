@@ -1,20 +1,12 @@
+# First run: the guided sign-in is named, and the only control looks for the
+# sign-in instead of taking an address that cannot sign in by itself.
 expect Connect Wallabag
-expect apps setup readlater
-tap Add address
-expect Read Later settings
+expect kobo connect readlater
+expect-missing Add address
 clean
 shot readlater-setup
-tap https://wallabag.example
-expect https://
-type localhost
-tap ?123
-type :8443
-tap Save
-expect Read Later settings
-tap Back
-expect No saved articles
-tap Sync
-wait-for Off the air
-expect No saved articles
+tap Check again
+wait-for No sign-in has arrived
+expect-missing Off the air
 clean
-shot readlater-offline
+shot readlater-check-again

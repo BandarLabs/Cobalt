@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Drive Inkling end to end: deterministic pinned day, shape-marked
-uppercase board, on-keyboard letter knowledge, real date display, statistics
-with a win distribution, result export verified on disk, archive play that
-leaves statistics untouched, and daily persistence across a restart.
+"""Drive Inkling end to end: deterministic pinned day, a board that stays in
+view above the keys, filled squares for letters in the right place, a refused
+word that stays typed, Rules and More in the top bar, real date display,
+statistics with a win distribution, result export verified on disk, archive
+play that leaves statistics untouched, and daily persistence across a
+restart.
 
 The day is pinned with KOBO_INKLING_DAY=2026-09-01, whose answer is gravy;
 the archive day 2026-08-31 answers dizzy.
@@ -92,23 +94,30 @@ def main():
                 drive("wait-for Inkling · Sep 1")
                 capture("inkling-board")
 
-                # Help stays reachable from the top bar.
-                drive("tap How to play", "wait-for Find the five-letter word")
+                # The rules are one tap away in the top bar, under the same
+                # name as every other game, and the old jargon is gone.
+                drive("expect-missing Shapes, not color", "expect-missing Enter guess",
+                      "tap Rules", "wait-for Find the five-letter word",
+                      "expect Filled: right spot.")
                 capture("inkling-help")
                 drive("tap Play", "wait-for Inkling · Sep 1")
+                drive("tap-id game-more", "wait-for New game", "expect Hard mode: off",
+                      "expect Statistics")
+                capture("inkling-more")
+                drive("tap Statistics", "wait-for Played 0. Won 0.", "tap Play",
+                      "wait-for Six guesses.")
 
-                # First guess: the typing panel admits nothing is known yet.
-                drive("tap Enter guess", "wait-for No letters known yet.")
-                drive("type crane", "tap Guess", "wait-for 1 of 6")
-
-                # Second guess: known letters are listed while typing.
-                drive("tap Enter guess", "wait-for Placed: _RA__")
+                # The keys sit under the board. A refused word stays typed.
+                drive("type zzzzz", "tap Guess", "wait-for Not in the word list.")
+                drive(*["tap-id kb.backspace"] * 5)
+                drive("type crane", "tap Guess", "wait-for 1 of 6",
+                      "wait-for Right spot: _RA__")
                 capture("inkling-knowledge")
                 drive("type gravy", "tap Guess", "wait-for Solved")
                 capture("inkling-solved")
 
                 # Statistics carry the win and its distribution slot.
-                drive("tap Stats", "wait-for Played 1. Won 1.",
+                drive("tap Statistics", "wait-for Played 1. Won 1.",
                       "wait-for 2 guesses: 1",
                       "wait-for Today is September 1, 2026.")
                 capture("inkling-stats")
@@ -141,16 +150,16 @@ def main():
                 drive("tap Play", "wait-for Inkling · Sep 1")
 
                 # Archive play solves a past day without touching statistics.
-                drive("tap Archive", "wait-for August 31, 2026")
+                drive("tap Play an earlier day", "wait-for August 31, 2026")
                 capture("inkling-archive-list")
                 drive("tap August 31, 2026",
                       "wait-for Archive puzzle from August 31, 2026.")
                 capture("inkling-archive")
-                drive("tap Enter guess", "type dizzy", "tap Guess",
+                drive("type dizzy", "tap Guess",
                       "wait-for Archive games do not change statistics")
                 capture("inkling-archive-solved")
-                drive("tap Stats", "wait-for Played 1. Won 1.")
-                drive("tap Play", "tap Today", "wait-for Inkling · Sep 1",
+                drive("tap Statistics", "wait-for Played 1. Won 1.")
+                drive("tap Play", "tap Today's puzzle", "wait-for Inkling · Sep 1",
                       "wait-for Solved.")
 
                 # The finished daily game and the statistics survive a restart.
@@ -158,13 +167,13 @@ def main():
                 start()
                 drive("wait-for Solved.")
                 capture("inkling-restored")
-                drive("tap Stats", "wait-for Played 1. Won 1.",
+                drive("tap Statistics", "wait-for Played 1. Won 1.",
                       "wait-for 2 guesses: 1")
 
                 result["checks"].append(dict(
                     name="inkling journey",
-                    detail="real date title, help, first-guess empty knowledge, "
-                           "typing letter knowledge, uppercase shape-marked solve, "
+                    detail="real date title, rules and menu in the top bar, a refused "
+                           "word kept, letter knowledge above the board, filled-square solve, "
                            "statistics with distribution, export received byte-for-byte by CLI, no overwrite, "
                            "archive solve with statistics untouched, daily game and "
                            "statistics proven across a restart",

@@ -14,3 +14,16 @@ expect-missing Open
 expect-missing Your frame is empty
 clean
 shot photo
+# Settings are a named control in the bar, every choice on one screen.
+tap Back
+wait-for Photographs
+tap Settings
+wait-for Change the photo every
+expect Frame mode
+expect Slow slideshow
+expect By date
+clean
+shot settings
+tap 5 minutes
+tap Back
+wait-for Photographs

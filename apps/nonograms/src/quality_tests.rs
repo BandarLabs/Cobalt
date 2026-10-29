@@ -252,7 +252,6 @@ fn long_clues_options_recovery_and_every_help_page_fit() {
                 Route::Menu,
                 Route::Clue,
                 Route::Restart,
-                Route::Photo,
                 Route::Gate,
                 Route::Reveal,
             ] {
@@ -362,7 +361,7 @@ fn new_collection_does_not_reuse_or_rewrite_an_earlier_save() {
     });
     assert_eq!(r.app().pack, Pack::Pictures);
     assert_eq!(r.app().visible_puzzles(), (60..78).collect::<Vec<_>>());
-    r.action(action_id("pack-toggle"));
+    r.action(action_id("tab-patterns"));
     assert_eq!(r.app().visible_puzzles(), (0..60).collect::<Vec<_>>());
     r.action(action_id("puzzle-0"));
     let old = [b"g\n".as_slice(), b"#........................"].concat();
@@ -372,7 +371,7 @@ fn new_collection_does_not_reuse_or_rewrite_an_earlier_save() {
     });
     assert_eq!(r.app().marks[0], Mark::Fill);
     r.action(action_id("back-browser"));
-    r.action(action_id("pack-toggle"));
+    r.action(action_id("tab-pictures"));
     r.action(action_id("puzzle-60"));
     assert_eq!(
         r.app().progress_key().as_deref(),
@@ -392,7 +391,7 @@ fn new_collection_does_not_reuse_or_rewrite_an_earlier_save() {
     ));
     ack(&mut r);
     r.action(action_id("back-browser"));
-    r.action(action_id("pack-toggle"));
+    r.action(action_id("tab-patterns"));
     r.action(action_id("puzzle-0"));
     r.store_result(StoreResult::Loaded {
         key: "progress-pack-00".into(),

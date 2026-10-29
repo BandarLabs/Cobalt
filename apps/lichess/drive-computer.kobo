@@ -1,5 +1,11 @@
+# sweep: --bare
 expect Computer
 tap-id play-computer
+wait-for Start game
+expect No clock
+clean
+shot computer-setup
+tap-id start-computer
 wait-for Kobo
 expect You
 clean
@@ -35,3 +41,15 @@ shot computer-result
 tap-id dismiss-result
 tap Back
 expect Computer
+tap-id play-computer
+wait-for Start game
+tap-id computer-side-black
+tap-id computer-clock-10
+expect 10 min
+clean
+shot computer-setup-black
+tap-id start-computer
+wait-for Kobo
+wait-for-id your-clock
+clean
+shot computer-black-clocked

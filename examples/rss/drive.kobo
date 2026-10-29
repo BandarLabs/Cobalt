@@ -1,6 +1,7 @@
 # An empty library points at the directory; Browse lists the bundled feeds.
 wait-for Feeds
 expect No feeds yet
+expect-missing ready offline
 clean
 shot rss-empty
 tap Add a feed
@@ -10,5 +11,20 @@ shot rss-add
 tap Browse
 wait-for Browse feeds
 expect NASA Science
+expect whole articles
+expect-missing BBC
 clean
 shot rss-browse
+# Following a starter opens its articles; back on the shelf, the feed is
+# saved and the shelf says what is ready offline, with Refresh all beside it.
+tap NASA Science
+wait-for Select to add
+tap NASA Science
+wait-for unread of
+clean
+shot rss-articles
+tap Back
+wait-for Ready offline
+expect Refresh all
+clean
+shot rss-shelf-offline

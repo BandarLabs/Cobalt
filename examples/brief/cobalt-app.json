@@ -2,11 +2,12 @@
   "id": "brief",
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
-  "summary": "Build a daily news brief in the background while you use other apps.",
-  "version": "1.0.9",
+  "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
+  "version": "1.0.10",
   "glyph": "clock",
   "capabilities": [
-    "network"
+    "network",
+    "scheduled-wake"
   ],
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for."
+  "release_notes": "Refreshes when the brief is stale, shows twelve stories with times in your own time zone, and keeps every story with its pictures so the whole brief reads without Wi-Fi. Reopens a document on the page you left."
 }

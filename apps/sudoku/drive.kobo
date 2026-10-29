@@ -1,18 +1,52 @@
-# Use disposable simulator storage for this original first-puzzle route.
-wait-for-id more
+# Fresh simulator storage opens the first Easy puzzle.
+wait-for-id game-more
+expect Sudoku · Easy 1
+expect Choose a square
+# Undo is first at the foot, and says so when there is nothing to undo.
+tap-id game-undo
+wait-idle
+expect Nothing to undo yet.
 tap-id cell-0
 tap-id pencil
 tap-id digit-2
 wait-idle
 expect Notes
 shot sudoku-notes
-tap-id undo
+tap-id game-undo
 tap-id pencil
-tap-id more
-tap-id view
-tap-id how-to-play
+# Rules are one tap away in the top bar.
+tap-id game-rules
 expect Use 1–9 once
 shot sudoku-help
 tap Back
 wait-idle
+# More opens over the board: New game first, mistakes in plain words.
+tap-id game-more
+wait-idle
+expect New game
+expect Show mistakes
+expect-missing Check off
+shot sudoku-more
+tap-id checking
+# The first square of Easy 1 is a 1, so a 2 is flagged in words and kept.
+tap-id cell-0
+tap-id digit-2
+wait-idle
+expect Wrong answer
+tap-id game-undo
+tap-id game-more
+wait-idle
+expect Hide mistakes
+tap-id checking
+tap-id erase
+wait-idle
+expect This square is already empty.
+# With nothing to lose, New game only asks for a difficulty, then moves on.
+tap-id game-more
+tap-id game-new
+wait-idle
+expect Choose a difficulty.
+tap-id new-easy
+wait-idle
+expect Sudoku · Easy 2
 shot sudoku-game

@@ -1,4 +1,6 @@
-# Library and its setlists after a seeded push.
+# Library and its setlists after a score is pushed from the computer.
+companion musicstand push scripts/fixtures/musicstand/Minuet --sim
+tap Check for scores
 wait-for Library
 clean
 shot library
@@ -6,5 +8,5 @@ tap Setlists
 wait-for New setlist
 clean
 shot setlists
-tap Library
-wait-for Library
+tap Back
+wait-for Minuet

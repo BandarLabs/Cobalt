@@ -55,7 +55,7 @@ resource limits, remaining release checks and the dependency assessment.
 | Application | Content | Terms |
 | --- | --- | --- |
 | `grimoire` | Excerpts from the System Reference Document 5.1 and 5.2 by Wizards of the Coast LLC | Creative Commons Attribution 4.0 International; attribution is also included in the app |
-| `pubquiz` | Starter questions sourced from Open Trivia DB | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` |
+| `pubquiz` | Question packs the owner downloads from Open Trivia DB (the bundled questions are original) | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` and stores it beside each cached pack |
 | `verses` | Short poems by Emily Dickinson, William Blake and Percy Bysshe Shelley | Public domain; source and publication year are retained with each poem |
 
 ## Test fixtures

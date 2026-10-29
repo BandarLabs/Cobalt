@@ -48,11 +48,15 @@ impl Panels {
             .map_err(|error| error.to_string())
             .and_then(|comic| {
                 let thumbnail = super::previews::from_comic(&bytes, &comic);
-                let import = Import::new(
-                    comic.metadata.title.as_deref().unwrap_or("Added comic"),
-                    Format::Cbz,
-                    bytes,
-                )?;
+                // The title the computer sent it under beats a guess: a CBZ
+                // with no ComicInfo used to arrive as "Added comic".
+                let title = comic
+                    .metadata
+                    .title
+                    .as_deref()
+                    .or(self.sent_from.as_ref().map(|sent| sent.title.as_str()))
+                    .unwrap_or("Added comic");
+                let import = Import::new(title, Format::Cbz, bytes)?;
                 let entry = Kept {
                     key: import.receipt().digest.clone(),
                     title: import.receipt().title.clone(),
@@ -70,11 +74,26 @@ impl Panels {
             Err(error) => {
                 self.notice = Some(error);
                 self.route = Route::Library;
+                if let Some(sent) = self.sent_from.take() {
+                    self.add_failed.insert(sent.sha256);
+                }
             }
         }
     }
 
+    /// Add comic: the comics sent from the computer when there are any,
+    /// otherwise the file copied over USB.
     pub(super) fn load_sideload(&mut self, context: &mut Context) {
+        if !self.sent.is_empty() {
+            self.sent_page = 0;
+            self.route = Route::Sent;
+            return;
+        }
+        self.load_volume(context);
+    }
+
+    /// Reads the comic copied over USB to its one fixed name.
+    pub(super) fn load_volume(&mut self, context: &mut Context) {
         if self.library.is_none()
             || self.local_load.is_some()
             || self.import.is_some()
@@ -107,6 +126,8 @@ impl Panels {
         }
         self.import_entry = None;
         self.previews.staged = None;
+        self.sent_from = None;
+        self.adding = false;
         // Drain an outstanding read before allowing another import of the same file.
         self.route = Route::Library;
     }
@@ -123,10 +144,25 @@ impl Panels {
             ShelfProgress::Done => {
                 let bytes = self.local_load.take().expect("active local load").take();
                 self.preview_comic(bytes);
+                if self.adding {
+                    if let Some(import) = &mut self.import {
+                        let _ = import.begin(context);
+                    } else {
+                        self.stop_adding();
+                    }
+                }
             }
             ShelfProgress::Failed(error) => {
                 self.local_load = None;
-                if error == kobo_sdk::StoreError::Missing {
+                if self.adding {
+                    self.stop_adding();
+                } else if self.sent_from.take().is_some() {
+                    self.route = Route::Library;
+                    self.notice = Some(
+                        "That comic is no longer on the reader. Send it again from your computer."
+                            .into(),
+                    );
+                } else if error == kobo_sdk::StoreError::Missing {
                     self.import_help_page = 0;
                     self.route = Route::ImportHelp;
                 } else {

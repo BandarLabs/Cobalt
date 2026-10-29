@@ -2,8 +2,8 @@ mod protocol;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Screen, ScreenBuilder,
-    Space, StoreResult, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, Space,
+    StoreResult, TaskError, TaskId, TaskOutcome,
 };
 use protocol::{Letter, Reply, ReplyState};
 use std::process::ExitCode;
@@ -46,9 +46,16 @@ struct Post {
     advance_on_fetch: bool,
     loaded: bool,
     notice: Option<String>,
+    /// The owner tapped Check again on setup and is owed an answer.
+    checking: bool,
 }
 
 impl Post {
+    /// The real cause of a failed request, in the gateway's terms.
+    fn problem(&self, error: TaskError) -> String {
+        problem_at(&self.gateway, error)
+    }
+
     fn show(&self, c: &mut Context) {
         let built = match self.view {
             View::Opening => ScreenBuilder::new("post-opening")
@@ -66,9 +73,10 @@ impl Post {
     fn setup(&self) -> Screen {
         let mut screen = ScreenBuilder::new("post-setup")
             .top_bar("Post")
+            .top_bar_action("check-again", "Check again")
             .section("Connect a gateway")
             .secondary("Post reads letters from a Hermes gateway you run. On your computer:")
-            .command("kobo post login --gateway https://hermes.example.net --token-file token.txt");
+            .command("kobo connect post");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -349,15 +357,12 @@ impl Post {
                     );
                 }
             }
-            TaskOutcome::Failed(TaskError::NoCredential) => {
-                self.notice =
-                    Some("Finish Post setup on your computer with kobo post login.".into());
-            }
             TaskOutcome::Failed(e) => {
-                self.notice = Some(format!(
-                    "Couldn't connect — {}. Your cached letters are still here.",
-                    Failure::of(e).advice
-                ));
+                self.notice = Some(if self.letters.is_empty() {
+                    self.problem(e)
+                } else {
+                    format!("{} Your cached letters are still here.", self.problem(e))
+                });
             }
             TaskOutcome::Cancelled => {}
         }
@@ -396,10 +401,9 @@ impl Post {
                 self.notice =
                     Some("Reply too long for the gateway. Shorten and send again.".into());
             }
-            TaskOutcome::Failed(TaskError::NoCredential | TaskError::Unauthorized) => {
+            TaskOutcome::Failed(e @ (TaskError::NoCredential | TaskError::Unauthorized)) => {
                 sent.state = ReplyState::Queued;
-                self.notice =
-                    Some("Finish Post setup on your computer with kobo post login.".into());
+                self.notice = Some(problem_at(&self.gateway, e));
             }
             TaskOutcome::Failed(TaskError::RateLimited(_)) => {
                 sent.state = ReplyState::Queued;
@@ -469,6 +473,17 @@ impl Post {
     }
 }
 
+fn problem_at(gateway: &str, error: TaskError) -> String {
+    let service = kobo_sdk::failure::Service::new("Your gateway")
+        .fixed_by("Run kobo connect post on your computer.");
+    let service = if gateway.is_empty() {
+        service
+    } else {
+        service.at(gateway)
+    };
+    service.explain(error).message
+}
+
 fn excerpt(text: &str) -> String {
     text.chars().take(72).collect()
 }
@@ -492,6 +507,16 @@ fn letter_page(pages: &[Vec<String>], position: usize) -> usize {
 }
 
 impl KoboApp for Post {
+    fn on_foreground(&mut self, c: &mut Context) {
+        if self.view == View::Setup {
+            c.store().load(GATEWAY);
+        }
+    }
+
+    fn on_resume(&mut self, c: &mut Context) {
+        self.on_foreground(c);
+    }
+
     fn on_start(&mut self, c: &mut Context) {
         c.store().load(GATEWAY);
         c.store().load(CACHE);
@@ -508,6 +533,26 @@ impl KoboApp for Post {
             self.gateway = value
                 .and_then(|b| String::from_utf8(b).ok())
                 .unwrap_or_default();
+            // A gateway saved by `kobo connect post` while setup was showing:
+            // the inbox opens without a restart.
+            if self.view == View::Setup {
+                if self.gateway.is_empty() {
+                    if std::mem::take(&mut self.checking) {
+                        self.notice = Some(
+                            "No gateway has arrived from the computer yet. Run the command, then check again."
+                                .into(),
+                        );
+                        self.show(c);
+                    }
+                } else {
+                    self.checking = false;
+                    self.notice = None;
+                    self.view = View::Inbox;
+                    self.show(c);
+                    self.check(c);
+                }
+                return;
+            }
         } else if key == CACHE {
             if let Some(bytes) = value {
                 if let Some((letters, places)) = protocol::decode_cache(&bytes) {
@@ -546,6 +591,12 @@ impl KoboApp for Post {
         if a == ActionId::BACK || a == action_id("back") {
             self.view = View::Inbox;
             self.show(c);
+            return;
+        }
+        if self.view == View::Setup && a == action_id("check-again") {
+            self.notice = None;
+            self.checking = true;
+            c.store().load(GATEWAY);
             return;
         }
         if matches!(self.view, View::Setup | View::Compose) {
@@ -870,8 +921,8 @@ mod large_text_tests {
                 .collect::<Vec<_>>()
                 .join(" ");
             assert!(text.contains("On your computer:"), "{text}");
-            // The end of the command, so a clipped command fails here.
-            assert!(text.contains("token.txt"), "{text}");
+            // The whole command, so a clipped command fails here.
+            assert!(text.contains("kobo connect post"), "{text}");
         }
     }
 }

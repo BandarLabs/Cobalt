@@ -13,12 +13,19 @@ const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/birds";
 const SNAPSHOT: &str = "current.json";
 const MAX_JSON: usize = 64 * 1024;
 const MAX_IMAGE: usize = 4 * 1024 * 1024;
-const USAGE: &str = "usage: kobo birds listen --source http://HOST:PORT (--device IP | --sim) [--interval SECONDS]\n\
+const USAGE: &str = concat!(
+    "usage: kobo birds listen --source http://HOST:PORT ",
+    crate::targets::target_choice!(),
+    " [--interval SECONDS]\n\
                      \x20      kobo birds status\n\
                      \x20      kobo birds stop\n\
-                     \x20      kobo birds push SNAPSHOT.json IMAGE.png (--device IP | --sim)\n\
+                     \x20      kobo birds push SNAPSHOT.json IMAGE.png ",
+    crate::targets::target_choice!(),
+    "\n\
                      \x20      kobo birds _worker --source URL --device IP --interval SECONDS\n\
-                     macOS and Linux only. --source is Fugleramme's local web endpoint; BirdNET-Go owns the microphone and model.";
+                     macOS and Linux only. --source is Fugleramme's local web endpoint; BirdNET-Go owns the microphone and model.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
@@ -46,6 +53,102 @@ fn pid_path() -> Result<PathBuf, String> {
 }
 fn log_path() -> Result<PathBuf, String> {
     Ok(home()?.join("listener.log"))
+}
+fn health_path() -> Result<PathBuf, String> {
+    Ok(home()?.join("listener.health"))
+}
+
+/// How the last look at the station went, as the worker writes it after
+/// every poll and `status` reads it back.
+///
+/// A process that is alive says nothing about whether birds are reaching
+/// the reader: a listener pointed at a station that is not running polled
+/// and failed every few seconds while `status` reported it running. This is
+/// what lets `status` say which half of the chain is broken.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Health {
+    /// The last poll worked. The time is when a collage last reached the
+    /// reader, if one has since the listener started.
+    Working { delivered: Option<u64> },
+    /// Every poll since `since` has failed, the latest for this reason.
+    Failing { since: u64, cause: String },
+}
+
+impl Health {
+    fn encode(&self) -> String {
+        match self {
+            Self::Working { delivered } => format!("ok\t{}\n", delivered.unwrap_or(0)),
+            Self::Failing { since, cause } => {
+                format!("fail\t{since}\t{}\n", cause.replace(['\n', '\t'], " "))
+            }
+        }
+    }
+
+    fn decode(text: &str) -> Option<Self> {
+        let mut fields = text.trim_end().splitn(3, '\t');
+        match fields.next()? {
+            "ok" => {
+                let delivered = fields.next()?.parse().ok()?;
+                Some(Self::Working {
+                    delivered: (delivered > 0).then_some(delivered),
+                })
+            }
+            "fail" => Some(Self::Failing {
+                since: fields.next()?.parse().ok()?,
+                cause: fields.next()?.to_owned(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// The health after one more poll.
+    fn after(self, poll: Result<bool, String>, now: u64) -> Self {
+        match (poll, self) {
+            (Ok(true), _) => Self::Working {
+                delivered: Some(now),
+            },
+            (Ok(false), Self::Working { delivered }) => Self::Working { delivered },
+            (Ok(false), Self::Failing { .. }) => Self::Working { delivered: None },
+            (Err(cause), Self::Failing { since, .. }) => Self::Failing { since, cause },
+            (Err(cause), Self::Working { .. }) => Self::Failing { since: now, cause },
+        }
+    }
+}
+
+fn now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+fn ago(seconds: u64) -> String {
+    match seconds {
+        0..=59 => "less than a minute ago".to_owned(),
+        60..=3599 => format!("{} min ago", seconds / 60),
+        _ => format!("{} hr ago", seconds / 3600),
+    }
+}
+
+/// What `status` says about a running listener, from its last poll.
+fn describe(pid: u32, health: Option<&Health>, now: u64) -> Result<String, String> {
+    match health {
+        None => Ok(format!(
+            "Birds listener is running (PID {pid}). It has not finished its first look at the station yet."
+        )),
+        Some(Health::Working {
+            delivered: Some(at),
+        }) => Ok(format!(
+            "Birds listener is running (PID {pid}). The last collage reached the reader {}.",
+            ago(now.saturating_sub(*at))
+        )),
+        Some(Health::Working { delivered: None }) => Ok(format!(
+            "Birds listener is running (PID {pid}). The station is answering, and the reader already has its latest collage."
+        )),
+        Some(Health::Failing { since, cause }) => Err(format!(
+            "Birds listener is running (PID {pid}), but nothing has reached the reader since {}: {cause}",
+            ago(now.saturating_sub(*since))
+        )),
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -109,6 +212,12 @@ fn parse_listen(args: &[String]) -> Result<Listen, String> {
 fn listen(args: &[String]) -> Result<(), String> {
     let options = parse_listen(args)?;
     fs::create_dir_all(home()?).map_err(|e| format!("create Birds state: {e}"))?;
+    // One look in the foreground first. A listener started against a station
+    // that is not running, or a reader that cannot be reached, used to report
+    // itself started and then fail in a log nobody reads.
+    let mut token = String::new();
+    poll_once(&options, &mut token)
+        .map_err(|cause| format!("Birds did not start: {cause} Nothing was left running."))?;
     // The running check, spawn and PID write must be one critical section:
     // two concurrent listens may otherwise both spawn workers and overwrite
     // the single PID file, leaving one worker untracked.
@@ -122,6 +231,7 @@ fn listen(args: &[String]) -> Result<(), String> {
         .open(log_path()?)
         .map_err(|e| format!("open Birds log: {e}"))?;
     let interval = options.interval.to_string();
+    let _ = fs::remove_file(health_path()?);
     let mut command = Command::new(env::current_exe().map_err(|e| format!("locate kobo: {e}"))?);
     command.args(["birds", "_worker", "--source", &options.source]);
     match &options.target {
@@ -140,19 +250,28 @@ fn listen(args: &[String]) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("start Birds listener: {e}"))?;
     atomic_write(&pid_path()?, format!("{}\n", child.id()).as_bytes())?;
-    println!("Birds listener started (PID {}). BirdNET-Go inference remains on this computer through Fugleramme.",child.id());
+    println!(
+        "Birds listener started (PID {}). The first collage reached the reader. Check on it with kobo birds status.",
+        child.id()
+    );
     Ok(())
 }
 fn status() -> Result<(), String> {
     match read_pid()? {
         Some(pid) if process_alive(pid) => {
-            println!(
-                "Birds listener is running (PID {pid}).\nLog: {}",
-                log_path()?.display()
-            );
-            Ok(())
+            let health = fs::read_to_string(health_path()?)
+                .ok()
+                .and_then(|text| Health::decode(&text));
+            let log = log_path()?;
+            match describe(pid, health.as_ref(), now_seconds()) {
+                Ok(line) => {
+                    println!("{line}\nLog: {}", log.display());
+                    Ok(())
+                }
+                Err(line) => Err(format!("{line}\nLog: {}", log.display())),
+            }
         }
-        _ => Err("Birds listener is not running".into()),
+        _ => Err("Birds listener is not running. Start it with kobo birds listen.".into()),
     }
 }
 fn stop() -> Result<(), String> {
@@ -264,41 +383,59 @@ fn running() -> Result<bool, String> {
 fn worker(args: &[String]) -> Result<(), String> {
     let o = parse_listen(args)?;
     let mut token = String::new();
+    let mut health = Health::Working { delivered: None };
     loop {
         // One bad poll (a transient timeout, a 503 while Fugleramme
-        // re-renders) must never kill the long-lived worker: log it and
-        // retry on the next interval.
-        if let Err(e) = poll_once(&o, &mut token) {
+        // re-renders) must never kill the long-lived worker: record it for
+        // `status`, log it, and retry on the next interval.
+        let poll = poll_once(&o, &mut token);
+        if let Err(e) = &poll {
             eprintln!("Birds update failed; retrying in {}s: {e}", o.interval);
+        }
+        health = health.after(poll, now_seconds());
+        if let Ok(path) = health_path() {
+            let _ = fs::write(path, health.encode());
         }
         std::thread::sleep(Duration::from_secs(o.interval));
     }
 }
 
-fn poll_once(o: &Listen, token: &mut String) -> Result<(), String> {
-    match http_get(&format!("{}/state", o.source), MAX_JSON).and_then(|b| state_token(&b)) {
-        Ok(next) if next != *token => {
-            let image = http_get(&format!("{}/collage.png", o.source), MAX_IMAGE)?;
-            // The token and the collage arrive in separate requests; if
-            // Fugleramme re-rendered meanwhile, this pair mixes generations.
-            // Re-read the state and skip the cycle rather than consume it.
-            let still =
-                http_get(&format!("{}/state", o.source), MAX_JSON).and_then(|b| state_token(&b))?;
-            if still != next {
-                return Ok(());
-            }
-            let generated = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| "clock is before 1970")?
-                .as_secs();
-            let snapshot = json!({"format":"cobalt-birds-v1","generated_at":generated,"source":o.source,"token":next,"recent":[]});
-            push_bytes(snapshot.to_string().as_bytes(), &image, o.target.clone())?;
-            *token = next;
-        }
-        Ok(_) => {}
-        Err(e) => eprintln!("Birds source unavailable; keeping the last snapshot: {e}"),
+/// One look at the station. `Ok(true)` when a new collage went to the
+/// reader, `Ok(false)` when there was nothing new to send, and an error
+/// naming which half of the chain failed and what to do about it.
+fn poll_once(o: &Listen, token: &mut String) -> Result<bool, String> {
+    let station = |error: String| {
+        format!(
+            "Fugleramme did not answer at {} ({error}). Start Fugleramme and BirdNET-Go on this computer, as the Birds README describes.",
+            o.source
+        )
+    };
+    let next = http_get(&format!("{}/state", o.source), MAX_JSON)
+        .and_then(|b| state_token(&b))
+        .map_err(station)?;
+    if next == *token {
+        return Ok(false);
     }
-    Ok(())
+    let image = http_get(&format!("{}/collage.png", o.source), MAX_IMAGE).map_err(station)?;
+    // The token and the collage arrive in separate requests; if
+    // Fugleramme re-rendered meanwhile, this pair mixes generations.
+    // Re-read the state and skip the cycle rather than consume it.
+    let still = http_get(&format!("{}/state", o.source), MAX_JSON)
+        .and_then(|b| state_token(&b))
+        .map_err(station)?;
+    if still != next {
+        return Ok(false);
+    }
+    let generated = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "clock is before 1970")?
+        .as_secs();
+    let snapshot = json!({"format":"cobalt-birds-v1","generated_at":generated,"source":o.source,"token":next,"recent":[]});
+    push_bytes(snapshot.to_string().as_bytes(), &image, o.target.clone()).map_err(|error| {
+        format!("The collage could not be sent to the reader ({error}). Wake the reader and check its Wi-Fi.")
+    })?;
+    *token = next;
+    Ok(true)
 }
 fn state_token(bytes: &[u8]) -> Result<String, String> {
     let v: Value =
@@ -592,6 +729,57 @@ mod tests {
         assert!(validate(b"{}", &minimal_png()).is_err());
         assert!(validate(j, b"\x89PNG\r\n\x1a\nrest").is_err());
     }
+    #[test]
+    fn a_listener_whose_every_poll_fails_says_so_and_why() {
+        let health = Health::Working { delivered: None }
+            .after(Err("Fugleramme did not answer.".into()), 100)
+            .after(Err("Fugleramme still did not answer.".into()), 160);
+        assert_eq!(
+            health,
+            Health::Failing {
+                since: 100,
+                cause: "Fugleramme still did not answer.".into()
+            }
+        );
+        assert_eq!(Health::decode(&health.encode()), Some(health.clone()));
+        let said = describe(42, Some(&health), 400).expect_err("a failing listener is an error");
+        assert!(
+            said.contains("running (PID 42), but nothing has reached the reader since 5 min ago")
+        );
+        assert!(said.contains("Fugleramme still did not answer."));
+    }
+
+    #[test]
+    fn a_listener_that_delivered_says_when() {
+        let health = Health::Failing {
+            since: 1,
+            cause: "x".into(),
+        }
+        .after(Ok(true), 1_000);
+        assert_eq!(
+            health,
+            Health::Working {
+                delivered: Some(1_000)
+            }
+        );
+        assert_eq!(Health::decode(&health.encode()), Some(health.clone()));
+        let said = describe(7, Some(&health), 1_030).expect("working");
+        assert!(said.contains("reached the reader less than a minute ago"));
+        assert!(describe(7, None, 0).is_ok());
+    }
+
+    #[test]
+    fn listen_against_a_station_that_is_not_running_names_the_station_and_the_fix() {
+        let options = Listen {
+            source: "http://127.0.0.1:9".into(),
+            target: Target::Sim,
+            interval: 5,
+        };
+        let error = poll_once(&options, &mut String::new()).expect_err("nothing listens there");
+        assert!(error.contains("Fugleramme did not answer at http://127.0.0.1:9"));
+        assert!(error.contains("Start Fugleramme and BirdNET-Go"));
+    }
+
     #[test]
     fn state_requires_token() {
         assert_eq!(state_token(br#"{"token":"abc"}"#).unwrap(), "abc");

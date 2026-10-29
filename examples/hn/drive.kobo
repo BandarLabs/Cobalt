@@ -6,6 +6,23 @@ clean
 shot hn-top
 tap Saved
 wait-for Nothing here yet
-expect Nothing saved yet.
+expect Its article is kept on this reader
 clean
 shot hn-saved
+# Save fetches the story's article and keeps it on the reader. The control
+# reads Saving while it comes down and Saved once it is stored or has failed.
+tap Top
+wait-for 1 of
+tap-id story-0
+wait-for Save
+clean
+shot hn-thread
+tap Save
+wait-for Saved
+tap Back
+wait-for 1 of
+tap Saved
+expect-missing Nothing saved yet.
+expect eady offline
+clean
+shot hn-saved-offline

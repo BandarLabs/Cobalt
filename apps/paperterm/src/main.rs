@@ -6,7 +6,7 @@ use kobo_sdk::keyboard::{Keyboard, Layer, Pressed};
 use kobo_sdk::terminal::{TerminalKeys, Typed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Caret, Context, DisplayMetrics, KoboApp, Orientation, Screen,
-    ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
+    ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::collections::VecDeque;
 use std::process::ExitCode;
@@ -25,7 +25,15 @@ const RETRY_PAIRING: &str = "retry-pairing";
 const RETRY_LOAD: &str = "retry-pairing-load";
 const TOGGLE_KEYBOARD: &str = "toggle-keyboard";
 const OFF_AIR: &str = "Connection lost. Reconnecting.";
-const PAIRING_REFUSED: &str = "Pairing failed. Check the computer address and pairing code.";
+/// Said instead of [`OFF_AIR`] until the computer has answered once: nothing
+/// was lost, and the usual reason is that no session is being shared yet.
+const NOT_YET: &str = "Not connected yet. On your computer, run kobo stream terminal. After a first pairing, reopen Cobalt once.";
+/// The computer answered and turned the code away. Never put down to the
+/// network or the address, which are both fine when this is what happened.
+const CODE_REFUSED: &str = "Your computer did not accept this pairing code. Run kobo stream init on it, or choose Pairing to enter the code again.";
+const READER_OFFLINE: &str = "This Kobo is not on Wi-Fi. Join a network in Cobalt Settings.";
+const PAIRING_REFUSED: &str =
+    "Something other than Paperterm answered at this address. Check the address kobo stream init printed.";
 const INPUT_REFUSED: &str =
     "Your computer refused the input. Check the terminal before continuing.";
 const INPUT_UNCERTAIN: &str = "Input may have reached your computer. Queued keys were discarded. Check the terminal before continuing.";
@@ -88,6 +96,13 @@ impl Input {
     }
 }
 
+/// Whether the current pairing has reached a session yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Reached {
+    Never,
+    Before,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PairingRead {
     Pending,
@@ -137,6 +152,9 @@ struct Paperterm {
     pairing_to_verify: bool,
     menu_return: View,
     failure: Option<String>,
+    /// Whether this pairing has ever reached a session. Until it has, a
+    /// failure is "not connected yet" rather than "connection lost".
+    reached: Reached,
 }
 
 impl Default for Paperterm {
@@ -182,6 +200,7 @@ impl Default for Paperterm {
             pairing_to_verify: false,
             menu_return: View::Watching,
             failure: None,
+            reached: Reached::Never,
         }
     }
 }
@@ -254,8 +273,10 @@ impl Paperterm {
         }
         let state = if self.input_notice.is_some() {
             "Input paused"
-        } else if self.failure.is_some() {
+        } else if self.failure.is_some() && self.reached == Reached::Before {
             "Reconnecting"
+        } else if self.failure.is_some() {
+            "Not connected"
         } else if self.session.is_some() {
             "Connected"
         } else {
@@ -501,6 +522,15 @@ impl Paperterm {
         });
         if self.nap.is_some() {
             self.nap_pairing_generation = self.pairing_generation;
+        }
+    }
+    /// What a failed request means for this pairing, in one sentence.
+    fn failure_for(&self, error: TaskError) -> &'static str {
+        match error {
+            TaskError::Unauthorized => CODE_REFUSED,
+            TaskError::Offline => READER_OFFLINE,
+            _ if self.reached == Reached::Before => OFF_AIR,
+            _ => NOT_YET,
         }
     }
     fn set_failure(&mut self, message: &str) -> bool {
@@ -858,8 +888,8 @@ impl Paperterm {
                     self.retry(context);
                 }
             }
-            TaskOutcome::Failed(_) => {
-                if self.set_failure(OFF_AIR) {
+            TaskOutcome::Failed(error) => {
+                if self.set_failure(self.failure_for(error)) {
                     self.show(context);
                 }
                 self.retry(context);
@@ -881,6 +911,7 @@ impl Paperterm {
                 let previous_keyboard_open = self.keyboard_open;
                 let previous_session = self.session;
                 if self.parse_hello(&bytes) {
+                    self.reached = Reached::Before;
                     if self.pairing_to_verify {
                         self.pairing_to_verify = false;
                         self.save_pairing(context);
@@ -907,7 +938,7 @@ impl Paperterm {
                     self.disconnect(context, PAIRING_REFUSED);
                 }
             }
-            TaskOutcome::Failed(_) => self.disconnect(context, OFF_AIR),
+            TaskOutcome::Failed(error) => self.disconnect(context, self.failure_for(error)),
             TaskOutcome::Cancelled => {}
         }
     }
@@ -936,7 +967,7 @@ impl Paperterm {
                     self.poll(context);
                 }
             }
-            TaskOutcome::Failed(_) => self.disconnect(context, OFF_AIR),
+            TaskOutcome::Failed(error) => self.disconnect(context, self.failure_for(error)),
             TaskOutcome::Cancelled => {}
         }
     }
@@ -1116,6 +1147,7 @@ impl KoboApp for Paperterm {
             return;
         }
         if action == action_id(REPAIR) {
+            self.reached = Reached::Never;
             self.pairing_to_verify = false;
             self.pairing_generation = self.pairing_generation.saturating_add(1);
             self.grid_generation = 0;
@@ -1444,6 +1476,46 @@ mod tests {
         )));
     }
     #[test]
+    fn a_pairing_that_never_connected_says_not_connected_yet_rather_than_lost() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.hello(&mut context);
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(app.failure.as_deref(), Some(NOT_YET));
+        assert_eq!(app.connection_label(), "Not connected");
+        let shown = format!("{:?}", app.screen());
+        assert!(!shown.contains("Connection lost"), "{shown}");
+    }
+    #[test]
+    fn a_refused_code_is_named_as_the_code_whatever_has_happened_before() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            reached: Reached::Before,
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.hello(&mut context);
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized),
+        );
+        assert_eq!(app.failure.as_deref(), Some(CODE_REFUSED));
+    }
+    #[test]
     fn connection_labels_distinguish_modes_and_recovery() {
         let mut app = Paperterm {
             view: View::Watching,
@@ -1459,6 +1531,9 @@ mod tests {
             app.input = input;
             assert_eq!(app.connection_label(), format!("Connected · {label}"));
         }
+        app.failure = Some(NOT_YET.into());
+        assert_eq!(app.connection_label(), "Not connected · Keyboard");
+        app.reached = Reached::Before;
         app.failure = Some(OFF_AIR.into());
         assert_eq!(app.connection_label(), "Reconnecting · Keyboard");
         app.input_notice = Some(INPUT_UNCERTAIN.into());
@@ -2228,6 +2303,7 @@ mod tests {
             session: Some(4),
             sequence: 27,
             poll: Some(TaskId(9)),
+            reached: Reached::Before,
             ..Paperterm::default()
         };
         let mut context = Context::default();
@@ -2353,6 +2429,7 @@ mod tests {
             view: View::Watching,
             failure: Some(OFF_AIR.to_owned()),
             poll: Some(TaskId(9)),
+            reached: Reached::Before,
             ..Paperterm::default()
         };
         let mut context = Context::default();

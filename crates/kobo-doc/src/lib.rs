@@ -39,6 +39,10 @@
 
 pub mod epub;
 pub mod html;
+/// Finding the article inside a web page, for a reader that opens pages
+/// fetched from a link. Re-exported so a crate that reads documents through
+/// this one gets the cut from the same place it gets the parser.
+pub use kobo_html::article as web;
 pub mod markdown;
 pub mod text;
 pub mod zip;

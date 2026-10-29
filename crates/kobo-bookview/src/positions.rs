@@ -7,11 +7,23 @@
 //! reader already has rather than replacing it with a shorter one.
 use kobo_read::Memory;
 use kobo_sdk::{Context, StoreResult};
+use kobo_ui::TextScale;
 use std::collections::BTreeMap;
 
 pub const KEY: &str = "reading-v1";
 const LIMIT: usize = 192 * 1024;
 const MAX_ARTICLES: usize = 1000;
+
+/// Where the text size last chosen in this application is kept.
+///
+/// Every article opened for the first time used to start at 100%, so a reader
+/// who needs 140% set it again on every story, every day. The size they chose
+/// last is kept as one more record in the same file, under an identity no
+/// article can have: an article's identity is a SHA-256 digest, and no input
+/// digests to all zeros. A version of the application from before this was
+/// added reads the record as an article nobody ever opens, so the file stays
+/// readable in both directions.
+const SIZE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 #[derive(Default)]
 pub struct Progress {
@@ -22,6 +34,16 @@ pub struct Progress {
     loaded: bool,
     pub failed: bool,
     capacity_failed: bool,
+}
+
+/// The identity a record is kept under: a SHA-256 digest of whatever the
+/// application uses to name an article, such as its address.
+///
+/// Records are keyed by digest so a file of them has one fixed shape however
+/// long the addresses are, and so nothing in it says which sites were read.
+#[must_use]
+pub fn identity(name: &str) -> String {
+    kobo_net::sha256::hex_digest(name.as_bytes())
 }
 
 impl Progress {
@@ -52,10 +74,24 @@ impl Progress {
         self.loaded.then(|| self.acknowledged.contains(id))
     }
 
-    /// Where this article was left, or the start of it.
+    /// Where this article was left, or the start of it at the text size
+    /// last chosen in this application.
     #[must_use]
     pub fn memory(&self, id: &str) -> Memory {
-        self.records.get(id).cloned().unwrap_or_default()
+        self.records.get(id).cloned().unwrap_or_else(|| Memory {
+            scale: self.text_scale(),
+            ..Memory::default()
+        })
+    }
+
+    /// The text size last chosen in this application, which is what an
+    /// article opened for the first time starts at.
+    #[must_use]
+    pub fn text_scale(&self) -> TextScale {
+        self.records
+            .get(SIZE)
+            .map(|record| record.scale)
+            .unwrap_or_default()
     }
 
     pub fn keep(&mut self, context: &mut Context, id: String, memory: Memory) {
@@ -64,6 +100,15 @@ impl Progress {
             return;
         }
         let mut next = self.records.clone();
+        if memory.scale != self.text_scale() {
+            next.insert(
+                SIZE.to_owned(),
+                Memory {
+                    scale: memory.scale,
+                    ..Memory::default()
+                },
+            );
+        }
         next.insert(id, memory);
         if next.len() > MAX_ARTICLES || encode(&next).len() > LIMIT {
             self.failed = true;
@@ -249,6 +294,36 @@ mod tests {
         assert!(save(&runner.action(ActionId(1))).is_none());
         assert!(runner.app_mut().progress.failed);
     }
+    #[test]
+    fn a_new_article_opens_at_the_size_last_chosen_and_the_choice_survives_a_restart() {
+        let mut progress = super::Progress::default();
+        let mut context = kobo_sdk::Context::default();
+        progress.load(StoreResult::Loaded {
+            key: KEY.into(),
+            value: None,
+        });
+        assert_eq!(progress.memory(&"b".repeat(64)).scale, TextScale::default());
+        let larger = TextScale::default()
+            .larger()
+            .expect("there is a larger size");
+        progress.keep(
+            &mut context,
+            "a".repeat(64),
+            Memory {
+                scale: larger,
+                ..Memory::default()
+            },
+        );
+        assert_eq!(progress.memory(&"b".repeat(64)).scale, larger);
+        let mut reopened = super::Progress::default();
+        reopened.load(StoreResult::Loaded {
+            key: KEY.into(),
+            value: Some(encode(&progress.records)),
+        });
+        assert_eq!(reopened.memory(&"c".repeat(64)).scale, larger);
+        assert_eq!(reopened.memory(&"a".repeat(64)).scale, larger);
+    }
+
     #[test]
     fn reading_memory_round_trips_and_rejects_truncated_records() {
         let memory = Memory {

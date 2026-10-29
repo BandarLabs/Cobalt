@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
+  "release_notes": "Every sample names the builder calls that drew it."
 }

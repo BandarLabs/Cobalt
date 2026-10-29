@@ -93,34 +93,19 @@ impl Page {
     }
 }
 
-pub fn failure(error: TaskError) -> String {
-    match error {
-        TaskError::NoCredential => {
-            "The account is not on this reader yet. Add it from your computer, then retry.".into()
-        }
-        TaskError::Unauthorized => {
-            "The library refused this account. Check its username and password on your computer."
-                .into()
-        }
-        TaskError::Offline => {
-            "Connect the reader to Wi-Fi, then retry. Your current catalog is kept.".into()
-        }
-        TaskError::Unreachable => {
-            "The library could not be reached. Check its address and certificate, then retry."
-                .into()
-        }
-        TaskError::TimedOut => "The library took too long to respond. Try again.".into(),
-        TaskError::NotFound => "This catalog address was not found. Check the OPDS address.".into(),
-        TaskError::TooLarge => {
-            "This catalog page is too large. Use a paginated OPDS catalog.".into()
-        }
-        TaskError::Denied => {
-            "Network access is unavailable for this app. Check its installed permissions.".into()
-        }
-        TaskError::RateLimited(seconds) => {
-            format!("The library is busy. Try again in {seconds} seconds.")
-        }
-    }
+/// What went wrong with a request to the library at `url`, in the owner's
+/// terms. The library's origin is what decides the home-network hint, so a
+/// reader away from home is told that rather than to check the address.
+pub fn problem(url: &str, error: TaskError) -> kobo_sdk::failure::Problem {
+    let origin = url.split('/').take(3).collect::<Vec<_>>().join("/");
+    kobo_sdk::failure::Service::new("Your library")
+        .at(&origin)
+        .fixed_by("Tap Sign in again.")
+        .explain(error)
+}
+
+pub fn failure(url: &str, error: TaskError) -> String {
+    problem(url, error).message
 }
 
 #[cfg(test)]

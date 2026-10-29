@@ -1,5 +1,14 @@
+# First run: the one computer command is named, and Check again says
+# plainly that nothing has arrived yet rather than doing nothing.
 expect Connect Miniflux
-expect secret set
+expect kobo connect
+expect-missing secret set
+clean
+shot rss-miniflux-connect
+tap Check again
+wait-for No account has arrived
+clean
+shot rss-miniflux-check-again
 tap Suggested feeds
 expect Suggested feeds
 clean

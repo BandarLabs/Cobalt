@@ -49,15 +49,25 @@ def main():
         before = {p.name: p.read_bytes() for p in shelf.iterdir()}
         repeated = run('plan', first, '--sim', '--album', 'Summer holiday')
         assert '0 new, 1 already present' in repeated
-        removal = run('plan', second, '--sim', '--delete', '--album', 'Autumn')
+        removal = run('plan', second, '--sim', '--replace', '--album', 'Autumn')
         assert 'Remove: Summer holiday / first.png' in removal
         assert 'Add: Autumn / second.png' in removal
         assert before == {p.name: p.read_bytes() for p in shelf.iterdir()}, 'Plan changed the shelf'
         repeated_push = run('push', first, '--sim', '--album', 'Summer holiday')
         assert '0 new, 1 already present' in repeated_push
         assert before == {p.name: p.read_bytes() for p in shelf.iterdir()}, 'Repeated import changed content'
+        # A second push adds: the first album stays, and the push ends by
+        # naming every album now on the reader.
+        added = run('push', second, '--sim', '--album', 'Autumn')
+        assert 'Now on the reader: 2 photos in 2 albums.' in added, added
+        assert 'Summer holiday: 1' in added and 'Autumn: 1' in added
+        listed = run('ls', '--sim')
+        assert 'Summer holiday' in listed and 'Autumn' in listed
+        run('restore', '--sim')
+        assert before == {p.name: p.read_bytes() for p in shelf.iterdir() if p.is_file() and not p.name.startswith('.')}, 'Restore did not undo the added album'
+        # `--delete`, the old spelling of `--replace`, still replaces.
         run('push', second, '--sim', '--delete', '--album', 'Autumn')
-        assert 'Autumn' in run('ls', '--sim')
+        assert 'Summer holiday' not in run('ls', '--sim')
         run('restore', '--sim')
         assert before == {p.name: p.read_bytes() for p in shelf.iterdir() if p.is_file() and not p.name.startswith('.')}, 'Restore did not recover original shelf'
         first_id = run('ls', '--sim').split('\t')[0]
@@ -70,7 +80,7 @@ def main():
         active_before = (shelf/'.recovery-current').read_text()
         current_before = (shelf/'manifest.v1').read_bytes()
         (shelf/f'{first_id}.png').unlink()
-        failed = subprocess.run([str(args.cli.resolve()), 'frame', 'push', str(second), '--sim', '--delete'],
+        failed = subprocess.run([str(args.cli.resolve()), 'frame', 'push', str(second), '--sim', '--replace'],
                                 env=env, capture_output=True, text=True, timeout=45)
         assert failed.returncode != 0 and 'preserve' in failed.stderr
         assert (shelf/'manifest.v1').read_bytes() == current_before
@@ -89,6 +99,7 @@ def main():
     (args.output/'result.json').write_text(json.dumps({'status': 'passed', 'physical_hardware': False,
         'checks': ['plan does not create shelf', 'push reports success only after shelf readback', 'album name survives push and list',
                    'repeated import explicitly reuses photo', 'concrete deletion list',
+                   'a second push adds and names every album on the reader', 'delete still replaces',
                    'plan leaves existing shelf unchanged', 'repeated push preserves image bytes', 'replacement and removal can be restored',
                    'recovery limited to two slots', 'failed recovery copy refuses replacement', 'incomplete recovery refused before manifest change']}, indent=2)+'\n')
 

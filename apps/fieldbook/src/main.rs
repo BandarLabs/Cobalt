@@ -3,18 +3,20 @@
 //! sightings are recorded locally and never need a connection.
 mod shelf;
 
-use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
-    LayoutIssueKind, PictureHandle, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
-    StoreResult, TilePicture,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, TilePicture,
 };
 use shelf::{Attribution, Pack, PhotoCredit, Species, MANIFEST, MAX_MANIFEST};
 use std::process::ExitCode;
 
 const OUTINGS: &str = "outings.v1";
 const SIGHTINGS: &str = "sightings.v1";
+/// The outing still being logged, and the pack it tallies from, so closing
+/// the app or a restart in the field does not end it.
+const OPEN_OUTING: &str = "open-outing.v1";
 const EXPORT: &str = "export-checklist.csv";
 const MAX_STATE: usize = 256 * 1024;
 const ATTRIBUTION: &str = "attribution.json";
@@ -72,6 +74,8 @@ struct Fieldbook {
     outings: Vec<Outing>,
     sightings: Vec<Sighting>,
     open_outing: Option<u64>,
+    /// The open outing as last saved, held until outings and packs are read.
+    saved_open: Option<String>,
     pack_pick: Option<usize>,
     detail: Option<Species>,
     deleted: Option<(usize, Sighting)>,
@@ -104,6 +108,7 @@ impl Default for Fieldbook {
             outings: Vec::new(),
             sightings: Vec::new(),
             open_outing: None,
+            saved_open: None,
             pack_pick: None,
             detail: None,
             deleted: None,
@@ -129,25 +134,7 @@ impl Default for Fieldbook {
 }
 
 fn reader_clock() -> Box<dyn Clock> {
-    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
-        .ok()
-        .and_then(|value| value.parse::<i16>().ok())
-        .unwrap_or(0);
-    SystemClock::new(minutes)
-        .or_else(|_| SystemClock::new(0))
-        .map_or_else(
-            |_| {
-                Box::new(
-                    ManualClock::new(Snapshot {
-                        unix_millis: 0,
-                        monotonic_millis: 0,
-                        utc_offset_minutes: 0,
-                    })
-                    .expect("a valid fixed clock"),
-                ) as Box<dyn Clock>
-            },
-            |clock| Box::new(clock) as Box<dyn Clock>,
-        )
+    Box::new(SystemClock::reader())
 }
 
 /// Date as MM/DD/YYYY, the shape the checklist import expects.
@@ -198,6 +185,7 @@ impl Fieldbook {
     fn start_when_ready(&mut self, context: &mut Context) {
         if self.loads.manifest && self.loads.state && !self.loads.started {
             self.loads.started = true;
+            self.restore_open();
             self.show(context);
         }
     }
@@ -215,6 +203,10 @@ impl Fieldbook {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.manifest_load.take().expect("active manifest").take();
+                let picked = self
+                    .pack_pick
+                    .and_then(|index| self.packs.get(index))
+                    .map(|pack| pack.id.clone());
                 match shelf::Shelf::decode(&bytes) {
                     Ok(decoded) => {
                         self.pack_failures = decoded
@@ -223,6 +215,8 @@ impl Fieldbook {
                             .map(|failure| (failure.input.clone(), failure.reason.clone()))
                             .collect();
                         self.packs = decoded.packs;
+                        self.pack_pick =
+                            picked.and_then(|id| self.packs.iter().position(|pack| pack.id == id));
                         self.pack_notice = None;
                         if self
                             .packs
@@ -374,6 +368,40 @@ impl Fieldbook {
             .collect::<Vec<_>>()
             .join("\n");
         context.store().save(SIGHTINGS, sightings.into_bytes());
+        self.persist_open(context);
+    }
+
+    /// Writes which outing is open, or that none is.
+    fn persist_open(&self, context: &mut Context) {
+        let open = self.open_outing.map_or_else(String::new, |id| {
+            let pack = self
+                .pack_pick
+                .and_then(|index| self.packs.get(index))
+                .map_or("", |pack| pack.id.as_str());
+            format!("{id}|{pack}")
+        });
+        context.store().save(OPEN_OUTING, open.into_bytes());
+    }
+
+    /// Puts back the outing that was open when the app last stopped, once
+    /// both the outings and the packs are known.
+    fn restore_open(&mut self) {
+        let Some(saved) = self.saved_open.take() else {
+            return;
+        };
+        let mut parts = saved.splitn(2, '|');
+        let Some(id) = parts.next().and_then(|id| id.parse::<u64>().ok()) else {
+            return;
+        };
+        if !self.outings.iter().any(|outing| outing.id == id) {
+            return;
+        }
+        self.open_outing = Some(id);
+        let pack = parts.next().unwrap_or("");
+        self.pack_pick = self
+            .packs
+            .iter()
+            .position(|known| !pack.is_empty() && known.id == pack);
     }
 
     fn open(&self) -> Option<&Outing> {
@@ -381,6 +409,10 @@ impl Fieldbook {
             .and_then(|id| self.outings.iter().find(|outing| outing.id == id))
     }
 
+    /// Every species the outing can tally with one tap: the chosen pack's,
+    /// or every pack's when none was chosen, then birds logged by name
+    /// earlier. The order never changes while a bird is being tallied, so a
+    /// row is where it was a tap ago.
     fn outing_species(&self) -> Vec<Species> {
         if let Some(pick) = self.pack_pick {
             if let Some(pack) = self.packs.get(pick) {
@@ -388,6 +420,13 @@ impl Fieldbook {
             }
         }
         let mut seen: Vec<Species> = Vec::new();
+        for species in self.packs.iter().flat_map(|pack| &pack.species) {
+            if !seen.iter().any(|known| {
+                same_species(&known.code, &known.common, &species.code, &species.common)
+            }) {
+                seen.push(species.clone());
+            }
+        }
         for sighting in &self.sightings {
             if !seen.iter().any(|known| {
                 same_species(&known.code, &known.common, &sighting.code, &sighting.common)
@@ -686,29 +725,47 @@ impl Fieldbook {
         screen.nav_bar(Some(2), Self::tab_bar()).build()
     }
 
-    fn outing_screen(&self, metrics: DisplayMetrics) -> Screen {
+    /// The tally: one row per species the outing can log with a tap, dealt
+    /// onto as many pages as the pack needs, under the outing's summary and
+    /// the two ways to log something not listed. Finishing sits in the bar
+    /// at the foot, where it cannot be pushed off the panel by a long pack.
+    fn outing_screen(&self, context: &Context) -> (Screen, usize) {
         let s = self.top("Outing");
         if self.naming_location {
-            return s
-                .secondary("Name this place. Recent places are offered next time.")
-                .typed(&self.location, "Location")
-                .keyboard(&self.location, "Save")
-                .build();
+            return (
+                s.secondary("Name this place. Recent places are offered next time.")
+                    .typed(&self.location, "Location")
+                    .keyboard(&self.location, "Save")
+                    .build(),
+                1,
+            );
         }
         let Some(outing) = self.open() else {
-            return s
-                .splash(None, "No open outing", "Start an outing from Today.")
-                .build();
+            return (
+                s.splash(None, "No open outing", "Start an outing from Today.")
+                    .build(),
+                1,
+            );
         };
         let (species, individuals) = self.outing_totals(outing.id);
-        let summary = format!(
-            "{} · {} · {} — {} species, {} birds",
-            outing.location, outing.date, outing.start, species, individuals
-        );
+        let mut screen = s
+            .secondary(format!(
+                "{} · {} · {} · {} species, {} birds",
+                outing.location, outing.date, outing.start, species, individuals
+            ))
+            .buttons([
+                ("type-species", "Type a species"),
+                ("sightings", "Review sightings"),
+            ]);
         let tally = self.outing_species();
+        if tally.is_empty() {
+            screen = screen.secondary(
+                "Type the first bird you see. A field pack from your computer lists your \
+                 region's birds here, one tap each.",
+            );
+        }
         let rows: Vec<(String, String, String, Glyph)> = tally
             .iter()
-            .take(6)
             .enumerate()
             .map(|(index, bird)| {
                 let logged: u32 = self
@@ -722,7 +779,7 @@ impl Fieldbook {
                     .sum();
                 (
                     format!("tally-{index}"),
-                    bird.common.clone(),
+                    context.clamped_row(&bird.common, 2, true),
                     if logged > 0 {
                         format!("{} · {logged} logged", bird.code)
                     } else {
@@ -736,79 +793,30 @@ impl Fieldbook {
                 )
             })
             .collect();
-        // One panel of the outing, whole: the summary, the tally rows dealt
-        // to the device in hand, and the three actions. At the largest text
-        // scale six rows and the actions do not fit one Clara panel, so the
-        // rows deal onto panels measured the way the gallery measures its
-        // reference pages -- a button pushed off the panel is an outing that
-        // cannot be finished.
-        let frame = |page_rows: &[(String, String, String, Glyph)], page: usize, pages: usize| {
-            let mut screen = self.top("Outing").secondary(summary.clone());
-            if tally.is_empty() {
-                screen = screen.section("Log a species by name:");
-            }
-            let mut screen = screen.rows(page_rows.iter().cloned()).buttons([
-                ("type-species", "Type a species"),
-                ("sightings", "Review sightings"),
-                ("finish", "Finish outing"),
-            ]);
-            if pages > 1 {
-                // Six rows deal onto a single-digit page count; the fallback
-                // is for the compiler, not the reader.
-                let (page, of) = (
-                    u16::try_from(page + 1).unwrap_or(1),
-                    u16::try_from(pages).unwrap_or(1),
-                );
-                screen = screen
-                    .page_turns("outing-back", "outing-next")
-                    .page_position(page, of);
-            }
-            screen
-        };
-        let mut panels: Vec<usize> = Vec::new();
-        let mut start = 0;
-        while start < rows.len() {
-            let mut take = rows.len() - start;
-            // Measured against the most pages the deal can produce, because
-            // "6 of 6" is wider than "1 of 1" and a page that fits only
-            // while it is the only page is not fitting.
-            while take > 1
-                && Self::overflows(
-                    frame(&rows[start..start + take], panels.len(), rows.len()),
-                    metrics,
-                )
-            {
-                take -= 1;
-            }
-            panels.push(take);
-            start += take;
-        }
-        if panels.is_empty() {
-            panels.push(0);
-        }
-        let page = self.outing_page.min(panels.len() - 1);
-        let start = panels[..page].iter().sum();
-        frame(&rows[start..start + panels[page]], page, panels.len()).build()
-    }
-
-    /// Whether anything on this screen was pushed off the panel, or squeezed
-    /// until it no longer fits what it says. Measured against the runtime's
-    /// own diagnostics, the way the gallery deals its reference pages.
-    fn overflows(screen: ScreenBuilder, metrics: DisplayMetrics) -> bool {
-        screen
-            .build()
-            .diagnostics(&metrics, &Chrome::measuring(false))
-            .issues
+        let screen = screen.bottom_action("finish", "Finish outing");
+        let labels = rows
             .iter()
-            .any(|issue| {
-                matches!(
-                    issue.kind,
-                    LayoutIssueKind::ContentOverflow { .. }
-                        | LayoutIssueKind::Clipped
-                        | LayoutIssueKind::InteractiveOffscreen
-                        | LayoutIssueKind::TextOverflow
-                )
-            })
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_under(
+            &labels,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = self.outing_page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen.rows(visible.iter().map(|&index| rows[index].clone()));
+        if count > 1 {
+            screen = screen
+                .page_turns("outing-back", "outing-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
+        }
+        (screen.build(), count)
     }
 
     fn sightings_screen(&self, context: &Context) -> (Screen, usize) {
@@ -932,6 +940,7 @@ impl Fieldbook {
 
     fn turn_list(&mut self, context: &Context, forward: bool) {
         let count = match self.view {
+            View::Outing => self.outing_screen(context).1,
             View::Home => self.home_screen(context).1,
             View::Packs => self.packs_screen(context).1,
             View::Sightings => self.sightings_screen(context).1,
@@ -939,6 +948,7 @@ impl Fieldbook {
             _ => return,
         };
         let page = match self.view {
+            View::Outing => &mut self.outing_page,
             View::Home => &mut self.home_page,
             View::Packs => &mut self.packs_page,
             View::Sightings => &mut self.sightings_page,
@@ -1006,7 +1016,7 @@ impl Fieldbook {
             View::Home => self.home_screen(context).0,
             View::Packs => self.packs_screen(context).0,
             View::Search => self.search_screen(),
-            View::Outing => self.outing_screen(context.metrics()),
+            View::Outing => self.outing_screen(context).0,
             View::Sightings => self.sightings_screen(context).0,
             View::Life => self.life_screen(context).0,
             View::Export => self.export_screen(),
@@ -1087,6 +1097,35 @@ impl Fieldbook {
         self.view = View::Outing;
     }
 
+    /// The outing screen's own actions: turning the tally, a one-tap tally
+    /// and finishing. True when the action was one of them.
+    fn outing_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id("outing-next") {
+            self.turn_list(context, true);
+        } else if action == action_id("outing-back") {
+            self.turn_list(context, false);
+        } else if action == action_id("finish") {
+            self.open_outing = None;
+            self.pack_pick = None;
+            self.persist_open(context);
+            self.view = View::Home;
+        } else if let Some(species) = (self.view == View::Outing)
+            .then(|| self.outing_species())
+            .and_then(|tally| {
+                tally
+                    .into_iter()
+                    .enumerate()
+                    .find(|(index, _)| action == action_id(&format!("tally-{index}")))
+                    .map(|(_, species)| species)
+            })
+        {
+            self.log_sighting(context, species);
+        } else {
+            return false;
+        }
+        true
+    }
+
     /// Keyboards consume their own key actions; true means the action is done.
     /// Every `Keyboard` answers any key action, so the view decides which
     /// one is actually on screen and listening.
@@ -1132,10 +1171,27 @@ impl KoboApp for Fieldbook {
         self.begin_manifest(context);
         context.store().load(OUTINGS);
         context.store().load(SIGHTINGS);
+        context.store().load(OPEN_OUTING);
+    }
+
+    /// A pack pushed while the reader slept is on the shelf when it wakes,
+    /// so the shelf is read again rather than waiting for a restart.
+    fn on_resume(&mut self, context: &mut Context) {
+        if self.manifest_load.is_none() {
+            self.begin_manifest(context);
+        }
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.on_resume(context);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if self.advance_manifest(context, &result) {
+            // A pack pushed while the app was away is drawn when it lands.
+            if self.loads.started && self.manifest_load.is_none() {
+                self.show(context);
+            }
             return;
         }
         if self.advance_attribution(context, &result) {
@@ -1183,6 +1239,12 @@ impl KoboApp for Fieldbook {
                         })
                         .collect();
                 }
+            }
+            StoreResult::Loaded { key, value } if key == OPEN_OUTING => {
+                self.saved_open = value
+                    .filter(|bytes| bytes.len() <= MAX_STATE)
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .filter(|text| !text.is_empty());
                 self.loads.state = true;
                 self.start_when_ready(context);
                 return;
@@ -1204,7 +1266,7 @@ impl KoboApp for Fieldbook {
         if self.delete_candidate.is_none()
             && matches!(
                 self.view,
-                View::Home | View::Packs | View::Sightings | View::Life
+                View::Home | View::Packs | View::Sightings | View::Life | View::Outing
             )
         {
             self.turn_list(context, forward);
@@ -1218,6 +1280,10 @@ impl KoboApp for Fieldbook {
             return;
         }
         if self.handle_keyboards(context, action) {
+            return;
+        }
+        if self.outing_action(context, action) {
+            self.show(context);
             return;
         }
         if action == ActionId::BACK || action == action_id("back") || action == action_id("home") {
@@ -1242,14 +1308,6 @@ impl KoboApp for Fieldbook {
         } else if action == action_id("resume") {
             self.view = View::Outing;
             self.outing_page = 0;
-        } else if action == action_id("outing-next") {
-            self.outing_page += 1;
-        } else if action == action_id("outing-back") {
-            self.outing_page = self.outing_page.saturating_sub(1);
-        } else if action == action_id("finish") {
-            self.open_outing = None;
-            self.pack_pick = None;
-            self.view = View::Home;
         } else if action == action_id("sightings") {
             self.view = View::Sightings;
         } else if action == action_id("type-species") {
@@ -1274,10 +1332,6 @@ impl KoboApp for Fieldbook {
                 self.view = View::Detail;
                 self.begin_photo(context);
             }
-        } else if let Some(index) = (0..6).find(|i| action == action_id(&format!("tally-{i}"))) {
-            if let Some(species) = self.outing_species().get(index).cloned() {
-                self.log_sighting(context, species);
-            }
         } else if let Some(outing) = self
             .outings
             .iter()
@@ -1287,6 +1341,7 @@ impl KoboApp for Fieldbook {
             self.view = View::Outing;
             self.outing_page = 0;
             self.sightings_page = 0;
+            self.persist_open(context);
         } else if let Some(index) = (0..self.sightings.len()).find(|index| {
             self.view == View::Sightings && action == action_id(&format!("sight-{index}"))
         }) {

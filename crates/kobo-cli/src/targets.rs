@@ -26,10 +26,158 @@ pub struct TargetArgs {
     reader: Option<String>,
 }
 
-/// Every spelling of the target flags, for usage lines: `--sim` for the
-/// simulator, `--device HOST` (or `-s HOST`, the spelling adb hands already
-/// know) for a reader by address, `--reader NAME` for a saved reader.
-pub const TARGET_FLAGS: &str = "--sim | --device HOST | --reader NAME";
+/// The target flags as every usage line spells them: `--sim` for the
+/// simulator, `--device IP` (or `-s IP`, the spelling adb hands already know)
+/// for a reader by address, `--reader NAME` for a saved reader.
+///
+/// A macro rather than a constant so that companion usage lines can splice it
+/// into their own `concat!`, which takes literals only. Seventeen of them used
+/// to spell the flags by hand as `(--sim | --device IP)`, which read as
+/// required and never mentioned the saved reader that makes them optional.
+macro_rules! target_flags {
+    () => {
+        "--sim | --device IP | --reader NAME"
+    };
+}
+pub(crate) use target_flags;
+
+/// The flags as an optional choice, the way a usage line shows them.
+macro_rules! target_choice {
+    () => {
+        concat!("[", $crate::targets::target_flags!(), "]")
+    };
+}
+pub(crate) use target_choice;
+
+/// The line every companion usage ends with, saying where a command with no
+/// target goes. Help that shows the flags without this is help that sends
+/// owners hunting for an address they no longer need.
+macro_rules! saved_reader_note {
+    () => {
+        "With no target, it goes to the reader kobo setup saved."
+    };
+}
+pub(crate) use saved_reader_note;
+
+/// [`target_flags`] as a value, for errors built at run time.
+pub const TARGET_FLAGS: &str = target_flags!();
+
+/// The step that saves a reader, for every message that finds none.
+pub const SAVE_A_READER: &str = "Run kobo setup with the reader plugged in, or kobo pair.";
+
+/// What a command that needs a reader says when this computer has none.
+pub const NO_READER_SAVED: &str =
+    "No reader saved. Run kobo setup with the reader plugged in, or kobo pair.";
+
+/// How long a command waits for a saved reader that is not answering.
+///
+/// The usual cause is a reader asleep on the desk, and pressing its power
+/// button brings it back onto Wi-Fi in well under a minute. Long enough to
+/// walk over and press it, short enough that a reader that is really gone
+/// still gets a prompt answer.
+pub const WAKE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long between looks while waiting for a reader to wake.
+const WAKE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The error for a command line that names no target when none can be
+/// chosen for it: no reader saved at all, or several and none named.
+#[must_use]
+pub fn missing_reader(saved: &[&str]) -> String {
+    match saved {
+        [] => crate::console::target(NO_READER_SAVED),
+        several => crate::console::target(format!(
+            "{} readers are saved: {}. Name one with --reader NAME.",
+            several.len(),
+            several.join(", ")
+        )),
+    }
+}
+
+/// The one next step for a reader that does not answer.
+///
+/// Asleep is by far the most common reason, and the fix is on the desk, not
+/// in the router: the owner presses power and the reader rejoins Wi-Fi.
+#[must_use]
+pub fn wake_step(name: Option<&str>) -> String {
+    match name {
+        Some(name) => format!("Wake \"{name}\" (press power) and check Wi-Fi in Cobalt Settings."),
+        None => "Wake the reader (press power) and check Wi-Fi in Cobalt Settings.".to_owned(),
+    }
+}
+
+/// What is printed once, when a wait for a sleeping reader begins.
+#[must_use]
+pub fn waiting_for(name: Option<&str>) -> String {
+    format!(
+        "{} Waiting up to {} s.",
+        wake_step(name),
+        WAKE_WAIT.as_secs()
+    )
+}
+
+/// The error for a reader that did not answer.
+///
+/// `waited` says whether the minute was spent waiting for it, which only
+/// happens with a person at the terminal to press the power button. A script
+/// is told at once, in words that do not claim a wait that never happened.
+#[must_use]
+pub fn not_answering(name: Option<&str>, waited: bool) -> String {
+    let seconds = WAKE_WAIT.as_secs();
+    let silence = match (name, waited) {
+        (Some(name), true) => format!("\"{name}\" did not answer within {seconds} s."),
+        (Some(name), false) => format!("\"{name}\" is not answering."),
+        (None, true) => format!("No reader answered within {seconds} s."),
+        (None, false) => "No reader is answering.".to_owned(),
+    };
+    crate::console::target(format!(
+        "{silence} Wake it (press power), check Wi-Fi in Cobalt Settings, and run this again."
+    ))
+}
+
+/// A pause for a wait on a sleeping reader: says what to do the first time,
+/// then waits out one interval, and answers false once [`WAKE_WAIT`] is spent.
+///
+/// The wait happens only with somebody there to wake the reader, which is a
+/// terminal on both stdin and stderr. A script or CI job gets false at once
+/// and fails fast with the same next step in its error: the quality scripts
+/// run `kobo stream init` with no reader on the network, and a minute spent
+/// waiting for a button nobody will press is a minute their timeout kills.
+pub fn wake_pause(name: Option<&str>) -> impl FnMut() -> bool + '_ {
+    use std::io::IsTerminal as _;
+    let present = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    wake_pause_when(
+        name,
+        present,
+        |line| eprintln!("{line}"),
+        std::thread::sleep,
+    )
+}
+
+/// [`wake_pause`] with the decision, the output and the clock passed in, so
+/// both paths can be tested without a terminal or a minute to spare.
+pub(crate) fn wake_pause_when<'a>(
+    name: Option<&'a str>,
+    present: bool,
+    mut say: impl FnMut(String) + 'a,
+    mut sleep: impl FnMut(std::time::Duration) + 'a,
+) -> impl FnMut() -> bool + 'a {
+    let mut deadline = None;
+    move || {
+        if !present {
+            return false;
+        }
+        let deadline = *deadline.get_or_insert_with(|| {
+            say(waiting_for(name));
+            std::time::Instant::now() + WAKE_WAIT
+        });
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        sleep(WAKE_INTERVAL);
+        true
+    }
+}
 
 impl TargetArgs {
     /// Pulls the target flags out of `arguments`, wherever they appear, and
@@ -92,13 +240,20 @@ impl TargetArgs {
 /// Turns a saved reader's name into its network address.
 ///
 /// Resolution goes through the saved-reader store and accepts an address
-/// only when the serial behind it is the saved one - an address is a lease,
+/// only when the serial behind it is the saved one: an address is a lease,
 /// not an identity, and the first reader to answer is never a substitute for
-/// the one that was named. A miss is a target error the owner can act on.
+/// the one that was named. A reader that does not answer is given a minute to
+/// be woken, with the step that wakes it, before the miss becomes an error.
 pub fn resolve_nickname(name: &str) -> Result<String, String> {
     let path = crate::readers::store_path();
     let mut store = crate::readers::Store::load(&path)?;
-    let address = crate::readers::resolve_saved(&mut store, name, probe_serial, sweep_serials)?;
+    let address = crate::readers::resolve_saved(
+        &mut store,
+        name,
+        probe_serial,
+        sweep_serials,
+        wake_pause(Some(name)),
+    )?;
     // A re-identified address is worth keeping; a store that cannot be
     // written never blocks a reader that was just found.
     let _ = store.save(&path);
@@ -235,11 +390,12 @@ impl ReaderCommand {
 /// this computer when it is given no reader, and `guard-test` takes the
 /// panel, so it is only ever pointed at a reader by address.
 const ACTS_ON_A_READER: &[ReaderCommand] = &[
-    ReaderCommand::sends("frame", &["init", "push", "ls", "rm"]),
+    ReaderCommand::sends("frame", &["init", "push", "plan", "restore", "ls", "rm"]),
     ReaderCommand::sends("musicstand", &["init", "push", "plan", "ls", "rm"]),
     ReaderCommand::sends("vault", &["init", "push", "plan", "ingest", "ls", "rm"]),
     ReaderCommand::sends("fieldbook", &["push", "ls"]),
     ReaderCommand::receives("fieldbook", &["export"]),
+    ReaderCommand::sends("flashcards", &["push"]),
     ReaderCommand::sends("needles", &["push"]),
     ReaderCommand::sends("nonograms", &["push"]),
     ReaderCommand::sends("parser", &["push"]),
@@ -307,17 +463,29 @@ pub fn default_reader(variable: Option<&str>, saved: &[&str]) -> Option<DefaultR
     }
 }
 
-/// [`default_reader`] as this computer is set up: its environment and its
+/// [`default_reader`], or the error a command with no target gives when it
+/// finds none, which names the one step that fixes it.
+pub fn default_or_why(variable: Option<&str>, saved: &[&str]) -> Result<DefaultReader, String> {
+    default_reader(variable, saved).ok_or_else(|| missing_reader(saved))
+}
+
+/// [`default_or_why`] as this computer is set up: its environment and its
 /// saved readers. A store that cannot be read saves nothing to default to.
-#[must_use]
-pub fn configured_default() -> Option<DefaultReader> {
+pub fn configured() -> Result<DefaultReader, String> {
     let store = crate::readers::Store::load(&crate::readers::store_path()).unwrap_or_default();
     let names: Vec<&str> = store
         .readers
         .iter()
         .map(|reader| reader.nickname.as_str())
         .collect();
-    default_reader(std::env::var(READER_VARIABLE).ok().as_deref(), &names)
+    default_or_why(std::env::var(READER_VARIABLE).ok().as_deref(), &names)
+}
+
+/// [`configured`] without the reason, for a caller that has its own answer
+/// to there being no default.
+#[must_use]
+pub fn configured_default() -> Option<DefaultReader> {
+    configured().ok()
 }
 
 /// The entry this command line falls under, when it acts on a reader.
@@ -356,11 +524,15 @@ fn asks_for_help(entry: &ReaderCommand, after: &[String]) -> bool {
 /// names a target keeps it; `--reader NAME` becomes the address that reader
 /// answers at for a command that only reads `--device`.
 ///
+/// `default` is the reader to fill in, or the error to give in its place:
+/// with nothing saved, a command used to fall through to its own parser and
+/// print a usage line demanding `--device IP`, which sent the owner looking
+/// for an address instead of to the one command that saves the reader.
 /// `resolve` turns a saved name into an address; `said` reports what was
 /// chosen, so the owner always sees which reader a command went to.
 pub fn with_reader(
     arguments: &[String],
-    default: Option<DefaultReader>,
+    default: Result<DefaultReader, String>,
     mut resolve: impl FnMut(&str) -> Result<String, String>,
     mut said: impl FnMut(String),
 ) -> Result<Vec<String>, String> {
@@ -396,23 +568,22 @@ pub fn with_reader(
     {
         return Ok(arguments.to_vec());
     }
-    let target = match (default, entry.flags) {
-        (Some(DefaultReader::Address(address)), _) => {
+    let target = match (default?, entry.flags) {
+        (DefaultReader::Address(address), _) => {
             said(format!(
                 "Using the reader at {address} ({READER_VARIABLE})."
             ));
             ["--device".to_owned(), address]
         }
-        (Some(DefaultReader::Nickname(name)), Flags::Reader) => {
+        (DefaultReader::Nickname(name), Flags::Reader) => {
             said(format!("Using your saved reader \"{name}\"."));
             ["--reader".to_owned(), name]
         }
-        (Some(DefaultReader::Nickname(name)), Flags::Device | Flags::Leading) => {
+        (DefaultReader::Nickname(name), Flags::Device | Flags::Leading) => {
             let address = resolve(&name)?;
             said(format!("Using your saved reader \"{name}\" at {address}."));
             ["--device".to_owned(), address]
         }
-        (None, _) => return Ok(arguments.to_vec()),
     };
     Ok(placed(entry, head, after.to_vec(), target))
 }
@@ -501,9 +672,151 @@ mod tests {
 
     #[test]
     fn a_nickname_never_becomes_a_guess() {
-        let error = resolve_nickname("clara").expect_err("no store yet");
+        let mut empty = crate::readers::Store::default();
+        let error = crate::readers::resolve_saved(
+            &mut empty,
+            "clara",
+            |_| Some("N365410043013".to_owned()),
+            || vec![("192.0.2.4".to_owned(), "N365410043013".to_owned())],
+            || false,
+        )
+        .expect_err("nothing is saved, so nothing that answers is clara");
         assert_eq!(console::category_of(&error), console::EXIT_TARGET);
-        assert!(console::display(&error).contains("clara"), "{error}");
+        assert!(console::display(&error).contains("\"clara\""), "{error}");
+        assert!(console::display(&error).ends_with(SAVE_A_READER), "{error}");
+        assert!(NO_READER_SAVED.ends_with(SAVE_A_READER));
+    }
+
+    #[test]
+    fn a_command_with_no_target_and_nothing_saved_names_the_step_that_saves_one() {
+        for line in [
+            "frame ls",
+            "frame push photos",
+            "vault plan notes",
+            "logs -f",
+            "wait",
+        ] {
+            let error = with_reader(
+                &words(line),
+                default_or_why(None, &[]),
+                |_| Err("nothing to look up".to_owned()),
+                |_| {},
+            )
+            .expect_err(line);
+            assert_eq!(console::category_of(&error), console::EXIT_TARGET, "{line}");
+            assert_eq!(console::display(&error), NO_READER_SAVED, "{line}");
+        }
+    }
+
+    #[test]
+    fn two_saved_readers_and_no_target_ask_which_one_by_name() {
+        let error = with_reader(
+            &words("frame ls"),
+            default_or_why(None, &["clara", "libra"]),
+            |_| Err("nothing to look up".to_owned()),
+            |_| {},
+        )
+        .expect_err("two readers and no name");
+        assert_eq!(console::category_of(&error), console::EXIT_TARGET);
+        assert!(error.contains("clara, libra"), "{error}");
+        assert!(error.contains("--reader NAME"), "{error}");
+    }
+
+    #[test]
+    fn a_line_that_already_settles_its_target_needs_nothing_saved() {
+        for line in [
+            "frame ls --sim",
+            "frame push p --device 10.0.0.2",
+            "nonograms push i --out d",
+            "frame push --help",
+        ] {
+            let kept = with_reader(
+                &words(line),
+                default_or_why(None, &[]),
+                |_| Err("nothing to look up".to_owned()),
+                |_| {},
+            );
+            assert_eq!(kept.unwrap(), words(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn frame_plan_and_restore_go_to_the_saved_reader_like_push_does() {
+        let (plan, _) = filled("frame plan photos");
+        assert_eq!(
+            plan.unwrap(),
+            words("frame plan photos --device addr-of-clara")
+        );
+        let (restore, _) = filled("frame restore");
+        assert_eq!(
+            restore.unwrap(),
+            words("frame restore --device addr-of-clara")
+        );
+    }
+
+    #[test]
+    fn the_usage_line_shows_the_target_as_optional_and_says_where_it_goes_without_one() {
+        let choice = target_choice!();
+        assert!(choice.starts_with('[') && choice.ends_with(']'), "{choice}");
+        assert!(choice.contains("--reader NAME"), "{choice}");
+        assert!(choice.contains("--device IP"), "{choice}");
+        assert!(saved_reader_note!().contains("kobo setup"));
+        assert_eq!(TARGET_FLAGS, target_flags!());
+    }
+
+    #[test]
+    fn a_reader_that_does_not_answer_is_told_to_wake_not_sent_to_the_router() {
+        let waiting = waiting_for(Some("study"));
+        assert!(
+            waiting.starts_with("Wake \"study\" (press power) and check Wi-Fi in Cobalt Settings."),
+            "{waiting}"
+        );
+        assert!(waiting.contains("60 s"), "{waiting}");
+        let unnamed = waiting_for(None);
+        assert!(
+            unnamed.starts_with("Wake the reader (press power)"),
+            "{unnamed}"
+        );
+        let error = not_answering(Some("study"), true);
+        assert_eq!(console::category_of(&error), console::EXIT_TARGET);
+        assert!(error.contains("did not answer within 60 s"), "{error}");
+        assert!(error.contains("Wake it (press power)"), "{error}");
+        assert!(!error.contains("router"), "{error}");
+        let quick = not_answering(Some("study"), false);
+        assert!(quick.contains("\"study\" is not answering."), "{quick}");
+        assert!(
+            !quick.contains("60 s"),
+            "a script was not made to wait: {quick}"
+        );
+    }
+
+    #[test]
+    fn a_script_with_nobody_to_press_power_is_not_made_to_wait() {
+        let mut said = Vec::new();
+        let mut slept = 0;
+        let mut pause =
+            wake_pause_when(Some("kobo"), false, |line| said.push(line), |_| slept += 1);
+        assert!(!pause(), "no person, no wait");
+        assert!(!pause());
+        drop(pause);
+        assert!(said.is_empty(), "the error says what to do, once: {said:?}");
+        assert_eq!(slept, 0);
+    }
+
+    #[test]
+    fn a_person_at_the_terminal_is_told_to_wake_the_reader_once_and_waited_for() {
+        let mut said = Vec::new();
+        let mut slept = 0;
+        let mut pause = wake_pause_when(Some("kobo"), true, |line| said.push(line), |_| slept += 1);
+        assert!(pause());
+        assert!(pause());
+        drop(pause);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(
+            said[0].starts_with("Wake \"kobo\" (press power)"),
+            "{said:?}"
+        );
+        assert_eq!(slept, 2);
     }
 
     fn words(text: &str) -> Vec<String> {
@@ -515,7 +828,7 @@ mod tests {
         let mut said = Vec::new();
         let filled = with_reader(
             &words("frame push photos"),
-            default_reader(None, &["clara"]),
+            default_or_why(None, &["clara"]),
             |name| Ok(format!("addr-of-{name}")),
             |line| said.push(line),
         )
@@ -530,7 +843,7 @@ mod tests {
         assert_eq!(
             with_reader(
                 &words("vault push notes --reader study"),
-                None,
+                default_or_why(None, &[]),
                 resolve,
                 |_| {}
             )
@@ -545,7 +858,7 @@ mod tests {
             assert_eq!(
                 with_reader(
                     &words(kept),
-                    default_reader(None, &["clara"]),
+                    default_or_why(None, &["clara"]),
                     resolve,
                     |_| {}
                 )
@@ -561,7 +874,7 @@ mod tests {
         assert_eq!(
             with_reader(
                 &words("vault preview a.md"),
-                default_reader(None, &["clara"]),
+                default_or_why(None, &["clara"]),
                 resolve,
                 |_| {}
             )
@@ -585,7 +898,7 @@ mod tests {
         let mut looked_up = Vec::new();
         let filled = with_reader(
             &words(line),
-            default_reader(None, &["clara"]),
+            default_or_why(None, &["clara"]),
             |name| {
                 looked_up.push(name.to_owned());
                 Ok(format!("addr-of-{name}"))
@@ -701,7 +1014,7 @@ mod tests {
     fn a_reader_named_by_address_in_the_environment_is_used_as_given() {
         let filled = with_reader(
             &words("send photo.jpg"),
-            default_reader(Some("192.168.1.9"), &["clara"]),
+            default_or_why(Some("192.168.1.9"), &["clara"]),
             |_| Err("nothing is looked up".to_owned()),
             |_| {},
         )

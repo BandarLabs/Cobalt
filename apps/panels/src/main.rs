@@ -6,6 +6,7 @@ mod downloads;
 mod komga;
 mod library;
 mod previews;
+mod sent;
 mod server;
 mod sideload;
 use library::{Kept, Library};
@@ -43,6 +44,8 @@ enum Route {
     SavingLibrary,
     Import,
     ImportHelp,
+    /// The comics sent from the computer, waiting to be added.
+    Sent,
     Server,
 }
 
@@ -66,6 +69,10 @@ struct Pending {
     url: String,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the shelf, the reader and sent comics, not one state"
+)]
 struct Panels {
     route: Route,
     view: Option<ComicView>,
@@ -105,6 +112,19 @@ struct Panels {
     progress_active: Option<(String, u64)>,
     progress_snapshot: Option<Vec<u8>>,
     previews: previews::Previews,
+    sent: Vec<kobo_comic::inbox::Sent>,
+    sent_load: Option<ShelfDownload>,
+    sent_page: usize,
+    /// The sent comic being previewed or added, so it keeps its title and its
+    /// file can go once the shelf has a copy.
+    sent_from: Option<kobo_comic::inbox::Sent>,
+    sent_cleanup: std::collections::BTreeSet<String>,
+    /// Whether comics sent from the computer are being added one after
+    /// another, without a tap for each.
+    adding: bool,
+    /// Sent comics that could not be added this session, so a damaged one is
+    /// not tried again on every return to the shelf.
+    add_failed: std::collections::BTreeSet<String>,
 }
 
 impl Default for Panels {
@@ -148,6 +168,13 @@ impl Default for Panels {
             progress_active: None,
             progress_snapshot: None,
             previews: previews::Previews::default(),
+            sent: Vec::new(),
+            sent_load: None,
+            sent_page: 0,
+            sent_from: None,
+            sent_cleanup: std::collections::BTreeSet::new(),
+            adding: false,
+            add_failed: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -189,6 +216,7 @@ impl Panels {
             if self.route == Route::SavingLibrary {
                 self.route = Route::Reader;
             }
+            self.added_one(context);
         }
     }
     fn show(&mut self, context: &mut Context) {
@@ -214,6 +242,7 @@ impl Panels {
             Route::Library => self.library_screen(context),
             Route::Server => self.server.screen(),
             Route::ImportHelp => self.import_help_screen(),
+            Route::Sent => self.sent_screen(context),
             Route::Catalog => self.catalog_screen(context),
             Route::Search => self.search_screen(),
             Route::Detail => self.detail_screen(context),
@@ -248,14 +277,15 @@ impl Panels {
         screen
     }
 
-    fn shelf_notice(&self) -> Option<&str> {
+    fn shelf_notice(&self) -> Option<String> {
         self.library
             .as_ref()
             .and_then(|library| match library.status() {
-                DraftStatus::Failed(error) => Some(error),
+                DraftStatus::Failed(error) => Some(error.to_owned()),
                 _ => None,
             })
-            .or(self.notice.as_deref())
+            .or_else(|| self.notice.clone())
+            .or_else(|| self.waiting_notice())
     }
     fn library_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let summaries = self
@@ -277,7 +307,7 @@ impl Panels {
             &rows,
             true,
             kobo_sdk::Position::AtTheFoot,
-            self.shelf_notice(),
+            self.shelf_notice().as_deref(),
         )
     }
     fn library_screen(&self, context: &Context) -> Screen {
@@ -290,20 +320,24 @@ impl Panels {
                 .build();
         }
         let mut screen = ScreenBuilder::new("panels-library").top_bar("Panels");
-        if let Some(notice) = self.shelf_notice() {
+        if let Some(notice) = self.shelf_notice().as_deref() {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
         if !self.loaded {
             return screen.activity("Opening your shelf", None).build();
         }
         if self.library_entries().is_empty() {
-            screen = screen
-                .splash(
-                    Some(Glyph::Reader),
-                    "Your shelf is empty",
-                    "Browse your home library or add a comic from your computer.",
-                )
-                .button("sample-comic", "Try a sample comic");
+            screen = screen.splash(
+                Some(Glyph::Reader),
+                "Your shelf is empty",
+                "Browse your home library or add a comic from your computer.",
+            );
+            // With comics already waiting, Add comic is the next step, and the
+            // sample stays one tap away on that list rather than crowding
+            // the banner that says so.
+            if self.waiting() == 0 {
+                screen = screen.button("sample-comic", "Try a sample comic");
+            }
         } else {
             let pages = self.library_pages(context);
             let page = self.library_page.min(pages.len().saturating_sub(1));
@@ -735,6 +769,17 @@ impl KoboApp for Panels {
         self.recovery.metadata_loading = true;
         context.store().load(PARTIAL_META);
         context.store().load(server::KEY);
+        self.look_for_sent(context);
+        self.show(context);
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.look_for_sent(context);
+        self.show(context);
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.look_for_sent(context);
         self.show(context);
     }
 
@@ -822,6 +867,7 @@ impl KoboApp for Panels {
                     }
                 }
                 self.loaded = true;
+                self.add_waiting(context);
             } else if key == PARTIAL_META {
                 if self.recovery.discard_requested {
                     self.recovery.metadata_loading = false;
@@ -858,6 +904,18 @@ impl KoboApp for Panels {
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
         if self.removed_blob(name, &result) {
+            self.show(context);
+            return;
+        }
+        if self.removed_sent(name) {
+            return;
+        }
+        if self
+            .sent_load
+            .as_ref()
+            .is_some_and(|load| load.name() == name)
+        {
+            self.advance_sent(context, &result);
             self.show(context);
             return;
         }
@@ -931,6 +989,7 @@ impl KoboApp for Panels {
                     self.previews.publish(context, key);
                     if let Some(entry) = self.import_entry.clone() {
                         if self.remember(context, entry) {
+                            self.tidy_sent(context);
                             self.finish_library(context);
                         } else {
                             self.import = None;
@@ -1006,9 +1065,29 @@ impl KoboApp for Panels {
                     self.import_help_page -= 1;
                 }
             } else if action == action_id("load-sideload") {
-                self.load_sideload(context);
+                self.load_volume(context);
             } else if action == action_id("sample-comic") {
                 self.load_sample();
+            }
+            self.show(context);
+            return;
+        }
+        if self.route == Route::Sent {
+            if action == ActionId::BACK {
+                self.route = Route::Library;
+            } else if action == action_id("usb-help") {
+                self.import_help_page = 0;
+                self.route = Route::ImportHelp;
+            } else if action == action_id("sample-comic") {
+                self.load_sample();
+            } else if action == action_id("sent-next") {
+                self.sent_page += 1;
+            } else if action == action_id("sent-previous") {
+                self.sent_page = self.sent_page.saturating_sub(1);
+            } else if let Some(index) =
+                (0..self.sent.len()).find(|index| action == action_id(&format!("sent-{index}")))
+            {
+                self.choose_sent(context, index);
             }
             self.show(context);
             return;
@@ -1127,7 +1206,11 @@ impl KoboApp for Panels {
                         self.route = Route::Library;
                     }
                 }
-                Route::Library | Route::Import | Route::Server | Route::ImportHelp => {}
+                Route::Library
+                | Route::Import
+                | Route::Server
+                | Route::ImportHelp
+                | Route::Sent => {}
             }
         } else if action == action_id("retry-library") {
             if let Some(library) = &mut self.library {

@@ -4,8 +4,8 @@
   "short_label": "Grimoire",
   "summary": "Browse offline SRD references and manage tabletop combat.",
   "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
-  "version": "0.1.5",
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "version": "0.1.6",
+  "release_notes": "Hit points move by 1, 5 or 10, monsters added from the reference bring their hit points, spell levels hold several slots with a Long rest button, and editing a party member now keeps your changes.",
   "glyph": "book",
   "capabilities": []
 }

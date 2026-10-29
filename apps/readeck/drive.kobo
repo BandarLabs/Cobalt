@@ -1,0 +1,12 @@
+# First run: the computer route is named and Check again answers when no
+# server has arrived, instead of leaving the owner to type the address twice.
+wait-for Connect Readeck
+expect kobo connect readeck
+tap Check again
+wait-for No server has arrived
+clean
+shot readeck-check-again
+tap Continue
+expect https://readeck.example
+clean
+shot readeck-server

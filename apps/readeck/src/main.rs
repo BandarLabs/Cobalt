@@ -3,6 +3,7 @@ use kobo_bookview::{BookView, Step};
 use kobo_json::Value;
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::credentials::{CredentialEvent, CredentialSetup};
+use kobo_sdk::failure::{Problem, Service};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, Glyph,
@@ -14,6 +15,11 @@ use std::process::ExitCode;
 
 const SERVER: &str = "server";
 const SCALE: &str = "reading.scale";
+/// The fix for every account problem, said where the owner will read it.
+const ACCOUNT_FIX: &str = "Run kobo connect readeck on your computer.";
+/// The largest article kept for reading offline. A store value holds at most
+/// 256 KiB; an article past this is read online only rather than cut short.
+const KEEP_LIMIT: usize = 240 * 1024;
 const LIST_PATH: &str = "/api/bookmarks?limit=50&offset=0&is_archived=false&read_status=unread&read_status=reading&type=article&type=photo&sort=-created";
 const LIMIT: usize = 50;
 
@@ -90,6 +96,11 @@ struct Readeck {
     scale: TextScale,
     more_open: bool,
     problem: Option<String>,
+    /// Why the last refresh failed, shown over whatever inbox is on screen.
+    failure: Option<Problem>,
+    /// A reload of the server address asked for on coming back to the
+    /// front, which must not pull the owner out of an article.
+    reloading: bool,
 }
 impl Default for Readeck {
     fn default() -> Self {
@@ -97,7 +108,8 @@ impl Default for Readeck {
             server: None,
             pending_server: None,
             saving_server: false,
-            account: CredentialSetup::new("readeck", "Readeck API token"),
+            account: CredentialSetup::new("readeck", "Readeck API token")
+                .with_computer_command("kobo connect readeck"),
             keyboard: Keyboard::new(),
             view: View::Loading,
             bookmarks: Vec::new(),
@@ -112,10 +124,33 @@ impl Default for Readeck {
             scale: TextScale::Medium,
             more_open: false,
             problem: None,
+            failure: None,
+            reloading: false,
         }
     }
 }
 impl Readeck {
+    fn service(&self) -> Service<'_> {
+        let service = Service::new("Readeck").fixed_by(ACCOUNT_FIX);
+        match &self.server {
+            Some(server) => service.at(server),
+            None => service,
+        }
+    }
+    /// Asks for the server address again, as `kobo connect readeck` may
+    /// have changed it while the app was away.
+    fn reload_server(&mut self, context: &mut Context) {
+        self.reloading = true;
+        context.store().load(SERVER);
+    }
+    fn sign_in_again(&mut self) {
+        if let Some(server) = self.server.clone() {
+            if self.account.bind_server(&server).is_ok() {
+                self.pending_server = Some(server);
+                self.account.open();
+            }
+        }
+    }
     fn show(&self, context: &mut Context) {
         context.set_screen(self.screen(context));
     }
@@ -136,6 +171,15 @@ impl Readeck {
             .zip(&minutes)
             .map(|(b, minutes)| (b.title.as_str(), b.summary.as_str(), minutes.as_str()))
             .collect();
+        if let Some(failure) = &self.failure {
+            // Under a banner the rows give up their minutes, so they can be
+            // measured with the banner's height taken off the page.
+            let rows: Vec<_> = rows
+                .iter()
+                .map(|(title, summary, _)| (*title, *summary))
+                .collect();
+            return context.paginate_rows_below_notice(&rows, true, Some(&failure.message));
+        }
         context.paginate_rows_with_trailing(&rows, true)
     }
     fn screen(&self, context: &Context) -> Screen {
@@ -169,7 +213,8 @@ impl Readeck {
             View::Loading => ScreenBuilder::new("readeck-loading").top_bar("Readeck")
                 .activity("Opening settings", None).build(),
             View::Server => ScreenBuilder::new("readeck-server").top_bar("Connect Readeck")
-                .secondary("Enter your HTTPS server. Use a token saved from your computer, or tap Next to enter one here.")
+                .top_bar_action("check-again", "Check again")
+                .secondary("Run kobo connect readeck on your computer, then tap Check again. Or type your HTTPS server here and tap Next.")
                 .button("saved-token", "Use saved token")
                 .typed(&self.keyboard, "https://readeck.example")
                 .keyboard(&self.keyboard, "Next").owns_back(true).build(),
@@ -224,7 +269,20 @@ impl Readeck {
                     .as_ref()
                     .map_or_else(|| "Readeck".into(), |s| format!("Search: {}", s.query)),
             )
-            .top_bar_action("search", "Search")
+            .top_bar_action(
+                // Search spends the same refused account, so the bar offers
+                // the fix in its place.
+                if self.failure.as_ref().is_some_and(Problem::needs_account) {
+                    "sign-in-again"
+                } else {
+                    "search"
+                },
+                if self.failure.as_ref().is_some_and(Problem::needs_account) {
+                    "Sign in again"
+                } else {
+                    "Search"
+                },
+            )
             .top_bar_overflow(
                 "more",
                 self.more_open,
@@ -244,6 +302,16 @@ impl Readeck {
                 .build();
         }
         if self.bookmarks.is_empty() {
+            if let Some(failure) = &self.failure {
+                // A failed refresh with nothing kept is the failure, not an
+                // empty inbox. Saying "empty" sent owners looking for
+                // articles that were there all along.
+                screen = screen.problem_state(failure, "refresh");
+                if failure.needs_account() {
+                    screen = screen.button("sign-in-again", "Sign in again");
+                }
+                return screen.owns_back(self.search.is_some()).build();
+            }
             screen = screen.empty_state(if self.search.is_some() {
                 "No readable matches in this batch. Turn back or forward to try another batch."
             } else {
@@ -252,21 +320,43 @@ impl Readeck {
         } else {
             let pages = self.pages(context);
             let page = self.page.min(pages.len().saturating_sub(1));
-            screen =
-                screen.rows_with_trailing(pages.get(page).into_iter().flatten().map(|index| {
-                    let b = &self.bookmarks[*index];
-                    (
-                        format!("article-{index}"),
-                        b.title.clone(),
-                        b.summary.clone(),
-                        RowLead::Icon(if b.marked {
-                            Glyph::Bookmark
-                        } else {
-                            Glyph::News
-                        }),
-                        minute_label(b.minutes),
-                    )
-                }));
+            let lead = |b: &Bookmark| {
+                RowLead::Icon(if b.marked {
+                    Glyph::Bookmark
+                } else {
+                    Glyph::News
+                })
+            };
+            if let Some(failure) = &self.failure {
+                screen =
+                    screen
+                        .problem_banner(failure)
+                        .rows(pages.get(page).into_iter().flatten().map(|index| {
+                            let b = &self.bookmarks[*index];
+                            (
+                                format!("article-{index}"),
+                                b.title.clone(),
+                                b.summary.clone(),
+                                lead(b),
+                            )
+                        }));
+            } else {
+                screen =
+                    screen.rows_with_trailing(pages.get(page).into_iter().flatten().map(|index| {
+                        let b = &self.bookmarks[*index];
+                        (
+                            format!("article-{index}"),
+                            b.title.clone(),
+                            b.summary.clone(),
+                            RowLead::Icon(if b.marked {
+                                Glyph::Bookmark
+                            } else {
+                                Glyph::News
+                            }),
+                            minute_label(b.minutes),
+                        )
+                    }));
+            }
             if self.search.is_none() {
                 screen = screen.page_position(
                     page_number(page),
@@ -515,6 +605,8 @@ impl Readeck {
             self.view = View::Search;
         } else if action == action_id("settings") {
             self.edit_server(context);
+        } else if action == action_id("sign-in-again") {
+            self.sign_in_again();
         } else if self.list.is_some() || self.article.is_some() { /* Ignore repeated taps. */
         } else if action == action_id("more") {
             self.more_open = true;
@@ -579,6 +671,8 @@ impl KoboApp for Readeck {
                         );
                     }
                 }
+            } else if self.view == View::Server && action == action_id("check-again") {
+                self.reload_server(context);
             } else if self.view == View::Server && action == action_id("saved-token") {
                 self.prepare_server(false);
                 if self.problem.is_none() {
@@ -604,24 +698,56 @@ impl KoboApp for Readeck {
         request: DeviceRequest,
         result: DeviceResult,
     ) {
-        if self.account.on_device_result(&request, &result) == Some(CredentialEvent::Saved) {
-            self.save_server(context);
+        match self.account.on_device_result(&request, &result) {
+            Some(CredentialEvent::Saved) => self.save_server(context),
+            // The runtime cannot say whether a server-bound account is there;
+            // a refresh with it can, and its failure says what is missing.
+            Some(CredentialEvent::TryAccount) => {
+                if self.pending_server.is_some() {
+                    self.save_server(context);
+                } else {
+                    self.fetch_list(context, 0, false);
+                }
+            }
+            _ => {}
         }
         self.show(context);
     }
     fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key.starts_with(kobo_sdk::CACHE_PREFIX) && !matches!(result, StoreResult::Loaded { .. })
+        {
+            // A kept copy that cannot be read is only a missed shortcut.
+            self.on_load(
+                context,
+                key,
+                StoreResult::Loaded {
+                    key: key.to_owned(),
+                    value: None,
+                },
+            );
+            return;
+        }
         let StoreResult::Loaded { value, .. } = result else {
             self.problem = Some("Saved settings or reading position could not be read. Reopen Readeck to retry; nothing was overwritten.".into());
             self.show(context);
             return;
         };
         if key == SERVER {
-            self.server = value
+            let loaded = value
                 .as_deref()
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .filter(|s| valid_server(s))
                 .map(str::to_owned);
+            if std::mem::take(&mut self.reloading) {
+                self.reloaded(context, loaded);
+                self.show(context);
+                return;
+            }
+            self.server = loaded;
             if self.server.is_some() {
+                if let Some(server) = &self.server {
+                    context.store().load_cached(inbox_key(server));
+                }
                 self.view = View::Inbox;
                 self.fetch_list(context, 0, false);
             } else {
@@ -639,21 +765,50 @@ impl KoboApp for Readeck {
                 .and_then(|b| b.first())
                 .and_then(|b| TextScale::from_wire(*b))
                 .unwrap_or(TextScale::Medium);
-        } else if let Some((server, article)) = self.server.as_ref().zip(self.article.as_mut()) {
-            if key == place_key(server, &article.id) && article.task.is_none() {
+        } else if self
+            .server
+            .as_ref()
+            .is_some_and(|server| key == kobo_sdk::cache_key(inbox_key(server)))
+        {
+            // The last inbox seen, so a reader away from Wi-Fi opens on its
+            // articles rather than on an error with nothing under it.
+            if self.bookmarks.is_empty() && self.search.is_none() {
+                if let Some((bookmarks, _)) = value.as_deref().and_then(parse_bookmarks) {
+                    self.bookmarks = bookmarks;
+                }
+            }
+        } else if let Some((server, article)) = self.server.clone().zip(self.article.as_ref()) {
+            let id = article.id.clone();
+            if article.task.is_some() {
+            } else if key == place_key(&server, &id) {
                 let mut memory = value
                     .as_deref()
-                    .and_then(|b| decode_place(server, b))
+                    .and_then(|b| decode_place(&server, b))
                     .unwrap_or_default();
                 memory.scale = self.scale;
                 self.memory = Some(memory);
-                article.task = context.spawn_retrying(fetch(
-                    format!("{server}/api/bookmarks/{}/article", article.id),
-                    4 * 1024 * 1024,
-                ));
-                if article.task.is_none() {
+                // The kept copy first: an article opened once reads the same
+                // with the radio off, and saves a 4 MB fetch with it on.
+                context.store().load_cached(kept_key(&server, &id));
+            } else if key == kobo_sdk::cache_key(kept_key(&server, &id)) {
+                if let Some(html) = value
+                    .as_deref()
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                {
                     self.article = None;
-                    self.problem = Some("The device is busy. Open the article again.".into());
+                    let html = html.to_owned();
+                    self.open_kept(context, &id, &html);
+                } else {
+                    let task = context.spawn_retrying(fetch(
+                        format!("{server}/api/bookmarks/{id}/article"),
+                        4 * 1024 * 1024,
+                    ));
+                    if task.is_none() {
+                        self.article = None;
+                        self.problem = Some("The device is busy. Open the article again.".into());
+                    } else if let Some(article) = self.article.as_mut() {
+                        article.task = task;
+                    }
                 }
             }
         }
@@ -674,7 +829,9 @@ impl KoboApp for Readeck {
                 self.problem =
                     Some("The server address could not be saved. Continue to retry.".into());
             }
-        } else if !matches!(result, StoreResult::Saved { .. }) {
+        } else if !matches!(result, StoreResult::Saved { .. })
+            && !key.starts_with(kobo_sdk::CACHE_PREFIX)
+        {
             self.problem = Some("Reading position or text size could not be saved. Turn a page to retry before closing.".into());
         }
         self.show(context);
@@ -685,6 +842,14 @@ impl KoboApp for Readeck {
             match outcome {
                 TaskOutcome::Completed(bytes) => {
                     if let Some((bookmarks, count)) = parse_bookmarks(&bytes) {
+                        self.failure = None;
+                        if let Some(server) =
+                            self.server.as_deref().filter(|_| self.search.is_none())
+                        {
+                            if bytes.len() <= KEEP_LIMIT {
+                                context.store().cache(inbox_key(server), bytes);
+                            }
+                        }
                         self.bookmarks = bookmarks;
                         if let Some(search) = &mut self.search {
                             search.offset = request.offset;
@@ -701,7 +866,7 @@ impl KoboApp for Readeck {
                     }
                 }
                 TaskOutcome::Failed(error) => {
-                    self.problem = Some(kobo_sdk::Failure::of(error).advice.into());
+                    self.failure = Some(self.service().explain(error));
                 }
                 TaskOutcome::Cancelled => {
                     self.problem = Some("Loading was interrupted. Refresh to retry.".into());
@@ -721,12 +886,20 @@ impl KoboApp for Readeck {
                         .is_ok_and(|html| self.book.open_html(context, html, &origin, memory))
                     {
                         self.view = View::Reading;
+                        if let Some(server) = self.server.as_deref() {
+                            if bytes.len() <= KEEP_LIMIT {
+                                context.store().cache(kept_key(server, &article.id), bytes);
+                            }
+                        }
                     } else {
                         self.problem = Some("This article could not be opened.".into());
                     }
                 }
                 TaskOutcome::Failed(error) => {
-                    self.problem = Some(kobo_sdk::Failure::of(error).advice.into());
+                    self.problem = Some(format!(
+                        "This article is not kept on the reader yet. {}",
+                        self.service().explain(error).message
+                    ));
                 }
                 TaskOutcome::Cancelled => {
                     self.problem = Some("Opening was interrupted. Try again.".into());
@@ -737,7 +910,7 @@ impl KoboApp for Readeck {
             match outcome {
                 TaskOutcome::Completed(_) => self.applied(context, &id, mutation),
                 TaskOutcome::Failed(error) => {
-                    self.problem = Some(kobo_sdk::Failure::of(error).advice.into());
+                    self.problem = Some(self.service().explain(error).message);
                 }
                 TaskOutcome::Cancelled => {
                     self.problem =
@@ -752,6 +925,79 @@ impl KoboApp for Readeck {
     fn on_exit(&mut self, context: &mut Context) {
         self.remember(context);
     }
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+    fn on_resume(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+}
+impl Readeck {
+    /// Coming back to the front is when a fix made on the computer arrives:
+    /// a server written by `kobo connect readeck`, or a token replaced.
+    fn returned(&mut self, context: &mut Context) {
+        self.account.recheck(context);
+        if !self.saving_server && self.pending_server.is_none() {
+            self.reload_server(context);
+        }
+    }
+    /// The server address as it is now, against the one in use.
+    fn reloaded(&mut self, context: &mut Context, loaded: Option<String>) {
+        match loaded {
+            Some(server) if self.server.as_ref() != Some(&server) => {
+                self.cancel_requests(context);
+                self.account.close();
+                self.server = Some(server);
+                self.bookmarks.clear();
+                self.search = None;
+                self.page = 0;
+                self.open = None;
+                self.failure = None;
+                self.view = View::Inbox;
+                if let Some(server) = &self.server {
+                    context.store().load_cached(inbox_key(server));
+                }
+                self.fetch_list(context, 0, false);
+            }
+            Some(_)
+                if self.view == View::Inbox && self.failure.is_some() && self.list.is_none() =>
+            {
+                self.fetch_list(context, 0, false);
+            }
+            None if self.view == View::Server => {
+                self.problem = Some(
+                    "No server has arrived from the computer yet. Run kobo connect readeck, then check again."
+                        .into(),
+                );
+            }
+            Some(_) | None => {}
+        }
+    }
+    fn open_kept(&mut self, context: &mut Context, id: &str, html: &str) {
+        let memory = self.memory.take().unwrap_or_default();
+        let origin = format!(
+            "{}/api/bookmarks/{id}/article",
+            self.server.as_deref().unwrap_or_default()
+        );
+        if self.book.open_html(context, html, &origin, memory) {
+            self.view = View::Reading;
+        } else {
+            self.problem = Some("This article could not be opened.".into());
+        }
+    }
+}
+/// Where the last inbox list from `server` is kept, so the app opens on it
+/// without a network.
+fn inbox_key(server: &str) -> String {
+    let place = place_key(server, "");
+    format!("inbox{}", place[1..].trim_end_matches('.'))
+}
+/// Where an opened article is kept for reading offline. The runtime drops
+/// the oldest kept copies on its own when the cache is full, so the reader
+/// keeps the most recent articles without the app counting them.
+fn kept_key(server: &str, id: &str) -> String {
+    let place = place_key(server, id);
+    format!("a{}", &place[1..])
 }
 fn fetch(url: String, max_bytes: u32) -> Task {
     Task::Fetch {

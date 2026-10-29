@@ -15,7 +15,7 @@ import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from simulator_cli import build_cli, verify_cli
+from simulator_cli import build_cli, fingerprint, verify_cli
 
 ROOT = Path(__file__).resolve().parents[2]
 GAME = "abcdEF12"
@@ -23,8 +23,9 @@ TOKEN = "fixture-only-not-a-live-token"
 
 
 class Match:
-    def __init__(self, drop_start_event=False):
+    def __init__(self, drop_start_event=False, rated=True):
         self.drop_start_event = drop_start_event
+        self.rated = rated
         self.start_events_sent = 0
         self.matched_at = None
         self.board_available = threading.Event()
@@ -41,7 +42,7 @@ class Match:
         self.stopping = threading.Event()
 
     def summary(self):
-        return dict(id=GAME, gameId=GAME, color="white", rated=True, speed="rapid",
+        return dict(id=GAME, gameId=GAME, color="white", rated=self.rated, speed="rapid",
                     source="lobby", variant=dict(key="standard"), secondsLeft=600,
                     isMyTurn=True, lastMove="e7e5" if self.moves else "",
                     opponent=dict(username="Other"))
@@ -51,7 +52,7 @@ class Match:
                     winc=0, binc=0, status=self.status, bdraw=self.draw_offer)
 
     def full(self):
-        return dict(type="gameFull", id=GAME, rated=True, speed="rapid",
+        return dict(type="gameFull", id=GAME, rated=self.rated, speed="rapid",
                     variant=dict(key="standard"), initialFen="startpos",
                     white=dict(id="owner123", name="Owner", rating=1500),
                     black=dict(id="other123", name="Other", rating=1510), state=self.state())
@@ -168,7 +169,8 @@ def handler(match):
                 raise ValueError("Oversized fixture request")
             body = self.rfile.read(length)
             if self.path == "/api/board/seek":
-                assert body == b"rated=true&time=10&increment=0&variant=standard&color=random", body
+                pool = b"true" if match.rated else b"false"
+                assert body == b"rated=" + pool + b"&time=10&increment=0&variant=standard&color=random", body
                 with match.lock:
                     match.active = True
                     match.matched_at = time.monotonic()
@@ -226,6 +228,24 @@ def assert_clock(layout, name, active, text=None):
         assert chips[0]["lines"] == [text], chips[0]
 
 
+SQUARES = {action_id(f"square-{file}{rank}"): f"{file}{rank}"
+           for file in "abcdefgh" for rank in range(1, 9)}
+
+
+def outlined(layout):
+    """Squares drawn with the selection outline, which also marks the last move."""
+    marked = set()
+    for node in layout["nodes"]:
+        found = re.match(r"Cell\(ActionId\((\d+)\), Board(?:Dark)?, true\)", node["kind"])
+        if found:
+            marked.add(SQUARES[int(found.group(1))])
+    return marked
+
+
+def has_overlay(layout):
+    return any(node["kind"] == "Overlay" for node in layout["nodes"])
+
+
 def pieces(layout):
     # Modal overlays disable actions, but the cell's stable ID stays in its
     # layout kind. Pair glyphs with their containing cells instead of relying
@@ -259,12 +279,27 @@ def main():
                         help="Match the seek but omit its event-stream notification")
     parser.add_argument("--disconnect-board", action="store_true",
                         help="Drop the live board stream and verify reconnect presentation")
+    parser.add_argument("--casual", action="store_true",
+                        help="Choose Casual in Account/Games and pair from the casual pool")
+    parser.add_argument("--cli", type=Path,
+                        help="use this kobo binary instead of building one; for a shared target "
+                             "directory that other builds may rewrite during the run")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))).resolve()
-    cli, provenance = build_cli(ROOT, target)
-    match = Match(drop_start_event=args.drop_start_event)
+    if args.cli is None:
+        cli, provenance = build_cli(ROOT, target)
+    else:
+        cli = args.cli.resolve()
+        provenance = dict(
+            source_revision=subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            prebuilt=str(cli),
+            cli_sha256=fingerprint(cli),
+        )
+    match = Match(drop_start_event=args.drop_start_event, rated=not args.casual)
+    pool = "Casual" if args.casual else "Rated"
     simulator = None
     with tempfile.TemporaryDirectory(prefix="cobalt-lichess-session-", dir="/tmp") as temporary:
         private = Path(temporary)
@@ -340,11 +375,24 @@ def main():
 
             try:
                 start()
-                drive("wait-for-id play", "tap-id play", "wait-for Owner", "tap Back", "wait-for-id seek-10-0",
-                      "tap-id seek-10-0")
+                # Time tiles stay tappable while the app connects and answer
+                # with a notice, so the driver waits for the Ready status
+                # rather than for the tile to become reachable.
+                choose = ["tap-id seek-casual"] if args.casual else []
+                drive("wait-for-id play", "tap-id play", "wait-for Owner", *choose, "tap Back",
+                      f"wait-for Rapid · {pool}", "wait-for Ready", "tap-id seek-10-0")
                 if args.drop_start_event:
                     capture("00-waiting-for-match")
-                wait_until(lambda: len(pieces(layout())) == 32, "Matched game did not open", 35)
+                refusal = "cannot seek casual games"
+                wait_until(lambda: len(pieces(layout())) == 32
+                           or refusal in json.dumps(layout(), ensure_ascii=False),
+                           "Matched game did not open", 35)
+                if refusal in json.dumps(layout(), ensure_ascii=False):
+                    capture("00-casual-refused")
+                    raise AssertionError(
+                        "The runtime refused the casual seek body before it left the simulator. "
+                        "kobo-policy lists only rated seek bodies for the lichess secret; the app "
+                        "showed its refusal copy (00-casual-refused.png).")
                 drive("wait-for Other", "wait-for-id square-e2")
                 matched_board_seconds = time.monotonic() - match.matched_at
                 if args.drop_start_event:
@@ -363,8 +411,11 @@ def main():
                 assert len(initial) == 32
                 drive("tap-id square-e2", "expect e2 →", "tap-id square-e4")
                 wait_until(lambda: count(f"/api/board/game/{GAME}/move/e2e4") == 1, "Move was not posted")
-                drive("wait-for Move sent")
-                assert pieces(capture("02-awaiting-ack")) == initial, "POST reply changed the board before stream acknowledgement"
+                drive("wait-for Move sent", f"expect White · Move sent · {pool} · e2e4")
+                awaiting = capture("02-awaiting-ack")
+                assert pieces(awaiting) == initial, "POST reply changed the board before stream acknowledgement"
+                assert not has_overlay(awaiting), "a sent move raised a dialog over the board"
+                assert outlined(awaiting) == {"e2", "e4"}, outlined(awaiting)
                 match.publish(moves="e2e4")
                 expected = initial.copy()
                 expected[action_id("square-e4")] = expected.pop(action_id("square-e2"))
@@ -376,6 +427,8 @@ def main():
                 expected[action_id("square-e5")] = expected.pop(action_id("square-e7"))
                 wait_until(lambda: pieces(layout()) == expected, "Acknowledged board position was not rendered")
                 acknowledged = capture("03-acknowledged")
+                assert outlined(acknowledged) == {"e7", "e5"}, outlined(acknowledged)
+                assert not has_overlay(acknowledged)
                 assert_clock(acknowledged, "your-clock", True)
                 assert_clock(acknowledged, "opponent-clock", False)
                 if args.disconnect_board:
@@ -423,11 +476,12 @@ def main():
                 assert not match.errors, match.errors
                 verify_cli(cli, provenance)
                 (out / "result.json").write_text(json.dumps(dict(status="pass", build=provenance,
-                    scale=args.scale, profile="clara-bw-391", requests=match.requests,
+                    scale=args.scale, profile="clara-bw-391", requests=match.requests, pool=pool,
                     dropped_start_event=args.drop_start_event, disconnected_board=args.disconnect_board,
                     start_events_sent=match.start_events_sent,
                     matched_board_seconds=round(matched_board_seconds, 3),
                     checks=[("recover matched seek without a start event" if args.drop_start_event else "pair through event stream"), "single move submission", "POST success does not move the board", "board stream acknowledgement",
+                            f"{pool.lower()} seek body and pairing", "no dialog while a move is sent", "sent and confirmed moves outlined",
                             "saved session survives process restart", "fresh board stream opened", "restored rendered piece positions", "draw completion clears store", "account polling resumes after completion", "active clock follows side to move"] +
                            (["disconnect retains board and hides unconfirmed clocks", "no moves while disconnected",
                              "reconnect restores clocks and position"] if args.disconnect_board else []),

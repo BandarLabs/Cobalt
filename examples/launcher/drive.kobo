@@ -1,0 +1,20 @@
+# Settings and Books are tabs on the bar, not also tiles, so the first page
+# of the grid reaches Daily Brief. The pages turn both ways.
+wait-for Cobalt
+expect App Store
+expect Terminal
+expect Daily Brief
+wait-for 1 of
+shot launcher-home
+tap-id next
+wait-for 2 of
+tap-id previous
+wait-for 1 of
+# A Store app's starting screen says what it reaches for in words.
+tap Daily Brief
+wait-for Starting
+expect Connects to online services
+expect-missing Uses network
+shot launcher-starting-brief
+tap Back
+wait-for Cobalt

@@ -18,9 +18,16 @@ the reader stays silent, the hook declines to decide, the question falls
 through to the terminal prompt it always was, and nothing is worse than
 before.
 
+Owners never need to call it by name: it ships beside `kobo` in every host
+release, and `kobo sidekick init | setup | run | status | stop | test` drive
+it. `kobo sidekick init` also installs the trust roots and writes the
+pairing for Sidekick, Deck and Paperterm onto the saved reader over SSH, so
+nothing is typed on the reader.
+
 ## Commands
 
 ```sh
+kobo-sidekickd --version
 kobo-sidekickd init    # certificate with the LAN address in it, pairing code
 kobo-sidekickd run     # both listeners, until killed
 kobo-sidekickd setup          # choose one integration by number
@@ -35,9 +42,8 @@ once, a leaf certificate minted from it for the machine's current addresses
 (add more with `--host`), their keys, and a six-character pairing code. The
 authority also lands in `~/.config/kobo/trust`, where the host runtimes
 already look, so the simulator trusts the daemon with no further ceremony,
-and where `kobo setup` looks, so a reader picks it up with the install. A
-reader set up before the authority existed gets it with
-`kobo trust set sidekick --device IP`.
+and where `kobo setup` looks, so a reader picks it up with the install.
+`kobo sidekick init` installs it on a reader set up earlier.
 
 ### Choosing an integration
 
@@ -64,7 +70,11 @@ Deliberately different, because their trust is different:
 
 - `127.0.0.1:9330`, plaintext, for hooks on the same machine. `POST /ask`
   blocks until the question is decided or five minutes pass, because the
-  hook protocol is "write your decision to stdout before you exit".
+  hook protocol is "write your decision to stdout before you exit". When no
+  paired reader has been in touch for a minute, it answers "no decision" at
+  once instead, so an agent asks at its terminal rather than waiting on a
+  reader that is asleep; a question already on the reader's panel still
+  waits for its answer. `GET /status` says whether a reader is in touch.
 - `0.0.0.0:9331`, TLS, for the reader. `GET /pending` long-polls up to
   twenty-five seconds for a question; `POST /answer` delivers the tap. Deck
   uses `GET /deck`, `POST /deck/press`, and `GET /deck/result` on the same

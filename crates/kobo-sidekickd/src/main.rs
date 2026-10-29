@@ -65,6 +65,12 @@ fn main() -> ExitCode {
                 println!("{USAGE}");
                 Ok(())
             }
+            // Asked by `kobo version --full` and by the release smoke test,
+            // neither of which should start listeners or touch a pairing.
+            ("--version" | "-V", []) => {
+                println!("kobo-sidekickd {}", env!("CARGO_PKG_VERSION"));
+                Ok(())
+            }
             ("init" | "run" | "sample" | "setup" | "agents" | "hook", [flag])
                 if matches!(flag.as_str(), "--help" | "-h") =>
             {

@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Pair with your computer and run favorite actions from large, clear controls. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/deck.png">
 <meta name="twitter:image:alt" content="Deck paired with a computer, showing Test, Format and Deploy command pads.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-k1koHFcZVqOcNmAXOcFA2yryjaCkqTYWULiDTWJ3cho='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-ncWl0CjkQycm604F0Q+HHHvcxiKXmCecTVAfEV2D7go='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.2.8",
+      "softwareVersion": "0.2.9",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Deck</h1>
       <p class="summary">Pair with your computer and run favorite actions from large, clear controls.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.2.8</dd></div>
+        <div><dt>Version</dt><dd>0.2.9</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
       </dl>
@@ -117,25 +117,21 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.2.8</h2>
-    <p>The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } &lt; &gt; \ | ~ and the backtick.</p>
+    <h2>New in 0.2.9</h2>
+    <p>Pairs from kobo sidekick init with nothing to type, fills in the port, adds Pairing to change it, names the real cause of each problem and adds Run again under a result.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Lay out your pads on the computer.
-        <code class="setup-command">kobo deck init</code></li>
-      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
-        <code class="setup-command">kobo pair</code></li>
-      <li>Prepare the helper. It prints the address and code Deck asks for.
+      <li>Set up the reader once over USB, if you have not already.
+        <code class="setup-command">kobo setup</code></li>
+      <li>In your project folder on the computer, lay out your first pads. Change them later with kobo deck set.
+        <code class="setup-command">kobo deck init --preset build</code></li>
+      <li>Pair this computer with the reader. There is nothing to type on the reader. The first time, close Cobalt and open it again afterwards.
         <code class="setup-command">kobo sidekick init</code></li>
-      <li>Let the reader trust the helper, so Deck can check it is talking to your computer.
-        <code class="setup-command">kobo trust set sidekick</code></li>
-      <li>Start the helper, then enter the address and code on the reader.
+      <li>Start the helper and leave it running, then open Deck on the reader.
         <code class="setup-command">kobo sidekick run</code></li>
-      <li>Send the layout to the reader.
-        <code class="setup-command">kobo deck push</code></li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
       <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>

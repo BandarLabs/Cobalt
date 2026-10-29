@@ -44,8 +44,9 @@ trap 'rm -rf "$build_root"' EXIT HUP INT TERM
 
 for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
     binary="$DIST/host-binaries/$platform/kobo"
+    sidekick="$DIST/host-binaries/$platform/kobo-sidekickd"
     importer="$DIST/host-binaries/$platform/flashcards-import"
-    for required in "$binary" "$importer"; do
+    for required in "$binary" "$sidekick" "$importer"; do
         [ -f "$required" ] || {
             echo "missing host binary $required" >&2
             exit 1
@@ -54,8 +55,11 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
     package="$build_root/$platform"
     mkdir -p "$package/licenses"
     cp "$binary" "$package/kobo"
+    # Sidekick and Deck cannot be set up without this helper, and
+    # `kobo sidekick` looks for it beside the kobo binary first.
+    cp "$sidekick" "$package/kobo-sidekickd"
     cp "$importer" "$package/flashcards-import"
-    chmod 755 "$package/kobo" "$package/flashcards-import"
+    chmod 755 "$package/kobo" "$package/kobo-sidekickd" "$package/flashcards-import"
     cp install.sh "$package/updater.sh"
     chmod 700 "$package/updater.sh"
     cp LICENSE "$package/LICENSE"
@@ -67,7 +71,7 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
         printf 'source https://github.com/BandarLabs/Cobalt/commit/%s\n' "$SOURCE_SHA"
         printf 'release train immutable beta candidate, promotable unchanged to stable\n'
         printf 'host platform %s\n' "$platform"
-        printf 'commands kobo,flashcards-import\n'
+        printf 'commands kobo,kobo-sidekickd,flashcards-import\n'
     } > "$package/SOURCE.txt"
     asset="$DIST/kobo-$VERSION-$platform.tar.gz"
     tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \

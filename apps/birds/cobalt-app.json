@@ -2,23 +2,29 @@
   "id": "birds",
   "display_name": "Birds",
   "short_label": "Birds",
-  "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer.",
+  "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.7",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.8",
+  "release_notes": "Asks the reader to stay awake while the birds are on screen, and says so in the menu when the reader cannot.",
   "glyph": "app",
-  "capabilities": [],
+  "capabilities": [
+    "keep-awake"
+  ],
   "setup": {
     "steps": [
       {
-        "text": "Run BirdNET-Go and Fugleramme on a Mac or Linux computer with a microphone. See apps/birds/README.md."
+        "text": "Birds needs BirdNET-Go and Fugleramme running on a Mac or Linux computer with a microphone. Install and start both first, as the Birds README describes.",
+        "link": {
+          "label": "Birds README",
+          "url": "https://github.com/BandarLabs/Cobalt/tree/main/apps/birds"
+        }
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Start mirroring what BirdNET-Go hears to the reader.",
+        "text": "Start sending what BirdNET-Go hears to the reader. It checks the station and the reader first, and says what to fix if either does not answer.",
         "command": "kobo birds listen --source http://localhost:8080"
       }
     ]

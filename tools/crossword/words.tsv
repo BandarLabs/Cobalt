@@ -3,609 +3,843 @@
 # vocabulary the generator may use, so every generated puzzle is clued by
 # construction and nothing ships with a blank clue.
 #
+# A clue is a plain definition in British spelling that points at one answer
+# of its length, with nothing in it that could go out of date. It never
+# contains its own answer, and never uses a double quote, so it can be
+# written into Rust as it stands.
+#
 # ANSWER<tab>clue
-ACE	Card above a king
-ACT	Part of a play
-ADD	Put numbers together
-AGE	Years behind you
-AGO	In the past
-AID	Help given
+ACE	Unreturnable tennis serve
+ACT	Main division of a play
+ADD	Find the sum of
+ADO	Fuss and bother
+AFT	Towards the back of a ship
+AGE	How old someone is
+AGO	Before now, as in 'two days ___'
+AHA	Cry of sudden understanding
+AID	Help given to people in need
+AIL	Trouble, as an illness does
 AIM	Point at a target
-AIR	What you breathe
-ANT	Small hill builder
-APE	Tailless climber
-ARC	Curved path
-ARM	Shoulder to hand
-ART	What a gallery hangs
-ASH	What a fire leaves
-ASK	Put a question
-AXE	Tool for splitting logs
-BAG	Carried by its handles
-BAR	Where drinks are poured
-BAT	Swung at a ball
-BAY	Curve of coast
-BED	Where you sleep
-BEE	Hive worker
-BET	Wager
-BIN	Rubbish goes in it
-BOW	Bend at the waist
-BOX	Cardboard container
-BOY	Young lad
+AIR	Mixture of gases we breathe
+ALE	Kind of beer served in a pub
+ALL	Every one of
+ALP	High mountain in Switzerland
+AND	Word linking 'fish' with 'chips'
+ANT	Small insect that builds a hill
+ANY	No matter which
+APE	Large primate with no tail
+APT	Suitable for the occasion
+ARC	Part of the curve of a circle
+ARE	Present form of 'be' with 'they'
+ARK	Noah's boat
+ARM	Limb from shoulder to hand
+ART	Painting, drawing and sculpture
+ASH	Grey powder left by a fire
+ASK	Put a question to
+ASP	Small venomous snake of Egypt
+ATE	Had a meal
+AWE	Wonder mixed with respect
+AWL	Pointed tool for piercing leather
+AXE	Tool for chopping wood
+BAA	Sound a sheep makes
+BAD	Not good
+BAG	Soft container with handles
+BAN	Forbid officially
+BAR	Counter where drinks are served
+BAT	Flying mammal that hunts at night
+BAY	Wide curve in a coastline
+BED	Furniture for sleeping in
+BEE	Insect that makes honey
+BEG	Ask humbly and earnestly
+BET	Money risked on a result
+BIB	Cloth tied under a baby's chin
+BID	Offer a price at an auction
+BIG	Large
+BIN	Container for rubbish
+BIT	Small piece
+BOA	Large snake that crushes its prey
+BOB	Short haircut level with the chin
+BOG	Wet, spongy ground
+BOO	Shout of disapproval
+BOW	Bend forward from the waist
+BOX	Cardboard container with a lid
+BOY	Male child
 BUD	Flower before it opens
-BUS	Public road vehicle
+BUG	Fault in a computer program
+BUN	Small round sweet roll
+BUS	Large road vehicle for passengers
+BUT	Except, as in 'all ___ one'
+BUY	Get by paying for
+BYE	Informal word for goodbye
 CAB	Taxi
-CAP	Peaked hat
-CAR	Four wheels and a driver
-CAT	Purring pet
-COW	Gives milk
+CAN	Metal container for a fizzy drink
+CAP	Soft hat with a peak
+CAR	Motor vehicle with four wheels
+CAT	Pet that purrs
+CAW	Harsh cry of a crow
+COB	Male swan
+COD	Sea fish often served with chips
+COG	Tooth on the rim of a gear wheel
+COO	Soft call of a pigeon
+COT	Baby's bed with high sides
+COW	Farm animal kept for its milk
+COY	Pretending to be shy
 CRY	Shed tears
-CUP	Tea is drunk from it
-CUT	Slice through
-DAM	Holds back a river
-DAY	Sunrise to sunset
-DEN	Animal's home
-DIG	Turn over soil
-DOG	Faithful barker
+CUB	Young fox or bear
+CUD	Food a cow chews a second time
+CUE	Long stick used in snooker
+CUP	Drinking vessel used with a saucer
+CUT	Divide with a knife
+DAB	Touch lightly with a cloth
+DAD	Informal word for father
+DAM	Wall built to hold back a river
+DAY	Twenty-four hours
+DEN	Wild animal's lair
+DEW	Drops of water on grass at dawn
+DIE	Small cube with spots, used in games
+DIG	Turn over soil with a spade
+DIM	Not bright
+DIN	Loud, unpleasant noise
+DIP	Put briefly into a liquid
+DOE	Female deer
+DOG	Pet that barks
+DON	Put on clothes
 DOT	Small round mark
-DRY	Without water
-DUE	Expected to arrive
-EAR	Hears with it
+DRY	Free from moisture
+DUE	Expected at a certain time
+DUG	Turned over the soil
+DUO	Pair of performers
+DYE	Substance used to colour cloth
+EAR	Organ of hearing
 EAT	Have a meal
-EEL	Long slippery fish
-EGG	Laid in a nest
-ELM	Broad shade tree
+EBB	Flow back out to sea, as the tide
+EEL	Long, snake-like fish
+EGG	Oval object laid by a hen
+EGO	Sense of your own importance
+ELF	Small magical helper in folk tales
+ELK	Very large deer
+ELM	Tall tree with rough, toothed leaves
+EMU	Large flightless Australian bird
 END	Final part
-ERA	Stretch of history
+ERA	Period of history
+ERR	Make a mistake
+EVE	Day before a festival
+EWE	Female sheep
 EYE	Organ of sight
-FAN	Keeps a room cool
+FAD	Short-lived craze
+FAN	Device that cools a room
 FAR	A long way off
-FEE	Charge for a service
-FIG	Sweet soft fruit
-FIN	Fish's steering flap
-FIR	Evergreen tree
-FIT	The right size
-FIX	Put right
-FLY	Travel by air
-FOG	Thick low cloud
-FOX	Red-coated raider
-FUN	Good time
-FUR	Animal's coat
-GAP	Space between
-GAS	Fuel for a hob
-GEM	Cut stone
-GUM	Chewed, not swallowed
-HAT	Worn on the head
-HAY	Dried grass
-HEN	Lays the eggs
-HIP	Joint above the leg
+FAT	Grease in meat
+FED	Gave food to
+FEE	Payment for a professional service
+FEW	Not many
+FEZ	Red felt hat with a tassel
+FIB	Small, harmless lie
+FIG	Soft sweet fruit full of tiny seeds
+FIN	Thin flap a fish swims with
+FIR	Evergreen tree used at Christmas
+FIT	In good health through exercise
+FIX	Repair
+FLU	Infectious illness with fever
+FLY	Travel by aircraft
+FOE	Enemy
+FOG	Thick cloud near the ground
+FOR	In favour of
+FOX	Wild animal with a bushy red tail
+FRY	Cook in hot fat
+FUN	Enjoyment
+FUR	Thick hair of an animal
+GAG	Joke
+GAP	Space between two things
+GAS	Neither solid nor liquid
+GEL	Jelly-like product for styling hair
+GEM	Precious stone
+GET	Obtain
+GIG	Live music performance
+GIN	Spirit flavoured with juniper
+GNU	African antelope, the wildebeest
+GOT	Obtained
+GUM	Firm flesh around the teeth
+GUT	Intestine
+GUY	Rope that holds a tent steady
+GYM	Hall for exercise
+HAD	Owned
+HAM	Salted meat from a pig's leg
+HAT	Head covering, often with a brim
+HAY	Grass cut and dried for animal feed
+HEM	Folded and sewn edge of cloth
+HEN	Female chicken
+HER	Belonging to a woman or girl
+HEW	Chop with an axe
+HEX	Curse
+HID	Kept out of sight
+HIM	That man
+HIP	Joint where the leg meets the body
+HIS	Belonging to a man or boy
 HIT	Strike
-HOE	Weeding tool
-HOT	Straight from the oven
+HOB	Cooking surface on top of a cooker
+HOE	Garden tool for weeding
+HOG	Keep all of something to yourself
+HOP	Jump on one foot
+HOT	Very warm
+HOW	In what way
 HUB	Centre of a wheel
-HUT	Small rough shelter
+HUE	Shade of colour
+HUG	Hold close in your arms
+HUM	Sing with closed lips
+HUT	Small, simple shelter
 ICE	Frozen water
-ILL	Not well
-INK	A pen runs out of it
-INN	Old roadside lodging
-ION	Charged particle
-IVY	Wall climber
-JAM	Spread on toast
-JAR	Screw-top pot
-JAW	Holds the teeth
+ICY	Covered in frost
+ILK	Kind or sort
+ILL	Unwell
+IMP	Mischievous child, playfully
+INK	Coloured liquid used in pens
+INN	Small hotel, often with a bar
+ION	Atom with an electric charge
+IRE	Anger
+IRK	Annoy
+ITS	Belonging to it
+IVY	Evergreen climbing plant
+JAB	Quick, sharp punch
+JAM	Fruit preserve spread on toast
+JAR	Glass container with a screw lid
+JAW	Bone that holds the lower teeth
+JAY	Noisy bird of the crow family
 JET	Fast aircraft
-JOB	Paid work
-JOY	Great delight
-JUG	Pours the milk
-KEY	Opens a lock
+JIG	Lively folk dance
+JOB	Paid position of work
+JOG	Run at a slow, steady pace
+JOT	Write down quickly
+JOY	Great happiness
+JUG	Container with a lip for pouring
+JUT	Stick out
+KEG	Small barrel
+KEY	It opens a lock
 KID	Young goat
-KIT	Everything you need
-LAB	Where experiments run
-LAP	Once round the track
-LAW	Passed by parliament
-LEG	You stand on two
-LID	Covers a pot
-LIE	Untruth
+KIN	Family members
+KIT	Set of tools or equipment
+LAB	Room for science, for short
+LAD	Boy or young man
+LAG	Fall behind
+LAP	One circuit of a track
+LAW	Rule made by a government
+LAX	Not strict enough
+LAY	Put down carefully
+LED	Showed the way
+LEE	Side sheltered from the wind
+LEG	Limb you stand on
+LET	Allow
+LID	Removable cover for a pot
+LIE	Statement you know is false
 LIP	Edge of the mouth
-LOG	Sawn piece of trunk
-LOT	A great deal
-MAN	Grown male
-MAP	Shows the way
-MAT	Wipe your feet on it
+LIT	Set alight
+LOB	Throw high into the air
+LOG	Piece cut from a tree trunk
+LOO	Toilet, informally
+LOT	Large number or amount
+LOW	Not high
+MAD	Very foolish, as a plan
+MAN	Adult male
+MAP	Drawing of an area showing roads
+MAR	Spoil
+MAT	Small rug at a door
+MAY	Month after April
+MEN	Adult males
+MET	Came face to face with
+MEW	Cry of a kitten
 MIX	Stir together
-MUD	Wet earth
-MUG	Holds the tea
-NET	Catches the fish
-NEW	Just made
-NOD	Agree without speaking
-NOT	Word of denial
+MOB	Disorderly crowd
+MOO	Sound a cow makes
+MOP	Floor cleaner on a long handle
+MOW	Cut grass
+MUD	Soft wet earth
+MUG	Large cup used without a saucer
+MUM	Mother, informally
+NAB	Catch or arrest
+NAG	Keep complaining at someone
+NAN	Grandmother, informally
+NAP	Short sleep in the day
+NET	Mesh for catching fish
+NEW	Not old
+NIB	Point of a fountain pen
+NIL	Nothing, in a football score
+NIP	Small, sharp bite
+NOD	Move the head up and down
+NOR	And not
+NOT	Word that makes a sentence negative
 NOW	At this moment
-NUT	Cracked for its kernel
-OAK	Acorn tree
-OAR	Rows the boat
-OAT	Porridge grain
-ODD	Not even
-ODE	Poem of praise
-OIL	Lubricates the chain
-OLD	Far from new
-ONE	First number
+NUN	Woman who lives in a convent
+NUT	Hard-shelled fruit, such as a walnut
+OAF	Clumsy, stupid person
+OAK	Tree that grows acorns
+OAR	Pole with a flat blade for rowing
+OAT	Cereal grass used in porridge
+ODD	Strange
+ODE	Poem addressed to its subject
+OFF	Not switched on
+OHM	Unit of electrical resistance
+OIL	Liquid used for frying
+OLD	Not young
+ONE	Lowest whole number above zero
+OPT	Choose
+ORB	Sphere
+ORE	Rock from which metal is extracted
 OUR	Belonging to us
 OUT	Not at home
-OWL	Night hunter
-OWN	Belong to you
+OWE	Be in debt
+OWL	Bird that hunts at night
+OWN	Possess
 PAD	Block of writing paper
-PAN	Fried in it
-PAW	Cat's foot
-PAY	Hand over money
-PEA	Green pod seed
-PEG	Holds the washing
-PEN	Writes in ink
-PET	Kept for company
-PIE	Filling under pastry
-PIG	Farmyard grunter
-PIN	Holds the cloth
-PIT	Deep hole
-POT	Plant sits in it
-PUT	Place down
-RAG	Torn cloth
-RAT	Long-tailed rodent
+PAL	Friend
+PAN	Flat pot for frying
+PAR	Expected number of strokes in golf
+PAT	Tap gently with the hand
+PAW	Animal's foot with claws
+PAY	Give money for
+PEA	Small round green seed from a pod
+PEG	Clip for hanging washing
+PEN	Writing tool that uses ink
+PEP	Energy and liveliness
+PET	Animal kept for company
+PEW	Long bench in a church
+PIE	Filling baked in pastry
+PIG	Farm animal that grunts
+PIN	Thin pointed metal fastener
+PIP	Small seed of an apple
+PIT	Deep hole in the ground
+PLY	Layer of wood or yarn
+POD	Seed case of a pea
+POP	Short, sharp bang
+POT	Deep round container for cooking
+PRY	Look into other people's business
+PUB	Local where beer is served
+PUN	Joke that plays on words
+PUP	Young dog
+PUT	Place
+RAG	Old piece of cloth
+RAM	Male sheep
+RAN	Moved quickly on foot
+RAP	Sharp knock
+RAT	Rodent larger than a mouse
 RAW	Not cooked
-RAY	Line of light
-RED	Colour of a stop light
-RIB	Curved chest bone
-RIM	Edge of a cup
-ROD	Long thin bar
+RAY	Narrow beam of light
+RED	Colour of blood
+RIB	Curved bone of the chest
+RID	Free from something unwanted
+RIG	Equipment for drilling for oil
+RIM	Outer edge of a wheel
+RIP	Tear roughly
+ROB	Steal from
+ROD	Long thin pole for fishing
+ROE	Fish eggs
+ROT	Decay
 ROW	Line of seats
-RUB	Polish by hand
-RUG	Small carpet
-RUN	Move at speed
-SAW	Cuts the timber
-SEA	Salt water
-SEE	Take in with the eyes
-SET	Put in place
-SHY	Slow to speak up
-SIP	Drink a little
+RUB	Move a hand back and forth on
+RUE	Regret
+RUG	Floor covering smaller than a carpet
+RUM	Spirit made from sugar cane
+RUN	Move faster than walking
+RUT	Deep track made by wheels
+RYE	Grain used for dark bread
+SAD	Unhappy
+SAG	Sink or droop in the middle
+SAP	Liquid that runs inside a plant
+SAT	Was seated
+SAW	Tool with teeth for cutting wood
+SAY	Speak
+SEA	Large body of salt water
+SEE	Look at with your eyes
+SET	Group of things that belong together
+SEW	Join with needle and thread
+SHE	That woman
+SHY	Nervous with other people
+SIN	Wrong act against religious law
+SIP	Drink in small mouthfuls
+SIR	Polite way to address a man
 SIT	Take a seat
 SIX	Half a dozen
-SKY	Above the clouds
-SON	Boy of the family
-SPA	Where you take the waters
-SUM	Answer to an addition
-SUN	Star we orbit
-TAG	Label on a coat
-TAN	Colour of light leather
-TAP	Water comes from it
-TAR	Black road dressing
-TAX	Paid to the state
-TEA	Brewed in a pot
-TEN	Fingers on two hands
-TIE	Worn at the collar
-TIN	Food keeps in it
-TIP	Point of a pen
-TOE	End of the foot
-TON	Heavy weight
+SKI	Long runner for travelling over snow
+SKY	Space where the clouds are
+SLY	Cunning and secretive
+SOB	Cry noisily
+SON	Male child of a parent
+SOW	Plant seeds
+SOY	Bean used to make tofu
+SPA	Resort with mineral springs
+SPY	Secret agent
+STY	Pen for pigs
+SUE	Take to court
+SUM	Total of numbers added
+SUN	Star that the earth goes round
+TAB	Small flap or strip for pulling
+TAD	Very small amount
+TAG	Label attached to clothing
+TAN	Brown colour of skin after sunshine
+TAP	Device that controls running water
+TAR	Black sticky substance used on roads
+TAT	Cheap, tasteless goods
+TAX	Money paid to the government
+TEA	Hot drink made from dried leaves
+TEE	Peg on which a golf ball is placed
+TEN	Number after nine
+TIC	Involuntary twitch
+TIE	Strip of cloth knotted at the collar
+TIN	Soft silvery-white metal
+TIP	Pointed end
+TOE	Digit of the foot
+TOM	Male cat
+TON	Large unit of weight
 TOP	Highest part
-TOY	Played with
-TRY	Make an attempt
-TUB	Bath
-TWO	A pair
-URN	Holds the ashes
+TOR	Rocky hill on a moor
+TOT	Very young child
+TOW	Pull a vehicle with a rope
+TOY	Thing a child plays with
+TRY	Attempt
+TUB	Wide open container, as for butter
+TUG	Pull hard
+TUT	Click of the tongue in disapproval
+TWO	Number in a pair
+URN	Large vase with a lid
 USE	Put to work
-VAN	Delivers the parcels
-VAT	Large brewing tub
-VET	Treats the animals
+VAN	Covered vehicle for carrying goods
+VAT	Large tank for liquids
+VET	Animal doctor
+VIA	By way of
+VIE	Compete
 VOW	Solemn promise
-WAR	Opposite of peace
-WAX	Candle stuff
-WAY	Route taken
-WEB	Spider's work
-WET	Soaked
-WIG	False hair
+WAD	Thick bundle of banknotes
+WAG	Shake a tail
+WAN	Pale and tired-looking
+WAR	Armed conflict
+WAS	Past form of 'is'
+WAX	Substance candles are made of
+WAY	Route
+WEB	Net spun by a spider
+WED	Marry
+WEE	Very small, in Scotland
+WET	Covered in water
+WHO	Which person
+WHY	For what reason
+WIG	Covering of false hair
 WIN	Come first
-WIT	Quick humour
+WIT	Clever humour
+WOE	Great sorrow
+WOK	Bowl-shaped pan for stir-frying
+WON	Came first
+WOO	Try to win the love of
+WRY	Dry and mocking, as a smile
+YAK	Long-haired ox of Tibet
+YAM	Starchy tropical root vegetable
+YAP	Short, high-pitched bark
+YEN	Strong desire
 YES	Word of agreement
-YEW	Churchyard evergreen
-ZOO	Animals on show
-ABOVE	Over the top of
-ACTOR	Takes a part
-AGAIN	One more time
-AGENT	Acts for another
-ALARM	Wakes you up
-ALBUM	Holds the photographs
-ALIKE	Much the same
-ALIVE	Not dead
-ALLOW	Give leave to
-ALONE	With nobody else
-ALTER	Change
-ANGER	Hot temper
-ANGLE	Two lines meeting
-ANGRY	Cross
-APPLE	Falls from the tree
-APRON	Worn while cooking
-ARENA	Ring for a contest
-ARGUE	Take opposite sides
-ARISE	Get up
-ASIDE	Out of the way
-AWARD	Prize handed over
-AWARE	Knowing about it
-BACON	Fried with eggs
-BADLY	Not at all well
-BAKER	Makes the bread
-BASIC	Simple and plain
-BEACH	Sand by the sea
+YET	Up to now
+YEW	Evergreen tree common in churchyards
+YOU	The person spoken to
+ZED	Last letter of the alphabet
+ZIP	Fastener with interlocking teeth
+ZOO	Park where wild animals are on show
+ABOVE	Higher than
+ACTOR	Person who performs in plays
+AGAIN	Once more
+AGENT	Person who acts on behalf of another
+ALARM	Bell or signal that warns of danger
+ALBUM	Book for keeping photographs
+ALIKE	Similar to each other
+ALIVE	Living
+ALLOW	Give permission for
+ALONE	Without anyone else
+ALTER	Make different
+ANGER	Strong feeling of displeasure
+ANGLE	Corner measured in degrees
+ANGRY	Very cross
+APPLE	Round fruit with red or green skin
+APRON	Garment worn to protect clothes
+ARENA	Enclosed area for sports or shows
+ARGUE	Disagree in words, often heatedly
+ARISE	Come into being
+ASIDE	To one side
+AWARD	Prize given for an achievement
+AWARE	Having knowledge of something
+BACON	Cured meat often fried with eggs
+BADLY	In a poor way
+BAKER	Person who makes bread
+BASIC	Forming the simplest level
+BEACH	Sandy shore by the sea
 BEGIN	Make a start
-BELOW	Under
-BENCH	Long seat
-BIRTH	Coming into the world
+BELOW	Further down the page
+BENCH	Long seat for several people
+BIRTH	Moment of being born
 BLACK	Colour of coal
-BLAME	Lay the fault on
-BLANK	Nothing written on it
+BLAME	Hold responsible for a fault
+BLANK	With nothing written on it
 BLIND	Unable to see
-BLOCK	Get in the way of
-BLOOD	Runs in the veins
-BOARD	Flat plank
-BONUS	Extra payment
-BRAIN	Thinks with it
-BRAND	Maker's name
-BRASS	Yellow metal mix
-BRAVE	Facing danger
-BREAD	Cut into slices
-BREAK	Snap in two
-BRICK	Baked building block
-BRIEF	Not lasting long
-BRING	Fetch here
+BLOCK	Solid piece of wood or stone
+BLOOD	Red liquid pumped by the heart
+BOARD	Chess is played on one
+BONUS	Extra payment on top of wages
+BRAIN	Organ of thought
+BRAND	Name under which a product is sold
+BRASS	Yellow alloy of copper and zinc
+BRAVE	Ready to face danger
+BREAD	Food baked from flour and yeast
+BREAK	Snap into pieces
+BRICK	Block of baked clay used in building
+BRIEF	Lasting a short time
+BRING	Carry here
 BROAD	Wide
-BROWN	Colour of soil
-BRUSH	Sweeps the floor
-BUILD	Put up
-BUNCH	Grapes come in one
-CABIN	Small wooden house
-CABLE	Thick wire
-CANAL	Cut waterway
-CANDY	Sweet
-CARGO	What a ship carries
-CARRY	Take with you
-CATCH	Take in the hand
-CAUSE	Reason for it
-CHAIN	Links joined
-CHAIR	You sit on it
-CHALK	Writes on a board
-CHARM	Winning manner
-CHART	Table of figures
+BROWN	Colour of chocolate
+BRUSH	Tool with bristles for sweeping
+BUILD	Construct
+BUNCH	Number of flowers held together
+CABIN	Small wooden house in the woods
+CABLE	Thick wire that carries electricity
+CANAL	Artificial waterway for boats
+CANDY	Sweets, in American English
+CARGO	Goods carried by a ship or plane
+CARRY	Hold while moving
+CATCH	Seize something thrown
+CAUSE	Reason why something happens
+CHAIN	Series of linked metal rings
+CHAIR	Seat with a back, for one person
+CHALK	Soft white rock used on blackboards
+CHARM	Power to please and attract
+CHART	Diagram showing information
 CHASE	Run after
-CHEAP	Costs little
-CHECK	Look it over
-CHEST	Trunk of the body
-CHIEF	Head of the tribe
-CHILD	Young person
-CLAIM	Say it is yours
-CLASS	Taught together
-CLEAN	Free of dirt
+CHEAP	Low in price
+CHECK	Examine to make sure
+CHEST	Front of the body below the neck
+CHIEF	Leader of a group
+CHILD	Boy or girl
+CLAIM	Demand as your right
+CLASS	Group of pupils taught together
+CLEAN	Free from dirt
 CLEAR	Easy to see through
-CLIFF	Steep rock face
-CLIMB	Go up
-CLOCK	Tells the time
+CLIFF	Steep rock face, often at the coast
+CLIMB	Go up using hands and feet
+CLOCK	Timepiece on a wall or tower
 CLOSE	Shut
-CLOTH	Woven material
-CLOUD	Rain comes from it
-COACH	Trains the team
-COAST	Where land meets sea
-COUNT	Number them off
-COURT	Where a case is heard
-COVER	Put a lid on
-CRAFT	Skilled making
-CRASH	Sudden loud smash
-CREAM	Rises on the milk
-CRIME	Breaking the law
-CROSS	Two lines over each other
-CROWD	Many people together
-CROWN	Worn by a king
-CURVE	Bend in the road
-CYCLE	Ride on two wheels
-DAILY	Every day
-DANCE	Move to music
-DEPTH	How far down
+CLOTH	Woven fabric
+CLOUD	Mass of water droplets in the sky
+COACH	Person who trains a sports team
+COAST	Freewheel downhill
+COUNT	Find the total number of
+COURT	Place where legal cases are heard
+COVER	Put something over
+CRAFT	Skill in making things by hand
+CRASH	Collision of vehicles
+CREAM	Thick fatty part of milk
+CRIME	Act that breaks the law
+CROSS	Mark shaped like an X
+CROWD	Large gathering of people
+CROWN	Headdress worn by a monarch
+CURVE	Line that bends smoothly
+CYCLE	Ride a bicycle
+DAILY	Happening every day
+DANCE	Move in time to music
+DEPTH	Distance from top to bottom
 DOZEN	Twelve
-DRAFT	First rough try
-DRAMA	Play for the stage
-DREAM	Comes while asleep
-DRESS	Worn by a woman
-DRIFT	Float along
-DRINK	Swallow a liquid
-DRIVE	Take the wheel
-EAGER	Keen to start
-EARLY	Before the time
-EARTH	Our planet
-EIGHT	Twice four
-EMPTY	Nothing in it
-ENEMY	Not a friend
+DRAFT	Early version of a piece of writing
+DRAMA	Play for the stage or screen
+DREAM	Images in the mind during sleep
+DRESS	One-piece garment with a skirt
+DRIFT	Be carried along by a current
+DRINK	Swallow liquid
+DRIVE	Operate a car
+EAGER	Keen to do something
+EARLY	Before the expected time
+EARTH	Planet we live on
+EIGHT	Number after seven
+EMPTY	Containing nothing
+ENEMY	Person who is hostile to another
 ENJOY	Take pleasure in
-ENTER	Go in
-EQUAL	Just the same
+ENTER	Go into
+EQUAL	The same in size or value
 ERROR	Mistake
-EVENT	Something that happens
-EVERY	Each one
-EXACT	Right to the letter
-EXTRA	More than needed
-FAITH	Firm belief
-FIELD	Grazing ground
-FIGHT	Come to blows
-FINAL	Last of all
-FIRST	Before the rest
-FLAME	Tip of a fire
-FLASH	Sudden light
-FLOAT	Stay on the surface
-FLOOR	You walk on it
-FLOUR	Ground wheat
-FOCUS	Sharpen the picture
-FORCE	Push or pull
-FRAME	Holds the picture
-FRESH	Newly picked
-FRONT	Facing forward
-FROST	White on the grass
-FRUIT	Grows on the tree
-GIANT	Very large
-GLASS	Window is made of it
-GLOBE	Model of the world
-GRAIN	Single seed
-GRAND	On a great scale
-GRASS	Mown in summer
-GREAT	Very fine indeed
-GREEN	Colour of leaves
-GROUP	Set of people
-GUARD	Keeps watch
-GUESS	Answer without knowing
-GUEST	Invited to stay
-GUIDE	Shows the way
-HABIT	What you always do
-HAPPY	Full of cheer
-HEART	Pumps the blood
-HEAVY	Hard to lift
-HORSE	Ridden with a saddle
-HOTEL	Rooms for the night
-HOUSE	Home with a roof
-HUMAN	One of us
-IMAGE	Picture of a thing
-INDEX	List at the back
-INNER	Further in
-ISSUE	Number of a magazine
-JUDGE	Sits in the court
-JUICE	Squeezed from fruit
-KNIFE	Cuts the bread
-KNOCK	Rap at the door
-LABEL	Names the jar
-LARGE	Big
-LATER	After this
-LAUGH	Break into mirth
-LAYER	One thickness
-LEARN	Take in a lesson
-LEAST	Smallest amount
+EVENT	Notable happening
+EVERY	Each, without exception
+EXACT	Precisely correct
+EXTRA	More than is usual
+FAITH	Complete trust
+FIELD	Area of open land, often fenced
+FIGHT	Struggle physically
+FINAL	Coming at the end
+FIRST	Coming before all others
+FLAME	Hot glowing gas of a fire
+FLASH	Sudden burst of light
+FLOAT	Rest on the surface of water
+FLOOR	Surface you walk on indoors
+FLOUR	Powder made by grinding grain
+FOCUS	Centre of interest
+FORCE	Strength or power used on something
+FRAME	Border around a picture
+FRESH	Newly made or picked
+FRONT	Part facing forward
+FROST	White ice crystals on cold ground
+FRUIT	Sweet part of a plant holding seeds
+GIANT	Huge person in fairy tales
+GLASS	Hard clear material in windows
+GLOBE	Round model of the earth
+GRAIN	Seed of a cereal plant
+GRAND	Large and impressive
+GRASS	Green plant covering lawns
+GREAT	Very large or important
+GREEN	Colour of grass
+GROUP	Number of people or things together
+GUARD	Person who keeps watch
+GUESS	Give an answer without being sure
+GUEST	Person invited to stay or eat
+GUIDE	Person who shows the way
+HABIT	Something you do without thinking
+HAPPY	Feeling pleasure
+HEART	Organ that pumps blood
+HEAVY	Of great weight
+HORSE	Animal ridden with a saddle
+HOTEL	Building with rooms for travellers
+HOUSE	Building where people live
+HUMAN	Person, as opposed to an animal
+IMAGE	Picture or likeness
+INDEX	Alphabetical list at a book's end
+INNER	Further inside
+ISSUE	Edition of a magazine
+JUDGE	Person who decides cases in court
+JUICE	Liquid squeezed from fruit
+KNIFE	Blade with a handle for cutting
+KNOCK	Rap on a door
+LABEL	Tag giving information about an item
+LARGE	Big in size
+LATER	At a time in the future
+LAUGH	Make sounds that show amusement
+LAYER	Sheet of material covering a surface
+LEARN	Gain knowledge or skill
+LEAST	Smallest in amount
 LEAVE	Go away from
 LEGAL	Allowed by law
-LEMON	Sour yellow fruit
-LEVEL	Perfectly flat
+LEMON	Sour yellow citrus fruit
+LEVEL	Flat and even
 LIGHT	Not heavy
-LIMIT	As far as allowed
-LOCAL	From nearby
+LIMIT	Point beyond which you cannot go
+LOCAL	Of a nearby area
 LOGIC	Sound reasoning
-LOOSE	Not tied down
+LOOSE	Not firmly fixed
 LOWER	Let down
-LOYAL	True to a friend
-LUCKY	Fortune favours them
-LUNCH	Midday meal
-MAGIC	Tricks and spells
-MAJOR	Greater of two
-MARCH	Walk in step
-MATCH	Strikes a flame
-MAYBE	Possibly
-MEDAL	Hung on a ribbon
-METAL	Iron or copper
-MINOR	Lesser of two
-MIXED	Stirred together
-MODEL	Small copy
-MONEY	Coins and notes
-MONTH	Thirty days or so
-MORAL	Lesson of the tale
-MOTOR	Drives the wheels
-MOUSE	Small grey nibbler
-MOUTH	Speaks with it
-MUSIC	Played or sung
-NERVE	Carries the feeling
-NEVER	Not at any time
-NIGHT	Dark hours
-NOBLE	High born
-NOISE	Unwanted sound
-NORTH	Opposite of south
+LOYAL	Faithful to a person or cause
+LUCKY	Having good fortune
+LUNCH	Meal in the middle of the day
+MAGIC	Tricks and spells of a wizard
+MAJOR	Greater in importance
+MARCH	Walk in step like soldiers
+MATCH	Small stick that makes a flame
+MAYBE	Perhaps
+MEDAL	Metal disc awarded as a prize
+METAL	Hard shiny material such as iron
+MINOR	Lesser in importance
+MIXED	Made of different kinds
+MODEL	Small copy of something
+MONEY	Coins and banknotes
+MONTH	One of the twelve parts of a year
+MORAL	Lesson taught by a story
+MOTOR	Machine that produces motion
+MOUSE	Small rodent with a long tail
+MOUTH	Opening in the face for eating
+MUSIC	Sounds arranged in a pleasing way
+NERVE	Fibre carrying signals in the body
+NEVER	At no time
+NIGHT	Time of darkness
+NOBLE	Of high rank by birth
+NOISE	Loud or unpleasant sound
+NORTH	Direction a compass needle points
 NOTED	Well known
-NOVEL	Long story
-NURSE	Cares for the sick
-OCEAN	Vast sea
-OFFER	Hold out for taking
-ORDER	Put in sequence
-ORGAN	Pipes in a church
-OTHER	The remaining one
-OUTER	Further out
-OWNER	Has the deeds
-PAINT	Brushed on a wall
-PANEL	Flat board
-PAPER	Written on
-PARTY	Gathering for fun
-PATCH	Sewn over a hole
-PEACE	No more war
-PEARL	Grown in an oyster
-PHONE	Ring on it
-PHOTO	Taken with a camera
-PIANO	Eighty-eight keys
-PIECE	Part of the whole
-PILOT	Flies the plane
-PITCH	Where the match is played
-PLACE	Spot on the map
-PLAIN	Simple and clear
-PLANE	Flies overhead
-PLANT	Grows in soil
-PLATE	Dinner is served on it
-POINT	Sharp end
-POUND	Weight of sixteen ounces
-POWER	Strength to act
-PRESS	Push down on
-PRICE	What it costs
-PRIDE	Proper self regard
-PRIME	First in rank
-PRINT	Put on paper
-PRIZE	Won in a contest
-PROOF	Settles the argument
-PROUD	Pleased with it
-PROVE	Show beyond doubt
-QUEEN	Wears the crown
-QUICK	Done in a moment
-QUIET	Making no sound
-QUITE	Rather
-RADIO	Brings the news
+NOVEL	Long written story
+NURSE	Person who cares for the sick
+OCEAN	Very large expanse of sea
+OFFER	Hold out for someone to take
+ORDER	Arrangement in sequence
+ORGAN	Keyboard instrument with pipes
+OTHER	The remaining one of two
+OUTER	Further from the centre
+OWNER	Person something belongs to
+PAINT	Coloured liquid spread on walls
+PANEL	Flat section forming part of a door
+PAPER	Thin material for writing on
+PARTY	Social gathering for fun
+PATCH	Piece of material sewn over a hole
+PEACE	Freedom from war
+PEARL	Smooth gem formed inside an oyster
+PHONE	Device for making calls
+PHOTO	Picture taken with a camera
+PIANO	Keyboard instrument with hammers
+PIECE	Part of a whole
+PILOT	Person who flies an aircraft
+PITCH	Field for football or cricket
+PLACE	Particular position or area
+PLAIN	Simple, with no decoration
+PLANE	Aircraft
+PLANT	Living thing that grows in soil
+PLATE	Flat dish for food
+POINT	Sharp end of a pencil
+POUND	Unit of weight of sixteen ounces
+POWER	Ability to control others
+PRESS	Push firmly
+PRICE	Amount of money something costs
+PRIDE	Satisfaction in what you achieved
+PRIME	Like the numbers 2, 3, 5 and 7
+PRINT	Put text on paper with a machine
+PRIZE	Reward for winning
+PROOF	Evidence that something is true
+PROUD	Pleased with what you have done
+PROVE	Show to be true
+QUEEN	Female monarch
+QUICK	Fast
+QUIET	Making little noise
+QUITE	Fairly
+RADIO	Device for listening to broadcasts
 RAISE	Lift up
-RANGE	Mountains in a row
-RAPID	Very fast
-RATIO	One number to another
-REACH	Stretch out to
-READY	Set to begin
-RIGHT	Not left
-RIVER	Runs to the sea
+RANGE	Line of mountains
+RAPID	Very quick
+RATIO	Proportion, such as 2:1
+REACH	Arrive at
+READY	Prepared
+RIGHT	Correct
+RIVER	Large natural stream of water
 ROUGH	Not smooth
-ROUND	Shaped like a ball
-ROUTE	Way to go
-ROYAL	Of the king
+ROUND	Shaped like a circle
+ROUTE	Way taken to get somewhere
+ROYAL	Of a king or queen
 RURAL	Of the countryside
-SALAD	Bowl of leaves
-SCALE	Weighs it
-SCENE	Part of an act
-SCORE	Twenty
-SENSE	Good judgement
-SERVE	Wait at table
-SEVEN	Days in a week
-SHADE	Out of the sun
-SHAKE	Move to and fro
-SHAPE	Form of a thing
-SHARE	Divide between you
-SHARP	Keen edged
-SHEEP	Grown for wool
-SHEET	Covers the bed
-SHELF	Books rest on it
-SHIFT	Move over
-SHINE	Give off light
-SHIRT	Buttoned at the front
-SHOCK	Sudden jolt
-SHORE	Edge of the sea
-SHORT	Not long
-SIGHT	What you can see
-SINCE	From then on
-SIXTY	Minutes in an hour
-SKILL	Learned ability
-SLEEP	Rest with eyes shut
+SALAD	Cold dish of raw vegetables
+SCALE	Small plate on a fish's skin
+SCENE	Part of a play
+SCORE	Number of points in a game
+SENSE	Sight or hearing, for example
+SERVE	Give food to at a table
+SEVEN	Number of days in a week
+SHADE	Area out of direct sunlight
+SHAKE	Move quickly up and down
+SHAPE	Outline or form of something
+SHARE	Divide between people
+SHARP	Having a fine cutting edge
+SHEEP	Farm animal kept for wool
+SHEET	Large piece of cloth on a bed
+SHELF	Board on a wall for storing things
+SHIFT	Set period of work in a factory
+SHINE	Give out bright light
+SHIRT	Garment with a collar and buttons
+SHOCK	Sudden upsetting surprise
+SHORE	Land along the edge of a sea or lake
+SHORT	Not tall
+SIGHT	Ability to see
+SINCE	From a past time until now
+SIXTY	Number of minutes in an hour
+SKILL	Ability to do something well
+SLEEP	Rest with the eyes closed
 SMALL	Little
-SMART	Quick to learn
-SMELL	Take in through the nose
-SMILE	Turn up the mouth
-SMOKE	Rises from a fire
-SNAKE	Legless slitherer
+SMART	Neat and well dressed
+SMELL	Sense based in the nose
+SMILE	Happy expression of the mouth
+SMOKE	Grey cloud rising from a fire
+SNAKE	Long reptile with no legs
 SOLAR	Of the sun
-SOLID	Not liquid
-SOLVE	Work it out
-SOUND	Reaches the ear
-SOUTH	Opposite of north
-SPACE	Room to move
+SOLID	Neither liquid nor gas
+SOLVE	Find the answer to
+SOUND	Something you hear
+SOUTH	Direction opposite north
+SPACE	Empty area
 SPARE	Kept in reserve
-SPEAK	Say something
-SPEED	Rate of going
-SPELL	Write the letters
-SPEND	Part with money
+SPEAK	Say words
+SPEED	How fast something moves
+SPELL	Name the letters of a word in order
+SPEND	Pay out money
 SPINE	Backbone
-SPLIT	Divide in two
-SPORT	Game with rules
-STAGE	Actors stand on it
-STAIR	One step of a flight
-STAND	Be on your feet
-START	Begin
-STATE	Say plainly
-STEAM	Rises from the kettle
-STEEL	Hardened iron
-STEEP	Hard to climb
-STICK	Fallen branch
+SPLIT	Divide into parts
+SPORT	Athletic game, such as football
+STAGE	Raised platform in a theatre
+STAIR	One step in a flight
+STAND	Be upright on your feet
+START	Set off
+STATE	Say clearly
+STEAM	Vapour from boiling water
+STEEL	Strong metal made from iron
+STEEP	Rising sharply
+STICK	Thin piece of wood
 STILL	Not moving
-STONE	Rock in the hand
-STORE	Keep for later
-STORM	Wind and rain
-STORY	Tale told
-STUDY	Read to learn
-STYLE	Way of doing it
-SUGAR	Stirred into tea
-SWEET	Not sour
-SWIFT	Very quick
-TABLE	Four legs and a top
-TASTE	Tell by the tongue
-TEACH	Give a lesson
-TEETH	Bite with them
-THANK	Say you are grateful
-THEME	Idea running through
-THICK	Not thin
-THIEF	Takes what is not theirs
-THING	Any object
-THINK	Turn over in the mind
-THIRD	After second
-THREE	One more than two
-THROW	Send through the air
-TIGHT	Hard to loosen
-TITLE	Name of the book
-TODAY	This very day
-TOKEN	Small sign of it
-TOPIC	What is being discussed
-TOTAL	The whole sum
-TOUCH	Feel with the hand
-TOUGH	Hard to chew
-TOWER	Tall and narrow
-TRACK	Path worn by feet
-TRADE	Buy and sell
-TRAIL	Rough path
-TRAIN	Runs on rails
-TREAT	Something special
-TREND	Way things are going
-TRIAL	Test of it
-TRIBE	People of one kin
-TRICK	Clever deceit
-TRUCK	Carries the load
-TRUNK	Stem of a tree
-TRUST	Take on faith
-TRUTH	What is so
+STONE	Small piece of rock
+STORE	Shop
+STORM	Violent weather with wind and rain
+STORY	Account of events, real or imagined
+STUDY	Spend time learning
+STYLE	Particular way of doing something
+SUGAR	Sweet crystals added to drinks
+SWEET	Tasting of sugar
+SWIFT	Moving very fast
+TABLE	Furniture with a flat top and legs
+TASTE	Sense based on the tongue
+TEACH	Give lessons to
+TEETH	What you bite and chew with
+THANK	Express gratitude to
+THEME	Main subject of a piece of writing
+THICK	Wide from one side to the other
+THIEF	Person who steals
+THING	Object
+THINK	Use your mind
+THIRD	Coming after second
+THREE	Number after two
+THROW	Send through the air with your hand
+TIGHT	Firmly fixed
+TITLE	Name of a book or film
+TODAY	On this day
+TOKEN	Small sign or symbol
+TOPIC	Subject of a discussion
+TOTAL	Whole amount
+TOUCH	Feel with your fingers
+TOUGH	Strong and hard to break
+TOWER	Tall narrow building
+TRACK	Circuit for running races
+TRADE	Buying and selling of goods
+TRAIL	Path through rough country
+TRAIN	Railway vehicle
+TREAT	Something special that pleases
+TREND	General direction of change
+TRIAL	Examination of a case in court
+TRIBE	Group sharing language and customs
+TRICK	Clever act meant to deceive
+TRUCK	Large road vehicle for goods
+TRUNK	Main stem of a tree
+TRUST	Firm belief in someone's honesty
+TRUTH	Facts as they really are
 TWICE	Two times
-UNCLE	Mother's brother
-UNDER	Below
-UNION	Joined together
+UNCLE	Brother of a parent
+UNDER	Less than, as in 'children ___ five'
+UNION	Joining together
 UNITE	Bring together
-UNTIL	Up to the time
-UPPER	Higher one
-URBAN	Of the town
-USAGE	How it is used
-USUAL	As a rule
-VALUE	What it is worth
-VIDEO	Moving picture
-VISIT	Call on
-VITAL	Cannot do without
-VOICE	Speaks with it
-WASTE	Throw away
-WATCH	Worn on the wrist
-WATER	Fills the glass
-WHEEL	Turns on an axle
+UNTIL	Up to the time of
+UPPER	Higher
+URBAN	Of a town or city
+USAGE	Customary practice in a language
+USUAL	Normal
+VALUE	How much something is worth
+VIDEO	Recording of moving pictures
+VISIT	Go to see
+VITAL	Absolutely necessary
+VOICE	Sound made when speaking
+WASTE	Use carelessly
+WATCH	Small timepiece worn on the wrist
+WATER	Clear liquid that falls as rain
+WHEEL	Round object that turns on an axle
 WHERE	In what place
 WHICH	What one
-WHILE	During the time
+WHILE	During the time that
 WHITE	Colour of snow
-WHOLE	All of it
-WOMAN	Grown female
-WORLD	All of the earth
-WORRY	Turn it over anxiously
+WHOLE	Complete
+WOMAN	Adult female
+WORLD	The earth and all its people
+WORRY	Feel anxious
 WORSE	Less good
-WORTH	Deserving of it
-WOULD	Might, given the chance
-WRITE	Put down in words
-WRONG	Not right
-WROTE	Put it down
+WORTH	Having a value of
+WOULD	Past form of 'will'
+WRITE	Put words on paper
+WRONG	Not correct
+WROTE	Put words on paper, in the past
 YIELD	Give way
-YOUNG	Early in life
-YOUTH	Young person
+YOUNG	Not old
+YOUTH	Period of being young
