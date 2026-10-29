@@ -797,8 +797,15 @@ fn cover_of(archive: &Archive<'_>, package: &Package, base: &str) -> Option<Vec<
             .ok()
             .filter(|bytes| !bytes.is_empty() && bytes.len() <= MAX_ONE_IMAGE_BYTES)
     };
+    // An SVG is a drawing that names a picture, not a picture a shelf can
+    // decode, so it is followed to the picture it draws.
+    let is_drawing = |item: &Item| {
+        item.media_type.contains("svg") || item.href.to_ascii_lowercase().ends_with(".svg")
+    };
     let is_picture = |item: &Item| {
-        item.media_type.starts_with("image/") || is_picture_name(&item.href.to_ascii_lowercase())
+        !is_drawing(item)
+            && (item.media_type.starts_with("image/")
+                || is_picture_name(&item.href.to_ascii_lowercase()))
     };
     let marked = package
         .cover_image
@@ -806,6 +813,7 @@ fn cover_of(archive: &Archive<'_>, package: &Package, base: &str) -> Option<Vec<
         .chain(package.cover_meta.iter())
         .find_map(|id| match package.manifest.get(id) {
             Some(item) if is_picture(item) => picture(&item.href),
+            Some(item) if is_drawing(item) => first_picture_in(archive, &resolve(base, &item.href)),
             Some(_) => None,
             // Some tools write the picture's path where an identifier belongs.
             None => is_picture_name(&id.to_ascii_lowercase())
@@ -832,8 +840,12 @@ fn cover_of(archive: &Archive<'_>, package: &Package, base: &str) -> Option<Vec<
             .and_then(|(id, _)| package.manifest.get(id))
             .map(|item| item.href.clone())
     })?;
-    let page = resolve(base, &page);
-    let xml = text_of(&archive.read(&page).ok()?);
+    first_picture_in(archive, &resolve(base, &page))
+}
+
+/// The first picture a page or a drawing in the archive refers to.
+fn first_picture_in(archive: &Archive<'_>, member: &str) -> Option<Vec<u8>> {
+    let xml = text_of(&archive.read(member).ok()?);
     let mut source = None;
     for_each_element(&xml, |name, inside, closing, _| {
         if closing || source.is_some() {
@@ -847,7 +859,7 @@ fn cover_of(archive: &Archive<'_>, package: &Package, base: &str) -> Option<Vec<
         }
         .map(decode_entities);
     });
-    let at = resolve(&directory_of(&page), &source?);
+    let at = resolve(&directory_of(member), &source?);
     archive
         .read(&at)
         .ok()
@@ -2059,6 +2071,30 @@ mod tests {
                 "{content}"
             );
         }
+    }
+
+    #[test]
+    fn a_cover_marked_as_a_drawing_gives_the_picture_the_drawing_shows() {
+        let package = r#"<package version="3.0"><metadata><dc:title>Four</dc:title></metadata>
+            <manifest>
+              <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+              <item id="art" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/>
+              <item id="plate" href="images/plate.jpg" media-type="image/jpeg"/>
+            </manifest><spine><itemref idref="one"/></spine></package>"#;
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", b"<p>Words.</p>"),
+            (
+                "OEBPS/cover.svg",
+                br#"<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="images/plate.jpg"/></svg>"#,
+            ),
+            ("OEBPS/images/plate.jpg", b"plate bytes"),
+        ]);
+        assert_eq!(
+            describe(&bytes).expect("a described book").cover.as_deref(),
+            Some(&b"plate bytes"[..])
+        );
     }
 
     #[test]
