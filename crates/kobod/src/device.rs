@@ -236,7 +236,9 @@ const SYNC_CHECK: Duration = Duration::from_secs(60);
 /// is open and caught up when it next opens.
 #[derive(Default)]
 struct SyncWindows {
-    running: Option<Child>,
+    /// The window this session started, with why, so a window that has to be
+    /// ended can be put back to run again.
+    running: Option<(Child, crate::syncthing::Due)>,
     checked: Option<Instant>,
     /// Set when the Sync app saved something that may make a window due now,
     /// so a tap is answered at once rather than within the minute.
@@ -250,7 +252,7 @@ impl SyncWindows {
         }
         self.asked = false;
         self.checked = Some(Instant::now());
-        if let Some(window) = &mut self.running {
+        if let Some((window, _)) = &mut self.running {
             if matches!(window.try_wait(), Ok(None)) {
                 return;
             }
@@ -284,7 +286,7 @@ impl SyncWindows {
         match started {
             Ok(window) => {
                 trace(&format!("sync window started ({due:?})"));
-                self.running = Some(window);
+                self.running = Some((window, due));
             }
             Err(error) => trace(&format!("sync window could not start: {error}")),
         }
@@ -297,7 +299,7 @@ impl SyncWindows {
     /// the deadline is ended with its whole group, the engine included,
     /// because nothing Cobalt started may still be running once the reader is.
     fn finish(&mut self) {
-        let Some(mut window) = self.running.take() else {
+        let Some((mut window, due)) = self.running.take() else {
             return;
         };
         if !matches!(window.try_wait(), Ok(None)) {
@@ -313,6 +315,13 @@ impl SyncWindows {
                     kobo_abi::process_group::signal(window.id(), kobo_abi::process_group::SIGKILL);
                 let _ignored = window.wait();
                 trace("sync window did not stop in time and was ended");
+                // Ended before it could say so: most likely still fetching the
+                // engine, after it had already recorded the attempt and taken
+                // the owner's request. Put both back here instead, or a Sync
+                // now tap is lost and a schedule waits out a sync that never ran.
+                if let Err(error) = crate::syncthing::put_back(due) {
+                    trace(&format!("could not put the stopped sync back: {error}"));
+                }
                 return;
             }
             thread::sleep(Duration::from_millis(100));

@@ -199,6 +199,20 @@ pub fn ask_window_to_stop() -> std::io::Result<()> {
     fs::write(Path::new(HOME).join(STOP), b"")
 }
 
+/// Puts back a sync whose window the session had to end before it could do
+/// so itself, so it runs again at the next session.
+///
+/// # Errors
+///
+/// When the app's state cannot be written.
+pub fn put_back(due: Due) -> Result<(), String> {
+    let reason = match due {
+        Due::Owner => "owner",
+        Due::Scheduled => "scheduled",
+    };
+    stopped_with_the_session(Path::new(APP_STATE), Path::new(HOME), reason)
+}
+
 /// Clears a request left by a session that ended before its window saw it,
 /// so the next window is not stopped by it as it starts.
 pub fn forget_stop_request() {
