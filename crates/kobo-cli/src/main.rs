@@ -10,13 +10,14 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use kobo_host::connect;
+
 mod account;
 mod apps;
 mod authorize;
 mod beta_store_smoke;
 mod birds;
 mod bootstrap;
-mod connect;
 mod console;
 mod deck;
 mod detect;
