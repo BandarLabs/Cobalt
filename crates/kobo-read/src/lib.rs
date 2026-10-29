@@ -3263,10 +3263,21 @@ fn paginate(
                 piece_presentation(rich, text.as_str(), &mut source_at);
             let presentation =
                 fragment_presentation(presentation, placed == 0, placed + take == lines.len());
+            // Only prose is drawn with the book's margins. A heading, a quote,
+            // an item or a caption is set by the toolkit with its own spacing,
+            // so charging it the margins its stylesheet asked for counted room
+            // the page never spent. Standard Ebooks gives every chapter heading
+            // three ems above and three below, and each page a chapter opened
+            // on ended six heading lines early.
+            let margins = if rich_layout.is_some() {
+                presentation_height(presentation, natural_height)
+            } else {
+                0
+            };
             used += i32::try_from(take)
                 .unwrap_or(i32::MAX)
                 .saturating_mul(height)
-                .saturating_add(presentation_height(presentation, natural_height));
+                .saturating_add(margins);
             page.push(Piece {
                 block: index,
                 text,
@@ -5613,6 +5624,36 @@ mod tests {
     // level it is and whatever face the book asked for. Measured as the
     // book's own type instead, this heading came out two lines where three
     // were drawn, and the line that made was drawn over the page number.
+    #[test]
+    fn a_heading_is_not_charged_margins_it_is_not_drawn_with() {
+        let opening = |margins: u16| {
+            let mut document = book(20);
+            document.rich.insert(
+                0,
+                kobo_doc::RichBlock {
+                    spans: Vec::new(),
+                    style: kobo_doc::BlockStyle {
+                        margin_before_em: margins,
+                        margin_after_em: margins,
+                        ..kobo_doc::BlockStyle::default()
+                    },
+                },
+            );
+            let reader = Reader::open(document, Memory::default(), &panel());
+            no_words_fall_off_a_page(&reader);
+            reader
+                .page()
+                .iter()
+                .map(|piece| piece.text.len())
+                .sum::<usize>()
+        };
+        assert_eq!(
+            opening(300),
+            opening(0),
+            "the heading's margins took room from the page it opened"
+        );
+    }
+
     #[test]
     fn a_heading_is_measured_at_the_size_it_is_drawn() {
         let mut blocks = Vec::new();
