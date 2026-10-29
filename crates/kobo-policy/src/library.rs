@@ -235,7 +235,7 @@ pub fn list_with_stock_in(roots: &[PathBuf]) -> Listing {
     if let Some(card) = roots.first() {
         let database = card.join(STOCK_DATABASE);
         if database.is_file() {
-            nickel::merge_from(&mut listing, &database, roots);
+            nickel::merge_from(&mut listing, &database, roots, Some(card));
         }
     }
     listing
@@ -556,13 +556,28 @@ mod nickel {
 
     const DATABASE: &str = "/mnt/onboard/.kobo/KoboReader.sqlite";
 
+    /// Where the reader mounts its card, and so where the database's paths
+    /// begin.
+    const CARD: &str = "/mnt/onboard/";
+
     pub fn merge(listing: &mut Listing) {
         let roots: Vec<PathBuf> = ROOTS.iter().map(PathBuf::from).collect();
-        merge_from(listing, Path::new(DATABASE), &roots);
+        merge_from(listing, Path::new(DATABASE), &roots, None);
     }
 
     /// Adds the stock library's titles to a walk of `roots`.
-    pub fn merge_from(listing: &mut Listing, database: &Path, roots: &[PathBuf]) {
+    ///
+    /// `card` is where a copy of the card is kept, when the database came off
+    /// a reader: it names its files where the reader mounts the card, and in
+    /// the copy they are under `card` instead. Without that every sideloaded
+    /// book was listed twice, once by the walk and once as a Store title that
+    /// was not downloaded.
+    pub fn merge_from(
+        listing: &mut Listing,
+        database: &Path,
+        roots: &[PathBuf],
+        card: Option<&Path>,
+    ) {
         let Ok(connection) = rusqlite::Connection::open_with_flags(
             database,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -596,11 +611,16 @@ mod nickel {
             if mime.to_ascii_lowercase().contains("mp3") {
                 continue;
             }
-            let named = content_id.strip_prefix("file://").map(Path::new);
-            if named.is_some_and(skipped_internal) {
+            let named = content_id.strip_prefix("file://").map(|path| {
+                match (card, path.strip_prefix(CARD)) {
+                    (Some(card), Some(inside)) => card.join(inside),
+                    _ => PathBuf::from(path),
+                }
+            });
+            if named.as_deref().is_some_and(skipped_internal) {
                 continue;
             }
-            let path = named.filter(|path| path.is_file());
+            let path = named.as_deref().filter(|path| path.is_file());
             if let Some(listed) = path.and_then(|path| already_listed(listing, path, roots)) {
                 // The walk named it after its file. The stock reader read the
                 // book's own title when it was copied on, and a sideloaded
@@ -1025,7 +1045,7 @@ mod tests {
         drop(connection);
         let roots = [root];
         let mut listing = list_in(&roots);
-        super::nickel::merge_from(&mut listing, &database, &roots);
+        super::nickel::merge_from(&mut listing, &database, &roots, None);
         let titles: Vec<_> = listing
             .entries
             .iter()
@@ -1089,6 +1109,43 @@ mod tests {
     }
 
     #[test]
+    fn a_database_copied_off_a_reader_names_the_books_on_the_copy_of_its_card() {
+        let card = scratch("copied-card");
+        fs::write(
+            card.join("austen_pride_v2.epub"),
+            a_book_called("Pride and Prejudice"),
+        )
+        .expect("a sideloaded book");
+        let kepubs = card.join(".kobo").join("kepub");
+        fs::create_dir_all(&kepubs).expect("the stock reader's folders");
+        fs::write(kepubs.join("1f7e9c2a"), a_book_called("Piranesi")).expect("a store book");
+        let database = card.join(".kobo").join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES
+                    ('file:///mnt/onboard/austen_pride_v2.epub', 'Pride and Prejudice',
+                     'application/epub+zip', 'true', 9, '6'),
+                    ('file:///mnt/onboard/.kobo/kepub/1f7e9c2a', 'Piranesi',
+                     'application/x-kobo-epub+zip', 'true', 9, '6');",
+            )
+            .expect("the rows");
+        drop(connection);
+        let roots = [card];
+        let listing = super::list_with_stock_in(&roots);
+        let found: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.on_card))
+            .collect();
+        assert_eq!(found, [("Piranesi", true), ("Pride and Prejudice", true)]);
+        let piranesi = &listing.entries[0].id;
+        assert!(super::read_with_stock_in(&roots, piranesi).is_some());
+    }
+
+    #[test]
     fn the_stock_library_names_books_the_walk_cannot_see() {
         let database = scratch("nickel-db").join("KoboReader.sqlite");
         let connection = rusqlite::Connection::open(&database).expect("a scratch library");
@@ -1115,7 +1172,7 @@ mod tests {
             .expect("the rows");
         drop(connection);
         let mut listing = super::Listing::default();
-        super::nickel::merge_from(&mut listing, &database, &[]);
+        super::nickel::merge_from(&mut listing, &database, &[], None);
         let titles: Vec<_> = listing
             .entries
             .iter()
