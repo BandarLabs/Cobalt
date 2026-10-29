@@ -3,12 +3,12 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo. Needs your computer.",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The address and pairing code are typed on Cobalt's own keyboard with a refused address explained under its field, and questions with several answers are ticked and sent from a bar that counts them.",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "setup": {
     "steps": [
       {

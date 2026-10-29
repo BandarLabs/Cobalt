@@ -3,11 +3,11 @@
   "display_name": "Preprints",
   "short_label": "Preprints",
   "summary": "Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "glyph": "note",
   "capabilities": [
     "network"
   ],
-  "release_notes": "On a Kobo Clara Colour or Libra Colour the bar across the top is arXiv red, and the buttons and the mark under the current list follow it. Black-and-white readers look exactly as before.",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "page_description": "Browse the newest arXiv preprints in any category, grouped under arXiv's own headings, or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints with their figures for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
 }

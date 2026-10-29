@@ -3,7 +3,7 @@
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
   "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,7 +11,7 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "The topic is typed on Cobalt's own keyboard, with a topic that is too short explained under it. The player keeps every control on the panel at every text size, and Bluetooth is a switch in the headphone picker.",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "setup": {
     "steps": [
       {

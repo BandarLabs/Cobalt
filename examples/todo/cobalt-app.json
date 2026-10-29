@@ -3,8 +3,8 @@
   "display_name": "Todo",
   "short_label": "Todo",
   "summary": "Keep a simple to-do list that stays on your Kobo.",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "glyph": "check",
   "capabilities": [],
-  "release_notes": "Items are typed on Cobalt's own keyboard, and Select ticks several to finish or delete in one go, with Undo putting deleted items back where they were. A due date is one choice of four side by side."
+  "release_notes": "Rebuilt with the current Cobalt SDK."
 }

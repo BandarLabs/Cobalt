@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
-  "version": "0.2.10",
-  "release_notes": "On a Kobo Clara Colour or Libra Colour card images are shown in colour. Black-and-white readers look exactly as before.",
+  "version": "0.2.11",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "bookmark",
   "capabilities": [],
   "setup": {

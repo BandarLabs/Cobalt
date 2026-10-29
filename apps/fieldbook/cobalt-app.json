@@ -4,8 +4,8 @@
   "short_label": "Fieldbook",
   "summary": "Log bird sightings anywhere and build your life list.",
   "page_description": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
-  "version": "0.3.6",
-  "release_notes": "On a Kobo Clara Colour or Libra Colour sighting photos are shown in colour. Black-and-white readers look exactly as before.",
+  "version": "0.3.7",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "search",
   "capabilities": [],
   "setup": {

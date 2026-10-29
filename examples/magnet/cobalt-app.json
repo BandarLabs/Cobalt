@@ -3,7 +3,7 @@
   "display_name": "Magnet",
   "short_label": "Magnet",
   "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "glyph": "magnet",
   "capabilities": [
     "cover-sensor"

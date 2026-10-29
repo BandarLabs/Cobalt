@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "On a Kobo Clara Colour or Libra Colour book covers are shown in colour. Black-and-white readers look exactly as before."
+  "release_notes": "A page that opens a chapter is filled to the foot again. Books whose headings carry their own spacing, as most Gutenberg and Standard Ebooks editions do, ended those pages several lines early."
 }

@@ -4,8 +4,8 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.8",
-  "release_notes": "Your password and the library address are typed on Cobalt's own keyboard, and the reader saves the password without the app seeing it. Sign in again, Try again and Retry saving sit on the message that explains the problem.",
+  "version": "0.1.9",
+  "release_notes": "A page that opens a chapter is filled to the foot again. Books whose headings carry their own spacing ended those pages several lines early.",
   "glyph": "book",
   "capabilities": [
     "network"

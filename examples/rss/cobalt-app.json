@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "On a Kobo Clara Colour or Libra Colour the bar across the top is feed orange, and the buttons and the mark under the current list follow it. Black-and-white readers look exactly as before."
+  "release_notes": "Rebuilt with the current Cobalt SDK."
 }

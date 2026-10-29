@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.16",
-  "release_notes": "A save that worked and one that failed now look different, and an empty library shows the command to send a story with Check for stories right under it.",
+  "version": "0.1.17",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "book",
   "capabilities": [],
   "setup": {

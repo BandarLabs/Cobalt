@@ -3,7 +3,7 @@
   "display_name": "Tic-tac-toe",
   "short_label": "Tic-tac-toe",
   "summary": "Play tic-tac-toe together on one Kobo.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "glyph": "grid",
   "capabilities": [],
   "release_notes": "Rebuilt with the current Cobalt SDK."

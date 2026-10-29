@@ -4,8 +4,8 @@
   "short_label": "Sync",
   "summary": "Sync folders between your computer and your Kobo with Syncthing. Needs your computer.",
   "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.",
-  "version": "0.3.7",
-  "release_notes": "On a Kobo Clara Colour or Libra Colour the bar across the top is Syncthing blue and the switch and buttons follow it. Black-and-white readers look exactly as before.",
+  "version": "0.3.8",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"
