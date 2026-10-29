@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
-  "version": "0.2.8",
-  "release_notes": "Cards you grade come back on their own schedule, missed cards return before you finish, and collections from current Anki arrive over Wi-Fi with kobo flashcards push.",
+  "version": "0.2.9",
+  "release_notes": "Each deck shows how many cards are due as a count beside its name, and the first screen, Review settings and the licences list fit at every text size.",
   "glyph": "bookmark",
   "capabilities": [],
   "setup": {

@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.7",
-  "release_notes": "Shows the computer command and the HTTPS requirement on the first screen, with Check again to pick up a connection made on your computer.",
+  "version": "0.2.8",
+  "release_notes": "The address and device search are typed on Cobalt's own keyboard, Wall panel is a switch, and a QR code opens your Home Assistant profile on a phone. Check again sits right under the computer command.",
   "glyph": "light",
   "capabilities": [
     "network"

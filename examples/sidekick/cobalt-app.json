@@ -3,12 +3,12 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo. Needs your computer.",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Opens already paired after kobo sidekick init, and says Connecting, Watching or Not connected with the reason, instead of Watching while the computer is away.",
+  "release_notes": "The address and pairing code are typed on Cobalt's own keyboard with a refused address explained under its field, and questions with several answers are ticked and sent from a bar that counts them.",
   "setup": {
     "steps": [
       {

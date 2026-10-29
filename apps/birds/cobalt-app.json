@@ -4,8 +4,8 @@
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.8",
-  "release_notes": "Asks the reader to stay awake while the birds are on screen, and says so in the menu when the reader cannot.",
+  "version": "0.1.9",
+  "release_notes": "When the collage is stale, the menu now says Out of date and when it last changed, in a plain sentence.",
   "glyph": "app",
   "capabilities": [
     "keep-awake"

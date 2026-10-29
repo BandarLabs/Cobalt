@@ -4,8 +4,8 @@
   "short_label": "Panels",
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Read CBZ comics on your Kobo with zoom, spreads and right-to-left reading. Add comics over USB or download them from your Komga library.",
-  "version": "0.1.6",
-  "release_notes": "Comics sent from your computer go on your shelf by themselves, under their own titles, and a second push no longer replaces the first.",
+  "version": "0.1.7",
+  "release_notes": "Search, the server address and account keys are typed on Cobalt's own keyboard, and the reader saves keys without the app seeing them. Reading order is a switch, and Back clears a search before leaving.",
   "glyph": "reader",
   "capabilities": [
     "network"

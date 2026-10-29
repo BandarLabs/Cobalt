@@ -3,9 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.1",
-  "release_notes": "Connects from your computer with kobo connect readeck, keeps the articles you open for reading offline, and says why a refresh failed instead of showing an empty inbox. Reopens a document on the page you left.",
-  "minimum_cobalt_version": "0.3.25",
+  "version": "0.1.2",
+  "release_notes": "Your API token, server address and searches are typed on Cobalt's own keyboard, and the reader saves the token without the app seeing it. Connecting shows its three steps, and a QR code opens the token page on a phone.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

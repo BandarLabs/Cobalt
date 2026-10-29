@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "Refresh all updates every feed and keeps the newest illustrated articles whole for offline reading, starter feeds carry whole articles, and times are in your own time zone. Reopens a document on the page you left."
+  "release_notes": "Addresses and searches are typed on Cobalt's own keyboard, feeds from an OPML file are ticked and added together, and each feed shows its unread count at the edge of its row."
 }
