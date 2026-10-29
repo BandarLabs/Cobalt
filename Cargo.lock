@@ -924,6 +924,7 @@ dependencies = [
  "kobo-comic",
  "kobo-doc",
  "kobo-frame-host",
+ "kobo-host",
  "kobo-html",
  "kobo-image",
  "kobo-json",
@@ -1173,6 +1174,13 @@ dependencies = [
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",
+]
+
+[[package]]
+name = "kobo-host"
+version = "0.3.30"
+dependencies = [
+ "kobo-profile",
 ]
 
 [[package]]
