@@ -1,6 +1,6 @@
 //! First-run guidance and an entirely local terminal preview.
 use kobo_sdk::keyboard::Keyboard;
-use kobo_sdk::{Screen, ScreenBuilder, Space};
+use kobo_sdk::{FieldKind, Screen, ScreenBuilder, Space};
 
 pub(super) fn welcome(error: Option<&str>) -> Screen {
     ScreenBuilder::new("paperterm-welcome")
@@ -73,24 +73,35 @@ pub(super) fn preview() -> Screen {
         .build()
 }
 
+/// The address or pairing code, typed on keys Paperterm draws itself.
+///
+/// The keys stay the application's: the same keyboard types into the
+/// terminal, where every key goes to the computer as it is tapped. The field
+/// carries its own name, its guidance and, in the guidance's place, what was
+/// wrong with the last try, so a refused entry does not move the field or the
+/// keys under the owner's thumbs.
 pub(super) fn entry(code: bool, keyboard: &Keyboard, error: Option<&str>) -> Screen {
-    let (id, title, prompt, field, placeholder, submit) = if code {
+    let (id, title, label, hint, field, placeholder, submit, kind) = if code {
         (
             "paperterm-code",
             "Now the pairing code",
+            "Pairing code",
             "Enter the six characters kobo stream init printed.",
             "code",
             "abc123",
             "Connect",
+            FieldKind::Text,
         )
     } else {
         (
             "paperterm-pairing",
             "Pair with your computer",
+            "Address",
             "Enter the address kobo stream init printed.",
             "address",
             "192.168.1.20:9332",
             "Next",
+            FieldKind::Address,
         )
     };
     let mut screen = ScreenBuilder::new(id)
@@ -99,10 +110,16 @@ pub(super) fn entry(code: bool, keyboard: &Keyboard, error: Option<&str>) -> Scr
     if code {
         screen = screen.top_bar_action("edit-address", "Address");
     }
-    screen
+    screen = screen
         .heading(title)
-        .text(error.unwrap_or(prompt))
         .field(field, keyboard.text(), placeholder)
+        .field_label(label)
+        .field_hint(hint)
+        .field_kind(kind);
+    if let Some(error) = error {
+        screen = screen.field_error(error);
+    }
+    screen
         .spacer(Space::Small)
         .keyboard(keyboard, submit)
         .build()

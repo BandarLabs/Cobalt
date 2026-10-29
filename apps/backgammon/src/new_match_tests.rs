@@ -129,3 +129,69 @@ fn confirmation_controls_fit_and_are_tappable_at_every_text_size_and_pose() {
         }
     }
 }
+
+/// Offering the cube, answering an offer and dropping it are the same kind
+/// of question as New match, so they are drawn the same way: the question as
+/// the screen's heading, what follows under it, and the two answers, each a
+/// whole-width button under a finger at every text size.
+#[test]
+fn the_cube_questions_are_asked_like_new_match_at_every_text_size() {
+    let questions = [
+        (
+            Phase::ConfirmDouble,
+            "Offer the cube at 2?",
+            ["confirm-double", "cancel-double"],
+        ),
+        (
+            Phase::Offered(Player::Black),
+            "Black offers the cube at 2",
+            ["take", "drop"],
+        ),
+        (
+            Phase::ConfirmDrop(Player::Black),
+            "Drop Black's double?",
+            ["confirm-drop", "cancel-drop"],
+        ),
+    ];
+    for (phase, question, answers) in questions {
+        let game = Game {
+            phase,
+            mode: Mode::PassAndPlay,
+            ..Game::default()
+        };
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics);
+            let screen = screen_for(&game, None, &runner.context());
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{phase:?} {text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            let heading = layout
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Heading(_)))
+                .map(|node| node.text_lines.join(" "));
+            assert_eq!(heading.as_deref(), Some(question), "{text_scale:?}");
+            for answer in answers {
+                let action = action_id(answer);
+                let rect = layout.rect_of_action(action).expect("an answer");
+                assert!(
+                    rect.height >= metrics.touch_target_minimum(),
+                    "{answer} {text_scale:?}"
+                );
+                assert_eq!(
+                    layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                    Some(action),
+                    "{answer} {text_scale:?}"
+                );
+            }
+        }
+    }
+}

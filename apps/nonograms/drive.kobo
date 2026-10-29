@@ -26,8 +26,14 @@ expect Column 3
 shot nonograms-clue
 tap-id resume
 tap-id more
-tap Free
-tap Run off
+wait-for Guided
+clean
+shot nonograms-options
+tap Guided
+tap Run entry
+wait-idle
+clean
+shot nonograms-options-on
 tap Resume
 wait-idle
 shot nonograms-play

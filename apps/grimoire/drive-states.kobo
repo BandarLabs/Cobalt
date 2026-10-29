@@ -1,9 +1,15 @@
 wait 800
 expect Grimoire
 tap About
-expect Creative Commons
+expect Grimoire is an unofficial offline reference
 clean
 shot about
+# The licence closes About, a page further on at the larger text sizes. The
+# page key does nothing where About is one page.
+page next
+expect Creative Commons
+clean
+shot about-licence
 tap Back
 tap Dice
 expect Dice

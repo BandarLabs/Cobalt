@@ -298,7 +298,13 @@ def main():
                 address = start(later=SEVEN_HOURS + 120_000)
                 drive('wait-for-id refresh', 'tap-id sources')
                 sources = capture('09b-sources')
-                assert 'Showing this now' in words(sources), words(sources)
+                # The list showing now carries the runtime's own mark in the
+                # option list, and it is the only one that does.
+                marked = [node['action'] for node in sources['nodes']
+                          if node['kind'].startswith('OptionRow(') and node['kind'].endswith(', true)')]
+                named = {node['action']: ' '.join(node['lines']) for node in sources['nodes']
+                         if node['kind'] == 'OptionLabel'}
+                assert [named.get(action) for action in marked] == ['Top stories'], marked
                 drive('tap Ask Hacker News')
                 chosen = capture('10-source-chosen')
                 assert 'Ask Hacker News · not fetched yet' in words(chosen), words(chosen)

@@ -151,14 +151,15 @@ def main():
                 return True
 
             def add_in_a_row(texts):
-                """Adds several items without leaving the keyboard, then Done."""
+                """Adds several items without leaving the keyboard, then puts it
+                away with Back."""
                 drive('tap-id add', 'wait-idle')
                 composed = None
                 for text in texts:
                     type_text(text)
                     drive('tap Add', 'wait-idle')
                     composed = capture('01b-still-composing')
-                drive('tap-id done-adding', 'wait-idle')
+                drive('tap Back', 'wait-idle')
                 return composed
 
             try:

@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Read and search your saved Readeck articles. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/readeck/inbox.png">
 <meta name="twitter:image:alt" content="Readeck inbox with sample articles, rendered by Cobalt at Clara BW dimensions; not a device capture.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-k29YwxVNBs4mi11N4uPMr+YU+6ScwrlvOQtYxTpx2Rk='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-l+F5UOS8UmmO57XdmRbOSDYYQcNjNEVigl5G0vpJ3es='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "ReferenceApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.1",
+      "softwareVersion": "0.1.2",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -92,16 +92,16 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="readeck" data-minimum-cobalt-version="0.3.25">
+<main class="wrap" data-app-id="readeck" data-minimum-cobalt-version="0.3.31">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Reading</p>
       <h1>Readeck</h1>
       <p class="summary">Read and search your saved Readeck articles. Needs an account.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.1</dd></div>
+        <div><dt>Version</dt><dd>0.1.2</dd></div>
         <div><dt>Permissions</dt><dd>network, frontlight-control</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.25</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/readeck">Source code on GitHub</a></p>
@@ -111,8 +111,8 @@
     </figure>
   </div>
   <section class="whats-new">
-    <h2>New in 0.1.1</h2>
-    <p>Connects from your computer with kobo connect readeck, keeps the articles you open for reading offline, and says why a refresh failed instead of showing an empty inbox. Reopens a document on the page you left.</p>
+    <h2>New in 0.1.2</h2>
+    <p>Your API token, server address and searches are typed on Cobalt's own keyboard, and the reader saves the token without the app seeing it. Connecting shows its three steps, and a QR code opens the token page on a phone.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>

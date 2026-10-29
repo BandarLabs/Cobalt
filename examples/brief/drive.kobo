@@ -10,7 +10,9 @@ clean
 shot brief-empty
 tap Source
 wait-for All four are public Hacker News lists
-expect Showing this now
+expect What held up over several days
+clean
+shot brief-sources
 tap-id source-best
 wait-for Best
 tap Brief

@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--profile', default='clara-bw-391')
     parser.add_argument('--scale', default='extra-large')
     args = parser.parse_args()
-    target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
+    target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')).resolve()
     fixture = target / 'debug/examples/board'
     cli = target / 'debug/kobo'
     if not fixture.is_file() or not cli.is_file():

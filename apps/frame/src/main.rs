@@ -28,7 +28,8 @@ const CHECK: &str = "check";
 const MODE_FRAME: &str = "mode-frame";
 const MODE_SLOW: &str = "mode-slow";
 const INTERVALS: [&str; 3] = ["interval-0", "interval-1", "interval-2"];
-const ORDER_DATE: &str = "order-date";
+/// Shuffle on or off. It used to be two segments, "By date" and "Shuffle",
+/// for what is one switch.
 const ORDER_SHUFFLE: &str = "order-shuffle";
 /// The choices each mode offers, in minutes for Frame mode and hours for the
 /// slow slideshow, in the order the settings screen shows them.
@@ -145,22 +146,22 @@ struct Frame {
 
 impl Frame {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        context.set_screen(self.screen(context));
     }
 
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Opening => ScreenBuilder::new("frame-opening")
                 .top_bar("Frame")
                 .activity("Opening your photo shelf", None)
                 .build(),
-            View::Home => self.home(),
+            View::Home => self.home(context),
             View::Show => self.photo_screen(),
             View::Settings => self.settings_screen(),
         }
     }
 
-    fn home(&self) -> Screen {
+    fn home(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("frame-home").top_bar("Frame");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
@@ -173,16 +174,7 @@ impl Frame {
         // screen ever mentioned.
         screen = screen.top_bar_action(SETTINGS, "Settings");
         if self.photos.is_empty() {
-            return screen
-                .splash(
-                    Some(Glyph::App),
-                    "Your frame is empty",
-                    "Send photos from a computer. A folder becomes a slideshow, and new photos appear here on their own.",
-                )
-                .section("On your computer")
-                .command("kobo frame push ~/Pictures/family")
-                .button(CHECK, "Check for photos")
-                .build();
+            return Self::empty_home(context, &screen);
         }
         let index = self.settings.position % self.photos.len().max(1) + 1;
         screen =
@@ -226,6 +218,43 @@ impl Frame {
         screen.build()
     }
 
+    /// The first screen a new owner sees: what to run on the computer.
+    ///
+    /// Check for photos is pinned to the foot of the panel: under the command
+    /// it was the first thing the largest text sizes pushed off, and new
+    /// photos turn up on their own anyway. Where a notice over the screen
+    /// leaves no room for the sentence under the heading, the sentence goes,
+    /// because the notice and the command between them say what to do.
+    fn empty_home(context: &Context, screen: &ScreenBuilder) -> Screen {
+        let with = |mark: Option<Glyph>, sentence: &str| {
+            screen
+                .clone()
+                .splash(mark, "Your frame is empty", sentence)
+                .section("On your computer")
+                .command("kobo frame push ~/Pictures/family")
+                .bottom_action(CHECK, "Check for photos")
+                .build()
+        };
+        let sentence =
+            "Send a folder of photos from a computer. New photos appear here on their own.";
+        // Then the mark above the heading, at the largest sizes held sideways.
+        let shapes = [
+            (Some(Glyph::App), sentence),
+            (Some(Glyph::App), ""),
+            (None, ""),
+        ];
+        let metrics = context.metrics();
+        shapes
+            .iter()
+            .map(|(mark, sentence)| with(*mark, sentence))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| with(None, ""))
+    }
+
     /// Every setting on one screen, each choice its own segment, so what is
     /// set can be read before anything is tapped.
     fn settings_screen(&self) -> Screen {
@@ -267,10 +296,16 @@ impl Frame {
             .secondary(mode_note)
             .section("Change the photo every")
             .segmented(interval, INTERVALS.into_iter().zip(labels))
-            .section("Order")
-            .segmented(
-                usize::from(self.settings.shuffled),
-                [(ORDER_DATE, "By date"), (ORDER_SHUFFLE, "Shuffle")],
+            .spacer(kobo_sdk::Space::Medium)
+            .toggle(
+                ORDER_SHUFFLE,
+                "Shuffle",
+                if self.settings.shuffled {
+                    "Photos come in a random order."
+                } else {
+                    "Photos come in date order."
+                },
+                self.settings.shuffled,
             )
             .build()
             .with_own_back(true)
@@ -958,16 +993,15 @@ impl KoboApp for Frame {
             };
             self.save(context);
             self.apply_power_policy(context);
-        } else if action == action_id(ORDER_DATE) || action == action_id(ORDER_SHUFFLE) {
-            let shuffled = action == action_id(ORDER_SHUFFLE);
-            if shuffled != self.settings.shuffled {
-                self.settings.shuffled = shuffled;
-                self.settings.position = 0;
-                self.picture = None;
-                self.save(context);
-                self.abandon_photo_load(context);
-                self.start_current(context);
-            }
+        } else if action == action_id(ORDER_SHUFFLE) {
+            // A new order starts from its first photo, because the place in
+            // the old order means nothing in the new one.
+            self.settings.shuffled = !self.settings.shuffled;
+            self.settings.position = 0;
+            self.picture = None;
+            self.save(context);
+            self.abandon_photo_load(context);
+            self.start_current(context);
         }
         self.show(context);
     }
@@ -1386,7 +1420,7 @@ mod tests {
         assert!(frame.picture.is_none());
         assert!(frame.photos_all_unreadable());
         assert_eq!(frame.view, View::Home);
-        let home = frame.home();
+        let home = frame.home(&Context::default());
         let labels = home
             .nodes
             .iter()
@@ -1663,14 +1697,14 @@ mod tests {
     #[test]
     fn settings_are_reachable_from_the_bar_and_name_the_current_choice() {
         let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa"]);
-        let home = runner.app().home();
+        let home = runner.app().home(&runner.context());
         let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout.rect_of_action(action_id(SETTINGS)).is_some());
         runner.action(action_id(SETTINGS));
         assert_eq!(runner.app().view, View::Settings);
         let screen = runner.app().settings_screen();
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        for name in [MODE_FRAME, MODE_SLOW, ORDER_DATE, ORDER_SHUFFLE]
+        for name in [MODE_FRAME, MODE_SLOW, ORDER_SHUFFLE]
             .into_iter()
             .chain(INTERVALS)
         {
@@ -1687,9 +1721,97 @@ mod tests {
     }
 
     #[test]
+    fn shuffle_is_one_switch_that_starts_the_new_order_from_its_first_photo() {
+        let mut runner = opened_on(&["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]);
+        runner.action(action_id(SETTINGS));
+        runner.app_mut().settings.position = 1;
+        runner.action(action_id(ORDER_SHUFFLE));
+        assert!(runner.app().settings.shuffled);
+        assert_eq!(runner.app().settings.position, 0);
+        let screen = runner.app().settings_screen();
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, kobo_ui::Node::Toggle { on: true, .. })),
+            "the switch does not say shuffle is on"
+        );
+        runner.action(action_id(ORDER_SHUFFLE));
+        assert!(!runner.app().settings.shuffled);
+    }
+
+    #[test]
+    fn the_settings_fit_every_text_size_in_both_modes() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Frame::default(), metrics);
+            let mut frame = Frame::default();
+            for slow in [false, true] {
+                frame.settings.slow = slow;
+                frame.wake_refused = Some(DenyReason::WithheldForBattery);
+                frame.awake_refused = Some(DenyReason::WithheldForBattery);
+                let screen = frame.settings_screen();
+                let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(
+                    !diagnostics.has_errors(),
+                    "{text_scale:?} slow {slow}: {:?}",
+                    diagnostics.issues
+                );
+            }
+            drop(runner);
+        }
+    }
+
+    /// The first screen a new owner sees, with and without a notice over
+    /// it, at every text size on a Clara held either way.
+    #[test]
+    fn the_empty_frame_fits_every_text_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = kobo_sdk::AppRunner::with_metrics(Frame::default(), metrics);
+                let mut frame = Frame::default();
+                frame.startup.manifest_loaded = true;
+                for notice in [
+                    None,
+                    Some(
+                        "Frame's photo list could not be read (the file is damaged). Push the \
+                         album again from your computer.",
+                    ),
+                ] {
+                    frame.notice = notice.map(str::to_owned);
+                    let screen = frame.home(&runner.context());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        !diagnostics.has_errors(),
+                        "{text_scale:?} {orientation:?} notice {notice:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(diagnostics
+                        .layout
+                        .rect_of_action(action_id(CHECK))
+                        .is_some());
+                }
+                drop(runner);
+            }
+        }
+    }
+
+    #[test]
     fn an_empty_frame_names_only_the_push_and_can_look_again() {
         let mut runner = opened_on(&[]);
-        let text = format!("{:?}", runner.app().home());
+        let text = format!("{:?}", runner.app().home(&runner.context()));
         assert!(text.contains("kobo frame push"));
         assert!(!text.contains("kobo frame init"));
         assert!(!text.contains("kobo pair"));
@@ -1724,7 +1846,7 @@ mod tests {
             )),
             ..Frame::default()
         };
-        for screen in [frame.home(), frame.photo_screen()] {
+        for screen in [frame.home(&Context::default()), frame.photo_screen()] {
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues

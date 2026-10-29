@@ -82,12 +82,14 @@ def main():
 
                 # The way back from an app's page: the runtime's Back action.
                 back = 'tap-id 4294967295'
-                # An install stays on the app's page, says so, and offers Open
-                # instead of sending the owner back to the catalog.
+                # Install on the row opens the app's page, so its permissions
+                # are read before anything is installed. The page's Install
+                # installs, stays on the page, says so, and offers Open.
                 drive('wait-idle', 'expect-state /simulation#/appStore/mode "signed-local"',
                       'expect Link browser', 'tap-id filter-available', 'expect Available to install',
-                      'tap-id app-quality-fixture', 'shot available',
-                      'tap-id install-quality-fixture', 'wait-for is installed.',
+                      'tap Install', 'wait-for Permissions', 'expect Not installed', 'shot available')
+                assert not (fixture / 'installed/apps/quality-fixture').exists()
+                drive('tap-id install-quality-fixture', 'wait-for is installed.',
                       'expect Open', 'expect Uninstall', 'expect-missing Not installed', 'shot installed',
                       'tap-id open-quality-fixture')
                 assert installed() == '1.0.0'
@@ -97,7 +99,10 @@ def main():
                 publish('1.1.0')
                 # A failed update stays on the app's page and offers to try
                 # again; trying again with room to spare finishes the update.
-                drive(back, 'tap-id refresh', 'wait-for Updates 1', 'tap-id filter-updates',
+                # The Updates tab's count gives way at the largest text sizes,
+                # so the update is found by opening the tab, not by its count.
+                drive(back, 'tap-id refresh', 'wait-idle', 'tap-id filter-updates',
+                      'wait-for Quality fixture', 'expect-missing Every installed app is up to date.',
                       'tap-id app-quality-fixture', 'shot update',
                       'scenario storage-full', 'tap-id install-quality-fixture',
                       'wait-for Check free space', 'expect Try again', 'shot failed')
@@ -109,8 +114,12 @@ def main():
                 address = start()
                 # Uninstall asks first. Cancel keeps the app; confirming removes
                 # it and keeps its data, as the question promised.
-                drive('wait-idle', 'expect Installed · 1.1.0', 'expect Updates 0', 'shot reopened',
-                      'tap-id app-quality-fixture', 'tap-id remove-quality-fixture',
+                # The row offers Open now that nothing newer is waiting, and
+                # the app's page says which version is installed.
+                drive('wait-idle', 'tap-id filter-updates', 'wait-for Every installed app is up to date.',
+                      'tap-id filter-all', 'shot reopened',
+                      'tap-id app-quality-fixture', 'expect-missing Not installed',
+                      'tap-id remove-quality-fixture',
                       'wait-for Its saved data stays on this reader', 'shot confirm-uninstall',
                       'tap Cancel', 'expect-missing Its saved data stays on this reader', 'expect Open')
                 assert installed() == '1.1.0'

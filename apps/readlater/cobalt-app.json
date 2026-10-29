@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere. Needs an account.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.7",
-  "release_notes": "Picks up a sign-in from your computer without restarting, and says why a sync failed instead of Off the air.",
+  "version": "0.2.8",
+  "release_notes": "The server address is typed on Cobalt's own keyboard, settings offer a QR code for your Wallabag's API clients page, and Retry saving sits on the message that says saving failed.",
   "glyph": "bookmark",
   "capabilities": [
     "network"

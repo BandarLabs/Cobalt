@@ -24,14 +24,6 @@ impl Cadence {
             Self::Daily => Some(86_400),
         }
     }
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Manual => Self::Hourly,
-            Self::Hourly => Self::FourHourly,
-            Self::FourHourly => Self::Daily,
-            Self::Daily => Self::Manual,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +72,5 @@ mod tests {
         let config = Config::default();
         assert!(!config.enabled);
         assert_eq!(config.cadence.seconds(), None);
-        assert_eq!(Cadence::Daily.next(), Cadence::Manual);
     }
 }

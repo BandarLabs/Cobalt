@@ -49,6 +49,10 @@ use kobo_sdk::{
 use std::process::ExitCode;
 use std::time::Duration;
 
+/// The source list's page turns.
+const SOURCES_BACK: &str = "sources-back";
+const SOURCES_NEXT: &str = "sources-next";
+
 /// Which list of stories the brief is drawn from.
 ///
 /// All four are the same public index in different moods, and a reader who
@@ -88,6 +92,14 @@ impl Source {
             Self::Show => "showstories",
         };
         format!("{}/v0/{list}.json", origin())
+    }
+
+    /// Where this list sits among [`Self::ALL`].
+    fn position(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|source| *source == self)
+            .unwrap_or(0)
     }
 
     const fn label(self) -> &'static str {
@@ -208,6 +220,9 @@ enum View {
 
 struct Brief {
     stories: Vec<Story>,
+    /// Which page of the source list is drawn. Four lists fit one page at
+    /// most sizes; held sideways at the largest text they take two.
+    source_page: u16,
     /// Which page of the brief is drawn, for the larger text sizes where six
     /// headlines do not fit one panel.
     page: usize,
@@ -253,6 +268,7 @@ impl Default for Brief {
         Self {
             stories: Vec::new(),
             page: 0,
+            source_page: 0,
             source: Source::default(),
             fetched: None,
             fetched_at: None,
@@ -593,6 +609,9 @@ impl Brief {
         }
     }
 
+    /// One list from four, drawn by the runtime as an option list, so the
+    /// list showing now carries the runtime's own mark and every row keeps
+    /// the line that says what its list is.
     fn sources_screen(&self) -> Screen {
         ScreenBuilder::new("brief-sources")
             .top_bar("Source")
@@ -601,22 +620,14 @@ impl Brief {
                 "All four are public Hacker News lists. Nothing is fetched until you \
                  refresh once; after that the brief refreshes itself each morning.",
             )
-            .rows(Source::ALL.map(|source| {
-                (
-                    source.action(),
-                    source.label(),
-                    if source == self.source {
-                        "Showing this now"
-                    } else {
-                        source.detail()
-                    },
-                    if source == self.source {
-                        Glyph::Check
-                    } else {
-                        Glyph::News
-                    },
-                )
-            }))
+            .option_list(
+                "",
+                self.source_page,
+                SOURCES_BACK,
+                SOURCES_NEXT,
+                Source::ALL.map(|source| (source.action(), source.label(), source.detail())),
+            )
+            .chosen(self.source.position())
             .bottom_action("close-sources", "Brief")
             .build()
     }
@@ -1146,7 +1157,21 @@ impl KoboApp for Brief {
         } else if action == action_id("next") {
             self.page = (self.page + 1).min(self.pages(context).len().saturating_sub(1));
         } else if action == action_id("sources") {
+            // Opens on the page holding the list showing now, so its mark is
+            // on the panel rather than a page turn away.
+            let per_page = kobo_sdk::options_per_page(&context.metrics(), true).max(1);
+            self.source_page = u16::try_from(self.source.position() / per_page).unwrap_or(0);
             self.view = View::Sources;
+        } else if self.view == View::Sources
+            && (action == action_id(SOURCES_BACK) || action == action_id(SOURCES_NEXT))
+        {
+            let pages = kobo_sdk::options_pages(Source::ALL.len(), &context.metrics(), true);
+            let last = u16::try_from(pages.saturating_sub(1)).unwrap_or(0);
+            self.source_page = if action == action_id(SOURCES_BACK) {
+                self.source_page.saturating_sub(1)
+            } else {
+                self.source_page.saturating_add(1).min(last)
+            };
         } else if action == action_id("close-sources") || action == ActionId::BACK {
             self.view = View::Brief;
         } else if let Some(chosen) = Source::ALL
@@ -1629,14 +1654,19 @@ mod tests {
                     text: String::new(),
                 })
                 .collect();
-            for view in [View::Brief, View::Sources] {
+            let context = kobo_sdk::AppRunner::with_metrics(Brief::default(), metrics).context();
+            let source_pages = kobo_sdk::options_pages(Source::ALL.len(), &context.metrics(), true);
+            let shown = std::iter::once((View::Brief, 0))
+                .chain((0..source_pages).map(|page| (View::Sources, page)));
+            for (view, page) in shown {
                 brief.view = view;
+                brief.source_page = u16::try_from(page).unwrap();
                 let diagnostics = brief
-                    .screen(&kobo_sdk::AppRunner::with_metrics(Brief::default(), metrics).context())
+                    .screen(&context)
                     .diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
                 assert!(
                     diagnostics.issues.is_empty(),
-                    "{text_scale:?} {view:?}: {:?}",
+                    "{text_scale:?} {view:?} page {page}: {:?}",
                     diagnostics.issues
                 );
             }

@@ -178,7 +178,9 @@ def main():
                 legacy=b'H........................;0;1'
                 store.write_bytes(legacy)
                 address=start()
-                drive('wait-for-id game-more','expect Heart of the matter')
+                # The title is cut to "Heart of the…" at the largest size, so
+                # the check reads only the words every size keeps.
+                drive('wait-for-id game-more','expect Heart of the')
                 assert store.read_bytes()==legacy
                 capture('13-legacy-progress')
                 drive('tap-id cell-0','type e','tap Enter','wait-idle')

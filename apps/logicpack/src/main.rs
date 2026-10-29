@@ -2,8 +2,8 @@
 
 use kobo_sdk::game::{self, Menu, Tap};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, DisplayMetrics, Glyph, KoboApp, LayoutIssueKind,
-    Screen, ScreenBuilder, SlotWidth, StoreResult,
+    action_id, ActionId, BandAlign, Context, DialogAction, DisplayMetrics, Glyph, KoboApp,
+    LayoutIssueKind, Screen, ScreenBuilder, SlotWidth, StoreResult,
 };
 use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
@@ -619,18 +619,19 @@ impl Game {
             .owns_back(true)
             .heading("Enter a digit")
             .text(format!("Across {across} · Down {down}"))
-            .secondary(format!(
-                "Current: {}",
-                if self.cells[self.entry] == 0 {
-                    "blank".into()
-                } else {
-                    self.cells[self.entry].to_string()
-                }
-            ))
-            .grid(
+            // The digit already in the square is state, so the runtime marks
+            // its key, as Sudoku's pad does, rather than a "Current:" line
+            // spelling it out above the keys. A blank square marks none.
+            .grid_with_selection(
                 3,
                 false,
-                (1..=9).map(|n| (format!("digit-{n}"), n.to_string())),
+                (1..=9).map(|n| {
+                    (
+                        format!("digit-{n}"),
+                        n.to_string(),
+                        self.cells[self.entry] == n,
+                    )
+                }),
             )
             .grid(
                 2,
@@ -641,24 +642,36 @@ impl Game {
     }
     fn screen(&self) -> Screen {
         if !self.loaded {
-            let b = ScreenBuilder::new("logicpack-opening").top_bar("Logic Pack");
+            let head = || ScreenBuilder::new("logicpack-opening").top_bar("Logic Pack");
+            // Both failures fill the screen, so each is a splash with its fix
+            // directly under the reason, not a heading at the top and the fix
+            // pinned to the foot with an empty panel between them.
             return if let Some(error) = &self.load_error {
-                b.heading("Cannot open progress")
-                    .text(error)
-                    .text("Your saved puzzles have been kept.")
-                    .bottom_action("retry-load", "Retry")
-                    .build()
+                failure_screen(
+                    head,
+                    &self.metrics,
+                    "Cannot open progress",
+                    (
+                        &format!("{error} Your saved puzzles have been kept."),
+                        error,
+                    ),
+                    ("retry-load", "Try again"),
+                )
             } else {
-                b.text("Opening puzzles…").build()
+                head().text("Opening puzzles…").build()
             };
         }
         if matches!(self.draft.status(), Status::Failed(_)) {
-            return ScreenBuilder::new("logicpack-save-failed")
-                .top_bar("Logic Pack")
-                .heading("Progress not saved")
-                .text("Your latest moves are still here. Keep Logic Pack open and retry saving.")
-                .bottom_action("retry-save", "Retry save")
-                .build();
+            return failure_screen(
+                || ScreenBuilder::new("logicpack-save-failed").top_bar("Logic Pack"),
+                &self.metrics,
+                "Progress not saved",
+                (
+                    "Your latest moves are still here. Keep Logic Pack open and retry saving.",
+                    "Keep Logic Pack open and retry saving.",
+                ),
+                ("retry-save", "Retry saving"),
+            );
         }
         if let View::Collection(kind) = self.view {
             return self.collection_screen(kind);
@@ -670,10 +683,12 @@ impl Game {
             return ScreenBuilder::new("logicpack-restart")
                 .top_bar("Restart puzzle")
                 .owns_back(true)
-                .heading("Clear this puzzle?")
-                .text("Other puzzles keep their progress. You can undo this restart.")
-                .button("confirm-restart", "Restart")
-                .button("cancel-restart", "Keep playing")
+                .confirmation(
+                    "Clear this puzzle?",
+                    "Other puzzles keep their progress. You can undo this restart.",
+                    DialogAction::new("confirm-restart", "Restart"),
+                    DialogAction::new("cancel-restart", "Keep playing"),
+                )
                 .build();
         }
         if self.view == View::Help {
@@ -800,10 +815,13 @@ impl Game {
         let verb = match (self.kind, self.outcome) {
             (_, Outcome::Solved) => Some(("next-puzzle", "Next puzzle")),
             (_, Outcome::Lost) => Some(("restart-field", "Restart")),
-            (Kind::Slither, _) if self.marking => Some(("line-mode", "Mode: Cross")),
-            (Kind::Slither, _) => Some(("line-mode", "Mode: Line")),
-            (Kind::Mines, _) if self.flagging => Some(("mine-mode", "Mode: Flag")),
-            (Kind::Mines, _) => Some(("mine-mode", "Mode: Reveal")),
+            // A bar cannot hold a switch, so the entry names what the tap
+            // does. "Mode: Line" stated the current mode, which read as an
+            // order as easily as a report.
+            (Kind::Slither, _) if self.marking => Some(("line-mode", "Draw lines")),
+            (Kind::Slither, _) => Some(("line-mode", "Mark crosses")),
+            (Kind::Mines, _) if self.flagging => Some(("mine-mode", "Reveal squares")),
+            (Kind::Mines, _) => Some(("mine-mode", "Flag mines")),
             _ => None,
         };
         // The notice and the save state share one line above the board, so
@@ -1283,6 +1301,33 @@ impl KoboApp for Game {
     }
 }
 
+/// A whole-screen failure: a splash saying why, then its one fix directly
+/// under it. On a small panel at the largest text sizes the mark gives way
+/// first and then the longer sentence, so the reason and the fix are always
+/// on the panel together.
+fn failure_screen(
+    head: impl Fn() -> ScreenBuilder,
+    metrics: &kobo_sdk::DisplayMetrics,
+    title: &str,
+    (full, short): (&str, &str),
+    (retry, label): (&str, &str),
+) -> Screen {
+    let build = |glyph, summary: &str| {
+        head()
+            .splash(glyph, title, summary)
+            .primary_button(retry, label)
+            .build()
+    };
+    [(Some(Glyph::Close), full), (None, full), (None, short)]
+        .into_iter()
+        .map(|(glyph, summary)| build(glyph, summary))
+        .find(|screen| {
+            !screen
+                .diagnostics(metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| build(None, short))
+}
 fn main() -> ExitCode {
     match kobo_sdk::run("logicpack", Game::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1809,6 +1854,219 @@ mod durable_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod p16_tests {
+    use super::*;
+    use kobo_ui::{Chrome, Emphasis, LayoutKind, Node, TextScale};
+
+    fn ready(metrics: DisplayMetrics) -> Game {
+        Game {
+            loaded: true,
+            metrics,
+            ..Game::default()
+        }
+    }
+
+    fn clara(width: i32, height: i32, ppi: i32, text_scale: TextScale) -> DisplayMetrics {
+        DisplayMetrics {
+            width,
+            height,
+            pixels_per_inch: ppi,
+            text_scale,
+        }
+    }
+
+    /// The splash a whole-screen failure draws, with the one control
+    /// directly under it, checked on the panel at this size.
+    fn assert_failure_splash(screen: &Screen, metrics: DisplayMetrics, retry: &str, label: &str) {
+        assert!(screen.bottom_action.is_none(), "{metrics:?}");
+        let splash = screen
+            .nodes
+            .iter()
+            .position(|node| matches!(node, Node::Splash { .. }))
+            .expect("the failure is a splash");
+        // The mark gives way only where a small panel at a large size needs the
+        // room; on a Clara at the default size it is there.
+        if metrics.text_scale == kobo_ui::TextScale::Default && metrics.pixels_per_inch == 300 {
+            assert!(matches!(
+                &screen.nodes[splash],
+                Node::Splash {
+                    glyph: Some(Glyph::Close),
+                    ..
+                }
+            ));
+        }
+        assert!(
+            matches!(
+                &screen.nodes[splash + 1],
+                Node::Button {
+                    label: drawn,
+                    emphasis: Emphasis::Primary,
+                    ..
+                } if drawn == label
+            ),
+            "{metrics:?}: {:?}",
+            screen.nodes
+        );
+        let chrome = Chrome::measuring(true);
+        let issues = screen.diagnostics(&metrics, &chrome).issues;
+        assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+        let layout = screen.layout_with(&metrics, &chrome);
+        let reason = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::SplashText))
+            .expect("the reason is drawn")
+            .rect;
+        let button = layout
+            .rect_of_action(action_id(retry))
+            .expect("the fix is on the panel");
+        assert!(button.y >= reason.y + reason.height, "{metrics:?}");
+    }
+
+    /// An unreadable record and a refused save each fill the screen, so each
+    /// is a splash with its one fix directly under the reason: Try again for
+    /// the read and Retry saving for the write.
+    #[test]
+    fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
+        for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
+            for text_scale in TextScale::STEPS {
+                let metrics = clara(width, height, ppi, text_scale);
+                let _fonts = fonts(metrics);
+                let mut unopened = Game {
+                    metrics,
+                    ..Game::default()
+                };
+                unopened.on_load(
+                    &mut Context::default(),
+                    STATE,
+                    StoreResult::Loaded {
+                        key: STATE.into(),
+                        value: Some(b"bad".to_vec()),
+                    },
+                );
+                // A default context answers with default metrics; the
+                // runtime's context carries the panel's own.
+                unopened.metrics = metrics;
+                assert_failure_splash(&unopened.screen(), metrics, "retry-load", "Try again");
+
+                let mut g = ready(metrics);
+                g.select(Kind::Hashi);
+                g.on_action(&mut Context::default(), action_id("route-0"));
+                g.on_save(
+                    &mut Context::default(),
+                    STATE,
+                    StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+                );
+                assert!(matches!(g.draft.status(), Status::Failed(_)));
+                g.metrics = metrics;
+                assert_failure_splash(&g.screen(), metrics, "retry-save", "Retry saving");
+            }
+        }
+    }
+
+    /// Restart asks with the shared confirmation, its two answers stacked
+    /// under the question the way Sudoku and Crossword ask, and both stay on
+    /// the panel at every size.
+    #[test]
+    fn restart_asks_with_the_shared_confirmation_at_every_size() {
+        for text_scale in TextScale::STEPS {
+            let metrics = clara(1072, 1448, 300, text_scale);
+            let _fonts = fonts(metrics);
+            let mut g = ready(metrics);
+            g.select(Kind::Slither);
+            g.view = View::Restart;
+            let screen = g.screen();
+            let expected = ScreenBuilder::new("logicpack-restart")
+                .top_bar("Restart puzzle")
+                .owns_back(true)
+                .confirmation(
+                    "Clear this puzzle?",
+                    "Other puzzles keep their progress. You can undo this restart.",
+                    DialogAction::new("confirm-restart", "Restart"),
+                    DialogAction::new("cancel-restart", "Keep playing"),
+                )
+                .build();
+            assert_eq!(screen.nodes, expected.nodes);
+            assert!(screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Divider { .. })));
+            let chrome = Chrome::measuring(true);
+            let issues = screen.diagnostics(&metrics, &chrome).issues;
+            assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+            let layout = screen.layout_with(&metrics, &chrome);
+            for name in ["confirm-restart", "cancel-restart"] {
+                assert!(layout.rect_of_action(action_id(name)).is_some(), "{name}");
+            }
+        }
+    }
+
+    /// The bar cannot hold a switch, so each mode entry names what the tap
+    /// will do, and the word changes with it. Both words of both games fit
+    /// the bar at every size.
+    #[test]
+    fn the_mode_entry_names_what_the_tap_does_and_fits_every_size() {
+        for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
+            for text_scale in TextScale::STEPS {
+                let metrics = clara(width, height, ppi, text_scale);
+                let _fonts = fonts(metrics);
+                for (kind, name, labels) in [
+                    (Kind::Slither, "line-mode", ["Mark crosses", "Draw lines"]),
+                    (Kind::Mines, "mine-mode", ["Flag mines", "Reveal squares"]),
+                ] {
+                    let mut g = ready(metrics);
+                    g.select(kind);
+                    for label in labels {
+                        let screen = g.screen();
+                        let entry = screen.nav_bar.as_ref().map_or_else(
+                            || screen.bottom_action.as_ref().unwrap().action.label.clone(),
+                            |bar| bar.destinations.last().unwrap().label.clone(),
+                        );
+                        assert_eq!(entry, label, "{kind:?}");
+                        let chrome = Chrome::measuring(true);
+                        let issues = screen.diagnostics(&metrics, &chrome).issues;
+                        assert!(issues.is_empty(), "{label} {metrics:?}: {issues:?}");
+                        g.on_action(&mut Context::default(), action_id(name));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The digit already in a Kakuro square is marked on its key by the
+    /// runtime, so the screen no longer spells it out in a "Current:" line,
+    /// and a blank square marks no key.
+    #[test]
+    fn the_kakuro_pad_marks_the_digit_already_in_the_square() {
+        let mut g = ready(DisplayMetrics::default());
+        g.select(Kind::Kakuro);
+        g.view = View::Entry;
+        g.entry = 0;
+        let selected = |g: &Game| -> Vec<String> {
+            g.screen()
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    Node::Grid { cells, .. } => Some(
+                        cells
+                            .iter()
+                            .filter(|cell| cell.selected)
+                            .map(|cell| cell.label.clone())
+                            .collect(),
+                    ),
+                    _ => None,
+                })
+                .expect("a digit pad")
+        };
+        g.cells[0] = 0;
+        assert!(selected(&g).is_empty());
+        g.cells[0] = 7;
+        assert_eq!(selected(&g), ["7"]);
+        assert!(!format!("{:?}", g.screen()).contains("Current:"));
     }
 }
 

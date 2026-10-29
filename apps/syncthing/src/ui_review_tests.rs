@@ -46,7 +46,7 @@ fn runtime_back_returns_from_every_supporting_page_without_changing_sync() {
     let imports = format!("{:?}", runner.app().imports);
     let attempted = runner.app().last_attempt;
     for _ in 0..5 {
-        for action in ["setup", "folders", "about"] {
+        for action in ["setup", "folders", "about", "cadence"] {
             let opened = runner.action(action_id(action));
             assert!(
                 screen(&opened).owns_back,
@@ -148,6 +148,49 @@ fn the_busiest_status_screen_fits_at_every_portrait_text_size() {
             assert!(
                 !diagnostics.has_errors(),
                 "{cadence:?} {text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
+    }
+}
+
+#[test]
+fn the_schedule_is_chosen_from_a_list_that_marks_the_current_one_and_closes_on_a_choice() {
+    let mut runner = AppRunner::new(active_sync());
+    let opened = runner.action(action_id("cadence"));
+    let Some(kobo_ui::Node::Options { selected, .. }) = screen(&opened)
+        .nodes
+        .iter()
+        .find(|node| matches!(node, kobo_ui::Node::Options { .. }))
+    else {
+        panic!("the schedule is not offered as a list")
+    };
+    assert_eq!(*selected, Some(1), "every hour is not marked as the answer");
+    runner.action(action_id(&schedule_name(3)));
+    assert_eq!(runner.app().view, View::Status);
+    assert_eq!(runner.app().config.cadence, Cadence::Daily);
+}
+
+#[test]
+fn the_schedule_list_and_a_stalled_sync_fit_at_every_portrait_text_size() {
+    let mut stalled = active_sync();
+    stalled.status = WindowStatus::default();
+    stalled.asked = Asked::Stalled;
+    for text_scale in kobo_ui::TextScale::STEPS {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        let _runner = AppRunner::with_metrics(Sync::default(), metrics);
+        for (name, screen) in [
+            ("schedule", stalled.schedule_screen().with_own_back(true)),
+            ("stalled", stalled.status_screen()),
+        ] {
+            let chrome = Chrome::for_screen(&screen, true, Chrome::measuring(true).status);
+            let diagnostics = screen.diagnostics(&metrics, &chrome);
+            assert!(
+                !diagnostics.has_errors(),
+                "{name} {text_scale:?}: {:?}",
                 diagnostics.issues
             );
         }

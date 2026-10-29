@@ -340,7 +340,7 @@ fn ordinary_buttons_are_centered_content_width_on_supported_panels_and_scales() 
         },
     ];
     for mut metrics in panels {
-        for scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+        for scale in TextScale::STEPS {
             metrics.text_scale = scale;
             let screen = Screen::new(
                 1,

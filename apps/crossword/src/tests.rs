@@ -695,3 +695,100 @@ fn a_square_in_one_word_only_carries_no_number() {
         assert_eq!(starts.len(), numbers.len(), "{}", puzzle.id);
     }
 }
+
+/// The splash a whole-screen failure draws and the one control directly
+/// under it, checked on the panel at this size.
+fn assert_failure_splash(screen: &Screen, metrics: DisplayMetrics, retry: &str, label: &str) {
+    assert!(screen.bottom_action.is_none(), "{metrics:?}");
+    let splash = screen
+        .nodes
+        .iter()
+        .position(|node| matches!(node, kobo_ui::Node::Splash { .. }))
+        .expect("the failure is a splash");
+    // The mark gives way only where a small panel at a large size needs the
+    // room; on a Clara at the default size it is there.
+    if metrics.text_scale == kobo_ui::TextScale::Default && metrics.pixels_per_inch == 300 {
+        assert!(matches!(
+            &screen.nodes[splash],
+            kobo_ui::Node::Splash {
+                glyph: Some(Glyph::Close),
+                ..
+            }
+        ));
+    }
+    assert!(
+        matches!(
+            &screen.nodes[splash + 1],
+            kobo_ui::Node::Button {
+                label: drawn,
+                emphasis: kobo_ui::Emphasis::Primary,
+                ..
+            } if drawn == label
+        ),
+        "{metrics:?}: {:?}",
+        screen.nodes
+    );
+    let chrome = Chrome::measuring(true);
+    let issues = screen.diagnostics(&metrics, &chrome).issues;
+    assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+    let layout = screen.layout_with(&metrics, &chrome);
+    let reason = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, kobo_ui::LayoutKind::SplashText))
+        .expect("the reason is drawn")
+        .rect;
+    let button = layout
+        .rect_of_action(action_id(retry))
+        .expect("the fix is on the panel");
+    assert!(button.y >= reason.y + reason.height, "{metrics:?}");
+}
+
+/// An unreadable record and a refused save each fill the screen, so each is
+/// a splash with its one fix directly under the reason: Try again for the
+/// read, Retry saving for the write. While the save is refused the board
+/// still ignores every tap but the retry.
+#[test]
+fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
+    for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                width,
+                height,
+                pixels_per_inch: ppi,
+                text_scale,
+            };
+            let mut r = AppRunner::with_metrics(Crossword::default(), metrics);
+            r.start();
+            r.store_result(StoreResult::Loaded {
+                key: saved::KEY.into(),
+                value: Some(b"bad".to_vec()),
+            });
+            assert_failure_splash(
+                &r.app().screen(&r.context()),
+                metrics,
+                "retry-load",
+                "Try again",
+            );
+
+            let mut r = AppRunner::with_metrics(Crossword::default(), metrics);
+            r.start();
+            r.store_result(StoreResult::Loaded {
+                key: saved::KEY.into(),
+                value: None,
+            });
+            r.action(action_id("puzzle-0"));
+            r.action(action_id("cell-1"));
+            r.store_result(StoreResult::Denied(StoreError::NoRoom));
+            assert_failure_splash(
+                &r.app().screen(&r.context()),
+                metrics,
+                "retry-save",
+                "Retry saving",
+            );
+            let before = r.app().games.clone();
+            assert!(r.action(action_id("direction")).is_empty());
+            assert_eq!(r.app().games, before);
+        }
+    }
+}

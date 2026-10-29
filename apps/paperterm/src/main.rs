@@ -564,25 +564,34 @@ impl Paperterm {
         self.pairing_writing = Some(value.clone());
         context.store().save(PAIRING, value.clone());
     }
+    /// The failed save is the one state here the owner has to act on, so it
+    /// is an Error banner carrying its own Retry saving, rather than a line of
+    /// text that reads like the others with a loose button under it. Progress
+    /// and success stay plain sentences: nothing is wrong and nothing is to do.
     fn pairing_menu(&self) -> Screen {
         let message = if self.pairing_read == PairingRead::Temporary {
-            "This connection will not be remembered. Reopen Paperterm to retry reading your saved pairing."
+            Some("This connection will not be remembered. Reopen Paperterm to retry reading your saved pairing.")
         } else if self.pairing_to_verify {
-            "Waiting for this computer to confirm pairing. Your saved connection has not been changed."
+            Some("Waiting for this computer to confirm pairing. Your saved connection has not been changed.")
         } else if self.pairing_writing.is_some() {
-            "Saving pairing…"
+            Some("Saving pairing…")
         } else if self.pairing_save_failed {
-            "Pairing was not saved. Your previous pairing is unchanged. This session can continue."
+            None
         } else {
-            "Pairing is saved for next time."
+            Some("Pairing is saved for next time.")
         };
-        let mut screen = ScreenBuilder::new("paperterm-pairing-menu")
-            .top_bar("Paperterm")
-            .heading("Computer connection")
-            .text(&self.address)
-            .text(message);
-        if self.pairing_save_failed && !self.pairing_to_verify {
-            screen = screen.button(RETRY_PAIRING, "Retry saving");
+        let mut screen = ScreenBuilder::new("paperterm-pairing-menu").top_bar("Paperterm");
+        if message.is_none() {
+            screen = screen
+                .banner(
+                    BannerLevel::Error,
+                    "Pairing was not saved. Your previous pairing is unchanged. This session can continue.",
+                )
+                .banner_action(RETRY_PAIRING, "Retry saving");
+        }
+        screen = screen.heading("Computer connection").text(&self.address);
+        if let Some(message) = message {
+            screen = screen.text(message);
         }
         screen
             .button("return-session", "Return to terminal")
@@ -1402,6 +1411,7 @@ mod tests {
                         None,
                         Some("Use a name or IP address, for example laptop:9332."),
                         Some("Enter the six letters and numbers from your computer."),
+                        Some("Saved pairing could not be read. You can enter it again."),
                     ] {
                         let app = Paperterm {
                             view,
@@ -1421,6 +1431,53 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn a_refused_address_is_said_in_the_fields_hint_without_moving_the_field_or_the_keys() {
+        let metrics = DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+        let place = |form_error| {
+            let app = Paperterm {
+                view: View::Address,
+                form_error,
+                ..Paperterm::default()
+            };
+            let screen = app.screen();
+            let field = screen.nodes.iter().find_map(|node| match node {
+                kobo_ui::Node::Field {
+                    label,
+                    hint,
+                    error,
+                    kind,
+                    ..
+                } => Some((label.clone(), hint.clone(), error.clone(), *kind)),
+                _ => None,
+            });
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            (
+                field,
+                layout.rect_of_action(action_id("address")),
+                layout.rect_of_action(action_id(KB_ENTER)),
+            )
+        };
+        let (calm, calm_field, calm_enter) = place(None);
+        let (refused, refused_field, refused_enter) =
+            place(Some("Use a name or IP address, for example laptop:9332."));
+        let (label, hint, error, kind) = refused.expect("a field");
+        assert_eq!(label.as_deref(), Some("Address"));
+        assert!(hint.is_some_and(|hint| hint.contains("kobo stream init")));
+        assert_eq!(
+            error.as_deref(),
+            Some("Use a name or IP address, for example laptop:9332.")
+        );
+        assert_eq!(kind, kobo_sdk::FieldKind::Address);
+        assert!(calm.expect("a field").2.is_none());
+        assert_eq!(calm_field, refused_field, "the field moved");
+        assert_eq!(calm_enter, refused_enter, "the keys moved");
+    }
+
     #[test]
     fn pairing_errors_preserve_typed_values_and_do_not_start_requests() {
         let mut app = Paperterm {
@@ -1649,6 +1706,55 @@ mod tests {
                     diagnostic.issues
                 );
             }
+        }
+    }
+    #[test]
+    fn a_pairing_that_was_not_saved_is_an_error_banner_carrying_retry_saving_and_nothing_else_retries(
+    ) {
+        let failed = Paperterm {
+            view: View::PairingMenu,
+            pairing_read: PairingRead::Available,
+            address: "laptop.local:9332".into(),
+            pairing_save_failed: true,
+            ..Paperterm::default()
+        };
+        let screen = failed.screen();
+        let banners: Vec<_> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Banner { level, action, .. } => Some((*level, action.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(banners.len(), 1, "{:?}", screen.nodes);
+        let (level, action) = &banners[0];
+        assert_eq!(*level, BannerLevel::Error);
+        let action = action.as_ref().expect("the banner carries the retry");
+        assert_eq!(action.action, action_id(RETRY_PAIRING));
+        assert_eq!(action.label, "Retry saving");
+        assert!(
+            !screen.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Button { action, .. } if *action == action_id(RETRY_PAIRING)
+            )),
+            "no loose Retry saving button under the words"
+        );
+        for writing in [true, false] {
+            let calm = Paperterm {
+                view: View::PairingMenu,
+                pairing_read: PairingRead::Available,
+                pairing_writing: writing.then(|| "laptop.local:9332\nabc234".to_owned()),
+                ..Paperterm::default()
+            };
+            assert!(
+                !calm
+                    .screen()
+                    .nodes
+                    .iter()
+                    .any(|node| matches!(node, kobo_ui::Node::Banner { .. })),
+                "progress and success keep their plain sentences"
+            );
         }
     }
     #[test]

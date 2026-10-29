@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn shared_metrics_accept_reachable_screens_in_both_orientations_and_all_sizes() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            for scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+            for scale in TextScale::STEPS {
                 for orientation in [crate::Orientation::Portrait, crate::Orientation::Landscape] {
                     let metrics = DisplayMetrics {
                         width: i32::try_from(profile.width).unwrap(),

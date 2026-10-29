@@ -4,8 +4,8 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.7",
-  "release_notes": "Shows a full screen of books at a time, says Sign in again when the library refuses your account, and tells you when the library at home cannot be reached instead of blaming the address. Reopens a document on the page you left.",
+  "version": "0.1.8",
+  "release_notes": "Your password and the library address are typed on Cobalt's own keyboard, and the reader saves the password without the app seeing it. Sign in again, Try again and Retry saving sit on the message that explains the problem.",
   "glyph": "book",
   "capabilities": [
     "network"

@@ -104,7 +104,7 @@ def main():
 
             try:
                 panel = start()
-                drive('wait-for Classic board games')
+                drive('wait-for Board games')
                 menu = capture('01-the-table')
                 said = words(menu)
                 for game in GAMES:
@@ -173,7 +173,7 @@ def main():
                 # the computer's last move is still marked.
                 stop()
                 panel = start()
-                drive('wait-for Classic board games')
+                drive('wait-for Board games')
                 resumed = capture('11-resume-offered')
                 assert 'Resume saved game' in words(resumed), words(resumed)
                 drive('tap Resume saved game', 'wait-idle')
@@ -192,7 +192,7 @@ def main():
                 drive(f"tap-id {legal_cells(board)[0]['action']}", 'wait-idle')
                 passed = capture('14-pass-and-play-after-black')
                 said = words(passed)
-                assert 'Pass the reader to White.' in said, said
+                assert 'Board turned. Pass the reader to White.' in said, said
                 assert 'Black placed the marked disc' in said, said
                 drive('tap Undo', 'wait-idle', 'wait-for The other player taps Undo to agree',
                       'tap Undo', 'wait-idle', 'wait-for The last move is taken back.')

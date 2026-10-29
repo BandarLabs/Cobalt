@@ -19,7 +19,9 @@ expect CRATE
 clean
 shot parser-open-what
 tap CRATE
-wait-for open crate
+# The reply lands on its last page, and at larger text sizes the echoed
+# command is a page earlier; the reply's last word is on screen at every size.
+wait-for note.
 tap Keyboard
 type save
 tap Run

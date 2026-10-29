@@ -18,6 +18,12 @@ const HABITS: &str = "habits-v1";
 /// a few kilobytes, so this is room to spare rather than a limit anybody meets.
 const MAX_BACKUP_BYTES: usize = 64 * 1024;
 const ROWS_PER_PAGE: usize = 3;
+/// The schedules a habit can keep, in the order the edit screen offers them.
+const SCHEDULES: [(&str, &str, Schedule); 3] = [
+    ("sched-daily", "Daily", Schedule::Daily),
+    ("sched-weekdays", "Weekdays", Schedule::Weekdays),
+    ("sched-every-2", "Every 2 days", Schedule::Every(2)),
+];
 const SHOW_TODAY: &str = "show-today";
 const SHOW_YESTERDAY: &str = "show-yesterday";
 const ACTION_NAME_CHARS: usize = 12;
@@ -75,6 +81,8 @@ struct Habits {
     entry: TextEntry,
     entry_mode: EntryMode,
     editing: Option<usize>,
+    /// Which page of the schedule list is showing on the edit screen.
+    schedule_page: u16,
     export: Option<Export>,
     import: Option<Import>,
     import_files: Vec<String>,
@@ -98,6 +106,7 @@ impl Default for Habits {
             entry: TextEntry::new().opened_by("add"),
             entry_mode: EntryMode::Add,
             editing: None,
+            schedule_page: 0,
             export: None,
             import: None,
             import_files: Vec::new(),
@@ -240,10 +249,17 @@ impl Habits {
                 EntryMode::Add => "Add",
                 EntryMode::Rename => "Save",
             };
+            // The limit is the field's hint, because the reader's keyboard
+            // covers this screen and a line drawn above the field here is
+            // not on the panel while the name is typed.
             return ScreenBuilder::new("hb-add")
                 .top_bar("Habits")
-                .secondary(format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."))
-                .text_entry(&self.entry, "Habit name", submit)
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Habit name",
+                    &format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."),
+                    submit,
+                )
                 .build();
         }
         let mut s = ScreenBuilder::new(match self.page {
@@ -411,32 +427,29 @@ impl Habits {
                     } else {
                         ("archive", "Archive")
                     };
-                    let schedules = [
-                        ("sched-daily", "Daily", Schedule::Daily),
-                        ("sched-weekdays", "Weekdays", Schedule::Weekdays),
-                        ("sched-every-2", "Every 2 days", Schedule::Every(2)),
-                    ];
                     let _ = i;
+                    // One answer from a list the runtime marks, where each
+                    // row used to say "current" under itself and draw its
+                    // own tick.
+                    let chosen = SCHEDULES
+                        .iter()
+                        .position(|(_, _, schedule)| *schedule == h.schedule);
                     s = s
                         .top_bar_action("rename", "Rename")
                         .heading(Self::display_name(&h.name))
-                        .rows(schedules.iter().map(|(action, label, schedule)| {
-                            (
-                                (*action).to_owned(),
-                                (*label).to_owned(),
-                                if *schedule == h.schedule {
-                                    "current".to_owned()
-                                } else {
-                                    String::new()
-                                },
-                                if *schedule == h.schedule {
-                                    Glyph::Check
-                                } else {
-                                    Glyph::Circle
-                                },
-                            )
-                        }))
-                        .buttons([archive]);
+                        .option_list(
+                            "How often",
+                            self.schedule_page,
+                            "sched-prev",
+                            "sched-next",
+                            SCHEDULES
+                                .iter()
+                                .map(|(action, label, _)| (*action, *label, "")),
+                        );
+                    if let Some(chosen) = chosen {
+                        s = s.chosen(chosen);
+                    }
+                    s = s.buttons([archive]);
                 }
                 None => {
                     s = s.splash(
@@ -643,13 +656,19 @@ impl Habits {
                 habit.archived = !habit.archived;
                 self.save(cx);
             }
+        } else if a == action_id("sched-next") {
+            let last =
+                kobo_sdk::options_pages(SCHEDULES.len(), &cx.metrics(), false).saturating_sub(1);
+            self.schedule_page = self
+                .schedule_page
+                .saturating_add(1)
+                .min(u16::try_from(last).unwrap_or(0));
+        } else if a == action_id("sched-prev") {
+            self.schedule_page = self.schedule_page.saturating_sub(1);
         } else {
-            let schedules = [
-                ("sched-daily", Schedule::Daily),
-                ("sched-weekdays", Schedule::Weekdays),
-                ("sched-every-2", Schedule::Every(2)),
-            ];
-            let Some((_, schedule)) = schedules.iter().find(|(action, _)| a == action_id(action))
+            let Some((_, _, schedule)) = SCHEDULES
+                .iter()
+                .find(|(action, _, _)| a == action_id(action))
             else {
                 return false;
             };
@@ -868,6 +887,14 @@ impl KoboApp for Habits {
             if a == action_id(&format!("edit-{i}")) {
                 self.editing = Some(i);
                 self.page = Page::Edit;
+                // Onto the page of the list holding this habit's schedule,
+                // counted the way the runtime pages it.
+                let chosen = SCHEDULES
+                    .iter()
+                    .position(|(_, _, schedule)| *schedule == h.schedule)
+                    .unwrap_or(0);
+                let per_page = kobo_sdk::options_per_page(&cx.metrics(), false).max(1);
+                self.schedule_page = u16::try_from(chosen / per_page).unwrap_or(0);
                 self.show(cx);
                 return;
             }
@@ -1169,10 +1196,13 @@ mod tests {
         runner.action(action_id("edit-0"));
         runner.action(action_id("rename"));
         assert!(runner.app().entry.is_open());
-        runner.action(action_id("kb.space"));
-        runner.action(action_id("kb.r0c1"));
+        // A tap that reaches the app while the reader's keyboard is up, such
+        // as a redraw, does not turn the rename into an add.
+        runner.action(action_id("redraw"));
         assert_eq!(runner.app().entry_mode, EntryMode::Rename);
+        runner.type_text("read daily");
         assert_eq!(runner.app().items.len(), 1);
+        assert_eq!(runner.app().items[0].name, "read daily");
     }
 
     #[test]

@@ -341,10 +341,12 @@ impl DeviceServices {
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
             }
-            // Only the host's durable credential handler can answer for secrets.
+            // Only the host's durable credential handler can answer for
+            // secrets, and only a host with a panel can draw a keyboard.
             DeviceRequest::SetSecret { .. }
             | DeviceRequest::SetServerSecret { .. }
             | DeviceRequest::CheckSecrets { .. }
+            | DeviceRequest::TypeText { .. }
             | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
@@ -748,7 +750,11 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::SetUpdateChannel { .. }
         | DeviceRequest::SetSecret { .. }
         | DeviceRequest::SetServerSecret { .. }
-        | DeviceRequest::CheckSecrets { .. } => return None,
+        | DeviceRequest::CheckSecrets { .. }
+        // Typing touches nothing but the panel the application already has.
+        // A secret typed into a field is held to the same per-name review as
+        // one set directly, by the host, before the field is drawn.
+        | DeviceRequest::TypeText { .. } => return None,
         DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
     })
 }

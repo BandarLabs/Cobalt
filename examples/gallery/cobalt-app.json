@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Every sample names the builder calls that drew it."
+  "release_notes": "Shows the controls Cobalt now draws: switches, rows you can tick and the bar that acts on them, long lists of choices, labelled fields, banners with an action, step counts and QR codes."
 }

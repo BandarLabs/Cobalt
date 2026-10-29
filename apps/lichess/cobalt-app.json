@@ -3,9 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.18",
-  "release_notes": "Play casual games as well as rated ones, play the computer as Black or White with or without a clock, and see the last move outlined on the board.",
-  "minimum_cobalt_version": "0.3.5",
+  "version": "1.0.19",
+  "release_notes": "Your token is typed on Cobalt's own keyboard and saved by the reader, never the app, and a QR code opens the Lichess token page on a phone. Rated or Casual, side and clock are each one row of segments.",
   "glyph": "grid",
   "capabilities": [
     "network",

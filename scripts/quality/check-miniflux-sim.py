@@ -318,7 +318,7 @@ def main():
                 assert says(unconnected, 'kobo connect rss-miniflux'), unconnected
                 drive('tap-id check-again')
                 nothing = capture('00b-check-again-before-connecting')
-                assert says(nothing, 'No account has arrived from the computer yet'), nothing
+                assert says(nothing, 'No account has arrived yet'), nothing
 
                 # A mistyped key is refused on the computer, and nothing is
                 # installed on the reader.

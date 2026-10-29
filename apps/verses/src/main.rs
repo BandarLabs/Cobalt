@@ -1,6 +1,6 @@
 //! Daily public-domain poetry with an offline shelf and `PoetryDB` search.
 use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
     StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -12,6 +12,8 @@ use std::hash::{Hash, Hasher};
 use std::process::ExitCode;
 
 const SETTINGS: &str = "settings";
+/// The search box, which raises the reader's keyboard when it is tapped.
+const SEARCH_FIELD: &str = "search-field";
 const SEARCH_LIMIT: u32 = 512 * 1024;
 const USER_AGENT: &str = "Cobalt Verses/0.1";
 
@@ -1526,7 +1528,8 @@ struct Verses {
     online_from: View,
     card_from: View,
     saved: Saved,
-    keyboard: Keyboard,
+    /// The words of a search, typed on the reader's own keyboard.
+    entry: TextEntry,
     results: Vec<OnlinePoem>,
     /// Where the next search looks, and what the last one asked for.
     scope: Scope,
@@ -1570,7 +1573,7 @@ impl Default for Verses {
             online_from: View::Results,
             card_from: View::Today,
             saved: Saved::default(),
-            keyboard: Keyboard::new(),
+            entry: TextEntry::new().opened_by(SEARCH_FIELD),
             results: Vec::new(),
             scope: Scope::Anything,
             query: String::new(),
@@ -2185,8 +2188,29 @@ impl Verses {
         Self::paged_poems(context, screen, &rows, self.browse_page)
     }
 
+    /// What the search box asks for, which follows where the search looks.
+    const fn search_prompt(&self) -> &'static str {
+        match self.scope {
+            Scope::Anything => "A title, a poet, or a line you remember",
+            Scope::Title => "A poem's title",
+            Scope::Poet => "A poet's name",
+            Scope::Line => "Words from a line",
+        }
+    }
+
+    /// Where a search looks, which poets to start from, and the box that
+    /// raises the reader's keyboard.
+    ///
+    /// The box is a field rather than keys on this screen: the scope and the
+    /// suggested poets are taps, and a search that needs neither typing nor
+    /// a third of the panel given to keys should not pay for them.
     fn search(&self) -> Screen {
         let mut screen = ScreenBuilder::new("verses-search").top_bar("Search poetry");
+        if self.entry.is_open() {
+            return screen
+                .text_entry(&self.entry, self.search_prompt(), "Search")
+                .build();
+        }
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice.clone());
         }
@@ -2199,25 +2223,17 @@ impl Verses {
                 selected,
                 Scope::ALL.iter().map(|&(_, name, label)| (name, label)),
             )
-            .typed(
-                &self.keyboard,
-                match self.scope {
-                    Scope::Anything => "A title, a poet, or a line you remember",
-                    Scope::Title => "A poem's title",
-                    Scope::Poet => "A poet's name",
-                    Scope::Line => "Words from a line",
-                },
-            );
-        // Somewhere to start, while there is nothing typed: the whole of
-        // PoetryDB is behind this box and an empty one says nothing about it.
-        if self.keyboard.text().is_empty() {
-            screen = screen.section("Poets to start with").chips(
+            .field(SEARCH_FIELD, "", self.search_prompt());
+        // Somewhere to start: the whole of PoetryDB is behind this box and an
+        // empty one says nothing about it.
+        screen
+            .section("Poets to start with")
+            .chips(
                 SUGGESTED_POETS
                     .iter()
                     .map(|poet| (format!("suggest-{poet}"), *poet, false)),
-            );
-        }
-        screen.keyboard(&self.keyboard, "Search").build()
+            )
+            .build()
     }
 
     fn results(&self, context: &Context) -> (Screen, usize) {
@@ -2656,6 +2672,18 @@ impl KoboApp for Verses {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         self.advance_day(reader_clock().as_ref());
         self.fetch_daily(context);
+        // The search box first: while it is open the runtime holds the panel,
+        // and its answer arrives as an action like any other. Backing out of
+        // it leaves the search screen as it was.
+        if self.view == View::Search {
+            if let Some(typing) = self.entry.handle(action) {
+                if let Typing::Submitted(query) = typing {
+                    self.begin_search(context, &query, self.scope);
+                }
+                self.show(context);
+                return;
+            }
+        }
         if self.view == View::Search && action != ActionId::BACK {
             if let Some(&(scope, _, _)) = Scope::ALL
                 .iter()
@@ -2667,9 +2695,6 @@ impl KoboApp for Verses {
                 .find(|poet| action == action_id(&format!("suggest-{poet}")))
             {
                 self.begin_search(context, poet, Scope::Poet);
-            } else if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let query = self.keyboard.take();
-                self.begin_search(context, &query, self.scope);
             }
             self.show(context);
             return;
@@ -2696,7 +2721,7 @@ impl KoboApp for Verses {
             self.view = View::Browse;
         } else if action == action_id("search") {
             self.cancel_request(context);
-            self.keyboard = Keyboard::new();
+            self.entry.close();
             self.notice = None;
             self.view = View::Search;
         } else if action == action_id("favorite") {

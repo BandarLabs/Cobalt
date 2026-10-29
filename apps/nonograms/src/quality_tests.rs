@@ -400,3 +400,35 @@ fn new_collection_does_not_reuse_or_rewrite_an_earlier_save() {
     assert_eq!(r.app().marks[0], Mark::Fill);
     assert!(r.app().guided);
 }
+#[test]
+fn checking_and_run_entry_are_switches_that_show_how_they_are_set() {
+    let mut r = ready(0);
+    r.action(action_id("more"));
+    let switches = |r: &AppRunner<Game>| -> Vec<(String, bool)> {
+        r.app()
+            .menu()
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Toggle { label, on, .. } => Some((label.clone(), *on)),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        switches(&r),
+        [
+            ("Guided".to_owned(), false),
+            ("Run entry".to_owned(), false)
+        ]
+    );
+    written(r.action(action_id("policy")));
+    ack(&mut r);
+    written(r.action(action_id("run-entry")));
+    ack(&mut r);
+    assert!(r.app().guided && r.app().run_entry);
+    assert_eq!(
+        switches(&r),
+        [("Guided".to_owned(), true), ("Run entry".to_owned(), true)]
+    );
+}

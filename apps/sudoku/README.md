@@ -10,7 +10,7 @@ offline.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/landscape.png" alt="The same puzzle in landscape"><br>The same puzzle in landscape</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/recovery.png" alt="Retry save in More after a save failed"><br>Retry save in More after a save failed</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/recovery.png" alt="Retry saving in More after a save failed"><br>Retry saving in More after a save failed</td>
 </tr>
 </table>
 
@@ -57,7 +57,7 @@ This is a guide to technique, not solving time.
 ## Saving
 
 Changes save automatically. If a save fails, the status line says **Not
-saved**, your game stays in memory and **More → Retry save** tries again.
+saved**, your game stays in memory and **More → Retry saving** tries again.
 Closing the app before a successful retry can lose those edits. A save that
 cannot be read is kept, and the app offers to retry rather than starting a
 blank game.

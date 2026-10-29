@@ -21,7 +21,7 @@ tap Settings
 wait-for Change the photo every
 expect Frame mode
 expect Slow slideshow
-expect By date
+expect Photos come in date order.
 clean
 shot settings
 tap 5 minutes

@@ -845,3 +845,86 @@ fn a_sent_comic_already_on_the_shelf_opens_instead_of_importing_again() {
     assert!(app.import.is_none());
     assert!(app.pending_open.is_some(), "the shelf copy is opening");
 }
+
+#[test]
+fn a_search_is_typed_on_the_readers_keyboard_and_back_lets_go_of_it_before_the_page() {
+    use kobo_sdk::{keyboard::testing, ActionId, AppRunner};
+    let mut runner = AppRunner::new(Panels {
+        catalog: Some(large_catalog()),
+        catalog_url: "https://library.example/catalog".into(),
+        route: super::Route::Catalog,
+        ..Panels::default()
+    });
+    let opened = runner.action(action_id("search"));
+    assert!(
+        testing::asked(&opened).is_some(),
+        "the reader's keyboard was not asked for"
+    );
+    runner.type_text("Garden 12");
+    assert_eq!(runner.app().query, "Garden 12");
+    assert_eq!(runner.app().route, super::Route::Catalog);
+    let reopened = runner.action(action_id("search"));
+    let Some(kobo_sdk::DeviceRequest::TypeText { initial, .. }) = testing::asked(&reopened) else {
+        panic!("the field did not open again");
+    };
+    assert_eq!(
+        initial, "Garden 12",
+        "the search was not put back to refine"
+    );
+    runner.cancel_text();
+    assert_eq!(
+        runner.app().query,
+        "Garden 12",
+        "backing out lost the search"
+    );
+    runner.action(ActionId::BACK);
+    assert!(runner.app().query.is_empty(), "Back kept the search");
+    assert_eq!(
+        runner.app().route,
+        super::Route::Catalog,
+        "Back left the page along with its search"
+    );
+}
+
+#[test]
+fn reading_order_is_a_switch_that_fits_beside_a_volume_at_every_text_size() {
+    use kobo_sdk::{AppRunner, Node};
+    let publication = large_catalog().publications[0].clone();
+    for text_scale in kobo_ui::TextScale::STEPS {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        let mut runner = AppRunner::with_metrics(
+            Panels {
+                selected: Some(publication.clone()),
+                route: super::Route::Detail,
+                ..Panels::default()
+            },
+            metrics,
+        );
+        let switch = |app: &Panels, context: &kobo_sdk::Context| {
+            app.detail_screen(context)
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    Node::Toggle { on, .. } => Some(*on),
+                    _ => None,
+                })
+                .expect("reading order is not a switch")
+        };
+        let context = runner.context();
+        assert!(!switch(runner.app(), &context));
+        let diagnostics = runner
+            .app()
+            .detail_screen(&context)
+            .diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(
+            diagnostics.issues.is_empty(),
+            "{text_scale:?}: {:?}",
+            diagnostics.issues
+        );
+        runner.action(action_id("detail-rtl"));
+        assert!(switch(runner.app(), &runner.context()));
+    }
+}

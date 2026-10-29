@@ -295,11 +295,11 @@ fn save_acknowledges_exact_revision_and_failure_keeps_latest_moves_for_retry() {
     r.store_result(StoreResult::Denied(StoreError::NoRoom));
     let latest = r.app().game.clone();
     assert!(matches!(r.app().draft.status(), Status::Failed(_)));
-    assert!(r.app().status().contains("Open More to retry"));
+    assert!(r.app().status().contains("Retry saving in More"));
     tap(&mut r, chrome::MORE);
     assert_eq!(
         menu_labels(&shown(&r))[..2],
-        [chrome::NEW_GAME_LABEL, "Retry save"]
+        [chrome::NEW_GAME_LABEL, "Retry saving"]
     );
     let commands = tap(&mut r, "retry-save");
     let written = commands
@@ -772,4 +772,109 @@ fn texts(screen: &Screen) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// A saved game that cannot be read is a whole-screen failure, so it is a
+/// splash saying why with its one fix directly under it. It used to be a
+/// heading at the top and Retry pinned to the foot, with an empty panel
+/// between the reason and the way out of it.
+#[test]
+fn an_unreadable_game_is_a_splash_with_try_again_directly_under_the_reason() {
+    for scale in TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale: scale,
+            ..CLARA_BW_METRICS
+        };
+        let mut r = AppRunner::with_metrics(Sudoku::default(), metrics);
+        r.start();
+        r.store_result(load(Some(b"not a saved game".to_vec())));
+        assert!(!r.app().loaded);
+        let screen = shown(&r);
+        assert!(screen.bottom_action.is_none(), "{scale:?}");
+        let splash = screen
+            .nodes
+            .iter()
+            .position(|node| matches!(node, kobo_ui::Node::Splash { .. }))
+            .expect("the failure is a splash");
+        // The mark gives way only where a small panel at a large size needs the
+        // room; on a Clara at the default size it is there.
+        if metrics.text_scale == kobo_ui::TextScale::Default && metrics.pixels_per_inch == 300 {
+            assert!(matches!(
+                &screen.nodes[splash],
+                kobo_ui::Node::Splash {
+                    glyph: Some(Glyph::Close),
+                    ..
+                }
+            ));
+        }
+        assert!(
+            matches!(
+                &screen.nodes[splash + 1],
+                kobo_ui::Node::Button {
+                    label,
+                    emphasis: kobo_ui::Emphasis::Primary,
+                    ..
+                } if label == "Try again"
+            ),
+            "{scale:?}: {:?}",
+            screen.nodes
+        );
+        let frame = Chrome::with_back(true);
+        let issues = screen.diagnostics(&metrics, &frame).issues;
+        assert!(issues.is_empty(), "{scale:?}: {issues:?}");
+        let layout = screen.layout_with(&metrics, &frame);
+        let reason = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::SplashText))
+            .expect("the reason is drawn")
+            .rect;
+        let retry = layout
+            .rect_of_action(action_id("retry-load"))
+            .expect("Try again is on the panel");
+        assert!(retry.y >= reason.y + reason.height, "{scale:?}");
+        let commands = tap(&mut r, "retry-load");
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c, Command::Store(StoreRequest::Load { .. }))));
+    }
+}
+
+/// The three difficulties each deal a new puzzle, so they are verbs on one
+/// line rather than a stack of full-width buttons, and every one of them
+/// stays on the panel at every size, held either way.
+#[test]
+fn the_three_difficulties_sit_side_by_side_and_fit_every_size() {
+    for (width, height) in [(1072, 1448), (1448, 1072)] {
+        for scale in TextScale::STEPS {
+            let (mut r, metrics) = on_panel(width, height, 300, scale);
+            r.app_mut().view = View::New;
+            let screen = shown(&r);
+            let frame = Chrome::with_back(true);
+            let issues = screen.diagnostics(&metrics, &frame).issues;
+            assert!(issues.is_empty(), "{width}x{height} {scale:?}: {issues:?}");
+            let layout = screen.layout_with(&metrics, &frame);
+            let easy = layout.rect_of_action(action_id("new-easy")).unwrap();
+            let hard = layout.rect_of_action(action_id("new-hard")).unwrap();
+            assert!(layout.rect_of_action(action_id("new-medium")).is_some());
+            if scale == TextScale::Default {
+                assert_eq!(
+                    easy.y, hard.y,
+                    "{width}x{height}: stacked at the default size"
+                );
+            }
+            // Side by side or stacked, no label is broken across lines:
+            // "Mediu" over "m" was the side-by-side row at the largest size.
+            for name in ["new-easy", "new-medium", "new-hard"] {
+                let lines = layout
+                    .nodes
+                    .iter()
+                    .find(|node| {
+                        matches!(node.kind, LayoutKind::Button(action, ..) if action == action_id(name))
+                    })
+                    .map(|node| node.text_lines.len());
+                assert_eq!(lines, Some(1), "{width}x{height} {scale:?}: {name}");
+            }
+        }
+    }
 }

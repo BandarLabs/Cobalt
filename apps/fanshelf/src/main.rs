@@ -5,10 +5,11 @@ mod library;
 
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, QuoteRole, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId,
+    TaskOutcome,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
@@ -50,6 +51,9 @@ enum View {
     Feed,
     Updates,
     Reading,
+    /// A work's whole summary, for a panel and text size where the work's
+    /// own page could only show the start of it.
+    Summary,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,7 +98,12 @@ enum AdultPurpose {
 #[allow(clippy::struct_excessive_bools)]
 struct Fanshelf {
     view: View,
-    keyboard: Keyboard,
+    /// A work's address or number, typed on the runtime's keyboard with the
+    /// marks an address needs beside the letters.
+    work_entry: TextEntry,
+    /// A tag's name or address. Tag names have spaces in them, so this one
+    /// keeps the space bar.
+    tag_entry: TextEntry,
     works: Vec<Work>,
     tags: Vec<FollowedTag>,
     feed: Vec<FeedWork>,
@@ -139,6 +148,10 @@ struct Fanshelf {
     filter: Option<String>,
     fandom_page: usize,
     confirm_remove: bool,
+    /// Whether the work page's menu is open.
+    work_menu: bool,
+    /// Which page of the whole summary is showing.
+    summary_page: usize,
     works_loaded: bool,
     tags_loaded: bool,
     #[cfg(not(target_arch = "arm"))]
@@ -149,7 +162,8 @@ impl Default for Fanshelf {
     fn default() -> Self {
         Self {
             view: View::Shelf,
-            keyboard: Keyboard::new(),
+            work_entry: TextEntry::new().address(),
+            tag_entry: TextEntry::new(),
             works: Vec::new(),
             tags: Vec::new(),
             feed: Vec::new(),
@@ -182,6 +196,8 @@ impl Default for Fanshelf {
             filter: None,
             fandom_page: 0,
             confirm_remove: false,
+            work_menu: false,
+            summary_page: 0,
             works_loaded: false,
             tags_loaded: false,
             #[cfg(not(target_arch = "arm"))]
@@ -351,13 +367,14 @@ impl Fanshelf {
         match self.view {
             View::Shelf => self.shelf_screen(context),
             View::Add => self.entry_screen(
-                ScreenBuilder::new("fs-add")
-                    .top_bar("Add work")
-                    .heading("Add an AO3 work"),
+                ScreenBuilder::new("fs-add").top_bar("Add work"),
+                &self.work_entry,
+                "Add an AO3 work",
                 "Work address or number, such as 4242",
                 "Open work",
             ),
             View::Work => self.work_screen(context),
+            View::Summary => self.summary_screen(context),
             View::Adult => ScreenBuilder::new("fs-adult")
                 .top_bar("Adult content")
                 .top_bar_action("shelf", "Shelf")
@@ -370,9 +387,9 @@ impl Fanshelf {
             View::Fandoms => self.fandoms_screen(context),
             View::Manage => self.manage_screen(context),
             View::AddTag => self.entry_screen(
-                ScreenBuilder::new("fs-add-tag")
-                    .top_bar("Follow tag")
-                    .heading("Follow an AO3 tag"),
+                ScreenBuilder::new("fs-add-tag").top_bar("Follow tag"),
+                &self.tag_entry,
+                "Follow an AO3 tag",
                 "Tag name or tag address",
                 "Follow",
             ),
@@ -390,22 +407,25 @@ impl Fanshelf {
         }
     }
 
-    /// A screen that takes typed text: what has been typed so far, and why
-    /// the last attempt was refused.
+    /// A screen that takes typed text on the reader's own keyboard, and says
+    /// why the last attempt was refused.
     ///
-    /// Both used to be missing. The keys answered but nothing on the panel
-    /// showed the letters, and a work number that could not be read set a
-    /// message this screen never drew, so a mistyped address looked like a
-    /// button that did nothing.
-    fn entry_screen(&self, screen: ScreenBuilder, hint: &str, submit: &str) -> Screen {
-        let mut screen = screen;
-        if let Some(message) = &self.message {
-            screen = screen.banner(BannerLevel::Attention, message);
-        }
+    /// The reason takes the place of the guidance under the prompt. The
+    /// runtime's field covers this application's screen, so a banner drawn
+    /// here would sit under the keys unseen, and a mistyped address would
+    /// come back looking like a button that did nothing.
+    fn entry_screen(
+        &self,
+        screen: ScreenBuilder,
+        entry: &TextEntry,
+        prompt: &str,
+        hint: &str,
+        submit: &str,
+    ) -> Screen {
+        let hint = self.message.as_deref().unwrap_or(hint);
         screen
-            .typed(&self.keyboard, hint)
-            .keyboard(&self.keyboard, submit)
             .owns_back(true)
+            .text_entry_with_hint(entry, prompt, hint, submit)
             .build()
     }
 
@@ -422,13 +442,13 @@ impl Fanshelf {
                     "That is not an AO3 work address or number. Try the number in the work's address, such as 4242."
                         .into(),
                 );
-                self.keyboard = Keyboard::with_text(entered);
+                self.work_entry.open_with(entered);
             }
             return;
         }
         let Some(tag) = parse_tag(&entered) else {
             self.message = Some("Type a tag name, or paste the tag's AO3 address.".into());
-            self.keyboard = Keyboard::with_text(entered);
+            self.tag_entry.open_with(entered);
             return;
         };
         if self.tags.iter().any(|known| known.slug == tag.slug) {
@@ -436,7 +456,7 @@ impl Fanshelf {
             self.message = Some("You already follow this tag.".into());
         } else if self.tags.len() >= MAX_TAGS {
             self.message = Some(format!("Fanshelf can follow {MAX_TAGS} tags at most."));
-            self.keyboard = Keyboard::with_text(entered);
+            self.tag_entry.open_with(entered);
         } else {
             self.tags.push(tag);
             self.save_tags(context);
@@ -706,7 +726,9 @@ impl Fanshelf {
     /// before deciding to download, so it sits under the byline. It is the
     /// longest field here, so it is the one shortened when the page would
     /// otherwise run off the panel at a large text size, and it is dropped
-    /// before the rating or the warnings ever are.
+    /// before the rating or the warnings ever are. Whenever it is cut, the
+    /// menu offers the whole of it on a page of its own, so nothing the
+    /// author wrote is out of reach at any size.
     fn work_screen(&self, context: &Context) -> Screen {
         let Some(work) = self.current() else {
             return ScreenBuilder::new("fs-work")
@@ -716,21 +738,47 @@ impl Fanshelf {
                 .build();
         };
         let summary = work.summary.trim();
+        let full_title = display(&work.title, 110);
         let mut budget = summary.len();
+        let mut title_budget = full_title.len();
         loop {
-            let screen = self.work_screen_with(work, &display(summary, budget));
-            if budget == 0 || Self::fits(context, &screen) {
+            let shown = display(summary, budget);
+            let title = display(&full_title, title_budget);
+            let cut = shown != summary || title != full_title;
+            let screen = self.work_screen_with(work, &title, &shown, cut);
+            if Self::fits(context, &screen) || (budget == 0 && title_budget <= 24) {
                 return screen;
             }
-            budget = if budget > 80 { budget * 3 / 4 } else { 0 };
+            // Down to the first few words before giving the line up, so the
+            // page says what the work is about wherever a line is left. Only
+            // a title too long for the panel at this size is cut after that,
+            // and the whole of it heads the summary pages.
+            if budget > 80 {
+                budget = budget * 3 / 4;
+            } else if budget > 30 {
+                budget -= 25;
+            } else if budget > 0 {
+                budget = 0;
+            } else {
+                title_budget = (title_budget * 3 / 4).max(24);
+            }
         }
     }
 
-    fn work_screen_with(&self, work: &Work, summary: &str) -> Screen {
+    fn work_screen_with(&self, work: &Work, title: &str, summary: &str, cut: bool) -> Screen {
+        // Checking is a step an owner takes now and then, and the Updates tab
+        // checks every work at once, so it waits in the menu. On the page it
+        // was a third full-width button, and at the largest text sizes that
+        // was the room the summary and the warnings needed.
+        let mut menu = vec![("check", "Check for new chapters")];
+        if cut {
+            menu.push(("summary", "Whole summary"));
+        }
         let mut screen = ScreenBuilder::new("fs-work")
             .top_bar("Work")
+            .top_bar_overflow("more", self.work_menu, menu)
             .top_bar_action("shelf", "Shelf")
-            .heading(display(&work.title, 110))
+            .heading(title)
             .secondary(format!(
                 "{} · {}",
                 display(&work.author, 60),
@@ -741,10 +789,7 @@ impl Fanshelf {
         }
         screen = screen
             .text(format!("Rating: {}", display(&work.rating, 90)))
-            .text(format!(
-                "Archive warnings: {}",
-                display(&work.warnings, 180)
-            ))
+            .text(format!("Warnings: {}", display(&work.warnings, 180)))
             .secondary(format!(
                 "Chapters {} · Updated {} · {}",
                 work.chapters_label(),
@@ -765,24 +810,62 @@ impl Fanshelf {
         } else if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
         }
-        let buttons = if work.download == DownloadState::UpdateAvailable {
-            vec![
-                ("read", "Read"),
-                ("redownload", "Download new chapters"),
-                ("check", "Check for new chapters"),
-            ]
+        // Pinned to the foot of the panel, where they stay whatever the page
+        // above them holds: stacked under the facts they were the first thing
+        // a long title or a large text size pushed off the panel.
+        screen = if work.download == DownloadState::UpdateAvailable {
+            screen.action_bar([("read", "Read"), ("redownload", "Download new chapters")])
         } else if work.downloaded() {
-            vec![("read", "Read"), ("check", "Check for new chapters")]
+            screen.bottom_action("read", "Read")
         } else {
-            vec![
-                ("download", "Download EPUB"),
-                ("check", "Check for new chapters"),
-            ]
+            screen.bottom_action("download", "Download EPUB")
         };
-        for (name, label) in buttons {
-            screen = screen.button(name, label);
-        }
         screen.owns_back(true).build()
+    }
+
+    /// The whole summary, a page at a time, under the work's whole title.
+    fn summary_screen(&self, context: &Context) -> Screen {
+        let pages = self.summary_pages(context);
+        let page = self.summary_page.min(pages.len().saturating_sub(1));
+        let mut screen = self.summary_head(page == 0);
+        for (_, depth, role, paragraph) in pages.get(page).into_iter().flatten() {
+            screen = match role {
+                QuoteRole::Body => screen.quote(*depth, paragraph),
+                QuoteRole::Byline => screen.byline(*depth, paragraph),
+            };
+        }
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("summary-previous", "summary-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
+    }
+
+    /// What sits above the summary: the top bar, and on the first page the
+    /// work's title.
+    fn summary_head(&self, first: bool) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("fs-summary")
+            .top_bar("Summary")
+            .owns_back(true);
+        match self.current() {
+            Some(work) if first => screen.heading(display(&work.title, 110)),
+            _ => screen,
+        }
+    }
+
+    fn summary_pages(&self, context: &Context) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+        let summary = self.current().map_or("", |work| work.summary.trim());
+        let paragraphs = summary
+            .split('\n')
+            .map(str::trim)
+            .filter(|paragraph| !paragraph.is_empty())
+            .map(|paragraph| (0, 0, QuoteRole::Body, paragraph))
+            .collect::<Vec<_>>();
+        context.paginate_tagged_under(&paragraphs, false, &self.summary_head(true).build())
     }
 
     fn follow_screen(&self, context: &Context) -> Screen {
@@ -1548,19 +1631,54 @@ impl KoboApp for Fanshelf {
             }
         }
         // Back is the way out of a typing screen, so it is not offered to the
-        // keyboard first: it used to be, the keyboard had no use for it, and
-        // the screen it was pressed on stayed put.
+        // field first: the field has no use for it, and the screen it was
+        // pressed on would stay put.
         if matches!(self.view, View::Add | View::AddTag) && action != ActionId::BACK {
-            if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let entered = self.keyboard.take();
-                self.submitted(context, entered);
+            let entry = if self.view == View::Add {
+                &mut self.work_entry
+            } else {
+                &mut self.tag_entry
+            };
+            match entry.handle(action) {
+                Some(Typing::Submitted(entered)) => self.submitted(context, entered),
+                // Backing out of the reader's keyboard is leaving the screen
+                // it was opened from, as Back always was.
+                Some(Typing::Cancelled | Typing::Saved | Typing::Refused(_)) => {
+                    self.view = if self.view == View::Add {
+                        View::Shelf
+                    } else {
+                        View::Follow
+                    };
+                    self.message = None;
+                }
+                Some(Typing::Changed) | None => {}
             }
             self.show(context);
             return;
         }
 
-        if action == action_id("add") {
-            self.keyboard.clear();
+        if self.view == View::Work && action == action_id("more") {
+            self.work_menu = true;
+            self.show(context);
+            return;
+        }
+        // A tap outside the open menu arrives as Back, and only closes it.
+        if self.work_menu && action == ActionId::BACK {
+            self.work_menu = false;
+            self.show(context);
+            return;
+        }
+        self.work_menu = false;
+        if action == action_id("summary") {
+            self.summary_page = 0;
+            self.view = View::Summary;
+        } else if action == action_id("summary-previous") {
+            self.summary_page = self.summary_page.saturating_sub(1);
+        } else if action == action_id("summary-next") {
+            let last = self.summary_pages(context).len().saturating_sub(1);
+            self.summary_page = self.summary_page.saturating_add(1).min(last);
+        } else if action == action_id("add") {
+            self.work_entry.open();
             self.view = View::Add;
             self.message = None;
         } else if action == action_id("filter") {
@@ -1622,7 +1740,7 @@ impl KoboApp for Fanshelf {
             self.shelf_page = 0;
             self.message = None;
         } else if action == action_id("add-tag") {
-            self.keyboard.clear();
+            self.tag_entry.open();
             self.view = View::AddTag;
             self.message = None;
         } else if action == action_id("adult-confirm") {
@@ -1727,6 +1845,7 @@ impl KoboApp for Fanshelf {
                     self.view = View::Shelf;
                 }
                 View::Feed | View::AddTag => self.view = View::Follow,
+                View::Summary => self.view = View::Work,
                 View::Reading => self.close_book(context),
                 View::Shelf => {}
             }
@@ -1827,6 +1946,49 @@ mod tests {
     use kobo_sdk::{AppRunner, Command, StoreRequest};
     use kobo_ui::{Chrome, Node, CLARA_BW_METRICS};
 
+    #[test]
+    fn a_mistyped_work_comes_back_in_the_field_with_the_reason_under_the_prompt() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        let opened = runner.action(action_id("add"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) =
+            kobo_sdk::keyboard::testing::asked(&opened)
+        else {
+            panic!("Add did not ask for the reader's keyboard");
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Address);
+        let refused = runner.type_text("nonsense");
+        let Some(kobo_sdk::DeviceRequest::TypeText { hint, initial, .. }) =
+            kobo_sdk::keyboard::testing::asked(&refused)
+        else {
+            panic!("the field did not come back for a correction");
+        };
+        assert!(
+            hint.starts_with("That is not an AO3 work address or number."),
+            "{hint}"
+        );
+        assert_eq!(initial, "nonsense");
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Shelf);
+        assert_eq!(runner.app().message, None);
+    }
+
+    #[test]
+    fn a_tag_is_typed_with_a_space_bar_and_backing_out_returns_to_the_followed_tags() {
+        let mut runner = AppRunner::new(Fanshelf {
+            view: View::Follow,
+            ..Fanshelf::default()
+        });
+        let opened = runner.action(action_id("add-tag"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) =
+            kobo_sdk::keyboard::testing::asked(&opened)
+        else {
+            panic!("Add did not ask for the reader's keyboard");
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Text);
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Follow);
+    }
+
     fn work() -> Work {
         Work {
             id: "42".into(),
@@ -1866,24 +2028,21 @@ mod tests {
             ..Fanshelf::default()
         };
         let screen = app.screen(&AppRunner::new(Fanshelf::default()).context());
-        let labels = screen
-            .nodes
-            .iter()
-            .filter_map(node_label)
-            .collect::<Vec<_>>();
-        let rating = labels
-            .iter()
-            .position(|text| text.starts_with("Rating:"))
-            .unwrap();
-        let warnings = labels
-            .iter()
-            .position(|text| text.starts_with("Archive warnings:"))
-            .unwrap();
-        let download = labels
-            .iter()
-            .position(|text| *text == "Download EPUB")
-            .unwrap();
-        assert!(rating < download && warnings < download);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        let top_of = |prefix: &str| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.text_lines
+                        .first()
+                        .is_some_and(|line| line.starts_with(prefix))
+                })
+                .map(|node| node.rect.y)
+                .unwrap()
+        };
+        let download = layout.rect_of_action(action_id("download")).unwrap();
+        assert!(top_of("Rating:") < download.y && top_of("Warnings:") < download.y);
     }
 
     #[test]
@@ -2254,7 +2413,10 @@ mod tests {
                 .iter()
                 .filter_map(node_label)
                 .collect::<Vec<_>>();
-            assert!(labels.contains(&"Download EPUB"));
+            assert!(screen
+                .layout_with(&metrics, &Chrome::measuring(true))
+                .rect_of_action(action_id("download"))
+                .is_some());
             if metrics.text_scale.percent() == 100 {
                 assert!(
                     labels
@@ -2262,6 +2424,104 @@ mod tests {
                         .any(|text| text.starts_with("A lantern keeper")),
                     "the summary is missing at the default size"
                 );
+            }
+        }
+    }
+
+    /// Every word of a work's summary is somewhere an owner can read it, at
+    /// every text size held either way: on the work's page, or, where the page
+    /// had to cut it, on the summary pages its menu opens. The demonstration
+    /// shelf is used because its first work carries every line the page has,
+    /// an update waiting included, and a long summary is added to it.
+    #[test]
+    fn a_work_summary_is_always_within_reach_and_every_page_fits_at_every_size_held_either_way() {
+        let mut shelf = Fanshelf {
+            demo: true,
+            works_loaded: true,
+            tags_loaded: true,
+            ..Fanshelf::default()
+        };
+        shelf.seed_demo();
+        let mut works = shelf.works.clone();
+        let mut long = works[0].clone();
+        long.summary = "A lantern keeper finds a door in the library that opens onto every \
+            night she has ever forgotten. "
+            .repeat(8)
+            .trim_end()
+            .to_owned();
+        works.push(long);
+        for metrics in collection_tests::metrics() {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = metrics.oriented(orientation);
+                let mut runner = AppRunner::with_metrics(
+                    Fanshelf {
+                        works: works.clone(),
+                        works_loaded: true,
+                        tags_loaded: true,
+                        ..Fanshelf::default()
+                    },
+                    metrics,
+                );
+                for (index, work) in works.iter().enumerate() {
+                    let at = format!("{metrics:?}, {}", work.title);
+                    runner.app_mut().view = View::Shelf;
+                    runner.action(action_id(&format!("work-{index}")));
+                    let context = runner.context();
+                    let page = runner.app().screen(&context);
+                    assert!(
+                        Fanshelf::fits(&context, &page),
+                        "{at}: the work page runs off"
+                    );
+                    let shown = format!("{page:?}");
+                    assert!(
+                        shown.contains("Read") || shown.contains("Download EPUB"),
+                        "{at}"
+                    );
+                    runner.action(action_id("more"));
+                    let menu = format!("{:?}", runner.app().screen(&runner.context()));
+                    assert!(menu.contains("Check for new chapters"), "{at}");
+                    let summary = work.summary.trim();
+                    if shown.contains(summary) {
+                        assert!(!menu.contains("Whole summary"), "{at}");
+                        runner.action(ActionId::BACK);
+                        continue;
+                    }
+                    assert!(
+                        menu.contains("Whole summary"),
+                        "{at}: the summary is cut and out of reach"
+                    );
+                    runner.action(action_id("summary"));
+                    let mut read = String::new();
+                    loop {
+                        let screen = runner.app().screen(&runner.context());
+                        assert!(
+                            Fanshelf::fits(&runner.context(), &screen),
+                            "{at}: a summary page runs off"
+                        );
+                        for node in &screen.nodes {
+                            if let Node::Quote { text, .. } = node {
+                                read.push_str(text);
+                                read.push(' ');
+                            }
+                        }
+                        let before = runner.app().summary_page;
+                        runner.action(action_id("summary-next"));
+                        if runner.app().summary_page == before {
+                            break;
+                        }
+                    }
+                    let split = |text: &str| {
+                        text.split_whitespace()
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(split(&read), split(summary), "{at}");
+                    runner.action(ActionId::BACK);
+                    assert_eq!(runner.app().view, View::Work, "{at}");
+                }
             }
         }
     }

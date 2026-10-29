@@ -187,7 +187,7 @@ def main():
                 drive('tap-id add', 'tap-id kb.layer', 'type '+root.removeprefix('https://').removesuffix('opds'), 'tap-id kb.layer', 'type opds', 'tap Continue')
                 authentication['required'] = True
                 drive('tap-id sign-in', 'tap-id credential.enter', 'type reader', 'tap Next', 'type sample',
-                      'expect 6 characters entered', 'tap-id credential.reveal', 'expect sample', 'tap Save', 'wait-for-id entry-0', 'wait-idle')
+                      'expect 6 characters entered', 'tap-id kb.reveal', 'expect sample', 'tap Save', 'wait-for-id entry-0', 'wait-idle')
                 assert (state/'catalog').read_text()==root+'|calibre'
                 capture('18-private-catalog')
                 drive('tap-id entry-0', 'wait-idle', 'expect Authors', 'tap Back', 'tap-id entry-2', 'tap-id download-book', 'wait-for-id offline-0', 'wait-idle')
@@ -213,9 +213,11 @@ def main():
                 drive('tap-id library', 'wait-for-id entry-0', 'wait-idle')
                 capture('20-connected-from-the-computer')
                 # The library at home stops answering: the catalog stays, with
-                # the home-network hint rather than "check the address".
+                # the home-network hint rather than "check the address". Its
+                # first entry is the one every text size keeps on the first
+                # page; at the largest the book itself turns to the second.
                 authentication['down'] = True
-                drive('tap-id entry-0', 'wait-for home network', 'expect A Walk by the River')
+                drive('tap-id entry-0', 'wait-for home network', 'expect Authors')
                 capture('21-library-away-from-home')
                 result = dict(status='passed', profile=args.profile, scale=args.scale,
                               basis='actual-sdk-simulator-with-private-https-opds-and-original-epub',

@@ -17,6 +17,10 @@ time.
   between them.
 - An estimate of how long the message will take updates as you type, next to
   **Send**.
+- **Learning** is a switch under the message. While it is on, the bar names
+  each letter and its code as the light sends it.
+- **Turn light off** in the bar keeps the letters on the panel without the
+  flashing, and **Turn light on** brings it back.
 - Your previous brightness comes back when the message ends, when you turn the
   light off or when you leave the app.
 - The screen changes once per letter, during the pause before it, so the

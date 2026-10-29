@@ -1,5 +1,5 @@
 wait 800
-expect Classic board games
+expect Board games
 tap Draughts
 expect Start game
 expect-missing International

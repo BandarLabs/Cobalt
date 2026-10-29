@@ -9,6 +9,8 @@ tap Check again
 wait-for No address has arrived
 clean
 shot homepanel-check-again
+tap-id home-url
+wait-for Home Assistant address
 type homeassistant
 expect https://homeassistant
 clean

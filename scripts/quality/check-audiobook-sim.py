@@ -308,7 +308,7 @@ def main():
                       'expect An estimate')
                 capture('audiobook-estimate')
                 drive('tap Edit topic', 'wait-for Your topic', 'expect the moon',
-                      'tap-id kb.enter', 'wait-for Before you start')
+                      'tap-id create', 'wait-for Before you start')
                 assert (providers.total('exa') == 0 and providers.total('openai') == 0
                     and providers.total('elevenlabs') == 0), providers.calls
                 result['checks'].append(dict(
@@ -413,7 +413,7 @@ def main():
 
                 # Phase G: a key removed with the CLI is named again, alone.
                 secret('remove', 'elevenlabs')
-                drive('tap Edit topic', 'wait-for Your topic', 'tap-id kb.enter',
+                drive('tap Edit topic', 'wait-for Your topic', 'tap-id create',
                       'wait-for Add your keys', 'expect kobo secret set elevenlabs',
                       'expect-missing kobo secret set exa')
                 capture('audiobook-keys-narration-missing')

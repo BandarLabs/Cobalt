@@ -10,7 +10,8 @@ tap Computer Science
 wait-idle
 expect Artificial Intelligence
 expect cs.AI
-expect 1 of 7
+# The group pages; how many pages depends on the panel and the text size.
+expect 1 of
 clean
 shot group
 tap Back
@@ -25,6 +26,16 @@ clean
 shot library
 tap Back
 wait-idle
+# A search is typed on the reader's own keyboard, and Back puts it away.
+tap Search arXiv
+wait-for Type here
+expect A phrase, an author, a title
+clean
+shot search
+tap Back
+wait-idle
+expect Computer Science
+expect-missing Type here
 scenario offline
 tap Computer Science
 wait-idle

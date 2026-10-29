@@ -82,7 +82,11 @@ struct Stand {
     page: Option<TilePicture>,
     page_key: Option<String>,
     menu_open: bool,
-    notice: Option<String>,
+    /// What the last turn or read came to, with how it is drawn: the end
+    /// of the music is news, a page or list that cannot be read is an
+    /// error. Drawn at one level, a damaged page and the last page looked
+    /// the same.
+    notice: Option<(BannerLevel, String)>,
     startup: Startup,
     library_page: usize,
     setlists_page: usize,
@@ -196,11 +200,11 @@ impl Stand {
                     return;
                 }
                 _ => {
-                    self.notice = Some("End of the setlist.".to_owned());
+                    self.notice = Some((BannerLevel::Info, "End of the setlist.".to_owned()));
                 }
             }
         } else {
-            self.notice = Some("Last page.".to_owned());
+            self.notice = Some((BannerLevel::Info, "Last page.".to_owned()));
         }
         self.save(context);
         self.page = None;
@@ -343,15 +347,15 @@ impl Stand {
 
     fn library(&self, context: &Context) -> (Screen, usize) {
         let mut screen = ScreenBuilder::new("music-library").top_bar("Music Stand");
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+        if let Some((level, notice)) = &self.notice {
+            screen = screen.banner(*level, notice);
         }
         if !self.startup.manifest_loaded {
             return (screen.activity("Opening your music shelf", None).build(), 1);
         }
         for (input, reason) in &self.failures {
             screen = screen.banner(
-                BannerLevel::Attention,
+                BannerLevel::Error,
                 format!("{input} did not import: {reason}"),
             );
         }
@@ -400,15 +404,12 @@ impl Stand {
 
     fn stand(&self) -> Screen {
         let mut screen = ScreenBuilder::new("music-stand");
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+        if let Some((level, notice)) = &self.notice {
+            screen = screen.banner(*level, notice);
         }
         let Some(score) = self.current_score() else {
             return screen
-                .banner(
-                    BannerLevel::Attention,
-                    "This score is no longer on the shelf.",
-                )
+                .banner(BannerLevel::Error, "This score is no longer on the shelf.")
                 .button(LIBRARY, "Library")
                 .build()
                 .with_own_back(true);
@@ -428,42 +429,39 @@ impl Stand {
             } else {
                 "top half"
             };
+            // Zoom and the corner mark are each on or off, so each is one
+            // switch that says how it stands and changes it, where a fact
+            // said it in one place and a button changed it in another. A tap
+            // still closes the menu, as the buttons did: the page behind is
+            // what a player wants to see next, with no hand free for a
+            // second tap.
             screen = screen.modal(score.title.clone(), |overlay| {
                 overlay
-                    .facts([
-                        (
-                            "Page",
-                            format!("{} of {} · {half}", state.page + 1, score.pages),
-                        ),
-                        (
-                            "Zoom",
-                            if state.zoomed {
-                                "Staff width".to_owned()
-                            } else {
-                                "Whole page".to_owned()
-                            },
-                        ),
-                        (
-                            "Mark",
-                            if state.marked {
-                                "Corner marked".to_owned()
-                            } else {
-                                "None".to_owned()
-                            },
-                        ),
-                    ])
-                    .buttons([
-                        (ZOOM, if state.zoomed { "Zoom out" } else { "Zoom in" }),
-                        (
-                            MARK,
-                            if state.marked {
-                                "Remove mark"
-                            } else {
-                                "Mark page corner"
-                            },
-                        ),
-                        (LIBRARY, "Library"),
-                    ])
+                    .facts([(
+                        "Page",
+                        format!("{} of {} · {half}", state.page + 1, score.pages),
+                    )])
+                    .toggle(
+                        ZOOM,
+                        "Staff width",
+                        if state.zoomed {
+                            "Margins cropped, staves larger"
+                        } else {
+                            "The whole page"
+                        },
+                        state.zoomed,
+                    )
+                    .toggle(
+                        MARK,
+                        "Corner mark",
+                        if state.marked {
+                            "Marked in your library"
+                        } else {
+                            "Not marked"
+                        },
+                        state.marked,
+                    )
+                    .button(LIBRARY, "Library")
             });
         }
         screen.build().with_own_back(true)
@@ -528,7 +526,7 @@ impl Stand {
             screen = screen.splash(
                 Some(Glyph::Note),
                 "No scores on this setlist yet",
-                "Choose Add scores to pick them from your library.",
+                "Tap Add from library to choose them.",
             );
         }
         let labels = rows
@@ -576,7 +574,7 @@ impl Stand {
                     u16::try_from(count).unwrap_or(u16::MAX),
                 );
         }
-        screen = screen.bottom_action(ADD_SCORES, "Add scores");
+        screen = screen.bottom_action(ADD_SCORES, "Add from library");
         if self.confirming_delete {
             screen = screen.confirm(
                 "Delete this setlist?",
@@ -595,7 +593,7 @@ impl Stand {
             return self.setlists(context);
         };
         let screen = ScreenBuilder::new("music-picker")
-            .top_bar("Add scores")
+            .top_bar("Add from library")
             .heading(list.name.clone())
             .secondary("Tap a score to add it to the end of the setlist.");
         if self.scores.is_empty() {
@@ -749,8 +747,11 @@ impl Stand {
                     Err(_) if reloading => {}
                     Err(error) => {
                         self.scores.clear();
-                        self.notice = Some(format!(
-                            "The list of scores could not be read ({error}). Push your scores again from your computer."
+                        self.notice = Some((
+                            BannerLevel::Error,
+                            format!(
+                                "The list of scores could not be read ({error}). Push your scores again from your computer."
+                            ),
                         ));
                     }
                 }
@@ -770,7 +771,10 @@ impl Stand {
             ShelfProgress::Failed(_) => {
                 self.manifest_load = None;
                 if !reloading {
-                    self.notice = Some("The list of scores could not be opened.".to_owned());
+                    self.notice = Some((
+                        BannerLevel::Error,
+                        "The list of scores could not be opened.".to_owned(),
+                    ));
                 }
                 self.startup.manifest_loaded = true;
                 true
@@ -806,25 +810,30 @@ impl Stand {
                                             crop.into_grey(),
                                         );
                                         if self.page.is_none() {
-                                            self.notice = Some(
+                                            self.notice = Some((
+                                                BannerLevel::Error,
                                                 "This page is larger than the picture budget."
                                                     .to_owned(),
-                                            );
+                                            ));
                                         } else {
                                             self.page_key = Some(key);
                                             self.notice = None;
                                         }
                                     }
                                     Err(_) => {
-                                        self.notice =
-                                            Some("This page could not be cropped.".to_owned());
+                                        self.notice = Some((
+                                            BannerLevel::Error,
+                                            "This page could not be cropped.".to_owned(),
+                                        ));
                                     }
                                 }
                             }
                         }
                         Err(_) => {
-                            self.notice =
-                                Some("This page could not be read. Re-push the score.".to_owned());
+                            self.notice = Some((
+                                BannerLevel::Error,
+                                "This page could not be read. Re-push the score.".to_owned(),
+                            ));
                         }
                     }
                 }
@@ -833,8 +842,10 @@ impl Stand {
             ShelfProgress::Failed(_) => {
                 self.page_load = None;
                 self.page_load_key = None;
-                self.notice =
-                    Some("This page is missing or damaged. Re-push the score.".to_owned());
+                self.notice = Some((
+                    BannerLevel::Error,
+                    "This page is missing or damaged. Re-push the score.".to_owned(),
+                ));
                 true
             }
             ShelfProgress::Moving { .. } => true,

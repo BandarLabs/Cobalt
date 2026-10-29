@@ -38,8 +38,9 @@ it through. **Rules**, then **Difficulty**, shows the open puzzle's guide.
 Every game keeps its controls in the same places: **Rules** and the menu at
 the top, **Undo** first at the foot. The menu starts with **New game**, which
 opens the next puzzle of the same kind you have not solved, then **Restart
-puzzle** and **Puzzles**. Slitherlink and Minesweeper put their mode beside
-Undo: Line or Cross, Reveal or Flag.
+puzzle** and **Puzzles**. Slitherlink and Minesweeper put the way taps work
+beside Undo, named for what a tap there does: **Mark crosses** or **Draw
+lines**, **Flag mines** or **Reveal squares**.
 
 - The puzzle list shows one grade at a time and as many puzzles as fit the
   page, each marked solved or in progress.
@@ -50,7 +51,7 @@ Undo: Line or Cross, Reveal or Flag.
 - In Kakuro, tapping a square opens a digit chooser that shows both sums.
 - **Restart puzzle** asks first, leaves other puzzles alone and can be undone.
 - Progress shows **Saving…** until storage confirms it. If a save fails, keep
-  the app open and choose **Retry save**.
+  the app open and choose **Retry saving**.
 
 ## How the puzzles are made
 
