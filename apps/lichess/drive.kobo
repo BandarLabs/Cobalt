@@ -1,12 +1,19 @@
 expect Lichess
 expect Puzzles
 wait-for Not connected
+# At the larger text sizes the cards are set two to a row, so the time cards
+# are on the second page; at the default size the pager is not drawn at all.
+maybe-tap-id home-next
 expect Rapid · Rated
 clean
 shot home
+maybe-tap-id home-previous
 tap How to play
 expect Chess on Lichess
 expect Outlined squares show the last move.
+# How to play turns a page at the larger text sizes; at the default size it
+# is one page and draws no pager.
+maybe-tap-id help-next
 expect Choose rated or casual games in Account/Games.
 wait 250
 clean
@@ -18,18 +25,34 @@ wait-for Download 32 puzzles
 expect-missing Resume puzzle
 tap Back
 expect Computer
+maybe-tap-id home-next
 tap 10+0
 wait-for Connect Lichess
 expect Connect a Lichess account to play people. Computer and Puzzles work without one.
 expect-missing Challenge player
 clean
 shot time-tile-without-account
+tap Connect Lichess
+wait-for Account key
+expect lichess.org/account/oauth/token
+expect Use phone
+clean
+shot connect-prompt
+tap Use phone
+wait-for Opens the Lichess token page
+clean
+shot connect-phone
+tap Back
+wait-for Account key
+tap Back
+wait-for Connect Lichess
 tap-id seek-casual
 tap Back
 wait-for Rapid · Casual
 expect-missing Rapid · Rated
 clean
 shot home-casual
+maybe-tap-id home-previous
 tap-id play-computer
 wait-for Start game
 expect No clock

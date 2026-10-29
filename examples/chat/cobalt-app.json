@@ -3,13 +3,12 @@
   "display_name": "AI Command Center",
   "short_label": "AI Chat",
   "summary": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
-  "version": "1.0.15",
-  "minimum_cobalt_version": "0.3.4",
+  "version": "1.0.16",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Anthropic answers again on its current model, the first screen says which key to add, and a long answer that stops early offers Continue.",
+  "release_notes": "Messages are typed on Cobalt's own keyboard, which names the service that will answer, and the service list marks the one in use.",
   "setup": {
     "steps": [
       {

@@ -15,7 +15,7 @@ mod transfer;
 use kobo_bookview::comic::{ComicView, Outcome as ComicOutcome, SaveState};
 use kobo_opds::{Feed, ImageSource, Publication};
 use kobo_sdk::imports::{Format, Import, Stage as ImportStage};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp, PictureHandle,
     Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId,
@@ -90,7 +90,8 @@ struct Panels {
     history: Vec<(String, Feed, usize, String)>,
     selected: Option<Publication>,
     query: String,
-    keyboard: Keyboard,
+    /// The search field, which the runtime draws while it is open.
+    search: TextEntry,
     library: Option<Library>,
     library_error: Option<String>,
     completed_cleanup: Option<String>,
@@ -146,7 +147,7 @@ impl Default for Panels {
             history: Vec::new(),
             selected: None,
             query: String::new(),
-            keyboard: Keyboard::new(),
+            search: TextEntry::new(),
             library: None,
             library_error: None,
             completed_cleanup: None,
@@ -393,10 +394,13 @@ impl Panels {
     fn search_screen(&self) -> Screen {
         ScreenBuilder::new("panels-search")
             .top_bar("Search")
-            .heading("Find a series or volume")
-            .secondary("Search the library page you opened.")
-            .keyboard(&self.keyboard, "Search")
             .owns_back(true)
+            .text_entry_with_hint(
+                &self.search,
+                "Find a series or volume",
+                "Search the library page you opened.",
+                "Search",
+            )
             .build()
     }
 
@@ -417,15 +421,19 @@ impl Panels {
         if let Some(summary) = &publication.summary {
             screen = screen.text(summary);
         }
+        // Reading order is a setting the volume keeps, on or off, so it is a
+        // switch rather than a button whose label says which way it is set.
         screen
             .primary_button("download", "Download")
-            .button(
+            .toggle(
                 "detail-rtl",
+                "Read right to left",
                 if self.rtl {
-                    "Reading order: right to left"
+                    "Pages turn as in manga"
                 } else {
-                    "Reading order: left to right"
+                    "Pages turn left to right"
                 },
+                self.rtl,
             )
             .build()
     }
@@ -1161,11 +1169,22 @@ impl KoboApp for Panels {
             }
         }
         if self.route == Route::Search {
-            if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let entered = self.keyboard.take();
-                entered.trim().clone_into(&mut self.query);
-                self.catalog_page = 0;
-                self.route = Route::Catalog;
+            match self.search.handle(action) {
+                Some(Typing::Submitted(entered)) => {
+                    self.query = entered;
+                    self.catalog_page = 0;
+                    self.route = Route::Catalog;
+                }
+                Some(Typing::Changed) => {}
+                Some(_) => self.route = Route::Catalog,
+                None => {
+                    // Back reaches the application only when the runtime is
+                    // not holding the field, and then it leaves the search.
+                    if action == ActionId::BACK {
+                        self.search.close();
+                        self.route = Route::Catalog;
+                    }
+                }
             }
             self.show(context);
             return;
@@ -1193,6 +1212,13 @@ impl KoboApp for Panels {
                     self.route = Route::Library;
                 }
                 Route::Detail | Route::Search => self.route = Route::Catalog,
+                // A filtered page lets go of its search before the page
+                // itself, because the runtime's field cannot be submitted
+                // empty to clear it the way the old keys could.
+                Route::Catalog if !self.query.is_empty() => {
+                    self.query.clear();
+                    self.catalog_page = 0;
+                }
                 Route::Catalog => {
                     if let Some((task, _)) = self.task.take() {
                         context.cancel(task);
@@ -1232,7 +1258,7 @@ impl KoboApp for Panels {
         } else if action == action_id("retry-catalog") {
             self.fetch_catalog(context, self.catalog_url.clone());
         } else if action == action_id("search") {
-            self.keyboard = Keyboard::with_text(&self.query);
+            self.search.open_with(self.query.clone());
             self.route = Route::Search;
         } else if action == action_id("download") {
             self.begin_download(context);

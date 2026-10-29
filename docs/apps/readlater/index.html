@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/readlater.png">
 <meta name="twitter:image:alt" content="Read Later's unread queue of synced Wallabag articles with reading times.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-4NXzGovgkmx6z0aTn7aiTTEuHM8oWIPZNrxzYHtoAM0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-pezQvKOAAgUeNOWcZn5xl5aUdGN2L+FLkq7O/uqdeds='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "ReferenceApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.2.7",
+      "softwareVersion": "0.2.8",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -92,16 +92,16 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="readlater" data-minimum-cobalt-version="0.3.18">
+<main class="wrap" data-app-id="readlater" data-minimum-cobalt-version="0.3.31">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Reading</p>
       <h1>Read Later</h1>
       <p class="summary">Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.2.7</dd></div>
+        <div><dt>Version</dt><dd>0.2.8</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/readlater">Source code on GitHub</a></p>
@@ -117,8 +117,8 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.2.7</h2>
-    <p>Picks up a sign-in from your computer without restarting, and says why a sync failed instead of Off the air.</p>
+    <h2>New in 0.2.8</h2>
+    <p>The server address is typed on Cobalt's own keyboard, settings offer a QR code for your Wallabag's API clients page, and Retry saving sits on the message that says saving failed.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>

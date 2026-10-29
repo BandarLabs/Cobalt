@@ -173,8 +173,10 @@ def main():
                 assert position(last) == (total, total), position(last)
                 checks.append(f'a {total}-page rule is reachable to its last page')
 
-                # A category this edition does not hold explains itself.
-                drive('tap Back', 'tap Back', 'tap-id spells', 'tap-id edition-2024')
+                # A category this edition does not hold explains itself. The
+                # second Back lets go of the search, the third leaves the list.
+                drive('tap Back', 'tap Back', 'tap Back', 'tap-id spells',
+                      'tap-id edition-2024')
                 missing = capture('07-edition-without-spells')
                 assert says(missing, 'No spells in the 2024 reference'), missing
                 assert says(missing, '2014'), missing

@@ -21,3 +21,15 @@ tap Streaks
 expect 1 current, 1 best
 tap Today
 expect Tap a habit when it is done.
+# A habit's schedule is one answer from a list with the current one marked.
+tap Manage
+tap Tea
+wait-for How often
+expect Every 2 days
+clean
+shot schedule
+tap Weekdays
+wait-for Weekdays
+tap Back
+wait-for Tea
+expect Weekdays

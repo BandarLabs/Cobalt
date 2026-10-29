@@ -457,7 +457,25 @@ impl Morse {
         spoken(self.beats.len())
     }
 
-    fn writing(&self) -> Screen {
+    /// The message, what it will cost, and the Learning switch, over the
+    /// keys. Where a small panel at a large size cannot hold them all, the
+    /// switch's summary gives way first and then the line about the speed,
+    /// so the estimate, the switch and every key stay on the panel.
+    fn writing(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        let shapes = [(true, true), (false, true), (false, false)];
+        shapes
+            .into_iter()
+            .map(|(summary, speed)| self.writing_with(summary, speed))
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| self.writing_with(false, false))
+    }
+
+    fn writing_with(&self, summary: bool, speed: bool) -> Screen {
         let mut screen = ScreenBuilder::new("morse-writing")
             .top_bar("Morse")
             .top_bar_overflow(MORE, self.menu_open, [(REFERENCE, "Letter reference")]);
@@ -472,17 +490,28 @@ impl Morse {
         // box rather than from the composed message, because at this point
         // nothing has been composed.
         let (signals, _) = encode(self.keyboard.text());
-        screen
+        let screen = screen
             .typed(&self.keyboard, "A message to send in light")
-            .secondary(format!("{} to send.", spoken(beats(&signals).len())))
-            // The speed is the same for every message, so it is said once, in
-            // the units the light actually keeps. A reader who knows a dash is
-            // three seconds can follow the beacon letter by letter; one who
-            // does not learns it here, before anything has flashed.
-            .secondary("A dot is one second of light, a dash three.")
-            // The learning switch lives beside the message it changes: chosen
-            // here, it is the send that follows which narrates its letters.
-            .chips([(LEARN, "Learning", self.learn)])
+            .secondary(format!("{} to send.", spoken(beats(&signals).len())));
+        // The speed is the same for every message, so it is said once, in
+        // the units the light actually keeps. A reader who knows a dash is
+        // three seconds can follow the beacon letter by letter; one who does
+        // not learns it here, before anything has flashed.
+        let screen = if speed {
+            screen.secondary("A dot is one second of light, a dash three.")
+        } else {
+            screen
+        };
+        // The learning switch lives beside the message it changes: chosen
+        // here, it is the send that follows which narrates its letters. A
+        // switch rather than a lone chip, which read as a tag.
+        let said = match (summary, self.learn) {
+            (false, _) => "",
+            (true, true) => "The bar names each letter's code.",
+            (true, false) => "The bar counts letters only.",
+        };
+        screen
+            .toggle(LEARN, "Learning", said, self.learn)
             .keyboard(&self.keyboard, "Send")
             .build()
     }
@@ -542,16 +571,45 @@ impl Morse {
                 .text(self.spelled())
                 .secondary(format!("{} to send.", self.duration()));
         }
-        let light = if self.light { "Light on" } else { "Light off" };
-        if self.running {
-            screen.action_bar([(STOP, "Stop"), (TOGGLE_LIGHT, light)])
+        // A bar cannot hold a switch, so the entry names what the tap does.
+        // "Light on" stated the current value, which read as an order as
+        // easily as a report. A third of a six-inch panel at the largest
+        // size cannot hold "Turn light on" in two lines, so there, and only
+        // there, the entry says the same thing in fewer letters.
+        let bar = |short: bool| {
+            let light = match (self.light, short) {
+                (true, false) => "Turn light off",
+                (false, false) => "Turn light on",
+                (true, true) => "Go dark",
+                (false, true) => "Light up",
+            };
+            if self.running {
+                screen
+                    .clone()
+                    .action_bar([(STOP, "Stop"), (TOGGLE_LIGHT, light)])
+            } else {
+                // The message is already composed, so this key repeats it
+                // rather than sending something new; the label says so, or a
+                // repeat looks like a fresh send that happens to say the same
+                // thing.
+                screen.clone().action_bar([
+                    (AGAIN, "Send again"),
+                    (EDIT, "Edit"),
+                    (TOGGLE_LIGHT, light),
+                ])
+            }
+            .build()
+        };
+        let metrics = context.metrics();
+        let full = bar(false);
+        if full
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            bar(true)
         } else {
-            // The message is already composed, so this key repeats it rather
-            // than sending something new; the label says so, or a repeat looks
-            // like a fresh send that happens to say the same thing.
-            screen.action_bar([(AGAIN, "Send again"), (EDIT, "Edit"), (TOGGLE_LIGHT, light)])
+            full
         }
-        .build()
     }
 
     /// Every character the beacon can send, with the code that carries it.
@@ -602,7 +660,7 @@ impl Morse {
 
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
-            View::Writing => self.writing(),
+            View::Writing => self.writing(context),
             View::Beacon => self.beacon(context),
             View::Reference => self.reference(context),
         };
@@ -1396,5 +1454,136 @@ mod tests {
             )),
             "{commands:?}"
         );
+    }
+
+    /// The writing screens Morse draws at this size, with Learning off and
+    /// on, as the runtime would be handed them.
+    fn writing_at(metrics: kobo_sdk::DisplayMetrics) -> Vec<kobo_sdk::Screen> {
+        let mut runner = AppRunner::with_metrics(Morse::default(), metrics);
+        let first = runner.start();
+        let toggled = runner.action(action_id(LEARN));
+        [first, toggled]
+            .iter()
+            .map(|commands| {
+                commands
+                    .iter()
+                    .rev()
+                    .find_map(|command| match command {
+                        Command::SetScreen(screen) => Some(screen.clone()),
+                        _ => None,
+                    })
+                    .expect("a writing screen")
+            })
+            .collect()
+    }
+
+    /// Learning is a switch, not a lone chip that read as a tag, and the
+    /// writing screen keeps it, the estimate and every key on the panel at
+    /// every text size. Morse never asks for landscape, so it is only ever
+    /// drawn upright.
+    #[test]
+    fn learning_is_a_switch_and_the_writing_screen_fits_every_size() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (758, 1024, 212), (1264, 1680, 300)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                for (screen, on) in writing_at(metrics).into_iter().zip([false, true]) {
+                    let switch = screen.nodes.iter().find_map(|node| match node {
+                        kobo_ui::Node::Toggle { label, on, .. } if label == "Learning" => Some(*on),
+                        _ => None,
+                    });
+                    assert_eq!(switch, Some(on), "{metrics:?}");
+                    assert!(!format!("{screen:?}").contains("Chips"), "{metrics:?}");
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome);
+                    assert!(!issues.has_errors(), "{metrics:?}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for name in [LEARN, kobo_ui::keyboard::ENTER, "kb.backspace"] {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?}: {name} is off the panel"
+                        );
+                    }
+                    assert!(
+                        format!("{screen:?}").contains("27 seconds"),
+                        "{metrics:?}: the estimate is gone"
+                    );
+                    // The summary and the speed give way only where the panel
+                    // forces it; a Clara at the default size has both.
+                    if pixels_per_inch == 300 && text_scale == kobo_ui::TextScale::Default {
+                        let drawn = format!("{screen:?}");
+                        assert!(drawn.contains("one second of light"), "{metrics:?}");
+                        assert!(drawn.contains("The bar "), "{metrics:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A bar cannot hold a switch, so the light's entry names what the tap
+    /// does, and both words fit beside Stop, and beside Send again and Edit,
+    /// at every text size.
+    #[test]
+    fn the_light_entry_names_what_the_tap_does_and_fits_every_bar() {
+        let last_screen = |commands: Vec<Command>| {
+            commands
+                .into_iter()
+                .rev()
+                .find_map(|command| match command {
+                    Command::SetScreen(screen) => Some(screen),
+                    _ => None,
+                })
+                .expect("a beacon screen")
+        };
+        for (width, height, pixels_per_inch) in [(1072, 1448, 300), (758, 1024, 212)] {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let mut runner = AppRunner::with_metrics(Morse::default(), metrics);
+                runner.start();
+                let running = last_screen(runner.action(action_id(AGAIN)));
+                let dark = last_screen(runner.action(action_id(TOGGLE_LIGHT)));
+                let resting = last_screen(runner.action(action_id(STOP)));
+                for (screen, (label, short), others) in [
+                    (running, ("Turn light off", "Go dark"), &[STOP][..]),
+                    (dark, ("Turn light on", "Light up"), &[STOP][..]),
+                    (resting, ("Turn light on", "Light up"), &[AGAIN, "edit"][..]),
+                ] {
+                    let bar = screen.nav_bar.as_ref().expect("an action bar");
+                    let entry = bar
+                        .destinations
+                        .iter()
+                        .find(|entry| entry.action == action_id(TOGGLE_LIGHT))
+                        .expect("the light entry");
+                    // The shorter words are only for a panel smaller than
+                    // a Clara, where the longer ones cannot fit the bar.
+                    if pixels_per_inch == 300 {
+                        assert_eq!(entry.label, label, "{metrics:?}");
+                    } else {
+                        assert!(entry.label == label || entry.label == short, "{metrics:?}");
+                    }
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome);
+                    assert!(!issues.has_errors(), "{metrics:?} {label}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for name in others.iter().copied().chain([TOGGLE_LIGHT]) {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?}: {name} is off the panel"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

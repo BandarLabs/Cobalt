@@ -7,6 +7,8 @@ clean
 shot post-setup
 tap Check again
 wait-for No gateway has arrived
+tap-id gateway-url
+wait-for Gateway address
 type hermes
 expect https://hermes
 clean

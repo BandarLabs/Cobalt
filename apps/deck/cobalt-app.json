@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer. Needs your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.9",
-  "release_notes": "Pairs from kobo sidekick init with nothing to type, fills in the port, adds Pairing to change it, names the real cause of each problem and adds Run again under a result.",
+  "version": "0.2.10",
+  "release_notes": "The computer address and pairing code are typed on Cobalt's own keyboard, the address opens on keys made for addresses, and each field says where its answer comes from.",
   "glyph": "grid",
   "capabilities": [
     "network"

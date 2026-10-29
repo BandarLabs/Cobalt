@@ -26,7 +26,7 @@ expect-missing Rules and difficulty
 tap Back
 tap-id mine-0
 tap-id mine-mode
-expect Mode: Flag
+expect Reveal squares
 tap-id mine-5
 clean
 shot logicpack-mines

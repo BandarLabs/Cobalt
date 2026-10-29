@@ -122,6 +122,17 @@ impl Progress {
         }
     }
 
+    /// Whether the last place could not be kept because the record of places
+    /// is full, rather than because a write failed.
+    ///
+    /// A retry cannot mend that, so an application offers Retry saving only
+    /// when this is false; offering it otherwise is a control that does
+    /// nothing every time it is tapped.
+    #[must_use]
+    pub const fn out_of_room(&self) -> bool {
+        self.capacity_failed
+    }
+
     pub fn retry(&mut self, context: &mut Context) {
         if self.capacity_failed {
             return;

@@ -3,8 +3,8 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.13",
-  "release_notes": "Tap a checker on the board and then a marked point to move it; the computer takes its turn by itself and marks its move, and the board stays the same size.",
+  "version": "0.1.14",
+  "release_notes": "Offering, taking and dropping the cube now ask the way New match does, with both answers as full buttons, and the match score stays beside whose move it is at every text size.",
   "glyph": "circle",
   "capabilities": [],
   "page_description": "Play complete backgammon on one Kobo, solo against a modest computer player or pass-and-play with the board reversed between turns. Full legal-move rules, the doubling cube with the Crawford rule, match play to 7 points, undo, and autosave."

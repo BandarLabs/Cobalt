@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "On this device lists the books you have downloaded and opens them offline, Gutenbird reopens the book you were reading, and a book downloads with one tap without choosing an edition. Reopens a document on the page you left."
+  "release_notes": "Search, marginal notes and catalog addresses are typed on Cobalt's own keyboard, searching every catalog is a switch, and the download list marks the edition you will read."
 }

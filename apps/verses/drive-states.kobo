@@ -10,3 +10,13 @@ expect Search poetry
 expect Poets to start with
 clean
 shot search
+# The search box raises the reader's keyboard, asking for what the scope looks in.
+tap-id scope-poet
+tap-id search-field
+wait-for Type here
+expect A poet's name
+clean
+shot search-keyboard
+tap Back
+wait-for Poets to start with
+expect-missing Type here

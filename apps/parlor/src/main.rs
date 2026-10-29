@@ -16,13 +16,18 @@ use games::QUIET_LIMIT;
 use games::{Draughts, DraughtsMove, Kalah, Morris, MorrisMove, Reversi, ReversiMove, Rules};
 use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, Tile,
-    TileShape,
+    action_id, ActionId, BandAlign, Chrome, Context, DisplayMetrics, Glyph, KoboApp, Orientation,
+    Screen, ScreenBuilder, SlotWidth, StoreResult, Tile, TileShape,
 };
 use std::cmp::Ordering;
 use std::process::ExitCode;
 
 const SAVE: &str = "parlor-autosave-v1";
+/// Which way up the owner asked for, kept apart from the game so that an
+/// older Parlor still reads the save, and so the choice outlives the game.
+const ORIENTATION: &str = "parlor-orientation-v1";
+/// More menu entry that turns the panel, named for what the tap does.
+const TURN: &str = "rotate";
 /// Shown in place of the usual note until a write lands again.
 const SAVE_FAILED: &str =
     "Progress is not saved. Keep the app open while you make room on your reader; the next move tries again.";
@@ -164,6 +169,22 @@ impl Title {
 enum Mode {
     PassAndPlay,
     Solo,
+}
+
+/// What the setup screen asks: who plays, and how.
+///
+/// The live game's copy is in [`Parlor`]'s own fields, which the board and
+/// the saved game read. The setup screen works on a copy of its own, a draft
+/// that reaches the game only with Start game, because the form is a form:
+/// these choices used to be written into the game on the tap, so choosing
+/// Pass-and-play over a game against the computer and pressing Back left that
+/// game between two players, and the computer never replied again.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Choices {
+    mode: Mode,
+    strength: Strength,
+    human_side: i8,
+    rotate: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -371,6 +392,15 @@ struct Parlor {
     /// Whether the setup screen was opened from a game in progress, by New
     /// game, so that Back returns to that game rather than to the shelf.
     setup_from_board: bool,
+    /// The setup screen's choices since it opened, or `None` while nothing
+    /// has been tapped there. See [`Choices`]. Never saved: a choice nobody
+    /// started is not part of the game.
+    draft: Option<Choices>,
+    /// Whether the owner asked for the panel sideways, from More.
+    landscape: bool,
+    /// Whether the runtime was last asked for landscape. Every app starts
+    /// upright, so this starts false and the request goes only on a change.
+    shown_landscape: bool,
 }
 
 impl Default for Parlor {
@@ -397,6 +427,9 @@ impl Default for Parlor {
             loaded: false,
             menu: Menu::default(),
             setup_from_board: false,
+            draft: None,
+            landscape: false,
+            shown_landscape: false,
         }
     }
 }
@@ -425,14 +458,55 @@ impl Parlor {
     }
 
     fn screen_for(&self, context: &Context) -> Screen {
+        let metrics = self.metrics(context);
         let screen = match self.view {
             View::Menu => self.menu_screen(),
-            View::Setup(title) => self.setup_screen(title),
-            View::Rules(title, _) => Self::rules_screen(title),
-            View::Board => self.board_screen(),
+            View::Setup(title) => first_that_fits(
+                &metrics,
+                [false, true]
+                    .into_iter()
+                    .map(|beside| self.setup_screen(title, beside)),
+            ),
+            View::Rules(title, _) => first_that_fits(
+                &metrics,
+                [None, Some(2), Some(1)]
+                    .into_iter()
+                    .map(|split| Self::rules_screen(title, split)),
+            ),
+            View::Board => self.board_screen(&metrics),
             View::Record => self.record_screen(context),
         };
         screen.with_own_back(self.view != View::Menu)
+    }
+
+    const fn orientation(&self) -> Orientation {
+        if self.landscape {
+            Orientation::Landscape
+        } else {
+            Orientation::Portrait
+        }
+    }
+
+    /// The panel as this app draws on it. The runtime always reports the
+    /// panel upright and turns it only when the app asks, so the app turns
+    /// its own measurements to match.
+    fn metrics(&self, context: &Context) -> DisplayMetrics {
+        context.metrics().oriented(self.orientation())
+    }
+
+    /// The menu behind the three dots after New game.
+    const fn more_items(&self) -> [(&'static str, &'static str); 2] {
+        [
+            (CHANGE_GAME, "Change game"),
+            (
+                TURN,
+                if self.landscape {
+                    "Use portrait"
+                } else {
+                    "Use landscape"
+                },
+            ),
+        ]
     }
 
     /// What a side is called at the start of a sentence about it.
@@ -475,11 +549,19 @@ impl Parlor {
 
     /// The note after a move that hands the turn over.
     ///
-    /// Between two people it says whose hands the reader goes to. Against
-    /// the computer there is nothing to say: the reply is already on the
-    /// board by the time the panel has repainted.
+    /// Between two people it says whose hands the reader goes to, and that
+    /// the board has turned round for them when it has. The turn used to be
+    /// said in the status line beside the score, where at the larger text
+    /// sizes "board turned" was cut to "board…"; said here, it is read at the
+    /// moment the board turns, and the status keeps room for whose move it
+    /// is. Against the computer there is nothing to say: the reply is already
+    /// on the board by the time the panel has repainted.
     fn handed_over(&self, title: Title, next: i8) -> String {
         match self.mode {
+            Mode::PassAndPlay if self.rotate && next == -1 => format!(
+                "Board turned. Pass the reader to {}.",
+                title.side_name(next)
+            ),
             Mode::PassAndPlay => format!("Pass the reader to {}.", title.side_name(next)),
             Mode::Solo => String::new(),
         }
@@ -526,7 +608,7 @@ impl Parlor {
     fn menu_prefix(&self) -> ScreenBuilder {
         let screen = ScreenBuilder::new("parlor-menu")
             .top_bar("Parlor")
-            .heading("Classic board games")
+            .heading("Board games")
             .secondary("Play the computer, or pass the reader between two players.");
         if self.position.is_some() {
             // The game already in progress is the first thing a reader who put
@@ -558,67 +640,152 @@ impl Parlor {
         })
     }
 
-    fn setup_screen(&self, title: Title) -> Screen {
+    /// The choices the game in progress was started with.
+    const fn choices(&self) -> Choices {
+        Choices {
+            mode: self.mode,
+            strength: self.strength,
+            human_side: self.human_side,
+            rotate: self.rotate,
+        }
+    }
+
+    /// What the setup screen shows: the draft once anything has been tapped
+    /// there, and until then the game in progress, so New game opens on the
+    /// settings being played.
+    fn setup_choices(&self) -> Choices {
+        self.draft.unwrap_or_else(|| self.choices())
+    }
+
+    /// One tap on the setup screen, kept in the draft.
+    fn choose(&mut self, change: impl FnOnce(&mut Choices)) {
+        let mut draft = self.setup_choices();
+        change(&mut draft);
+        self.draft = Some(draft);
+    }
+
+    /// Opens the setup screen with nothing chosen yet.
+    fn open_setup(&mut self, title: Title, from_board: bool) {
+        self.view = View::Setup(title);
+        self.setup_from_board = from_board;
+        self.draft = None;
+    }
+
+    /// Start game: the draft becomes the game's settings, then the game.
+    fn start_from_setup(&mut self, title: Title) {
+        let chosen = self.setup_choices();
+        self.mode = chosen.mode;
+        self.strength = chosen.strength;
+        self.human_side = chosen.human_side;
+        self.rotate = chosen.rotate;
+        self.draft = None;
+        self.start(title);
+    }
+
+    /// The setup screen, its choices one under another, or held sideways in
+    /// two columns: who plays on the left, and how strong the computer is and
+    /// Start game on the right. Stacked, three choices and a button are
+    /// taller than a panel on its side at every text size.
+    fn setup_screen(&self, title: Title, beside: bool) -> Screen {
+        let choices = self.setup_choices();
+        let head = ScreenBuilder::new("parlor-setup")
+            .top_bar(title.name())
+            .top_bar_action(chrome::RULES, chrome::RULES_LABEL);
         // Both opponents side by side with the current one filled, rather
         // than a row that changes when tapped: a reader who has only ever
         // seen "Computer" there had no way of knowing there was anything else.
-        let screen = ScreenBuilder::new("parlor-setup")
-            .top_bar(title.name())
-            .top_bar_action(chrome::RULES, chrome::RULES_LABEL)
-            .secondary(title.detail())
-            .section("Opponent")
-            .segmented(
-                usize::from(self.mode == Mode::PassAndPlay),
-                [(PLAY_COMPUTER, "Computer"), (PLAY_PEOPLE, "Pass-and-play")],
-            );
-        // The same for every other choice here. These were rows that cycled
-        // on a tap, which showed one value and gave no sign that tapping it
-        // would change it, let alone to what.
-        let screen = match self.mode {
-            Mode::Solo => screen
-                .section("Your side")
+        let who = move |screen: ScreenBuilder| {
+            let screen = screen
+                .secondary(title.detail())
+                .section("Opponent")
                 .segmented(
-                    usize::from(self.human_side == -1),
+                    usize::from(choices.mode == Mode::PassAndPlay),
+                    [(PLAY_COMPUTER, "Computer"), (PLAY_PEOPLE, "Pass-and-play")],
+                );
+            match choices.mode {
+                Mode::Solo => screen.section("Your side").segmented(
+                    usize::from(choices.human_side == -1),
                     [
                         (SIDE_FIRST, title.side_choice(1)),
                         (SIDE_SECOND, title.side_choice(-1)),
                     ],
-                )
-                .section("Computer strength")
-                .segmented(
+                ),
+                Mode::PassAndPlay => screen,
+            }
+        };
+        // The same for every other choice here. These were rows that cycled
+        // on a tap, which showed one value and gave no sign that tapping it
+        // would change it, let alone to what.
+        let how = move |screen: ScreenBuilder| {
+            let screen = match choices.mode {
+                Mode::Solo => screen.section("Computer strength").segmented(
                     STRENGTHS
                         .iter()
-                        .position(|&(_, strength)| strength == self.strength)
+                        .position(|&(_, strength)| strength == choices.strength)
                         .unwrap_or(1),
                     STRENGTHS.map(|(name, strength)| (name, strength.name())),
                 ),
-            Mode::PassAndPlay => screen.section("Board").segmented(
-                usize::from(!self.rotate),
+                Mode::PassAndPlay => screen.section("Board").segmented(
+                    usize::from(!choices.rotate),
+                    [
+                        (ROTATE_ON, "Turns for each player"),
+                        (ROTATE_OFF, "Stays still"),
+                    ],
+                ),
+            };
+            let screen = match self.replacing(title) {
+                Some(warning) => screen.secondary(warning),
+                None => screen,
+            };
+            screen.primary_button("start", "Start game")
+        };
+        if beside {
+            head.band(
+                BandAlign::Top,
                 [
-                    (ROTATE_ON, "Turns for each player"),
-                    (ROTATE_OFF, "Stays still"),
+                    (SlotWidth::Fill, Box::new(who) as BuildSlot<'_>),
+                    (SlotWidth::Fill, Box::new(how)),
                 ],
-            ),
-        };
-        let screen = match self.replacing(title) {
-            Some(warning) => screen.secondary(warning),
-            None => screen,
-        };
-        screen.primary_button("start", "Start game").build()
-    }
-
-    fn rules_screen(title: Title) -> Screen {
-        let [first, second, third] = title.rules();
-        ScreenBuilder::new("parlor-rules")
-            .top_bar(chrome::RULES_LABEL)
-            .heading(title.name())
-            .text(first)
-            .text(second)
-            .text(third)
+            )
             .build()
+        } else {
+            how(who(head)).build()
+        }
     }
 
-    fn status(&self, position: &Position, rotated: bool) -> String {
+    /// A game's rules: three paragraphs one under another, or held
+    /// sideways in two columns with the first `split` of them on the left.
+    /// Stacked, Kalah's run past the foot of a panel on its side at the
+    /// largest text size.
+    fn rules_screen(title: Title, split: Option<usize>) -> Screen {
+        let paragraphs = title.rules();
+        let head = ScreenBuilder::new("parlor-rules")
+            .top_bar(chrome::RULES_LABEL)
+            .heading(title.name());
+        let column = |slot: ScreenBuilder, part: &[&str]| {
+            part.iter()
+                .fold(slot, |slot, paragraph| slot.text(*paragraph))
+        };
+        match split {
+            None => column(head, &paragraphs),
+            Some(split) => {
+                let (left, right) = paragraphs.split_at(split.min(paragraphs.len()));
+                head.band(
+                    BandAlign::Top,
+                    [
+                        (
+                            SlotWidth::Fill,
+                            Box::new(move |slot| column(slot, left)) as BuildSlot<'_>,
+                        ),
+                        (SlotWidth::Fill, Box::new(move |slot| column(slot, right))),
+                    ],
+                )
+            }
+        }
+        .build()
+    }
+
+    fn status(&self, position: &Position) -> String {
         let title = position.title();
         if let Some(score) = position.terminal() {
             let winner = match score.cmp(&0) {
@@ -635,12 +802,6 @@ impl Parlor {
         match self.mode {
             Mode::Solo if position.turn() == self.human_side => "Your move".to_owned(),
             Mode::Solo => "The computer's move".to_owned(),
-            Mode::PassAndPlay if rotated => {
-                format!(
-                    "{} to move · board turned",
-                    title.side_name(position.turn())
-                )
-            }
             Mode::PassAndPlay => format!("{} to move", title.side_name(position.turn())),
         }
     }
@@ -666,10 +827,30 @@ impl Parlor {
         }
     }
 
-    fn board_screen(&self) -> Screen {
+    /// The board screen in the first shape that fits the panel.
+    fn board_screen(&self, metrics: &DisplayMetrics) -> Screen {
         let Some(position) = &self.position else {
             return self.menu_screen();
         };
+        let chrome = Chrome::measuring(true);
+        let mut fallback = None;
+        for shape in Shape::IN_ORDER {
+            let screen = self.board_shaped(position, shape, metrics, &chrome);
+            if !screen.diagnostics(metrics, &chrome).has_errors() {
+                return screen;
+            }
+            fallback.get_or_insert(screen);
+        }
+        fallback.unwrap_or_else(|| self.menu_screen())
+    }
+
+    fn board_shaped(
+        &self,
+        position: &Position,
+        shape: Shape,
+        metrics: &DisplayMetrics,
+        chrome: &Chrome,
+    ) -> Screen {
         let title = position.title();
         let rotated = self.rotated(position);
         let mover = -position.turn();
@@ -679,35 +860,18 @@ impl Parlor {
         // there too, and on a six inch panel at the larger text settings the
         // bar cut it off mid-word: the one thing two people passing a reader
         // between them have to read was the first thing to go.
-        let base = ScreenBuilder::new("parlor-board")
-            .game_top_bar(title.name(), self.menu, [(CHANGE_GAME, "Change game")])
-            .section_with_value(self.status(position, rotated), self.score(title));
-        // What the other side just did, in words, beside the same move marked
-        // on the board. Nobody can see the computer's tap, and a board of
-        // identical discs does not say which one moved.
-        //
-        // A refused save takes the place of both lines rather than joining
-        // them: at the largest text sizes three paragraphs above a board that
-        // cannot shrink below a fingertip push Undo off the panel, and the
-        // mark on the board still shows the move.
-        let base = if self.save_failed {
-            base.secondary(SAVE_FAILED)
-        } else {
-            let base = if self.notice.is_empty() {
-                base
-            } else {
-                base.secondary(self.notice.as_str())
-            };
-            match self.last_line(title, mover, &steps, rotated) {
-                Some(line) => base.secondary(line),
-                None => base,
-            }
+        let head = || {
+            ScreenBuilder::new("parlor-board").game_top_bar(
+                title.name(),
+                self.menu,
+                self.more_items(),
+            )
         };
-        let base = match position {
-            Position::Reversi(game) => self.reversi_board(base, game, rotated, &marks),
-            Position::Draughts(game) => self.draughts_board(base, game, rotated, &marks),
-            Position::Morris(game) => self.morris_board(base, game, rotated, &marks),
-            Position::Kalah(game) => self.kalah_board(base, game, rotated, &marks),
+        let board = |screen: ScreenBuilder| match position {
+            Position::Reversi(game) => self.reversi_board(screen, game, rotated, &marks),
+            Position::Draughts(game) => self.draughts_board(screen, game, rotated, &marks),
+            Position::Morris(game) => self.morris_board(screen, game, rotated, &marks),
+            Position::Kalah(game) => self.kalah_board(screen, game, rotated, &marks),
         };
         // Undo and the record, and nothing that leaves the game: that is the
         // chevron in the bar, the same as everywhere else on the reader. A
@@ -715,8 +879,77 @@ impl Parlor {
         // text settings and was drawn off the bottom of the panel.
         let next_round = position.terminal().is_some() && !self.match_score.contains(&2);
         let verbs = std::iter::once(("record", "Moves"))
-            .chain(next_round.then_some((NEXT_ROUND, "Next round")));
-        base.game_actions(true, verbs).build()
+            .chain(next_round.then_some((NEXT_ROUND, "Next round")))
+            .collect::<Vec<_>>();
+        let words = |screen: ScreenBuilder| {
+            let status = self.status(position);
+            let screen = if shape == Shape::Stacked {
+                screen.section_with_value(status, self.score(title))
+            } else {
+                // A column is too narrow at the larger sizes for whose move
+                // it is and the score on one line, so the score goes under.
+                screen.section(status).secondary(self.score(title))
+            };
+            self.board_notes(screen, title, mover, &steps, rotated)
+        };
+        if shape == Shape::Stacked {
+            return board(words(head()))
+                .game_actions(true, verbs.iter().copied())
+                .build();
+        }
+        // A square board is as wide as the height beside the words lets it
+        // be, never less than a finger a square, and the words have the rest
+        // of the width. The runtime sizes the squares to the room it is
+        // given, so the board is laid out once alone to find that width.
+        let slot = if matches!(position, Position::Kalah(_)) {
+            SlotWidth::Fill
+        } else {
+            let alone = board(head()).game_actions(true, verbs.iter().copied());
+            SlotWidth::Fixed(tenths_for(
+                metrics,
+                board_width(&alone.build(), metrics, chrome),
+            ))
+        };
+        head()
+            .band(
+                BandAlign::Top,
+                [
+                    (slot, Box::new(board) as BuildSlot<'_>),
+                    (SlotWidth::Fill, Box::new(words)),
+                ],
+            )
+            .game_actions(true, verbs.iter().copied())
+            .build()
+    }
+
+    /// What the other side just did, in words, beside the same move marked
+    /// on the board. Nobody can see the computer's tap, and a board of
+    /// identical discs does not say which one moved.
+    ///
+    /// A refused save takes the place of both lines rather than joining
+    /// them: at the largest text sizes three paragraphs above a board that
+    /// cannot shrink below a fingertip push Undo off the panel, and the
+    /// mark on the board still shows the move.
+    fn board_notes(
+        &self,
+        screen: ScreenBuilder,
+        title: Title,
+        mover: i8,
+        steps: &[Step],
+        rotated: bool,
+    ) -> ScreenBuilder {
+        if self.save_failed {
+            return screen.secondary(SAVE_FAILED);
+        }
+        let screen = if self.notice.is_empty() {
+            screen
+        } else {
+            screen.secondary(self.notice.as_str())
+        };
+        match self.last_line(title, mover, steps, rotated) {
+            Some(line) => screen.secondary(line),
+            None => screen,
+        }
     }
 
     fn reversi_board(
@@ -1043,7 +1276,7 @@ impl Parlor {
     }
 
     fn record_pages(&self, context: &Context) -> Vec<Vec<String>> {
-        context.paginate(&self.record_text(), false)
+        context.paginate_oriented(&self.record_text(), false, self.orientation())
     }
 
     fn record_screen(&self, context: &Context) -> Screen {
@@ -1490,8 +1723,7 @@ impl Parlor {
             }
             Some(Tap::NewGame) => {
                 if let Some(title) = self.current_title() {
-                    self.view = View::Setup(title);
-                    self.setup_from_board = true;
+                    self.open_setup(title, true);
                 }
                 return;
             }
@@ -1507,27 +1739,28 @@ impl Parlor {
             .find(|title| action == action_id(title.key()))
             .copied()
         {
-            self.view = View::Setup(title);
-            self.setup_from_board = false;
+            self.open_setup(title, false);
         } else if action == action_id(PLAY_COMPUTER) {
-            self.mode = Mode::Solo;
+            self.choose(|draft| draft.mode = Mode::Solo);
         } else if action == action_id(PLAY_PEOPLE) {
-            self.mode = Mode::PassAndPlay;
+            self.choose(|draft| draft.mode = Mode::PassAndPlay);
         } else if action == action_id(ROTATE_ON) || action == action_id(ROTATE_OFF) {
-            self.rotate = action == action_id(ROTATE_ON);
+            let rotate = action == action_id(ROTATE_ON);
+            self.choose(|draft| draft.rotate = rotate);
         } else if action == action_id(SIDE_FIRST) || action == action_id(SIDE_SECOND) {
-            self.human_side = if action == action_id(SIDE_FIRST) {
+            let side = if action == action_id(SIDE_FIRST) {
                 1
             } else {
                 -1
             };
+            self.choose(|draft| draft.human_side = side);
         } else if let Some(&(_, strength)) =
             STRENGTHS.iter().find(|(name, _)| action == action_id(name))
         {
-            self.strength = strength;
+            self.choose(|draft| draft.strength = strength);
         } else if action == action_id("start") {
             if let View::Setup(title) = self.view {
-                self.start(title);
+                self.start_from_setup(title);
             }
         } else if action == action_id("record") {
             self.record_page = 0;
@@ -1542,7 +1775,14 @@ impl Parlor {
             }
         } else if action == action_id(CHANGE_GAME) {
             self.view = View::Menu;
+        } else if action == action_id(TURN) {
+            self.landscape = !self.landscape;
         } else if action == action_id("back") || action == ActionId::BACK {
+            // Back from the setup screen is "never mind": whatever was tapped
+            // there goes, and the game is exactly as it was.
+            if matches!(self.view, View::Setup(_)) {
+                self.draft = None;
+            }
             self.view = match self.view {
                 View::Rules(title, true) => View::Setup(title),
                 View::Rules(_, false) | View::Record => View::Board,
@@ -1555,21 +1795,39 @@ impl Parlor {
     }
 }
 
+impl Parlor {
+    /// Draws the current screen, first asking the runtime to turn the panel
+    /// when the owner has changed which way up it is.
+    fn show(&mut self, context: &mut Context) {
+        if self.shown_landscape != self.landscape {
+            context.set_orientation(self.orientation());
+            self.shown_landscape = self.landscape;
+        }
+        context.set_screen(self.screen_for(context));
+    }
+}
+
 impl KoboApp for Parlor {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(SAVE);
-        context.set_screen(self.screen_for(context));
+        context.store().load(ORIENTATION);
+        self.show(context);
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         match &result {
             StoreResult::Denied(_) => {
                 self.save_failed = true;
-                context.set_screen(self.screen_for(context));
+                self.show(context);
                 return;
             }
-            StoreResult::Saved { .. } if self.save_failed => {
+            StoreResult::Saved { key } if key == SAVE && self.save_failed => {
                 self.save_failed = false;
-                context.set_screen(self.screen_for(context));
+                self.show(context);
+                return;
+            }
+            StoreResult::Loaded { key, value } if key == ORIENTATION => {
+                self.landscape = value.as_deref() == Some(b"landscape".as_slice());
+                self.show(context);
                 return;
             }
             _ => {}
@@ -1579,21 +1837,26 @@ impl KoboApp for Parlor {
                 if let Some(bytes) = value {
                     if let Ok(text) = String::from_utf8(bytes) {
                         if let Some(saved) = decode(&text) {
+                            // Which way up the panel is was read on its own
+                            // and is not part of the game.
+                            let (landscape, shown) = (self.landscape, self.shown_landscape);
                             *self = saved;
+                            self.landscape = landscape;
+                            self.shown_landscape = shown;
                             self.notice = "Saved game ready. Choose Resume saved game.".into();
                             self.view = View::Menu;
                         }
                     }
                 }
                 self.loaded = true;
-                context.set_screen(self.screen_for(context));
+                self.show(context);
             }
         }
     }
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
         if self.view == View::Record {
             self.turn_record_page(context, forward);
-            context.set_screen(self.screen_for(context));
+            self.show(context);
         }
     }
 
@@ -1604,10 +1867,74 @@ impl KoboApp for Parlor {
             self.on_page_turn(context, action == action_id("record-next"));
             return;
         }
+        let landscape = self.landscape;
         self.handle_action(action);
+        if self.landscape != landscape {
+            let value: &[u8] = if self.landscape {
+                b"landscape"
+            } else {
+                b"portrait"
+            };
+            context.store().save(ORIENTATION, value.to_vec());
+        }
         self.save(context);
-        context.set_screen(self.screen_for(context));
+        self.show(context);
     }
+}
+
+/// One column of a band, built by a closure that borrows the app.
+type BuildSlot<'a> = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder + 'a>;
+
+/// How the board screen is arranged, tried in this order: the first that
+/// fits the panel is the one drawn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Shape {
+    /// The words above the board and Undo in the bar at the foot. Upright,
+    /// and sideways for Kalah's two rows of pits.
+    Stacked,
+    /// Sideways, where the words above a square board push it through the
+    /// bar at the foot: the board on the left with the words beside it, and
+    /// Undo still in the bar.
+    Beside,
+}
+
+impl Shape {
+    const IN_ORDER: [Self; 2] = [Self::Stacked, Self::Beside];
+}
+
+/// The first of a screen's shapes that fits the panel, built one at a time
+/// and only as far as needed, or the first shape when none does.
+fn first_that_fits(metrics: &DisplayMetrics, mut shapes: impl Iterator<Item = Screen>) -> Screen {
+    let chrome = Chrome::measuring(true);
+    let first = shapes.next().expect("every screen has a shape");
+    if !first.diagnostics(metrics, &chrome).has_errors() {
+        return first;
+    }
+    shapes
+        .find(|shape| !shape.diagnostics(metrics, &chrome).has_errors())
+        .unwrap_or(first)
+}
+
+/// How wide the board in a screen is drawn, in pixels: from the left edge
+/// of its first column of squares to the right edge of its last.
+fn board_width(screen: &Screen, metrics: &DisplayMetrics, chrome: &Chrome) -> i32 {
+    let layout = screen.layout_with(metrics, chrome);
+    let (left, right) = (0..100)
+        .filter_map(|at| layout.rect_of_action(action_id(&cell_name(at))))
+        .fold((i32::MAX, 0), |(left, right), rect| {
+            (left.min(rect.x), right.max(rect.x + rect.width))
+        });
+    right.saturating_sub(left)
+}
+
+/// The fewest tenths of a millimetre that are at least `pixels` on this
+/// panel, so a slot of that width holds a board of that width whole.
+fn tenths_for(metrics: &DisplayMetrics, pixels: i32) -> u16 {
+    let mut tenths = pixels.saturating_mul(254) / metrics.pixels_per_inch.max(1);
+    while metrics.tenth_mm(tenths) < pixels {
+        tenths += 1;
+    }
+    u16::try_from(tenths).unwrap_or(u16::MAX)
 }
 
 /// The cells the other side's last turn touched, in the board's own
@@ -1970,6 +2297,9 @@ fn decode(text: &str) -> Option<Parlor> {
         loaded: true,
         menu: Menu::default(),
         setup_from_board: false,
+        draft: None,
+        landscape: false,
+        shown_landscape: false,
     })
 }
 
@@ -2465,7 +2795,7 @@ mod tests {
     /// One move may be two taps -- a piece then its destination -- and a
     /// capture chain is more, so this drives the application through its own
     /// action handling rather than reaching into the engine.
-    fn play_one_move(app: &mut Parlor) -> bool {
+    pub(super) fn play_one_move(app: &mut Parlor) -> bool {
         let Some(position) = app.position.clone() else {
             return false;
         };
@@ -2818,7 +3148,11 @@ mod tests {
             words.contains("Black placed the marked disc and turned one white disc."),
             "{words}"
         );
-        assert!(words.contains("Pass the reader to White."), "{words}");
+        assert!(
+            words.contains("Board turned. Pass the reader to White."),
+            "{words}"
+        );
+        assert!(words.contains("White to move"), "{words}");
     }
 
     #[test]
@@ -2832,8 +3166,10 @@ mod tests {
         let words = shown(&setup.screen()).join(" | ");
         assert!(words.contains("Computer strength"), "{words}");
         setup.handle_action(action_id(PLAY_PEOPLE));
-        assert_eq!(setup.mode, Mode::PassAndPlay);
+        let words = shown(&setup.screen()).join(" | ");
+        assert!(words.contains("Turns for each player"), "{words}");
         setup.handle_action(action_id("start"));
+        assert_eq!(setup.mode, Mode::PassAndPlay);
         let words = shown(&setup.screen()).join(" | ");
         assert!(words.contains("Black to move"), "{words}");
 
@@ -2910,7 +3246,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(entries, [chrome::NEW_GAME_LABEL, "Change game"]);
+        assert_eq!(
+            entries,
+            [chrome::NEW_GAME_LABEL, "Change game", "Use landscape"]
+        );
 
         // A tap beside the menu closes it and leaves the game where it was.
         app.handle_action(ActionId::BACK);
@@ -3087,7 +3426,7 @@ mod tests {
     }
 
     /// Every line of words a screen draws.
-    fn shown(screen: &Screen) -> Vec<String> {
+    pub(super) fn shown(screen: &Screen) -> Vec<String> {
         screen
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .nodes
@@ -3096,42 +3435,126 @@ mod tests {
             .collect()
     }
 
+    /// Whose move it is, when the board screen does not draw it whole as
+    /// the first section on it.
+    fn status_cut(
+        app: &Parlor,
+        screen: &Screen,
+        metrics: &kobo_ui::DisplayMetrics,
+    ) -> Option<String> {
+        let status = app.status(app.position.as_ref()?);
+        let said = screen
+            .layout_with(metrics, &Chrome::measuring(true))
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Section))
+            .and_then(|node| node.text_lines.first().cloned());
+        (said.as_deref() != Some(status.as_str()))
+            .then(|| format!("status {status:?} drawn as {said:?}"))
+    }
+
+    /// The errors the renderer would refuse a screen for.
+    fn errors(screen: &Screen, metrics: &kobo_ui::DisplayMetrics) -> Vec<String> {
+        screen
+            .diagnostics(metrics, &Chrome::measuring(true))
+            .issues
+            .into_iter()
+            .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
+            .map(|issue| format!("{:?}", issue.kind))
+            .collect()
+    }
+
+    /// What a board screen leaves out of a finger's reach: any of Undo,
+    /// Moves, More and Rules that a tap at its centre does not land on, and
+    /// the squares, when one is missing or narrower than a fingertip.
+    fn out_of_reach(
+        screen: &Screen,
+        metrics: &kobo_ui::DisplayMetrics,
+        position: &Position,
+    ) -> Vec<String> {
+        let squares = match position {
+            Position::Reversi(_) => 64,
+            Position::Draughts(game) => game.board.len(),
+            Position::Morris(_) => 49,
+            Position::Kalah(_) => 14,
+        };
+        let layout = screen.layout_with(metrics, &Chrome::measuring(true));
+        let mut missing = [chrome::UNDO, "record", chrome::MORE, chrome::RULES]
+            .into_iter()
+            .filter(|control| {
+                let action = action_id(control);
+                !layout.rect_of_action(action).is_some_and(|rect| {
+                    layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2)
+                        == Some(action)
+                })
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let cells = (0..100)
+            .filter_map(|at| layout.rect_of_action(action_id(&cell_name(at))))
+            .collect::<Vec<_>>();
+        let smallest = cells
+            .iter()
+            .map(|rect| rect.width.min(rect.height))
+            .min()
+            .unwrap_or(0);
+        if cells.len() != squares || smallest < metrics.touch_target_minimum() {
+            missing.push(format!(
+                "{} of {squares} squares, smallest {smallest} px",
+                cells.len()
+            ));
+        }
+        missing
+    }
+
     #[test]
-    fn every_screen_fits_the_panel_at_every_text_size() {
+    fn every_screen_fits_the_panel_at_every_text_size_upright_and_sideways() {
         // A board shrinks to fit, and everything around it does not: the
         // score card, the line saying what just happened, the three controls
         // under the board. This is the sweep that says so at the sizes a
-        // reader can actually choose.
-        let chrome = Chrome::default();
+        // reader can actually choose, under the status band the reader draws
+        // above every screen, upright and turned sideways by Use landscape,
+        // where the board stands beside the words instead of under them.
         let mut failures = Vec::new();
-        for scale in kobo_ui::TextScale::STEPS {
-            let metrics = kobo_ui::DisplayMetrics {
+        for (scale, landscape) in kobo_ui::TextScale::STEPS
+            .into_iter()
+            .flat_map(|scale| [(scale, false), (scale, true)])
+        {
+            // The runtime always reports the panel upright; the app turns it.
+            let upright = kobo_ui::DisplayMetrics {
                 text_scale: scale,
                 ..CLARA_BW_METRICS
             };
+            let metrics = upright.oriented(if landscape {
+                kobo_ui::Orientation::Landscape
+            } else {
+                kobo_ui::Orientation::Portrait
+            });
+            let pose = if landscape { "sideways" } else { "upright" };
             // Every screen is built through a runner at the size it is checked
             // at, the way the runtime builds it. Built first, the runner also
             // installs the real face before anything is measured, so the
             // smallest size is not measured in the fallback type when this test
             // runs on its own.
-            let context = kobo_sdk::AppRunner::with_metrics(Parlor::default(), metrics).context();
+            let context = kobo_sdk::AppRunner::with_metrics(Parlor::default(), upright).context();
             // The shelf itself, which is the screen every reader sees first,
             // in both of its states: bare, and carrying the offer to pick up a
             // game that is already under way.
-            let mut resumable = Parlor::default();
+            let mut resumable = Parlor {
+                landscape,
+                ..Parlor::default()
+            };
             resumable.start(Title::Reversi);
             play_one_move(&mut resumable);
             resumable.view = View::Menu;
-            for (name, table) in [("table", Parlor::default()), ("table resuming", resumable)] {
-                let issues = table
-                    .screen_for(&context)
-                    .diagnostics(&metrics, &chrome)
-                    .issues
-                    .into_iter()
-                    .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
-                    .collect::<Vec<_>>();
+            let bare = Parlor {
+                landscape,
+                ..Parlor::default()
+            };
+            for (name, table) in [("table", bare), ("table resuming", resumable)] {
+                let issues = errors(&table.screen_for(&context), &metrics);
                 if !issues.is_empty() {
-                    failures.push(format!("{scale:?} {name}: {issues:?}"));
+                    failures.push(format!("{scale:?} {pose} {name}: {issues:?}"));
                 }
             }
             for (title, mode) in GAMES
@@ -3140,6 +3563,7 @@ mod tests {
             {
                 let mut app = Parlor {
                     mode,
+                    landscape,
                     ..Parlor::default()
                 };
                 app.start(title);
@@ -3150,6 +3574,14 @@ mod tests {
                     play_one_move(&mut app);
                 }
                 let board = app.screen_for(&context);
+                // One move more hands the reader to the second player, whose
+                // board is drawn turned round. Whose move it is must be read
+                // whole, never cut short.
+                play_one_move(&mut app);
+                let handed_over = app.screen_for(&context);
+                if let Some(cut) = status_cut(&app, &handed_over, &metrics) {
+                    failures.push(format!("{scale:?} {pose} {} {mode:?}: {cut}", title.name()));
+                }
                 app.handle_action(action_id(chrome::MORE));
                 let menu = app.screen_for(&context);
                 app.handle_action(ActionId::BACK);
@@ -3166,24 +3598,34 @@ mod tests {
                 app.view = View::Board;
                 app.save_failed = true;
                 let save_failed = app.screen_for(&context);
+                // Each board keeps every square a finger wide and every control
+                // under a finger, whichever way the board is arranged.
+                let position = app.position.as_ref().expect("a game");
+                for (name, screen) in [
+                    ("board", &board),
+                    ("board handed over", &handed_over),
+                    ("save failed", &save_failed),
+                ] {
+                    for missing in out_of_reach(screen, &metrics, position) {
+                        failures.push(format!(
+                            "{scale:?} {pose} {} {mode:?} {name}: {missing}",
+                            title.name()
+                        ));
+                    }
+                }
                 for (name, screen) in [
                     ("setup", setup),
                     ("board", board),
+                    ("board handed over", handed_over),
                     ("menu", menu),
                     ("record", record),
                     ("rules", rules),
                     ("save failed", save_failed),
                 ] {
-                    let issues = screen
-                        .diagnostics(&metrics, &chrome)
-                        .issues
-                        .into_iter()
-                        .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
-                        .map(|issue| format!("{:?}", issue.kind))
-                        .collect::<Vec<_>>();
+                    let issues = errors(&screen, &metrics);
                     if !issues.is_empty() {
                         failures.push(format!(
-                            "{scale:?} {} {mode:?} {name}: {issues:?}",
+                            "{scale:?} {pose} {} {mode:?} {name}: {issues:?}",
                             title.name()
                         ));
                     }
@@ -3191,6 +3633,89 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn use_landscape_in_more_turns_the_panel_and_is_kept_across_restarts() {
+        use kobo_sdk::{AppRunner, Command, StoreRequest};
+        let turned = |commands: &[Command]| {
+            commands.iter().find_map(|command| match command {
+                Command::SetOrientation(orientation) => Some(*orientation),
+                _ => None,
+            })
+        };
+        let kept = |commands: &[Command]| {
+            commands.iter().find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == ORIENTATION => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+        };
+        let menu = |runner: &AppRunner<Parlor>| {
+            runner
+                .app()
+                .screen()
+                .overlay
+                .expect("the menu")
+                .nodes
+                .iter()
+                .filter_map(|node| match node {
+                    kobo_ui::Node::Button { label, .. } => Some(label.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut runner = AppRunner::new(Parlor::default());
+        // Every app starts upright, so nothing is asked for until it changes.
+        assert_eq!(turned(&runner.start()), None);
+        runner.store_result(StoreResult::Loaded {
+            key: SAVE.to_owned(),
+            value: None,
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: ORIENTATION.to_owned(),
+            value: None,
+        });
+        runner.action(action_id(Title::Morris.key()));
+        runner.action(action_id("start"));
+        runner.action(action_id(chrome::MORE));
+        assert_eq!(
+            menu(&runner),
+            [chrome::NEW_GAME_LABEL, "Change game", "Use landscape"]
+        );
+        let commands = runner.action(action_id(TURN));
+        assert_eq!(turned(&commands), Some(kobo_ui::Orientation::Landscape));
+        assert_eq!(kept(&commands).as_deref(), Some(b"landscape".as_slice()));
+        assert_eq!(runner.app().view, View::Board, "the game stays in front");
+        runner.action(action_id(chrome::MORE));
+        assert_eq!(
+            menu(&runner).last().map(String::as_str),
+            Some("Use portrait")
+        );
+        runner.action(ActionId::BACK);
+
+        // Opened again, it asks to be turned before anything is tapped, and
+        // the game picked up from the save keeps that.
+        let saved = encode(runner.app(), runner.app().position.as_ref().unwrap());
+        let mut again = AppRunner::new(Parlor::default());
+        again.start();
+        let commands = again.store_result(StoreResult::Loaded {
+            key: ORIENTATION.to_owned(),
+            value: Some(b"landscape".to_vec()),
+        });
+        assert_eq!(turned(&commands), Some(kobo_ui::Orientation::Landscape));
+        let commands = again.store_result(StoreResult::Loaded {
+            key: SAVE.to_owned(),
+            value: Some(saved.into_bytes()),
+        });
+        assert_eq!(turned(&commands), None, "asked once, not again");
+        assert!(again.app().landscape);
+        again.action(action_id("resume"));
+        again.action(action_id(chrome::MORE));
+        let commands = again.action(action_id(TURN));
+        assert_eq!(turned(&commands), Some(kobo_ui::Orientation::Portrait));
+        assert_eq!(kept(&commands).as_deref(), Some(b"portrait".as_slice()));
     }
 
     #[test]
@@ -3231,6 +3756,9 @@ mod tests {
 
 #[cfg(test)]
 mod navigation_tests;
+
+#[cfg(test)]
+mod setup_draft_tests;
 
 #[cfg(test)]
 mod large_text_tests {

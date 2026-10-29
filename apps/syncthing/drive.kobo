@@ -3,26 +3,34 @@ expect Sync is off. Nothing moves until you turn it on.
 expect Not run yet
 expect-missing Refresh status
 expect-missing window
-tap Turn on Sync
+clean
+shot syncthing-off
+tap-id toggle
 expect Sync now
 expect Starting
-expect Turn off Sync
+expect Files move with your computer.
 expect-missing Sync is off
 clean
 shot syncthing-on
+# The schedule is one answer from a list, with the current one marked.
 tap No schedule
+wait-for How often Sync runs
+expect Once a day
+clean
+shot syncthing-schedule
+tap Every hour
+wait-for Runs while Cobalt is open. Tap to change.
 expect Every hour
-expect Runs while Cobalt is open. Tap to change.
 tap Set up Sync
 expect Pair one computer folder
 expect kobo sync setup
-expect tap Turn on Sync here
+expect turn on Sync here
 expect-missing receive-only
 clean
 shot syncthing-guide
 tap Back
-tap Turn off Sync
+tap-id toggle
 expect Sync is off
 tap Set up Sync
 tap Back
-expect Turn on Sync
+expect Paused. Your files stay here.

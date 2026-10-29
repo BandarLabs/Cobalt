@@ -189,8 +189,17 @@ impl App {
             // heading and a paragraph above it fit at the default text size
             // and are refused outright at 170%, which left a reader who had
             // turned the type up with a blank panel and no way to pair.
+            //
+            // The reader's keyboard covers this screen while the owner types,
+            // so where the address and code come from is said in the field's
+            // own hint, which the runtime keeps under the prompt.
             View::Address if self.entry.is_open() => ScreenBuilder::new("deck-address")
-                .text_entry(&self.entry, "Computer address", "Next")
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Computer address",
+                    "The address kobo sidekick init printed, like 192.168.1.20.",
+                    "Next",
+                )
                 .build(),
             View::Address => {
                 let mut screen = ScreenBuilder::new("deck-address")
@@ -198,7 +207,7 @@ impl App {
                     .owns_back(self.previous.is_some())
                     .heading("Pair with your computer");
                 if let Some(error) = self.entry_error {
-                    screen = screen.banner(BannerLevel::Attention, error);
+                    screen = screen.banner(BannerLevel::Error, error);
                 }
                 screen
                     .text("On your computer, run these two.")
@@ -209,7 +218,12 @@ impl App {
                     .build()
             }
             View::Code if self.entry.is_open() => ScreenBuilder::new("deck-code")
-                .text_entry(&self.entry, "Pairing code", "Pair")
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Pairing code",
+                    "The six letters and digits kobo sidekick init printed.",
+                    "Pair",
+                )
                 .build(),
             View::Code => {
                 let mut screen = ScreenBuilder::new("deck-code")
@@ -217,7 +231,7 @@ impl App {
                     .owns_back(true)
                     .heading("Now the pairing code");
                 if let Some(error) = self.entry_error {
-                    screen = screen.banner(BannerLevel::Attention, error);
+                    screen = screen.banner(BannerLevel::Error, error);
                 }
                 screen
                     .text("The six characters kobo sidekick init printed beside the address.")
@@ -531,11 +545,17 @@ impl App {
                 .as_ref()
                 .map(|(address, _)| address.clone())
                 .unwrap_or_default();
+            // An address has no spaces and needs its dots and colon, so its
+            // field opens on the keys the runtime keeps for addresses.
+            self.entry.close();
+            self.entry = TextEntry::new().address();
             self.entry.open_with(known);
             self.show(cx);
             return true;
         }
         if a == action_id("enter-code") {
+            self.entry.close();
+            self.entry = TextEntry::new();
             self.entry.open();
             self.show(cx);
             return true;
@@ -1183,10 +1203,35 @@ mod tests {
         assert_eq!(runner.app().view, View::Address);
         runner.action(action_id("enter-address"));
         assert_eq!(runner.app().entry.text(), "192.168.1.5:8080");
-        runner.action(action_id("kb.cancel"));
+        runner.cancel_text();
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Grid);
         assert_eq!(runner.app().code, "code");
+    }
+
+    #[test]
+    fn the_address_opens_on_the_address_keys_and_both_fields_say_where_their_answer_comes_from() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("repair"));
+        let asked = runner.action(action_id("enter-address"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, hint, .. }) =
+            kobo_sdk::keyboard::testing::asked(&asked)
+        else {
+            panic!("the reader's keyboard was not asked for the address")
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Address);
+        assert!(hint.contains("kobo sidekick init"), "{hint}");
+        runner.type_text("192.168.1.9");
+        let asked = runner.action(action_id("enter-code"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, hint, .. }) =
+            kobo_sdk::keyboard::testing::asked(&asked)
+        else {
+            panic!("the reader's keyboard was not asked for the code")
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Text);
+        assert!(hint.contains("six letters and digits"), "{hint}");
+        runner.type_text("NEW234");
+        assert_eq!(runner.app().view, View::Grid);
     }
 
     #[test]

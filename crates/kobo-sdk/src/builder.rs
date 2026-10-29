@@ -3,11 +3,12 @@
 use crate::{
     action_id, stable_id, ActionId, AppMetadata, BandAlign, BandSlot, BannerLevel, BarAction,
     BottomAction, Caret, Cell, Chip, ControlState, DiagnosticSeverity, DialogAction, Emphasis,
-    Failure, Fold, FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind,
-    NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphPresentation, Percent, QuoteRole,
-    RichTextSpan, Row, RowLead, Screen, ScreenBuilder, SlotWidth, Space, StandardState, Tile,
-    TilePicture, TileShape, TopBar, TransferFailure, JOIN_WIFI, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_ROWS,
+    Failure, FieldKind, Fold, FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue,
+    LayoutIssueKind, NavBar, Node, NodeId, OptionRow, Overlay, OverlayKind, ParagraphPresentation,
+    Percent, QuoteRole, RichTextSpan, Row, RowLead, RowState, Screen, ScreenBuilder, SlotWidth,
+    Space, StandardState, Tile, TilePicture, TileShape, TopBar, TransferFailure, JOIN_WIFI,
+    MAX_BAND_SLOTS, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_OPTIONS, MAX_QUOTE_DEPTH,
+    MAX_ROWS, MAX_SELECTION_ACTIONS, MAX_STEPS, MAX_TERMINAL_ROWS,
 };
 
 impl ScreenBuilder {
@@ -1429,7 +1430,64 @@ impl ScreenBuilder {
             value: value.into(),
             placeholder: placeholder.into(),
             clear: None,
+            label: None,
+            hint: None,
+            error: None,
+            kind: FieldKind::Text,
         });
+        self
+    }
+
+    /// Names the field just added, on a line above it.
+    ///
+    /// Part of the field rather than a heading beside it, so the name stays
+    /// with its field when two are stacked and every application sets it the
+    /// same way. Does nothing if the last node is not a field.
+    #[must_use]
+    pub fn field_label(mut self, label: impl Into<String>) -> Self {
+        if let Some(Node::Field { label: slot, .. }) = self.nodes.last_mut() {
+            *slot = Some(label.into());
+        }
+        self
+    }
+
+    /// Says how to fill in the field just added, on a line under it.
+    ///
+    /// "24 characters, from lichess.org/account/oauth/token". Up to two lines
+    /// are kept; a longer hint is cut with an ellipsis.
+    #[must_use]
+    pub fn field_hint(mut self, hint: impl Into<String>) -> Self {
+        if let Some(Node::Field { hint: slot, .. }) = self.nodes.last_mut() {
+            *slot = Some(hint.into());
+        }
+        self
+    }
+
+    /// Says why what was typed into the field just added was refused.
+    ///
+    /// Drawn in ink in the hint's place, so give the real cause and the fix:
+    /// "Lichess refused this token. Make a new one and paste it here." The
+    /// line under the field is as tall as the longer of the hint and the
+    /// error, so setting this on a field with a hint of the same length moves
+    /// nothing below it.
+    #[must_use]
+    pub fn field_error(mut self, error: impl Into<String>) -> Self {
+        if let Some(Node::Field { error: slot, .. }) = self.nodes.last_mut() {
+            *slot = Some(error.into());
+        }
+        self
+    }
+
+    /// Says what the field just added holds.
+    ///
+    /// A [`FieldKind::Secret`] is drawn as one dot per character, so a token
+    /// is never left on the panel for the next person to read. The runtime's
+    /// text entry uses the kind to choose the keys it opens on.
+    #[must_use]
+    pub fn field_kind(mut self, kind: FieldKind) -> Self {
+        if let Some(Node::Field { kind: slot, .. }) = self.nodes.last_mut() {
+            *slot = kind;
+        }
         self
     }
 
@@ -1604,6 +1662,51 @@ impl ScreenBuilder {
         self.rows_with_trailing(items.into_iter().map(|(name, title, summary, glyph, on)| {
             (name, title, summary, glyph, if on { "On" } else { "Off" })
         }))
+    }
+
+    /// A setting that is on or off, drawn by the runtime as a row with a
+    /// switch at its trailing edge.
+    ///
+    /// The whole row is the target and the tap is only reported: flip the
+    /// value in `on_action` and rebuild, the way a phone applies a setting
+    /// the moment it is touched. Exactly one row high, with the label and the
+    /// summary one line each, so a column of settings keeps one pitch. Needs
+    /// a runtime on protocol 16; use [`Self::toggles`] for older ones.
+    #[must_use]
+    pub fn toggle(
+        self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        summary: impl Into<String>,
+        on: bool,
+    ) -> Self {
+        self.toggle_with_state(name, label, summary, on, ControlState::Enabled)
+    }
+
+    /// The same, for a setting that may not be able to change right now.
+    ///
+    /// A disabled toggle is drawn muted and answers nothing, rather than
+    /// disappearing and moving the settings under it.
+    #[must_use]
+    pub fn toggle_with_state(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        summary: impl Into<String>,
+        on: bool,
+        state: ControlState,
+    ) -> Self {
+        let id = self.next_id();
+        let action = self.register(name.as_ref());
+        self.nodes.push(Node::Toggle {
+            id,
+            action,
+            label: label.into(),
+            summary: summary.into(),
+            on,
+            state,
+        });
+        self
     }
 
     /// Adds up to [`crate::MAX_TABS`] peer views of the current screen.
@@ -1931,6 +2034,104 @@ impl ScreenBuilder {
             self.warn_limit(id, "rows", MAX_ROWS);
         }
         self.nodes.push(Node::Rows { id, rows });
+        self
+    }
+
+    /// Rows that can be ticked, for choosing several things at once.
+    ///
+    /// Each row carries its state: [`RowState::Checked`],
+    /// [`RowState::Unchecked`], or [`RowState::Mixed`] for a group some of
+    /// whose members are ticked. The runtime draws a box in the lead column
+    /// in place of the lead, so a row is the same size ticked or not and
+    /// turning select mode on moves nothing. Tapping a row is reported as
+    /// tapping it; tick it in `on_action` and rebuild. Pair it with
+    /// [`Self::selection_bar`] to act on what is ticked.
+    #[must_use]
+    pub fn checked_rows<I, N, T, S, L>(mut self, rows: I) -> Self
+    where
+        I: IntoIterator<Item = (N, T, S, L, RowState)>,
+        N: AsRef<str>,
+        T: Into<String>,
+        S: Into<String>,
+        L: Into<RowLead>,
+    {
+        let id = self.next_id();
+        let mut source = rows.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, lead, state) in source.by_ref().take(MAX_ROWS) {
+            let mut row = Row::new(self.register(name.as_ref()), title, summary, lead);
+            row.state = state;
+            rows.push(row);
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
+        self.nodes.push(Node::Rows { id, rows });
+        self
+    }
+
+    /// Gives the row named `row`, in the list just added, a small button of
+    /// its own against the trailing edge: Install, Open, Update.
+    ///
+    /// The button is hit ahead of the row, so a tap on it is `name` and a tap
+    /// anywhere else on the row is still the row. Does nothing if the last
+    /// node is not a list holding that row.
+    #[must_use]
+    pub fn row_button(
+        mut self,
+        row: impl AsRef<str>,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+    ) -> Self {
+        let target = action_id(row.as_ref());
+        let action = self.register(name.as_ref());
+        if let Some(Node::Rows { rows, .. }) = self.nodes.last_mut() {
+            if let Some(row) = rows.iter_mut().find(|row| row.action == target) {
+                row.button = Some(BarAction::new(action, label));
+            }
+        }
+        self
+    }
+
+    /// Gives the row named `row`, in the list just added, a count against
+    /// the trailing edge: updates waiting, messages unread.
+    ///
+    /// The badge is the same width from one to "999+", so the title beside
+    /// it does not rewrap as the count changes. Leave it off for zero.
+    #[must_use]
+    pub fn row_badge(mut self, row: impl AsRef<str>, count: u32) -> Self {
+        let target = action_id(row.as_ref());
+        if let Some(Node::Rows { rows, .. }) = self.nodes.last_mut() {
+            if let Some(row) = rows.iter_mut().find(|row| row.action == target) {
+                row.badge = Some(count);
+            }
+        }
+        self
+    }
+
+    /// How many rows are ticked, and up to three things to do to all of
+    /// them: "Delete", "Move", "Select all".
+    ///
+    /// One bar high. Put it after [`Self::fill`] to anchor it at the foot of
+    /// the panel under the list it acts on. Verbs past
+    /// [`crate::MAX_SELECTION_ACTIONS`] are dropped and reported.
+    #[must_use]
+    pub fn selection_bar<I, N, L>(mut self, count: u32, actions: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = actions.into_iter();
+        let mut actions = Vec::new();
+        for (name, label) in source.by_ref().take(MAX_SELECTION_ACTIONS) {
+            actions.push(BarAction::new(self.register(name.as_ref()), label));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "selection actions", MAX_SELECTION_ACTIONS);
+        }
+        self.nodes.push(Node::SelectionBar { id, count, actions });
         self
     }
 
@@ -2350,14 +2551,72 @@ impl ScreenBuilder {
     /// index naming no option leaves every row unmarked.
     #[must_use]
     pub fn chosen(mut self, index: usize) -> Self {
-        if let Some(Node::Choice {
-            options, selected, ..
-        }) = self.nodes.last_mut()
-        {
-            *selected = u8::try_from(index)
-                .ok()
-                .filter(|index| usize::from(*index) < options.len());
+        match self.nodes.last_mut() {
+            Some(Node::Choice {
+                options, selected, ..
+            }) => {
+                *selected = u8::try_from(index)
+                    .ok()
+                    .filter(|index| usize::from(*index) < options.len());
+            }
+            Some(Node::Options {
+                options, selected, ..
+            }) => {
+                *selected = u16::try_from(index)
+                    .ok()
+                    .filter(|index| usize::from(*index) < options.len());
+            }
+            _ => {}
         }
+        self
+    }
+
+    /// One answer from a list too long for [`Self::choose`]: a time zone, a
+    /// network, a category.
+    ///
+    /// The runtime shows `page` of the list, a page of rows at a time with a
+    /// pager under them whose chevrons send `previous` and `next`. How many
+    /// rows a page holds depends on the panel and the text size alone: ask
+    /// [`kobo_ui::options_per_page`] which page holds the current answer, and
+    /// [`kobo_ui::options_pages`] for the last page, rather than counting.
+    /// Mark the current answer with [`Self::chosen`], counted across the
+    /// whole list. Each option is a name, a label and a summary, which may be
+    /// empty.
+    #[must_use]
+    pub fn option_list<I, N, L, S>(
+        mut self,
+        prompt: impl Into<String>,
+        page: u16,
+        previous: impl AsRef<str>,
+        next: impl AsRef<str>,
+        options: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, L, S)>,
+        N: AsRef<str>,
+        L: Into<String>,
+        S: Into<String>,
+    {
+        let id = self.next_id();
+        let previous = self.register(previous.as_ref());
+        let next = self.register(next.as_ref());
+        let mut source = options.into_iter();
+        let mut options = Vec::new();
+        for (name, label, summary) in source.by_ref().take(MAX_OPTIONS) {
+            options.push(OptionRow::new(self.register(name.as_ref()), label, summary));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "options", MAX_OPTIONS);
+        }
+        self.nodes.push(Node::Options {
+            id,
+            prompt: prompt.into(),
+            options,
+            selected: None,
+            page,
+            previous,
+            next,
+        });
         self
     }
 
@@ -2372,6 +2631,75 @@ impl ScreenBuilder {
             id,
             level,
             text: text.into(),
+            action: None,
+        });
+        self
+    }
+
+    /// Gives the banner just added the one thing to do about it: "Check
+    /// again", "Retry", "Sign in again".
+    ///
+    /// Set on a line of its own under the words, so the words keep the
+    /// banner's whole width. Does nothing if the last node is not a banner.
+    #[must_use]
+    pub fn banner_action(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        let action = self.register(name.as_ref());
+        if let Some(Node::Banner { action: slot, .. }) = self.nodes.last_mut() {
+            *slot = Some(BarAction::new(action, label));
+        }
+        self
+    }
+
+    /// Text for a phone to read off the panel, drawn by the runtime as a QR
+    /// code: a sign-in address, an install link, an article to finish
+    /// somewhere else.
+    ///
+    /// Square and centred, as wide as the column up to fifty millimetres,
+    /// with `caption` under it on at most two lines. The payload may be up
+    /// to [`crate::MAX_CODE_BYTES`] bytes; anything longer is reported by
+    /// `validate` and refused by the runtime, because a denser code stops
+    /// scanning reliably off an e-ink panel. Drop tracking parameters from a
+    /// link before showing it.
+    #[must_use]
+    pub fn code(mut self, payload: impl Into<String>, caption: impl Into<String>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Code {
+            id,
+            payload: payload.into(),
+            caption: caption.into(),
+        });
+        self
+    }
+
+    /// Where the reader is in a short sequence, on one line: "Step 2 of 4:
+    /// Sign in", with a mark for each step.
+    ///
+    /// `current` counts from zero. `labels` is empty, or one name per step;
+    /// the name of the current step follows the count. At most
+    /// [`crate::MAX_STEPS`] steps are counted.
+    #[must_use]
+    pub fn steps<I, L>(mut self, current: u8, total: u8, labels: I) -> Self
+    where
+        I: IntoIterator<Item = L>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let total = total.clamp(1, u8::try_from(MAX_STEPS).unwrap_or(u8::MAX));
+        let labels: Vec<String> = labels
+            .into_iter()
+            .take(usize::from(total))
+            .map(Into::into)
+            .collect();
+        let labels = if labels.len() == usize::from(total) {
+            labels
+        } else {
+            Vec::new()
+        };
+        self.nodes.push(Node::Steps {
+            id,
+            current: current.min(total - 1),
+            total,
+            labels,
         });
         self
     }

@@ -27,7 +27,7 @@ mod conversation;
 use conversation::{Conversation, Provider, Reply, Role, Turn, PROVIDERS};
 use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::failure;
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
     Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -58,6 +58,10 @@ const SERVICE: &str = "service";
 /// Where the chosen provider is remembered between sessions.
 const CHOSEN: &str = "provider";
 const CHOICES: [&str; 3] = ["service-0", "service-1", "service-2"];
+/// The service list's page turns. Three services fit on one page at most
+/// sizes; held sideways at the largest text, they take two.
+const SERVICES_BACK: &str = "services-back";
+const SERVICES_NEXT: &str = "services-next";
 const CANCEL: &str = "cancel";
 const RETRY: &str = "retry";
 const CONTINUE: &str = "continue";
@@ -102,16 +106,14 @@ const TITLE: &str = "AI Command Center";
 const DESTINATIONS: [(&str, &str); 3] =
     [(TALK, "Conversation"), (TYPE, "Type"), (SERVICE, "Service")];
 
-/// A provider's name, marked when it is the one in use.
-///
-/// The mark is a character rather than a tone: a chosen row drawn a shade
-/// darker is invisible on a panel that resolves sixteen greys under a reading
-/// light, and this is the only way to tell which key a request will use.
 #[derive(Default)]
 struct Chat {
     conversation: Conversation,
-    keyboard: Keyboard,
+    /// The message being typed, on the reader's own keyboard.
+    entry: TextEntry,
     view: View,
+    /// Which page of the service list is showing.
+    service_page: u16,
     /// Which service the next request goes to.
     ///
     /// The application still never sees a key. This picks the endpoint, the
@@ -322,19 +324,7 @@ impl Chat {
                     )
                     .or_type(TYPE, "Type something else...");
             }
-            _ => {
-                // A draft left in the keyboard is kept in sight here rather
-                // than only on the keyboard screen. Before this, a message
-                // half-typed and then navigated away from was gone, with
-                // nothing on the panel to say it had ever been started; the
-                // reader came back to a blank composer and retyped it.
-                let draft = self.keyboard.text();
-                if !draft.trim().is_empty() {
-                    screen = screen
-                        .section("Draft")
-                        .field(TYPE, draft, "Tap to keep typing.");
-                }
-            }
+            _ => {}
         }
 
         if on_latest && self.view != View::Waiting && self.can_retry() {
@@ -354,36 +344,65 @@ impl Chat {
         screen.build()
     }
 
-    /// The keyboard, and what has been typed on it so far.
+    /// The message, typed on the reader's own keyboard.
+    ///
+    /// The runtime draws the field and the keys over this screen and keeps
+    /// its title, so the hint is the one place left to say which service
+    /// the message goes to while it is being written.
     fn compose(&self) -> Screen {
         ScreenBuilder::new("chat-compose")
-            .top_bar("Type a message")
-            .nav_bar(1, DESTINATIONS)
-            .typed(&self.keyboard, "Your message appears here.")
-            .spacer(Space::Small)
-            .keyboard(&self.keyboard, "Send")
+            .top_bar(TITLE)
+            .owns_back(true)
+            .text_entry_with_hint(
+                &self.entry,
+                "Type a message",
+                &format!("Goes to {}.", self.provider.label()),
+                "Send",
+            )
             .build()
     }
 
     /// The service chooser.
+    ///
+    /// One answer from three, drawn by the runtime as an option list, so the
+    /// service in use carries the runtime's own mark rather than an icon
+    /// this application picked to stand for "chosen".
     fn choosing(&self) -> Screen {
+        let chosen = self.chosen_index();
         ScreenBuilder::new("chat-service")
             .top_bar("Service")
             .nav_bar(2, DESTINATIONS)
             .secondary("Add a service key from your computer, for example kobo secret set openai.")
-            .rows(PROVIDERS.iter().enumerate().map(|(index, provider)| {
-                (
-                    CHOICES[index],
-                    provider.label(),
-                    provider.model(),
-                    if *provider == self.provider {
-                        Glyph::Check
-                    } else {
-                        Glyph::Circle
-                    },
-                )
-            }))
+            .option_list(
+                "",
+                self.service_page,
+                SERVICES_BACK,
+                SERVICES_NEXT,
+                PROVIDERS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, provider)| (CHOICES[index], provider.label(), provider.model())),
+            )
+            .chosen(chosen)
             .build()
+    }
+
+    /// Where the service in use sits in the list.
+    fn chosen_index(&self) -> usize {
+        PROVIDERS
+            .iter()
+            .position(|provider| *provider == self.provider)
+            .unwrap_or(0)
+    }
+
+    /// How many pages the service list takes on this panel at this size.
+    fn service_pages(context: &Context) -> u16 {
+        u16::try_from(kobo_sdk::options_pages(
+            PROVIDERS.len(),
+            &context.metrics(),
+            true,
+        ))
+        .unwrap_or(1)
     }
 
     /// The answers the newest reply offered, if it offered any.
@@ -495,28 +514,50 @@ impl Chat {
         true
     }
 
-    /// Handles a tap while the keyboard is up. Returns whether it was one.
-    fn typing(&mut self, context: &mut Context, action: ActionId) -> bool {
-        if action == action_id(TALK) {
-            self.view = View::Talking;
-            self.show(context);
-            return true;
+    /// Opens the service list and turns its pages. Returns whether the
+    /// action was one of those.
+    fn services(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(SERVICE) {
+            // Opens on the page holding the service in use, so its mark is
+            // on the panel rather than a page turn away.
+            let per_page = kobo_sdk::options_per_page(&context.metrics(), true).max(1);
+            self.service_page = u16::try_from(self.chosen_index() / per_page).unwrap_or(0);
+            self.view = View::Choosing;
+            self.trouble = None;
+        } else if self.view == View::Choosing
+            && (action == action_id(SERVICES_BACK) || action == action_id(SERVICES_NEXT))
+        {
+            let last = Self::service_pages(context).saturating_sub(1);
+            self.service_page = if action == action_id(SERVICES_BACK) {
+                self.service_page.saturating_sub(1)
+            } else {
+                self.service_page.saturating_add(1).min(last)
+            };
+        } else {
+            return false;
         }
-        let Some(pressed) = self.keyboard.press(action) else {
+        self.show(context);
+        true
+    }
+
+    /// Handles the answer from the reader's keyboard. Returns whether it
+    /// was one.
+    ///
+    /// Sending nothing comes back as backing out, and both return to the
+    /// transcript, because the runtime hands back no text for either.
+    fn typing(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let Some(typing) = self.entry.handle(action) else {
             return false;
         };
-        match pressed {
-            Pressed::Edited | Pressed::Shifted => self.show(context),
-            Pressed::Submitted => {
-                let text = self.keyboard.text().trim().to_owned();
-                // Nothing typed means nothing changed, so nothing is
-                // repainted. A refresh that redraws the same pixels is the
-                // most visible thing this application could do for no reason.
-                if !text.is_empty() {
-                    self.keyboard.clear();
-                    self.view = View::Talking;
-                    self.say(context, text);
-                }
+        match typing {
+            Typing::Submitted(text) => {
+                self.view = View::Talking;
+                self.say(context, text);
+            }
+            Typing::Changed => self.show(context),
+            Typing::Cancelled | Typing::Saved | Typing::Refused(_) => {
+                self.view = View::Talking;
+                self.show(context);
             }
         }
         true
@@ -721,6 +762,8 @@ impl KoboApp for Chat {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
+            // From the keyboard, Back puts it away and goes no further.
+            self.entry.close();
             // A menu, a confirmation and an export are layers over the
             // transcript; the keyboard and the service list are destinations
             // reached from it. Back lifts or leaves one layer at a time.
@@ -776,14 +819,12 @@ impl KoboApp for Chat {
         if action == action_id(TYPE) {
             self.view = View::Composing;
             self.trouble = None;
+            self.entry.open();
             self.show(context);
             return;
         }
 
-        if action == action_id(SERVICE) {
-            self.view = View::Choosing;
-            self.trouble = None;
-            self.show(context);
+        if self.services(context, action) {
             return;
         }
 
@@ -885,14 +926,14 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use super::PROVIDERS;
     use super::{
         conversation::Provider,
         conversation::{Role, Turn},
         transcript_pages, Chat, View, CHOICES, CHOSEN, COLUMNS, CONTINUE, CONTINUE_MESSAGE,
         EARLIER, OPTIONS, SERVICE, TALK, TRANSCRIPT_LINES, TYPE,
     };
-    use super::{Glyph, PROVIDERS};
-    use kobo_sdk::keyboard::Keyboard;
+    use kobo_sdk::keyboard::testing::{asked, cancel_text, type_text};
     use kobo_sdk::{
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
         TaskId, TaskOutcome,
@@ -966,11 +1007,12 @@ mod tests {
         TaskOutcome::Completed(body.into_bytes())
     }
 
-    /// Types `text` on the on-screen keyboard and taps send.
+    /// Types `text` on the reader's keyboard and taps send.
     fn type_and_send(chat: &mut Chat, text: &str) -> Vec<Command> {
         act(chat, TYPE);
-        chat.keyboard = Keyboard::with_text(text);
-        act(chat, "kb.enter")
+        let mut context = Context::default();
+        type_text(chat, &mut context, text);
+        context.take_commands()
     }
 
     #[test]
@@ -987,29 +1029,35 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_stays_in_sight_after_leaving_the_keyboard() {
-        // The defect: a message half-typed and then navigated away from was
-        // gone, with nothing on the panel to say it had ever been started, so
-        // the reader came back to a blank composer and typed it a second time.
+    fn backing_out_of_the_keyboard_returns_to_the_conversation_and_sends_nothing() {
         let (mut chat, _) = started();
         act(&mut chat, TYPE);
-        chat.keyboard = Keyboard::with_text("half a thought");
-        act(&mut chat, TALK);
+        let mut context = Context::default();
+        cancel_text(&mut chat, &mut context);
+        let commands = context.take_commands();
         assert_eq!(chat.view, View::Talking);
-        let screen = chat.screen();
-        assert!(
-            screen
-                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-                .rect_of_action(action_id(TYPE))
-                .is_some(),
-            "the draft was not left tappable to keep typing"
-        );
-        assert!(
-            shown(&screen)
-                .iter()
-                .any(|line| line.contains("half a thought")),
-            "the draft vanished when the keyboard closed"
-        );
+        assert!(!chat.entry.is_open(), "the keyboard was left open");
+        assert!(posted(&commands).is_none(), "backing out sent a message");
+    }
+
+    #[test]
+    fn the_message_is_typed_on_the_reader_s_keyboard_and_says_which_service_it_goes_to() {
+        let (mut chat, _) = started();
+        act(&mut chat, SERVICE);
+        act(&mut chat, CHOICES[1]);
+        let commands = act(&mut chat, TYPE);
+        let Some(kobo_sdk::DeviceRequest::TypeText {
+            prompt,
+            hint,
+            submit,
+            ..
+        }) = asked(&commands)
+        else {
+            panic!("the reader's keyboard was not asked for")
+        };
+        assert_eq!(prompt, "Type a message");
+        assert_eq!(hint, "Goes to Anthropic.");
+        assert_eq!(submit, "Send");
     }
 
     #[test]
@@ -1120,16 +1168,11 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_message_is_not_sent_and_does_not_repaint_the_panel() {
+    fn an_empty_message_is_not_sent_and_returns_to_the_conversation() {
         let (mut chat, _) = started();
-        act(&mut chat, TYPE);
-        chat.keyboard = Keyboard::with_text("   ");
-        let commands = act(&mut chat, "kb.enter");
+        let commands = type_and_send(&mut chat, "   ");
         assert!(posted(&commands).is_none());
-        assert!(
-            commands.is_empty(),
-            "an empty send repainted the panel for nothing"
-        );
+        assert_eq!(chat.view, View::Talking);
     }
 
     #[test]
@@ -1495,34 +1538,6 @@ mod tests {
     }
 
     #[test]
-    fn every_key_of_the_compose_screen_is_reachable_on_this_panel() {
-        // The compose screen is the one that can run off the bottom, because
-        // the keyboard is four rows of controls under whatever has been typed.
-        let chat = Chat {
-            view: View::Composing,
-            keyboard: Keyboard::with_text(
-                "a message long enough to wrap onto a second line of the panel, \
-                 which is what a real one does",
-            ),
-            ..Chat::default()
-        };
-        let layout = chat
-            .screen()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        let send = layout
-            .rect_of_action(action_id("kb.enter"))
-            .expect("a send key");
-        assert!(
-            send.y + send.height <= CLARA_BW_METRICS.height,
-            "the send key is off the bottom of the panel: {send:?}"
-        );
-        assert!(
-            send.height >= CLARA_BW_METRICS.touch_target_minimum(),
-            "the send key is too small to tap: {send:?}"
-        );
-    }
-
-    #[test]
     fn a_conversation_with_nothing_in_it_says_so_and_offers_the_keyboard() {
         let (chat, mut context) = started();
         let screen = last_screen(&context.take_commands());
@@ -1582,24 +1597,6 @@ mod tests {
         let commands = act(&mut chat, TALK);
         assert_eq!(chat.view, View::Talking);
         assert!(!commands.is_empty(), "the way back repainted nothing");
-    }
-
-    #[test]
-    fn the_keyboard_screen_offers_the_way_back_in_the_same_place() {
-        let (mut chat, mut context) = started();
-        let talking = chat
-            .screen()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id(TALK))
-            .expect("the transcript names where it already is");
-        act(&mut chat, TYPE);
-        let composing = chat
-            .screen()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id(TALK))
-            .expect("the keyboard offers the way back");
-        assert_eq!(talking, composing);
-        let _ = &mut context;
     }
 
     /// The identifier the application handed to `Context::spawn`.
@@ -1698,21 +1695,20 @@ mod tests {
         act(&mut chat, CHOICES[1]);
         act(&mut chat, SERVICE);
         let screen = chat.screen();
-        let [.., kobo_sdk::Node::Rows { rows, .. }] = &screen.nodes[..] else {
-            unreachable!("the chooser ends in service rows")
+        let Some(kobo_sdk::Node::Options {
+            options, selected, ..
+        }) = screen
+            .nodes
+            .iter()
+            .find(|node| matches!(node, kobo_sdk::Node::Options { .. }))
+        else {
+            unreachable!("the chooser is an option list")
         };
-        for (index, row) in rows.iter().enumerate() {
-            assert_eq!(row.title, PROVIDERS[index].label());
-            assert_eq!(row.summary, PROVIDERS[index].model());
-            assert_eq!(
-                row.lead,
-                kobo_sdk::RowLead::from(if index == 1 {
-                    Glyph::Check
-                } else {
-                    Glyph::Circle
-                })
-            );
-            assert!(row.title.is_ascii());
+        assert_eq!(*selected, Some(1), "the service in use is not marked");
+        for (index, option) in options.iter().enumerate() {
+            assert_eq!(option.label, PROVIDERS[index].label());
+            assert_eq!(option.summary, PROVIDERS[index].model());
+            assert!(option.label.is_ascii());
         }
     }
 
@@ -1774,6 +1770,38 @@ mod tests {
         assert_eq!(bar(&chat), empty, "the bar moved as the transcript grew");
     }
     #[test]
+    fn the_service_list_opens_on_the_page_that_holds_the_service_in_use() {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            width: 1448,
+            height: 1072,
+            pixels_per_inch: 300,
+        };
+        let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
+        // Counted once the runner has put the reader's own faces in place,
+        // because the rows on a page are counted in them.
+        let per_page = kobo_sdk::options_per_page(&runner.context().metrics(), true).max(1);
+        runner.app_mut().provider = PROVIDERS[2];
+        runner.action(action_id(SERVICE));
+        assert_eq!(
+            usize::from(runner.app().service_page),
+            2 / per_page,
+            "the list opened away from the service in use"
+        );
+        runner.action(action_id(super::SERVICES_BACK));
+        runner.action(action_id(super::SERVICES_BACK));
+        assert_eq!(runner.app().service_page, 0);
+        for _ in 0..4 {
+            runner.action(action_id(super::SERVICES_NEXT));
+        }
+        assert_eq!(
+            usize::from(runner.app().service_page),
+            (PROVIDERS.len() - 1) / per_page,
+            "the list turned past its last page"
+        );
+    }
+
+    #[test]
     fn service_rows_fit_and_select_their_provider_at_every_text_size() {
         // Exercise the 300ppi panel geometries in portrait and logical landscape.
         // The Elipsa 227ppi profile is verified in its own native-renderer
@@ -1792,9 +1820,14 @@ mod tests {
                     pixels_per_inch,
                 };
                 let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
+                let per_page = kobo_sdk::options_per_page(&metrics, true).max(1);
                 for (index, provider) in PROVIDERS.iter().enumerate() {
                     runner.app_mut().view = View::Choosing;
-                    let screen = runner.app().screen().with_own_back(true);
+                    runner.app_mut().service_page = u16::try_from(index / per_page).unwrap();
+                    let screen = runner
+                        .app()
+                        .screen_for(&runner.context())
+                        .with_own_back(true);
                     let chrome = kobo_ui::Chrome::for_screen(
                         &screen,
                         false,

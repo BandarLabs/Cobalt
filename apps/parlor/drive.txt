@@ -1,4 +1,4 @@
-expect Classic board games
+expect Board games
 tap Reversi
 expect Computer strength
 tap Start game

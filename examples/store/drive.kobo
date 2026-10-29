@@ -1,13 +1,17 @@
 # The simulator's catalog has every app installed except Sudoku.
 # First run: the filters, the labelled browser link, and updates first.
+# At the largest text size the tabs give up their counts so their names
+# stay whole, and the open tab's heading carries its count.
 wait-for App Store
 expect Link browser
-expect Available 1
+expect Available
+expect Updates
 shot store-catalog
-tap Available 1
+tap-id filter-available
 wait-for Available to install
 expect Sudoku
-# A failed install stays on the app and offers to try again.
+# A failed install stays on the app, and its error banner offers to try
+# again.
 scenario offline
 tap Sudoku
 wait-for Not installed
@@ -36,5 +40,17 @@ wait-for Uninstall Sudoku?
 tap-id confirm-remove
 wait-for Sudoku is uninstalled.
 shot store-uninstalled
-tap Updates 0
+# Install on the row opens the app's page, so its permissions are read
+# before anything is installed; the page's own Install installs it.
+tap Install
+wait-for Permissions
+expect Not installed
+shot store-install-from-row
+tap-id install-sudoku
+wait-for Sudoku is installed.
+expect Open
+tap-id 4294967295
+wait-for Every app in the catalog is installed.
+shot store-installed-from-row
+tap-id filter-updates
 wait-for Every installed app is up to date.

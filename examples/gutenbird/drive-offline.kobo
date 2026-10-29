@@ -35,4 +35,5 @@ tap Books on this device
 wait-for-id device-1
 tap-id device-1
 wait-for An Older Book
-expect Book downloaded earlier
+# The reading bar shortens a long title with an ellipsis at large text sizes.
+expect Book downloaded

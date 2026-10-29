@@ -98,22 +98,30 @@ def main():
                 # name as every other game, and the old jargon is gone.
                 drive("expect-missing Shapes, not color", "expect-missing Enter guess",
                       "tap Rules", "wait-for Find the five-letter word",
-                      "expect Filled: right spot.")
+                      "expect Filled: right spot.", "expect Hard mode",
+                      "expect Guesses can leave out letters found.")
                 capture("inkling-help")
+                # Hard mode is a switch under the rules, applied on the tap.
+                drive("tap-id hard", "wait-for Each guess must use the letters found.",
+                      "tap-id hard", "wait-for Guesses can leave out letters found.")
                 drive("tap Play", "wait-for Inkling · Sep 1")
-                drive("tap-id game-more", "wait-for New game", "expect Hard mode: off",
+                drive("tap-id game-more", "wait-for New game", "expect-missing Hard mode",
                       "expect Statistics")
                 capture("inkling-more")
                 drive("tap Statistics", "wait-for Played 0. Won 0.", "tap Play",
                       "wait-for Six guesses.")
 
                 # The keys sit under the board. A refused word stays typed.
-                drive("type zzzzz", "tap Guess", "wait-for Not in the word list.")
-                drive(*["tap-id kb.backspace"] * 5)
+                # Where the keys and the board do not fit together, as at the
+                # largest text size, Type a guess opens the keys on a screen
+                # of their own; elsewhere the step finds nothing to tap.
+                drive("maybe-tap-id enter", "type zzzzz", "tap Guess",
+                      "wait-for Not in the word list.")
+                drive("maybe-tap-id enter", *["tap-id kb.backspace"] * 5)
                 drive("type crane", "tap Guess", "wait-for 1 of 6",
                       "wait-for Right spot: _RA__")
                 capture("inkling-knowledge")
-                drive("type gravy", "tap Guess", "wait-for Solved")
+                drive("maybe-tap-id enter", "type gravy", "tap Guess", "wait-for Solved")
                 capture("inkling-solved")
 
                 # Statistics carry the win and its distribution slot.
@@ -155,7 +163,7 @@ def main():
                 drive("tap August 31, 2026",
                       "wait-for Archive puzzle from August 31, 2026.")
                 capture("inkling-archive")
-                drive("type dizzy", "tap Guess",
+                drive("maybe-tap-id enter", "type dizzy", "tap Guess",
                       "wait-for Archive games do not change statistics")
                 capture("inkling-archive-solved")
                 drive("tap Statistics", "wait-for Played 1. Won 1.")

@@ -3,8 +3,8 @@ use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::game::{Menu, Tap};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, Glyph, KoboApp, Screen, ScreenBuilder, SlotWidth,
-    StoreResult,
+    action_id, ActionId, BandAlign, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder,
+    SlotWidth, StoreResult,
 };
 use std::process::ExitCode;
 const STATE: &str = "inkling-state-v1";
@@ -439,6 +439,24 @@ fn today() -> String {
             .and_then(Snapshot::local_day)
             .unwrap_or_default(),
     )
+}
+/// What the Hard mode switch says is true now, longest first. A switch's
+/// summary is one line, so a small panel at a large size takes the first
+/// that is drawn whole, and nothing where none is.
+const fn hard_summaries(hard: bool) -> [&'static str; 3] {
+    if hard {
+        [
+            "Each guess must use the letters found.",
+            "Guesses keep found letters.",
+            "",
+        ]
+    } else {
+        [
+            "Guesses can leave out letters found.",
+            "Found letters are optional.",
+            "",
+        ]
+    }
 }
 fn hard_allows(answer: &str, prior: &[String], guess: &str) -> bool {
     let guess_bytes = guess.as_bytes();
@@ -932,17 +950,10 @@ impl Game {
         } else {
             format!("Inkling \u{00b7} {}", short_date(&self.today))
         };
-        let mut more = vec![
-            (
-                "hard",
-                if self.hard {
-                    "Hard mode: on"
-                } else {
-                    "Hard mode: off"
-                },
-            ),
-            ("stats", "Statistics"),
-        ];
+        // Hard mode is a switch on the Rules screen. In this menu, which
+        // cannot hold one, "Hard mode: off" read as an order as easily as a
+        // report of the setting.
+        let mut more = vec![("stats", "Statistics")];
         if self.archive {
             more.push(("today", "Today's puzzle"));
         }
@@ -991,15 +1002,37 @@ impl Game {
         }
     }
 
-    fn help_screen() -> Screen {
-        ScreenBuilder::new("inkling-help")
-            .top_bar(kobo_sdk::game::RULES_LABEL)
-            .owns_back(true)
-            .text("Find the five-letter word in six guesses.")
-            .text("Filled: right spot. (A): wrong spot. Plain: not in the word.")
-            .text("Hard mode keeps found letters. New game opens earlier days.")
-            .bottom_action("close-help", "Play")
-            .build()
+    /// The rules, with Hard mode as a switch under them: the rule it adds is
+    /// read in the same place it is turned on, and the switch says what is
+    /// true now before anything is tapped.
+    fn help_screen(&self) -> Screen {
+        let build = |summary: &str| {
+            ScreenBuilder::new("inkling-help")
+                .top_bar(kobo_sdk::game::RULES_LABEL)
+                .owns_back(true)
+                .text("Find the five-letter word in six guesses.")
+                .text("Filled: right spot. (A): wrong spot. Plain: not in the word.")
+                .text("New game opens earlier days.")
+                .toggle("hard", "Hard mode", summary, self.hard)
+                .bottom_action("close-help", "Play")
+                .build()
+        };
+        let summaries = hard_summaries(self.hard);
+        let Some(metrics) = self.fit.measured_for else {
+            return build(summaries[0]);
+        };
+        summaries
+            .into_iter()
+            .map(|summary| (summary, build(summary)))
+            .find(|(summary, screen)| {
+                summary.is_empty()
+                    || screen
+                        .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
+                        .nodes
+                        .iter()
+                        .any(|node| node.text_lines.iter().any(|line| line == summary))
+            })
+            .map_or_else(|| build(""), |(_, screen)| screen)
     }
 
     fn stats_screen(&self) -> Screen {
@@ -1023,25 +1056,23 @@ impl Game {
             }
         }
         builder = builder.secondary(format!("Today is {}.", full_date(&self.today)));
+        // A failed export is a banner carrying its retry, so it is not missed
+        // in muted type and there is one control for it rather than a second
+        // button under the words. A finished one says so at Success.
         builder = match self.export_status {
-            ExportStatus::Idle => builder,
-            ExportStatus::Writing => builder.secondary("Writing results…"),
-            ExportStatus::Saved => builder.secondary(format!("Saved as {EXPORT}.")),
-            ExportStatus::Failed => {
-                builder.secondary("Results could not be saved. Check storage and try again.")
-            }
-        };
-        builder = if self.export_status == ExportStatus::Writing {
-            builder.disabled_button("export", "Exporting results")
-        } else {
-            builder.button(
-                "export",
-                if self.export_status == ExportStatus::Failed {
-                    "Try export again"
-                } else {
-                    "Export results"
-                },
-            )
+            ExportStatus::Idle => builder.button("export", "Export results"),
+            ExportStatus::Writing => builder
+                .secondary("Writing results…")
+                .disabled_button("export", "Exporting results"),
+            ExportStatus::Saved => builder
+                .banner(BannerLevel::Success, format!("Saved as {EXPORT}."))
+                .button("export", "Export results"),
+            ExportStatus::Failed => builder
+                .banner(
+                    BannerLevel::Error,
+                    "Results could not be saved. Check storage.",
+                )
+                .banner_action("export", "Try again"),
         };
         builder.bottom_action("close-stats", "Play").build()
     }
@@ -1132,16 +1163,6 @@ impl Game {
                 return (true, false);
             }
         }
-        if a == action_id("hard") {
-            self.hard = !self.hard;
-            self.notice = if self.hard {
-                "Hard mode on."
-            } else {
-                "Hard mode off."
-            }
-            .into();
-            return (true, true);
-        }
         if a == action_id("stats") {
             self.view = View::Stats;
             return (true, false);
@@ -1165,7 +1186,7 @@ impl Game {
 
     fn screen(&self) -> Screen {
         match self.view {
-            View::Help => Self::help_screen(),
+            View::Help => self.help_screen(),
             View::Stats => self.stats_screen(),
             View::Archive => self.archive_screen(),
             View::Board if self.typing && !self.fit.keys => self.typing_screen(),
@@ -1222,6 +1243,12 @@ impl KoboApp for Game {
                 if a == action_id("close-help") || a == ActionId::BACK {
                     self.view = View::Board;
                     changed = true;
+                } else if a == action_id("hard") {
+                    // Applied on the tap and saved with the game, the way a
+                    // switch is expected to behave.
+                    self.hard = !self.hard;
+                    changed = true;
+                    save = true;
                 }
             }
             View::Stats => {
@@ -1545,6 +1572,7 @@ mod persistence_tests {
             key: STATE.into(),
             value: None,
         });
+        runner.action(action_id(kobo_sdk::game::RULES));
         runner.action(action_id("hard"));
         assert!(runner.app().hard);
         runner.store_result(StoreResult::Loaded {
@@ -1735,7 +1763,9 @@ mod feedback_tests {
     #[test]
     fn an_unrelated_game_save_cannot_settle_the_export() {
         let mut runner = ready();
+        runner.action(action_id(kobo_sdk::game::RULES));
         runner.action(action_id("hard"));
+        runner.action(action_id("close-help"));
         runner.action(action_id("stats"));
         runner.action(action_id("export"));
         runner.store_result(StoreResult::Denied(StoreError::TooFull));
@@ -1776,12 +1806,196 @@ mod feedback_tests {
                         "{text_scale:?} {state:?}: {:?}",
                         diagnostics.issues
                     );
-                    assert!(screen
-                        .layout_with(&metrics, &chrome)
-                        .rect_of_action(action_id("close-stats"))
-                        .is_some());
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    assert!(layout.rect_of_action(action_id("close-stats")).is_some());
+                    if state != ExportStatus::Writing {
+                        assert!(
+                            layout.rect_of_action(action_id("export")).is_some(),
+                            "{text_scale:?} {state:?}: no way to export"
+                        );
+                    }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod p16_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Command, StoreError};
+    use kobo_ui::{Chrome, Node, TextScale};
+
+    fn ready() -> AppRunner<Game> {
+        let mut runner = AppRunner::new(Game::for_day("2026-09-01"));
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner
+    }
+
+    fn banners(screen: &Screen) -> Vec<(BannerLevel, String, Option<String>)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Banner {
+                    level,
+                    text,
+                    action,
+                    ..
+                } => Some((
+                    *level,
+                    text.clone(),
+                    action.as_ref().map(|action| action.label.clone()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Hard mode is a switch on the Rules screen, not a "Hard mode: off"
+    /// entry in the menu. The tap applies it there and then and saves it,
+    /// and the menu over the board no longer offers it.
+    #[test]
+    fn hard_mode_is_a_switch_on_the_rules_that_applies_and_saves_on_the_tap() {
+        let mut runner = ready();
+        runner.action(action_id(kobo_sdk::game::MORE));
+        let menu = format!("{:?}", runner.app().screen().overlay);
+        assert!(!menu.contains("Hard mode"), "{menu}");
+        runner.action(ActionId::BACK);
+        runner.action(action_id(kobo_sdk::game::RULES));
+        assert_eq!(runner.app().view, View::Help);
+        let toggle = |game: &Game| {
+            game.screen()
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    Node::Toggle {
+                        label, summary, on, ..
+                    } if label == "Hard mode" => Some((summary.clone(), *on)),
+                    _ => None,
+                })
+                .expect("a Hard mode switch on the rules")
+        };
+        assert_eq!(
+            toggle(runner.app()),
+            (hard_summaries(false)[0].to_owned(), false)
+        );
+        let commands = runner.action(action_id("hard"));
+        assert!(runner.app().hard);
+        assert_eq!(runner.app().view, View::Help);
+        assert_eq!(
+            toggle(runner.app()),
+            (hard_summaries(true)[0].to_owned(), true)
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == STATE
+        )));
+        runner.action(action_id("hard"));
+        assert!(!runner.app().hard);
+    }
+
+    /// Both states of the switch keep their summary whole on one line and
+    /// Play on the panel, on every supported panel at every size, held
+    /// either way, since the rules are text and are drawn both ways.
+    #[test]
+    fn the_hard_mode_switch_reads_whole_at_every_size_either_way_up() {
+        for (width, height, pixels_per_inch) in [
+            (1072, 1448, 300),
+            (1448, 1072, 300),
+            (758, 1024, 212),
+            (1264, 1680, 300),
+            (1680, 1264, 300),
+            (1404, 1872, 227),
+            (1872, 1404, 227),
+        ] {
+            for text_scale in TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let _runner = AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+                for hard in [false, true] {
+                    let mut game = Game::for_day("2026-09-01");
+                    game.view = View::Help;
+                    game.hard = hard;
+                    game.fit(metrics);
+                    let screen = game.screen();
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome).issues;
+                    assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for name in ["hard", "close-help"] {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?}: {name}"
+                        );
+                    }
+                    let summary = screen
+                        .nodes
+                        .iter()
+                        .find_map(|node| match node {
+                            Node::Toggle { summary, .. } => Some(summary.clone()),
+                            _ => None,
+                        })
+                        .expect("the switch");
+                    // Every supported panel keeps a summary, drawn whole; the
+                    // empty one is only a guard for a smaller panel.
+                    assert!(
+                        layout
+                            .nodes
+                            .iter()
+                            .any(|node| node.text_lines.iter().any(|line| *line == summary))
+                            && !summary.is_empty(),
+                        "{metrics:?}: the summary was cut or dropped"
+                    );
+                    if pixels_per_inch == 300 && text_scale == TextScale::Default {
+                        assert_eq!(summary, hard_summaries(hard)[0], "{metrics:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A refused export is an Error banner whose one action exports again,
+    /// with no second button for it; a finished one is a Success banner.
+    #[test]
+    fn a_refused_export_carries_its_retry_on_an_error_banner() {
+        let mut runner = ready();
+        runner.action(action_id("stats"));
+        runner.action(action_id("export"));
+        runner.store_result(StoreResult::Denied(StoreError::TooFull));
+        let screen = runner.app().screen();
+        assert_eq!(
+            banners(&screen),
+            [(
+                BannerLevel::Error,
+                "Results could not be saved. Check storage.".to_owned(),
+                Some("Try again".to_owned())
+            )]
+        );
+        assert!(!format!("{screen:?}").contains("Try export again"));
+        let buttons = screen
+            .nodes
+            .iter()
+            .filter(|node| matches!(node, Node::Button { .. }))
+            .count();
+        assert_eq!(buttons, 0, "a second control for the same retry");
+        let commands = runner.action(action_id("export"));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == EXPORT
+        )));
+        runner.store_result(StoreResult::Saved { key: EXPORT.into() });
+        assert_eq!(
+            banners(&runner.app().screen()),
+            [(BannerLevel::Success, format!("Saved as {EXPORT}."), None)]
+        );
     }
 }

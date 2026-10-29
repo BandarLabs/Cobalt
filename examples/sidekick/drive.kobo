@@ -2,8 +2,14 @@
 wait-for Sidekick
 expect Pair with your computer
 expect Run kobo sidekick init on your computer. It pairs this reader for you.
+expect Or type the address it shows
 clean
 shot sidekick-address
+# The field raises the reader's own keyboard, which keeps the steps.
+tap-id address.box
+wait-for Next
+clean
+shot sidekick-address-typing
 type example
 tap Next
 wait-for Now the pairing code

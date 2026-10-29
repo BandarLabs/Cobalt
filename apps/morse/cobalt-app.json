@@ -3,12 +3,12 @@
   "display_name": "Morse",
   "short_label": "Morse",
   "summary": "Type a message and send it in Morse code with the front light.",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "glyph": "light",
   "capabilities": [
     "frontlight-control",
     "keep-awake"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick.",
+  "release_notes": "Learning is now a switch under the message, and the light button says Turn light off or Turn light on.",
   "page_description": "Type a message and send it in Morse code on the reader's front light, a letter at a time, with the outgoing letter drawn across the whole panel."
 }

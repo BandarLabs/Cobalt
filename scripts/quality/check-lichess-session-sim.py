@@ -379,8 +379,11 @@ def main():
                 # with a notice, so the driver waits for the Ready status
                 # rather than for the tile to become reachable.
                 choose = ["tap-id seek-casual"] if args.casual else []
+                # At the larger text sizes the home cards are two to a row
+                # and the time cards are on the second page.
                 drive("wait-for-id play", "tap-id play", "wait-for Owner", *choose, "tap Back",
-                      f"wait-for Rapid · {pool}", "wait-for Ready", "tap-id seek-10-0")
+                      "wait-for Ready", "maybe-tap-id home-next",
+                      f"wait-for Rapid · {pool}", "tap-id seek-10-0")
                 if args.drop_start_event:
                     capture("00-waiting-for-match")
                 refusal = "cannot seek casual games"

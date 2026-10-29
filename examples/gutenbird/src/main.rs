@@ -39,7 +39,7 @@
 use kobo_bookview::{BookView, Step};
 use kobo_opds::{AcquisitionKind, Category, Feed, ImageSource, Link, Publication, SearchTemplate};
 use kobo_read::{Memory, Outcome, Reader};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::provider::{Event as ProviderEvent, ProviderSetup};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, FontHandle,
@@ -699,7 +699,13 @@ struct Gutenbird {
     /// [`Gutenbird::stack`], which Back unwinds first, because they are that
     /// catalog's own history rather than the application's.
     trail: Vec<View>,
-    keyboard: Keyboard,
+    /// The search field, which the runtime draws while it is open.
+    search_entry: TextEntry,
+    /// What was last searched for, shown in the field and put back in it
+    /// when it is opened again, so a search is refined rather than retyped.
+    query: String,
+    /// The marginal note field, opened as soon as a highlight asks for one.
+    note_entry: TextEntry,
     pending_annotation: Option<kobo_read::AnnotationId>,
     selected_range: Option<kobo_read::TextRange>,
     lookup_word: String,
@@ -822,7 +828,9 @@ impl Default for Gutenbird {
             // what puts a way back to the list under the first shelf drawn.
             view: View::Catalogs,
             trail: Vec::new(),
-            keyboard: Keyboard::new(),
+            search_entry: TextEntry::new(),
+            query: String::new(),
+            note_entry: TextEntry::new(),
             pending_annotation: None,
             selected_range: None,
             lookup_word: String::new(),
@@ -2240,12 +2248,23 @@ impl Gutenbird {
 
     fn search_screen(&self) -> kobo_sdk::Screen {
         let catalog = self.current_catalog();
-        let mut screen = ScreenBuilder::new("gutenbird-search")
-            .top_bar("Search")
-            .field("query", self.keyboard.text(), "An author or a title")
-            .field_clear("query-clear");
+        let screen = ScreenBuilder::new("gutenbird-search").top_bar("Search");
+        if self.search_entry.is_open() {
+            return screen
+                .text_entry(&self.search_entry, "An author or a title", "Search")
+                .build();
+        }
+        let mut screen = match &catalog.search {
+            SearchState::None => screen.secondary("This catalog has no search."),
+            SearchState::Unknown | SearchState::Known(_) => screen
+                .field("query", self.query.clone(), "An author or a title")
+                .field_clear("query-clear"),
+        };
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
+        }
+        if self.awaiting_feed() {
+            screen = screen.activity("Searching", None);
         }
         if !catalog.recent.is_empty() {
             screen = screen.section("Recent searches").chips(
@@ -2256,24 +2275,32 @@ impl Gutenbird {
                     .map(|(index, term)| (format!("recent-{index}"), term.clone(), false)),
             );
         }
-        screen = screen.chips([("search-all", "Search every catalog", self.search_all)]);
-        match &catalog.search {
-            SearchState::None => screen.secondary("This catalog has no search.").build(),
-            SearchState::Unknown | SearchState::Known(_) => {
-                screen.keyboard(&self.keyboard, "Search").build()
-            }
-        }
+        // A setting rather than a filter: it decides where the next search
+        // goes and stays as it was left, so it is a switch, not a chip that
+        // reads the same ticked or not.
+        screen
+            .toggle(
+                "search-all",
+                "Search every catalog",
+                if self.search_all {
+                    "Every catalog in the list"
+                } else {
+                    "Only this catalog"
+                },
+                self.search_all,
+            )
+            .build()
     }
 
     fn note_screen(&self) -> kobo_sdk::Screen {
         ScreenBuilder::new("gutenbird-note")
             .top_bar("Marginal note")
-            .secondary(
+            .text_entry_with_hint(
+                &self.note_entry,
+                "Your note",
                 "Write beside the highlighted words. The highlight remains if the note is blank.",
+                "Save note",
             )
-            .field("annotation-note", self.keyboard.text(), "Your note")
-            .field_clear("annotation-note-clear")
-            .keyboard(&self.keyboard, "Save note")
             .build()
     }
 
@@ -2558,49 +2585,55 @@ impl Gutenbird {
             .all(|issue| issue.severity != DiagnosticSeverity::Error)
     }
 
+    /// The downloads a book is offered in, one answer from a list the
+    /// runtime pages, with the one that would be read marked.
+    ///
+    /// It used to be rows with " · Selected" written into a label and four
+    /// to a page whatever the panel held, so the mark read as part of the
+    /// file's name and a large panel showed half a screen of paper.
     fn formats_screen(&self) -> kobo_sdk::Screen {
-        let pages = self.formats.len().div_ceil(4).max(1);
-        let page = self.format_page.min(pages - 1);
-        let mut screen = ScreenBuilder::new("gutenbird-formats")
+        let chosen = self
+            .open
+            .as_ref()
+            .and_then(Publication::best_acquisition)
+            .and_then(|selected| {
+                self.formats
+                    .iter()
+                    .position(|acquisition| acquisition.href == selected.href)
+            });
+        let options = self
+            .formats
+            .iter()
+            .enumerate()
+            .map(|(index, acquisition)| {
+                (
+                    format!("format-{index}"),
+                    format_label(acquisition),
+                    acquisition.title.clone().unwrap_or_default(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let screen = ScreenBuilder::new("gutenbird-formats")
             .top_bar("Choose download")
-            .secondary("Each download keeps its own reading position.");
-        let mut rows = Vec::new();
-        for (index, acquisition) in self.formats.iter().enumerate().skip(page * 4).take(4) {
-            let mut label = match download_kind(acquisition.media_type.as_deref()) {
-                DownloadKind::Epub => "EPUB".to_owned(),
-                DownloadKind::Text => "Plain text".to_owned(),
-            };
-            if acquisition.kind == AcquisitionKind::Sample {
-                label.push_str(" · Sample");
-            }
-            if let Some(length) = acquisition.length {
-                let _ = write!(label, " · {} KB", length.div_ceil(1024));
-            }
-            if self
-                .open
-                .as_ref()
-                .and_then(Publication::best_acquisition)
-                .is_some_and(|selected| selected.href == acquisition.href)
-            {
-                label.push_str(" · Selected");
-            }
-            rows.push((
-                format!("format-{index}"),
-                label,
-                acquisition.title.clone().unwrap_or_default(),
-                RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
-            ));
+            .option_list(
+                "Each keeps its own reading position",
+                u16::try_from(self.format_page).unwrap_or(u16::MAX),
+                "formats-back",
+                "formats-next",
+                options,
+            );
+        match chosen {
+            Some(index) => screen.chosen(index).build(),
+            None => screen.build(),
         }
-        screen = screen.rows(rows);
-        if pages > 1 {
-            screen = screen
-                .page_turns("formats-back", "formats-next")
-                .page_position(
-                    u16::try_from(page + 1).unwrap_or(u16::MAX),
-                    u16::try_from(pages).unwrap_or(u16::MAX),
-                );
-        }
-        screen.build()
+    }
+
+    /// Whether any download in the list has a title of its own to show under
+    /// its kind, which is what decides how many fit on a page.
+    fn formats_have_summaries(&self) -> bool {
+        self.formats
+            .iter()
+            .any(|acquisition| acquisition.title.as_deref().is_some_and(|t| !t.is_empty()))
     }
 
     fn format_action(&mut self, context: &mut Context, action: ActionId) -> bool {
@@ -2610,11 +2643,32 @@ impl Gutenbird {
             && self.task.is_none()
             && self.loading.is_none()
         {
+            // The list opens on the page holding the download that would be
+            // read, which the runtime's paging decides from the panel and
+            // text size alone.
+            let per_page =
+                kobo_sdk::options_per_page(&context.metrics(), self.formats_have_summaries())
+                    .max(1);
+            let chosen = self
+                .open
+                .as_ref()
+                .and_then(Publication::best_acquisition)
+                .and_then(|selected| {
+                    self.formats
+                        .iter()
+                        .position(|acquisition| acquisition.href == selected.href)
+                })
+                .unwrap_or(0);
+            self.format_page = chosen / per_page;
             self.go(View::Formats);
         } else if self.view == View::Formats {
             if action == action_id("formats-next") {
-                self.format_page =
-                    (self.format_page + 1).min(self.formats.len().saturating_sub(1) / 4);
+                let pages = kobo_sdk::options_pages(
+                    self.formats.len(),
+                    &context.metrics(),
+                    self.formats_have_summaries(),
+                );
+                self.format_page = (self.format_page + 1).min(pages.saturating_sub(1));
             } else if action == action_id("formats-back") {
                 self.format_page = self.format_page.saturating_sub(1);
             } else if let Some(acquisition) = self
@@ -4084,6 +4138,22 @@ fn language_name(code: &str) -> String {
     }
 }
 
+/// A download as the list of formats names it: its kind, whether it is
+/// only a sample, and its size when the catalog says.
+fn format_label(acquisition: &kobo_opds::Acquisition) -> String {
+    let mut label = match download_kind(acquisition.media_type.as_deref()) {
+        DownloadKind::Epub => "EPUB".to_owned(),
+        DownloadKind::Text => "Plain text".to_owned(),
+    };
+    if acquisition.kind == AcquisitionKind::Sample {
+        label.push_str(" · Sample");
+    }
+    if let Some(length) = acquisition.length {
+        let _ = write!(label, " · {} KB", length.div_ceil(1024));
+    }
+    label
+}
+
 fn selected_edition(publication: &Publication) -> Option<String> {
     let acquisition = publication.best_acquisition()?;
     let format = match download_kind(acquisition.media_type.as_deref()) {
@@ -4562,25 +4632,29 @@ impl KoboApp for Gutenbird {
         }
 
         if self.view == View::Search {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let query = self.keyboard.take();
-                    let query = query.trim().to_owned();
-                    if !query.is_empty() {
-                        if self.search_all {
-                            self.begin_federated_search(context, query);
-                        } else {
-                            self.begin_search(context, self.current, query, false);
-                        }
+            match self.search_entry.handle(action) {
+                Some(Typing::Submitted(query)) => {
+                    self.query.clone_from(&query);
+                    if self.search_all {
+                        self.begin_federated_search(context, query);
+                    } else {
+                        self.begin_search(context, self.current, query, false);
                     }
                     self.show(context);
                     return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
+                Some(_) => {
                     self.show(context);
                     return;
                 }
                 None => {}
+            }
+            if action == action_id("query")
+                && !matches!(self.current_catalog().search, SearchState::None)
+            {
+                self.search_entry.open_with(self.query.clone());
+                self.show(context);
+                return;
             }
         }
         if self.view == View::Lookup
@@ -4596,7 +4670,7 @@ impl KoboApp for Gutenbird {
                 self.save_place(context);
                 if action == action_id("lookup-note") {
                     self.pending_annotation = Some(id);
-                    self.keyboard.clear();
+                    self.note_entry.open();
                     self.go(View::Note);
                 } else {
                     self.selected_range = None;
@@ -4621,27 +4695,29 @@ impl KoboApp for Gutenbird {
             return;
         }
         if self.view == View::Note {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let note = self.keyboard.take();
-                    if let (Some(id), Some(reader)) =
-                        (self.pending_annotation.take(), self.book.reader_mut())
-                    {
-                        let note = (!note.trim().is_empty()).then_some(note.trim());
-                        let _ = reader.edit_annotation_note(id, note);
-                        self.save_place(context);
-                    }
-                    self.back_to(View::Lookup);
-                    self.back_to(View::Reading);
-                    self.selected_range = None;
+            // Backing out of the keyboard leaves the note blank, which is
+            // what the field says happens: the highlight stays without one.
+            let note = match self.note_entry.handle(action) {
+                Some(Typing::Submitted(note)) => Some(Some(note)),
+                Some(Typing::Changed) => {
                     self.show(context);
                     return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
+                Some(_) => Some(None),
+                None => None,
+            };
+            if let Some(note) = note {
+                if let (Some(id), Some(reader)) =
+                    (self.pending_annotation.take(), self.book.reader_mut())
+                {
+                    let _ = reader.edit_annotation_note(id, note.as_deref());
+                    self.save_place(context);
                 }
-                None => {}
+                self.back_to(View::Lookup);
+                self.back_to(View::Reading);
+                self.selected_range = None;
+                self.show(context);
+                return;
             }
         }
         if self.view == View::Catalogs
@@ -4688,17 +4764,7 @@ impl KoboApp for Gutenbird {
             return;
         }
         if action == action_id("query-clear") {
-            self.keyboard.clear();
-            self.show(context);
-            return;
-        }
-        if action == action_id("catalog-url-clear") {
-            self.keyboard.clear();
-            self.show(context);
-            return;
-        }
-        if action == action_id("annotation-note-clear") {
-            self.keyboard.clear();
+            self.query.clear();
             self.show(context);
             return;
         }
@@ -5804,7 +5870,16 @@ Please read this before you distribute or use this work.\n";
         runner.action(action_id("formats"));
         runner.action(action_id("formats-next"));
         runner.action(action_id("formats-next"));
-        assert_eq!(runner.app().format_page, 1);
+        let last = kobo_sdk::options_pages(
+            5,
+            &runner.context().metrics(),
+            runner.app().formats_have_summaries(),
+        ) - 1;
+        assert_eq!(
+            runner.app().format_page,
+            last.min(2),
+            "paging went past the last page of downloads"
+        );
         runner.action(action_id("format-4"));
         assert_eq!(
             read_offer(runner.app().open.as_ref().unwrap()),
@@ -5825,6 +5900,54 @@ Please read this before you distribute or use this work.\n";
         runner.action(kobo_sdk::ActionId::BACK);
         assert_eq!(runner.app().view, View::Details);
         assert_eq!(runner.app().formats.len(), 5);
+    }
+
+    #[test]
+    fn the_downloads_are_one_answer_from_a_list_with_the_one_that_would_be_read_marked() {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let epub = epub_acquisition("https://x/book.epub");
+            let text = text_acquisition("https://x/book.txt");
+            let mut app = Gutenbird::default();
+            app.open_publication(
+                &mut Context::default(),
+                publication("A Test Book", vec![epub, text]),
+            );
+            let mut runner = AppRunner::with_metrics(app, metrics);
+            runner.action(action_id("formats"));
+            let screen = runner.app().formats_screen();
+            let Some(kobo_ui::Node::Options {
+                options, selected, ..
+            }) = screen
+                .nodes
+                .iter()
+                .find(|node| matches!(node, kobo_ui::Node::Options { .. }))
+            else {
+                panic!("the downloads are not an option list");
+            };
+            assert_eq!(options.len(), 2);
+            assert_eq!(
+                *selected,
+                Some(0),
+                "the download that would be read is not marked"
+            );
+            assert!(
+                options
+                    .iter()
+                    .all(|option| !option.label.contains("Selected")),
+                "the mark is still written into a label"
+            );
+            let errors = screen
+                .diagnostics(&runner.context().metrics(), &Chrome::with_back(true))
+                .issues
+                .into_iter()
+                .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                .collect::<Vec<_>>();
+            assert!(errors.is_empty(), "{text_scale:?}: {errors:?}");
+        }
     }
 
     #[test]
@@ -6301,10 +6424,8 @@ Please read this before you distribute or use this work.\n";
         known_search(&mut app.catalogs[0], "https://example.org/search{?query}");
         let mut runner = AppRunner::new(app);
         runner.action(action_id("search"));
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
-        let commands = runner.action(action_id("kb.enter"));
+        runner.action(action_id("query"));
+        let commands = runner.type_text("paw");
         let asked = commands.iter().find_map(|command| match command {
             Command::Spawn { work, .. } => Some(work.clone()),
             _ => None,
@@ -6321,11 +6442,60 @@ Please read this before you distribute or use this work.\n";
         known_search(&mut app.catalogs[0], "https://example.org/search{?query}");
         let mut runner = AppRunner::new(app);
         runner.action(action_id("search"));
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
-        runner.action(action_id("kb.enter"));
+        runner.action(action_id("query"));
+        runner.type_text("paw");
         assert_eq!(runner.app().catalogs[0].recent, vec!["paw".to_owned()]);
+    }
+
+    #[test]
+    fn the_search_field_is_typed_on_the_readers_keyboard_and_reopens_on_the_last_search() {
+        let mut app = Gutenbird::default();
+        known_search(&mut app.catalogs[0], "https://example.org/search{?query}");
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("search"));
+        assert!(
+            !runner.app().search_entry.is_open(),
+            "the keyboard covered the recent searches before anything was tapped"
+        );
+        let opened = runner.action(action_id("query"));
+        assert!(
+            kobo_sdk::keyboard::testing::asked(&opened).is_some(),
+            "tapping the field did not ask the reader for its keyboard"
+        );
+        runner.type_text("paw");
+        runner.action(kobo_sdk::ActionId::BACK);
+        runner.action(action_id("search"));
+        let reopened = runner.action(action_id("query"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { initial, .. }) =
+            kobo_sdk::keyboard::testing::asked(&reopened)
+        else {
+            panic!("the field did not open again");
+        };
+        assert_eq!(initial, "paw");
+    }
+
+    #[test]
+    fn searching_every_catalog_is_a_switch_that_says_where_the_next_search_goes() {
+        let mut app = Gutenbird::default();
+        known_search(&mut app.catalogs[0], "https://example.org/search{?query}");
+        app.view = View::Search;
+        let switch = |app: &Gutenbird| {
+            app.search_screen()
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_ui::Node::Toggle { on, summary, .. } => Some((*on, summary.clone())),
+                    _ => None,
+                })
+                .expect("no switch on the search screen")
+        };
+        assert_eq!(switch(&app), (false, "Only this catalog".to_owned()));
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("search-all"));
+        assert_eq!(
+            switch(runner.app()),
+            (true, "Every catalog in the list".to_owned())
+        );
     }
 
     #[test]
@@ -6467,10 +6637,8 @@ Please read this before you distribute or use this work.\n";
         app.view = View::Search;
         let mut runner = AppRunner::new(app);
         runner.action(action_id("search"));
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
-        runner.action(action_id("kb.enter"));
+        runner.action(action_id("query"));
+        runner.type_text("paw");
         assert!(runner.app().federating, "a federated search did not start");
         assert_eq!(
             runner.app().all_queue.len(),
@@ -6514,10 +6682,8 @@ Please read this before you distribute or use this work.\n";
         app.trail = vec![View::Catalogs, View::Shelf];
         let mut runner = AppRunner::new(app);
         runner.action(action_id("search"));
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
-        runner.action(action_id("kb.enter"));
+        runner.action(action_id("query"));
+        runner.type_text("paw");
         assert!(!runner.app().all_queue.is_empty());
 
         // Leaving before the results have finished arriving: Back pops the
@@ -7015,11 +7181,34 @@ Please read this before you distribute or use this work.\n";
         assert_eq!(runner.app().view, View::Note);
         assert_eq!(runner.app().book.reader().unwrap().annotations().len(), 1);
 
-        runner.action(action_id("kb.r0c0"));
-        runner.action(action_id("kb.enter"));
+        runner.type_text("q");
         assert_eq!(runner.app().view, View::Reading);
         let annotation = &runner.app().book.reader().unwrap().annotations()[0];
         assert_eq!(annotation.note.as_deref(), Some("q"));
+    }
+
+    #[test]
+    fn backing_out_of_a_note_keeps_the_highlight_without_one() {
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Reading,
+            book: BookView::holding(opened("café novel")),
+            complete: true,
+            ..Gutenbird::default()
+        });
+        runner.text_hold(
+            action_id(kobo_read::action::MARKING),
+            kobo_sdk::TextHit {
+                context: 0,
+                start: 0,
+                end: 5,
+            },
+        );
+        runner.action(action_id("lookup-note"));
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Reading);
+        let annotations = runner.app().book.reader().unwrap().annotations();
+        assert_eq!(annotations.len(), 1, "the highlight went with the note");
+        assert_eq!(annotations[0].note, None);
     }
 
     #[test]
@@ -7942,7 +8131,7 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn the_search_screen_offers_the_same_keyboard_whichever_version_supplied_the_template() {
+    fn the_search_screen_offers_the_same_field_whichever_version_supplied_the_template() {
         let atom_feed = kobo_opds::parse(PARITY_ATOM.as_bytes(), BASE).expect("parses");
         let json_feed = kobo_opds::parse(PARITY_JSON.as_bytes(), BASE).expect("parses");
         let atom_link = atom_feed.search().cloned().expect("a search link");

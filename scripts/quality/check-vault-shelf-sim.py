@@ -174,8 +174,12 @@ def main():
                 # returns to the note it was followed from.
                 drive("tap back", "wait-for Home note")
                 # The link's words, underlined inside the paragraph; a tap
-                # by label would land on the middle of the paragraph.
-                drive("tap-at 722 255", "wait 1500", "wait-for A project note")
+                # by label would land on the middle of the paragraph, and a
+                # fixed point is only on the link at one text size. The link
+                # carries its note's place in the list, pushed notes first.
+                alpha = next(index for index, note in enumerate(manifest["notes"])
+                             if note["path"].endswith("Alpha.md"))
+                drive(f"tap-id wiki-{alpha}", "wait 1500", "wait-for A project note")
                 capture("vault-link-followed")
                 drive("tap back", "wait-for Home note")
                 drive("tap back", "wait-for Projects")

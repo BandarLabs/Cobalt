@@ -12,11 +12,18 @@ shot shelf
 tap The Clockwork Garden
 expect A synthetic demonstration work.
 expect Rating: Teen And Up Audiences
-expect Archive warnings: No Archive Warnings Apply
+expect Warnings: No Archive Warnings Apply
 expect New chapters found
 expect Download new chapters
 clean
 shot work
+# Checking for new chapters waits in the work's menu.
+tap-id more
+expect Check for new chapters
+clean
+shot work-menu
+tap Back
+expect-missing Check for new chapters
 
 tap Shelf
 tap A Field Guide to Small Hours

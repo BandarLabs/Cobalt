@@ -39,6 +39,13 @@ tap-id point-12
 tap-id point-9
 expect Computer rolled double 1s and played 17/18 17/18 17/18 18/19.
 expect Your move
+tap Double
+expect Offer the cube at 2?
+expect The opponent may take or drop. This cannot be undone.
+clean
+shot backgammon-double
+tap Cancel
+expect Your move
 scenario storage-full
 tap Roll
 expect Progress is not saved

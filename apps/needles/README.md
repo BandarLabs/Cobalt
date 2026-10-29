@@ -15,12 +15,17 @@ Row counters and your Ravelry library, with patterns you own readable offline.
 ## Features
 
 - A separate row and repeat counter for each section of a project.
+  **Change section** lists the sections with each one's row, and **Repeat
+  length** sets the repeat to 4, 8, 12 or 16 rows in one tap.
 - **+1 row** saves on every tap. **Undo** reverses the last count.
 - **Start section again** sets the section back to row 0 for the second
   sleeve or the second sock. Undo brings the old count back.
 - Keep several patterns. Each opens on the page you left it at.
 - Following a project keeps the screen on.
-- Browse your Ravelry Library, Queue and Favorites.
+- **Use landscape**, under More, turns the counter on its side with the
+  count beside its controls.
+- Browse your Ravelry Library, Queue and Favorites (More, then Ravelry
+  library).
 - Counters, Ravelry details and patterns stay available offline.
 
 ## Setup

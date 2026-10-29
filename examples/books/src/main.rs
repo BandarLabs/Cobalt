@@ -28,6 +28,7 @@ const PREVIOUS: &str = "previous";
 const NEXT: &str = "next";
 const BACK: &str = "back";
 const RELIST: &str = "relist";
+const RETRY_SAVE: &str = "retry-save";
 
 /// Where to send an owner for anything Books cannot open itself.
 const IN_KOBO_READER: &str = "To get there, tap Kobo reader at the foot of the Cobalt home screen.";
@@ -245,12 +246,7 @@ impl Books {
                 )
                 .build();
         }
-        if self.progress.failed {
-            screen = screen.banner(
-                BannerLevel::Attention,
-                "Books could not save your place in the last book. It tries again the next time you turn a page.",
-            );
-        }
+        screen = self.place_notice(screen);
         let pages = self.pages(context);
         self.page = self.page.min(pages.len().saturating_sub(1));
         let page = pages.get(self.page).cloned().unwrap_or_default();
@@ -334,8 +330,39 @@ impl Books {
             .build()
     }
 
+    /// Says on the shelf that the last place was not kept, with the fix on
+    /// the same banner.
+    ///
+    /// On the shelf no book is open, so nothing would try the write again
+    /// until a book was opened and paged; Retry saving does it now. A full
+    /// record of places is not mended by trying again, so that one is said
+    /// without the control.
+    fn place_notice(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        if !self.progress.failed {
+            return screen;
+        }
+        if self.progress.out_of_room() {
+            return screen.banner(
+                BannerLevel::Error,
+                "Books has no room left to save your place in another book.",
+            );
+        }
+        screen
+            .banner(
+                BannerLevel::Error,
+                "Books could not save your place in the last book.",
+            )
+            .banner_action(RETRY_SAVE, "Retry saving")
+    }
+
     fn pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        let pages = context.paginate_tiles(self.documents.len(), TileShape::Portrait, false);
+        // Measured under the banner, so a notice with its action line takes
+        // room from the grid's page rather than squeezing every tile.
+        let placed = self
+            .place_notice(ScreenBuilder::new("books").top_bar("Books"))
+            .build();
+        let pages =
+            context.paginate_tiles_under(self.documents.len(), TileShape::Portrait, false, &placed);
         if pages.is_empty() {
             vec![Vec::new()]
         } else {
@@ -527,6 +554,11 @@ impl KoboApp for Books {
         if action == action_id(RELIST) {
             self.library_failed = false;
             context.device().list_library();
+            return;
+        }
+        if action == action_id(RETRY_SAVE) {
+            self.progress.retry(context);
+            self.show(context);
             return;
         }
         if action == action_id(BACK)
@@ -1157,6 +1189,38 @@ mod tests {
         let mut runner = started_with(Some(record));
         runner.action(action_id("book-0"));
         assert_eq!(runner.app().book.memory().map(|memory| memory.at), left);
+    }
+
+    #[test]
+    fn a_place_that_was_not_saved_offers_retry_saving_on_the_shelf_and_writes_it_again() {
+        let mut runner = started_with(None);
+        runner.action(action_id("book-0"));
+        runner.page_turn(true);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Unwritable));
+        // Leaving the book tries once more; when that fails too, the shelf
+        // is where the owner learns of it.
+        runner.action(ActionId::BACK);
+        let shelf =
+            shown(runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Unwritable)));
+        let drawn = words(&shelf);
+        assert!(drawn.contains("could not save your place"), "{drawn}");
+        assert!(drawn.contains("Retry saving"), "{drawn}");
+        // The fix is on the banner that explains it, and the shelf still fits.
+        let layout = shelf.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout
+            .nodes
+            .iter()
+            .any(|node| { node.kind == LayoutKind::BannerAction(action_id("retry-save")) }));
+        assert!(shelf.validate(&CLARA_BW_METRICS).is_empty());
+        let commands = runner.action(action_id("retry-save"));
+        assert!(
+            saved(&commands).is_some(),
+            "Retry saving writes the place now"
+        );
+        let commands = runner.store_result(StoreResult::Saved {
+            key: READING.into(),
+        });
+        assert!(!words(&shown(commands)).contains("Retry saving"));
     }
 
     #[test]

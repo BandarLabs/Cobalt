@@ -88,14 +88,37 @@ impl Control {
     /// shortened to fit -- "Return to Kobo reader" becomes "Return to Kobo…"
     /// on a narrow panel, and a script that had to know which panel it was
     /// running on would be a script nobody kept up to date.
+    ///
+    /// A line that ends on a word's own hyphen ("calibre-" over "web") is
+    /// joined to the next without a space, because the wrap broke the word
+    /// where it was allowed to, and a reader still reads "calibre-web".
     fn says(&self, needle: &str) -> bool {
+        // A command is drawn with its hyphens made unbreakable and a joiner
+        // after each slash, so a flag or a path is never split across two
+        // lines. A route names the command as it is typed, so both are read
+        // as the characters they stand for.
         let normalize = |text: &str| {
-            text.split_whitespace()
+            text.replace('\u{2011}', "-")
+                .replace('\u{2060}', "")
+                .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
                 .to_lowercase()
         };
-        normalize(&self.lines.join(" ")).contains(&normalize(needle))
+        let mut joined = String::new();
+        for line in &self.lines {
+            let broken_at_hyphen = joined.ends_with('-')
+                && joined
+                    .chars()
+                    .rev()
+                    .nth(1)
+                    .is_some_and(char::is_alphanumeric);
+            if !joined.is_empty() && !broken_at_hyphen {
+                joined.push(' ');
+            }
+            joined.push_str(line.trim());
+        }
+        normalize(&joined).contains(&normalize(needle))
     }
 
     /// Whether one of this node's lines is exactly `needle`.
@@ -314,6 +337,10 @@ impl Driver {
     /// declared page-turn zones, taps the forward zone -- the empty right
     /// edge of the content, where a reader's thumb goes -- and looks
     /// again. The bound keeps a genuinely absent label a failure.
+    ///
+    /// A list whose rows run the full width of the content leaves no empty
+    /// spot in that zone, at the largest text size especially, so there the
+    /// reader's page key turns the page instead, as an owner would.
     fn tap_paged(&mut self, label: &str) -> Result<(), String> {
         const MAX_PAGES: u32 = 8;
         for page in 0..=MAX_PAGES {
@@ -329,9 +356,10 @@ impl Driver {
             if !paging.has_next {
                 break;
             }
-            let (x, y) = forward_point(&controls, paging.content)
-                .ok_or("no empty spot in the forward page-turn zone")?;
-            self.touch(x, y)?;
+            match forward_point(&controls, paging.content) {
+                Some((x, y)) => self.touch(x, y)?,
+                None => self.post_and_settle("/input", "page next")?,
+            }
         }
         Err(format!(
             "{label:?} never appeared within {MAX_PAGES} page turns"
@@ -390,9 +418,10 @@ impl Driver {
         self.touch(x, y)
     }
 
-    /// Types through visible touch targets. Standard SDK key identities take
+    /// Types through visible touch targets. Standard key identities, which
+    /// the runtime's keyboard and the keys an application draws share, take
     /// precedence over matching letters in a crossword or document. Custom
-    /// keyboards retain label matching when no SDK keyboard is present.
+    /// keyboards retain label matching when no standard keyboard is present.
     fn type_text(&mut self, text: &str) -> Result<(), String> {
         for character in text.chars() {
             let label = match character {
@@ -408,9 +437,11 @@ impl Driver {
     ///
     /// A pairing code such as `dr2q29` mixes letters and digits, and an owner
     /// taps the layer key to reach each digit. Refusing every character not on
-    /// the page showing made a script spell that out key by key. The SDK
-    /// keyboard has four pages, letters, symbols and the shifted form of each,
-    /// and the two toggles visit all of them before coming back.
+    /// the page showing made a script spell that out key by key. The
+    /// keyboard, whether the runtime draws it for a text field or an
+    /// application draws it for a terminal, has four pages, letters, symbols
+    /// and the shifted form of each, and the two toggles visit all of them
+    /// before coming back.
     fn press_key(&mut self, label: &str) -> Result<(), String> {
         let layer = parse_action_id("kb.layer").expect("fixed key");
         let shift = parse_action_id("kb.shift").expect("fixed key");
@@ -1393,7 +1424,16 @@ fn keyboard_key<'a>(controls: &'a [Control], label: &str) -> Option<&'a Control>
         .flat_map(|row| (0..10).map(move |column| format!("kb.r{row}c{column}")))
         .filter_map(|name| parse_action_id(&name).ok())
         .collect::<Vec<_>>();
-    keys.push(parse_action_id("kb.space").expect("fixed key"));
+    // The space bar, and the three keys an address keyboard has in its
+    // place, are on the bottom row of every page.
+    for name in [
+        kobo_ui::keyboard::SPACE,
+        kobo_ui::keyboard::AT,
+        kobo_ui::keyboard::SLASH,
+        kobo_ui::keyboard::DOT,
+    ] {
+        keys.push(parse_action_id(name).expect("fixed key"));
+    }
     let is_key = |control: &Control| control.action.is_some_and(|action| keys.contains(&action));
     let standard = controls.iter().any(is_key);
     controls.iter().find(|control| {
@@ -1527,6 +1567,31 @@ mod tests {
             super::keyboard_key(&cells[..1], "n").unwrap().action,
             cells[0].action
         );
+    }
+
+    #[test]
+    fn typing_an_address_finds_the_marks_the_runtime_keyboard_has_beside_its_letters() {
+        let control = |name: &str, label: &str| super::Control {
+            kind: "Cell".into(),
+            rect: (0, 0, 0, 0),
+            centre: (1, 1),
+            lines: vec![label.into()],
+            action: Some(super::parse_action_id(name).unwrap()),
+        };
+        let cells = [
+            control("entry-3", "@"),
+            control("kb.r0c0", "q"),
+            control("kb.at", "@"),
+            control("kb.slash", "/"),
+            control("kb.dot", "."),
+        ];
+        for (label, at) in [("@", 2), ("/", 3), (".", 4)] {
+            assert_eq!(
+                super::keyboard_key(&cells, label).unwrap().action,
+                cells[at].action,
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -1702,6 +1767,37 @@ mod tests {
         assert!(text.says("CHECK\nfree  space"));
         assert!(!text.says("try again"));
         assert!(!text.says("finish Check"));
+    }
+
+    #[test]
+    fn a_word_broken_at_its_own_hyphen_is_read_as_one_word() {
+        let text = super::Control {
+            kind: "Paragraph".into(),
+            rect: (0, 0, 0, 0),
+            centre: (50, 100),
+            action: None,
+            lines: vec![
+                "Run kobo connect calibre-".into(),
+                "web on your computer, or a -".into(),
+                "list".into(),
+            ],
+        };
+        assert!(text.says("kobo connect calibre-web on your computer"));
+        assert!(!text.says("calibre- web"));
+        // A dash standing alone is not a broken word.
+        assert!(text.says("or a - list"));
+    }
+
+    #[test]
+    fn a_command_is_read_as_it_is_typed_though_its_hyphens_cannot_break() {
+        let command = super::Control {
+            kind: "Quote".into(),
+            rect: (0, 0, 0, 0),
+            centre: (50, 100),
+            action: None,
+            lines: vec!["kobo connect zotero\u{2011}reader ~/\u{2060}Notes".into()],
+        };
+        assert!(command.says("kobo connect zotero-reader ~/Notes"));
     }
 
     #[test]

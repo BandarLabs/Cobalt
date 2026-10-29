@@ -2,7 +2,7 @@
 
 mod pipeline;
 
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id,
     audio::{AudioMetadata, AudioPlayer},
@@ -20,6 +20,10 @@ const NEW: &str = "new";
 const CHECK: &str = "check";
 /// Back to the composer with the topic still typed.
 const EDIT: &str = "edit";
+/// The topic field, which raises the reader's keyboard.
+const TOPIC: &str = "topic";
+/// Checks the keys for the topic in the field and shows the estimate.
+const CREATE: &str = "create";
 /// Spends: the one control that starts the paid requests.
 const START: &str = "start";
 /// The firmware's container for a sideloaded audiobook.
@@ -129,7 +133,10 @@ enum Keeping {
 #[derive(Default)]
 struct Audiobook {
     stage: Stage,
-    topic: Keyboard,
+    /// What the book is about, as last typed.
+    topic: String,
+    /// The topic, typed on the reader's own keyboard.
+    entry: TextEntry,
     /// What the book is written and narrated in. Chosen on the composer,
     /// spoken by a narrator whose accent is native to it.
     language: pipeline::Language,
@@ -199,22 +206,32 @@ impl Audiobook {
                 let mut screen = ScreenBuilder::new("audiobook-compose")
                     .top_bar("Create an audiobook")
                     .owns_back(true);
+                if self.entry.is_open() {
+                    return screen
+                        .text_entry(&self.entry, "Your topic", "Create")
+                        .build();
+                }
                 if self.has_books() {
                     screen = screen.top_bar_glyph(SHELF, "Audiobooks", Glyph::Headphones);
                 }
                 if self.checkpoint.is_some() {
                     screen = screen.top_bar_action(RESUME, "Resume");
                 }
-                let mut screen = screen.heading("Your topic");
+                // The field carries its own name, and the line under it says
+                // what is wrong with the topic, or where an interrupted book
+                // would carry on, in the one place either is looked for.
+                let mut screen = screen
+                    .field(TOPIC, &self.topic, "Type any topic")
+                    .field_label("Your topic");
                 if let Some(hint) = self.hint {
-                    screen = screen.secondary(hint);
+                    screen = screen.field_error(hint);
                 } else if let Some(checkpoint) = &self.checkpoint {
                     let title = if checkpoint.title.is_empty() {
                         "Interrupted audiobook"
                     } else {
                         &checkpoint.title
                     };
-                    screen = screen.secondary(context.one_line_row(
+                    screen = screen.field_hint(context.one_line_row(
                         &format!(
                             "Resume part {} of {}: {title}",
                             checkpoint.next_part + 1,
@@ -223,7 +240,7 @@ impl Audiobook {
                         false,
                     ));
                 } else {
-                    screen = screen.secondary("Saved here to play offline.");
+                    screen = screen.field_hint("Saved here to play offline.");
                 }
                 screen
                     .section("Language")
@@ -234,8 +251,7 @@ impl Audiobook {
                             language == self.language,
                         )
                     }))
-                    .typed(&self.topic, "Type any topic")
-                    .keyboard(&self.topic, "Create")
+                    .primary_button(CREATE, "Create")
                     .build()
             }
             Stage::Player => self.player.as_ref().map_or_else(
@@ -246,7 +262,7 @@ impl Audiobook {
                         .button(AGAIN, "Create another")
                         .build()
                 },
-                AudioPlayer::screen,
+                |player| player.screen_for(context),
             ),
             Stage::Failed => self.failed_screen(),
             Stage::Keys => self.keys_screen(),
@@ -571,7 +587,7 @@ impl Audiobook {
             let Some(checkpoint) = self.checkpoint.clone() else {
                 return;
             };
-            self.topic = Keyboard::with_text(&checkpoint.topic);
+            self.topic.clone_from(&checkpoint.topic);
             self.language = checkpoint.language;
             self.title = checkpoint.title;
             self.summary = checkpoint.summary;
@@ -639,7 +655,7 @@ impl Audiobook {
     /// that answer changes: the script written, and each part saved.
     fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
-            topic: self.topic.text().to_owned(),
+            topic: self.topic.clone(),
             language: self.language,
             title: self.title.clone(),
             summary: self.summary.clone(),
@@ -719,7 +735,7 @@ impl Audiobook {
     }
 
     fn begin(&mut self, context: &mut Context) {
-        let topic = self.topic.text().trim();
+        let topic = self.topic.trim();
         if topic.len() < 3 {
             self.hint = Some("That is too short. Add a few words.");
             self.stage = Stage::Compose;
@@ -778,7 +794,7 @@ impl Audiobook {
         // somebody waiting wants to know is how long they have been waiting,
         // not how long this particular provider has.
         self.clock.start(context);
-        self.task = context.spawn(pipeline::research(self.topic.text().trim()));
+        self.task = context.spawn(pipeline::research(self.topic.trim()));
         if self.task.is_none() {
             self.fail("The runtime is already busy.");
         }
@@ -786,7 +802,7 @@ impl Audiobook {
     }
 
     fn start_writing(&mut self, context: &mut Context, research: &[u8]) {
-        match pipeline::write_book(self.topic.text(), self.language, research) {
+        match pipeline::write_book(&self.topic, self.language, research) {
             Ok(task) => {
                 self.stage = Stage::Write;
                 self.task = context.spawn(task);
@@ -1109,6 +1125,23 @@ impl KoboApp for Audiobook {
     }
 
     fn on_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+        if self.stage == Stage::Compose && self.entry.is_open() {
+            // Back from the keyboard puts it away and keeps the composer.
+            if action == kobo_sdk::ActionId::BACK {
+                self.entry.close();
+                self.show(context);
+                return;
+            }
+            if let Some(typing) = self.entry.handle(action) {
+                if let Typing::Submitted(topic) = typing {
+                    self.topic = topic;
+                    self.begin(context);
+                } else {
+                    self.show(context);
+                }
+                return;
+            }
+        }
         if self.stage == Stage::Compose
             && (action == kobo_sdk::ActionId::BACK || action == action_id(SHELF))
         {
@@ -1191,13 +1224,11 @@ impl KoboApp for Audiobook {
                     return;
                 }
             }
-            if let Some(pressed) = self.topic.press(action) {
-                if pressed == Pressed::Submitted {
-                    self.begin(context);
-                } else {
-                    self.hint = None;
-                    self.show(context);
-                }
+            if action == action_id(TOPIC) {
+                self.entry.open_with(self.topic.clone());
+                self.show(context);
+            } else if action == action_id(CREATE) {
+                self.begin(context);
             }
         }
     }
@@ -1662,8 +1693,7 @@ mod tests {
 
     /// The hint used to be written to a field the compose screen never drew,
     /// so a topic under three characters made the Create button do nothing at
-    /// all. It has to reach the screen, and it has to still fit with a
-    /// keyboard already on the panel.
+    /// all. It has to reach the screen, under the field it is about.
     #[test]
     fn a_short_topic_puts_a_visible_hint_on_the_compose_screen() {
         let app = Audiobook {
@@ -1760,12 +1790,12 @@ mod tests {
                 title: "The Moon".to_owned(),
                 bytes: 4_000_000,
             }]),
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         };
         app.reset();
         assert_eq!(app.stage, Stage::Library);
-        assert!(app.topic.text().is_empty());
+        assert!(app.topic.is_empty());
         assert_eq!(app.library.expect("the library survived").len(), 1);
         assert_eq!(app.titles.len(), 1);
     }
@@ -1814,7 +1844,7 @@ mod tests {
         let mut context = runner.context();
         let mut app = Audiobook {
             stage: Stage::Compose,
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         };
         app.begin(&mut context);
@@ -1834,7 +1864,7 @@ mod tests {
         let mut context = runner.context();
         let mut app = Audiobook {
             stage: Stage::Setup,
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         };
         app.checked_secrets(&mut context, &["openai".to_owned()]);
@@ -1858,12 +1888,12 @@ mod tests {
         let mut runner = kobo_sdk::AppRunner::new(Audiobook {
             stage: Stage::Keys,
             missing: vec!["exa"],
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         });
         let commands = runner.action(action_id(CHECK));
         assert_eq!(runner.app().stage, Stage::Setup);
-        assert_eq!(runner.app().topic.text(), "the moon");
+        assert_eq!(runner.app().topic, "the moon");
         assert!(commands.iter().any(|command| matches!(
             command,
             kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::CheckSecrets { .. })
@@ -1877,7 +1907,7 @@ mod tests {
         let mut context = runner.context();
         let mut app = Audiobook {
             stage: Stage::Setup,
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         };
         let all = SECRETS
@@ -1912,7 +1942,7 @@ mod tests {
         let mut context = runner.context();
         let mut app = Audiobook {
             stage: Stage::Setup,
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         };
         app.skip_preflight(&mut context);
@@ -2360,7 +2390,7 @@ mod tests {
     fn a_dropped_connection_offers_to_try_the_same_topic_again() {
         let mut runner = kobo_sdk::AppRunner::new(Audiobook {
             stage: Stage::Research,
-            topic: kobo_sdk::keyboard::Keyboard::with_text("the moon"),
+            topic: "the moon".to_owned(),
             ..Audiobook::default()
         });
         runner.app_mut().fail_task(kobo_sdk::TaskError::Offline);
@@ -2370,7 +2400,7 @@ mod tests {
         assert!(!drawn.contains("Try another topic"), "{drawn}");
         runner.action(action_id(CHECK));
         assert_eq!(runner.app().stage, Stage::Setup);
-        assert_eq!(runner.app().topic.text(), "the moon");
+        assert_eq!(runner.app().topic, "the moon");
     }
 
     /// The resume button stays one short word, and the message says where

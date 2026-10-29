@@ -5,17 +5,13 @@ clean
 shot kitchen-connect
 tap Check again
 wait-for No account has arrived
+clean
+shot kitchen-check-again
 tap Type the address here
 expect Kitchen Card settings
 tap https://mealie.example
 expect https://
-type mealie
-tap ?123
-type .
-tap abc
-type invalid
-tap ?123
-type :8443
+type mealie.invalid:8443
 tap Save
 expect Kitchen Card settings
 expect https://mealie.invalid:8443

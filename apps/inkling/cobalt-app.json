@@ -4,8 +4,8 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.2.3",
-  "release_notes": "The board stays in view while you type, right letters show as filled squares, a refused word stays typed, and the daily puzzle changes at your midnight.",
+  "version": "0.2.4",
+  "release_notes": "Hard mode is now a switch on the Rules screen that says what it does, and a failed export shows an error with Try again on it.",
   "glyph": "note",
   "capabilities": []
 }

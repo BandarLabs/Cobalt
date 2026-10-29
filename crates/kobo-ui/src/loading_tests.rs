@@ -9,6 +9,7 @@ fn an_attention_banner_is_at_least_finger_tall_on_every_panel() {
             id: NodeId(1),
             level: BannerLevel::Attention,
             text: "Battery low".into(),
+            action: None,
         }],
     );
     for (name, metrics) in PANELS {
@@ -228,6 +229,7 @@ fn one_of_every_node() -> Vec<Node> {
             id: NodeId(15),
             level: BannerLevel::Attention,
             text: "Careful".into(),
+            action: None,
         },
         Node::Skeleton {
             id: NodeId(16),

@@ -26,12 +26,14 @@ A five-letter word puzzle, new each day, that works offline.
   accepted stays typed, so one wrong letter is one backspace.
 - Above the board, the letters your earlier guesses have already proven are
   listed.
-- **Rules** sits in the top bar, and the menu beside it holds New game (an
-  earlier day), hard mode and statistics, where every Cobalt game keeps them.
+- **Rules** sits in the top bar, with the **Hard mode** switch under the
+  rules. The menu beside it holds New game (an earlier day) and statistics,
+  where every Cobalt game keeps them.
 - Saved daily progress, played and won totals, and a win distribution by
   number of guesses.
 - **Export results** saves the day's board and statistics as
-  `export-result.txt`, ready to fetch from a computer.
+  `export-result.txt`, ready to fetch from a computer. If storage refuses
+  it, the message says so and carries **Try again**.
 - The archive plays any of the past 365 days. Archive games do not count
   towards statistics and are not saved.
 

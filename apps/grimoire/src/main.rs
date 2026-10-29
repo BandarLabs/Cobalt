@@ -4,7 +4,7 @@ mod filters;
 use corpus::Entry;
 use filters::Filter;
 use kobo_bookview::BookView;
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, TaskId,
     TaskOutcome,
@@ -204,7 +204,9 @@ struct Grimoire {
     kind: Kind,
     edition: u16,
     query: String,
-    keyboard: Keyboard,
+    /// The one field open at a time, a search or a step of an edit, drawn by
+    /// the runtime while it is open.
+    entry: TextEntry,
     page: usize,
     detail: Option<usize>,
     /// Which page of the open reference is drawn. Also pages About, which is
@@ -253,7 +255,7 @@ impl Default for Grimoire {
             kind: Kind::Spell,
             edition: 2014,
             query: String::new(),
-            keyboard: Keyboard::new(),
+            entry: TextEntry::new(),
             page: 0,
             detail: None,
             detail_page: 0,
@@ -418,15 +420,7 @@ impl Grimoire {
             View::Filters | View::FilterChoice => self.filter_screen(context),
             View::Bookmarks => self.bookmarks(s, context),
             View::Search => s
-                .secondary(if self.keyboard.text().is_empty() {
-                    "Type the start of a name.".to_owned()
-                } else {
-                    format!(
-                        "Names starting with \u{201c}{}\u{201d}",
-                        self.keyboard.text()
-                    )
-                })
-                .keyboard(&self.keyboard, "Search")
+                .text_entry(&self.entry, "Type the start of a name.", "Search")
                 .build(),
             View::Dice => self.dice(s),
             View::Initiative => self.initiative(s, context),
@@ -443,6 +437,23 @@ impl Grimoire {
     /// claimed. A reference that overstates its own contents sends somebody
     /// looking through filters for a spell that was never in the file.
     fn about(&self, s: ScreenBuilder, context: &Context) -> Screen {
+        let pages = context.paginate(&self.about_text(), true);
+        let page = self.detail_page.min(pages.len().saturating_sub(1));
+        let mut s = s;
+        for paragraph in pages.get(page).into_iter().flatten() {
+            s = s.text(paragraph);
+        }
+        if pages.len() > 1 {
+            s = s.page_turns("previous", "next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        s.bottom_action("back", "Back").build()
+    }
+
+    /// Everything About says, in paragraphs, before it is set into pages.
+    fn about_text(&self) -> String {
         let mut text = String::from(
             "Grimoire is an unofficial offline reference. It requests no capabilities.\n\n",
         );
@@ -454,29 +465,17 @@ impl Grimoire {
                     (held > 0).then(|| format!("{held} {}", kind.plural()))
                 })
                 .collect();
-            let _ = writeln!(text, "{edition}: {}", counted.join(" · "));
+            // A paragraph each: one line break inside a paragraph is set as a
+            // space, and the two editions' counts ran on as one sentence.
+            let _ = write!(text, "{edition}: {}\n\n", counted.join(" · "));
         }
         text.push_str(
-            "\nThe System Reference Documents do not cover classes, subclasses, \
+            "The System Reference Documents do not cover classes, subclasses, \
              backgrounds or feats, so this reference has none of them. No \
              third-party OGL-only material or artwork is included.\n\n",
         );
         text.push_str(ATTRIBUTION);
-        let pages = context.paginate(&text, true);
-        let page = self.detail_page.min(pages.len().saturating_sub(1));
-        let mut s = s.text(
-            pages
-                .get(page)
-                .map(|lines| lines.join("\n"))
-                .unwrap_or_default(),
-        );
-        if pages.len() > 1 {
-            s = s.page_turns("previous", "next").page_position(
-                u16::try_from(page + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len()).unwrap_or(u16::MAX),
-            );
-        }
-        s.bottom_action("back", "Back").build()
+        text
     }
 
     /// How many entries of one category this build holds for an edition.
@@ -1043,10 +1042,75 @@ impl Grimoire {
             Editor::Init(_) => ["Name", "Initiative", "Hit points, or leave blank", ""],
             Editor::Party(_) => ["Name", "Armor class", "Maximum HP", "Current HP"],
         };
+        if self.entry.is_open() {
+            return s
+                .text_entry(&self.entry, prompts[edit.step], "Next")
+                .build();
+        }
+        // The keyboard was put away at the step that may be left blank. The
+        // runtime answers an empty field the way it answers Back, so the
+        // choice between the two is asked here, and Back still abandons.
         s.heading(prompts[edit.step])
-            .field("value", self.keyboard.text(), prompts[edit.step])
-            .keyboard(&self.keyboard, "Next")
+            .secondary(format!(
+                "{} \u{b7} Initiative {}",
+                edit.values.first().map_or("", String::as_str),
+                edit.values.get(1).map_or("", String::as_str)
+            ))
+            .button("edit-blank", "Leave hit points blank")
+            .button("edit-type", "Type hit points")
             .build()
+    }
+
+    /// Opens the field for a search or one step of an edit, holding `text`.
+    ///
+    /// Every step after a name is a number and opens on the digits, whether
+    /// or not it already holds one, since a value is changed by typing digits.
+    fn open_entry(&mut self, number: bool, text: &str) {
+        self.entry.close();
+        self.entry = if number {
+            TextEntry::new().numeric()
+        } else {
+            TextEntry::new()
+        };
+        self.entry.open_with(text);
+    }
+
+    /// Whether the step an edit is on may be left without a value: the hit
+    /// points of a combatant, which a table often does not track.
+    fn blank_allowed(&self) -> bool {
+        self.edit
+            .as_ref()
+            .is_some_and(|edit| matches!(edit.target, Editor::Init(_)) && edit.step == 2)
+    }
+
+    /// Answers the edit field, or the choice offered when it was put away.
+    fn edit_action(&mut self, c: &mut Context, a: ActionId) -> bool {
+        if a == action_id("edit-blank") && self.blank_allowed() && !self.entry.is_open() {
+            self.complete_edit(c, String::new());
+            return true;
+        }
+        if a == action_id("edit-type") && self.blank_allowed() && !self.entry.is_open() {
+            let existing = self
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.existing.get(edit.step).cloned())
+                .unwrap_or_default();
+            self.open_entry(true, &existing);
+            return true;
+        }
+        match self.entry.handle(a) {
+            Some(Typing::Submitted(text)) => self.complete_edit(c, text),
+            Some(Typing::Changed) => {}
+            Some(_) if self.blank_allowed() => {}
+            Some(_) => {
+                self.view = match self.edit.take().map(|edit| edit.target) {
+                    Some(Editor::Party(_)) => View::Party,
+                    _ => View::Initiative,
+                };
+            }
+            None => return false,
+        }
+        true
     }
     fn save(&self, c: &mut Context) {
         let init = self
@@ -1136,7 +1200,7 @@ impl Grimoire {
                 .unwrap_or_default(),
             _ => vec![],
         };
-        self.keyboard = Keyboard::with_text(values.first().cloned().unwrap_or_default());
+        self.open_entry(false, &values.first().cloned().unwrap_or_default());
         self.edit = Some(Edit {
             target,
             step: 0,
@@ -1155,13 +1219,11 @@ impl Grimoire {
             Editor::Party(_) => 4,
         };
         if edit.values.len() < count {
-            // Every step after the name is a number, so an empty one opens
-            // on the digits; one being edited holds what it held before.
+            // Every step after the name is a number, and one being edited
+            // holds what it held before.
             edit.step = edit.values.len();
-            self.keyboard = match edit.existing.get(edit.step).filter(|v| !v.is_empty()) {
-                Some(value) => Keyboard::with_text(value.clone()),
-                None => Keyboard::numeric(),
-            };
+            let existing = edit.existing.get(edit.step).cloned().unwrap_or_default();
+            self.open_entry(true, &existing);
             self.edit = Some(edit);
             return;
         }
@@ -1361,21 +1423,24 @@ impl KoboApp for Grimoire {
             self.show(c);
             return;
         }
-        if self.view == View::Search || self.view == View::Edit {
-            if let Some(p) = self.keyboard.press(a) {
-                if p == Pressed::Submitted {
-                    let text = self.keyboard.take();
-                    if self.view == View::Search {
-                        self.query = text;
-                        self.page = 0;
-                        self.view = View::Compendium;
-                    } else {
-                        self.complete_edit(c, text);
-                    }
+        if self.view == View::Search {
+            match self.entry.handle(a) {
+                Some(Typing::Submitted(text)) => {
+                    self.query = text;
+                    self.page = 0;
+                    self.view = View::Compendium;
                 }
+                Some(Typing::Changed) | None => {}
+                Some(_) => self.view = View::Compendium,
+            }
+            if a != ActionId::BACK {
                 self.show(c);
                 return;
             }
+        }
+        if self.view == View::Edit && a != ActionId::BACK && self.edit_action(c, a) {
+            self.show(c);
+            return;
         }
         // The open reference answers its own page turns and controls first.
         if self.view == View::Detail && self.book.memory().is_some() {
@@ -1392,6 +1457,12 @@ impl KoboApp for Grimoire {
             // The scrim beside an open menu takes Back before the view does,
             // or putting the menu away leaves the compendium.
             self.entry_menu = None;
+        } else if a == ActionId::BACK && self.view == View::Compendium && !self.query.is_empty() {
+            // A search lets go before the list it narrowed. The runtime's
+            // field answers an empty search the way it answers Back, so
+            // clearing the field no longer clears the search.
+            self.query.clear();
+            self.page = 0;
         } else if a == ActionId::BACK || a == action_id("back") {
             self.init_menu = None;
             self.view = match self.view {
@@ -1438,7 +1509,8 @@ impl KoboApp for Grimoire {
             self.clear_filters();
             self.save(c);
         } else if a == action_id("search") {
-            self.keyboard = Keyboard::with_text(&self.query);
+            let query = self.query.clone();
+            self.open_entry(false, &query);
             self.view = View::Search;
         } else if a == action_id("bookmarks") {
             self.bookmarks_page = 0;
@@ -1452,7 +1524,10 @@ impl KoboApp for Grimoire {
             }
         } else if a == action_id("next") {
             match self.view {
-                View::About => self.detail_page += 1,
+                View::About => {
+                    let last = c.paginate(&self.about_text(), true).len().saturating_sub(1);
+                    self.detail_page = (self.detail_page + 1).min(last);
+                }
                 View::Member => self.member_page = 1,
                 View::Initiative => {
                     self.page =
@@ -1885,6 +1960,71 @@ mod tests {
     }
 
     #[test]
+    fn a_combatant_can_be_left_without_hit_points_and_back_still_abandons_the_edit() {
+        let mut runner = ready();
+        runner.action(action_id("initiative"));
+        let before = runner.app().initiative.len();
+        runner.action(action_id("init-add"));
+        runner.type_text("goblin");
+        runner.type_text("7");
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Edit, "the edit was dropped");
+        runner.action(action_id("edit-blank"));
+        let goblin = runner
+            .app()
+            .initiative
+            .iter()
+            .find(|combatant| combatant.name == "goblin")
+            .expect("the combatant was not added");
+        assert_eq!((goblin.initiative, goblin.hp), (7, None));
+
+        runner.action(action_id("init-add"));
+        runner.type_text("orc");
+        runner.type_text("5");
+        runner.cancel_text();
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Initiative);
+        assert_eq!(
+            runner.app().initiative.len(),
+            before + 1,
+            "Back kept the orc"
+        );
+    }
+
+    #[test]
+    fn the_steps_after_a_name_open_on_the_digits() {
+        let mut runner = ready();
+        runner.action(action_id("initiative"));
+        let named = runner.action(action_id("init-add"));
+        let kind =
+            |commands: &[kobo_sdk::Command]| match kobo_sdk::keyboard::testing::asked(commands) {
+                Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) => *kind,
+                _ => panic!("no field was asked for"),
+            };
+        assert_eq!(kind(&named), kobo_sdk::FieldKind::Text);
+        let numbered = runner.type_text("goblin");
+        assert_eq!(kind(&numbered), kobo_sdk::FieldKind::Number);
+    }
+
+    #[test]
+    fn a_search_narrows_the_list_and_back_lets_go_of_it_before_leaving() {
+        let mut runner = ready();
+        runner.action(action_id("spells"));
+        runner.action(action_id("search"));
+        runner.type_text("fire");
+        assert_eq!(runner.app().view, View::Compendium);
+        assert_eq!(runner.app().query, "fire");
+        runner.action(action_id("search"));
+        runner.cancel_text();
+        assert_eq!(runner.app().query, "fire", "backing out lost the search");
+        runner.action(ActionId::BACK);
+        assert!(runner.app().query.is_empty(), "Back kept the search");
+        assert_eq!(runner.app().view, View::Compendium);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
     fn editing_a_member_keeps_what_was_not_retyped_and_takes_what_was() {
         let mut runner = ready();
         runner.app_mut().party.push(Member {
@@ -1898,17 +2038,16 @@ mod tests {
         });
         runner.app_mut().member = Some(0);
         runner.action(action_id("party-edit"));
-        assert_eq!(runner.app().keyboard.text(), "Moss");
-        runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app().entry.text(), "Moss");
+        runner.type_text("Moss");
         assert_eq!(
-            runner.app().keyboard.text(),
+            runner.app().entry.text(),
             "12",
             "the armour class step lost its value"
         );
-        runner.app_mut().keyboard = Keyboard::with_text("15");
-        runner.action(action_id("kb.enter"));
-        runner.action(action_id("kb.enter"));
-        runner.action(action_id("kb.enter"));
+        runner.type_text("15");
+        runner.type_text("10");
+        runner.type_text("8");
         assert_eq!(runner.app().party[0].name, "Moss");
         assert_eq!(runner.app().party[0].ac, 15);
         assert_eq!(
@@ -1943,6 +2082,61 @@ mod tests {
         assert_eq!((app.party[0].success, app.party[0].failure), (2, 1));
         assert_eq!(app.party[0].slots[1].used, 1);
     }
+    /// About pages at the larger sizes; every page fits, the two editions'
+    /// counts stay apart, and the licence is on one of the pages.
+    #[test]
+    fn every_about_page_fits_and_the_licence_is_on_one_of_them_at_every_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let mut runner = kobo_sdk::AppRunner::with_metrics(Grimoire::default(), metrics);
+                runner.app_mut().view = View::About;
+                let mut read = Vec::new();
+                for page in 0..8 {
+                    runner.app_mut().detail_page = page;
+                    let screen = runner.app().screen(&runner.context());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?} {orientation:?} page {page}: {:?}",
+                        diagnostics.issues
+                    );
+                    let paragraphs = screen
+                        .nodes
+                        .iter()
+                        .filter_map(|node| match node {
+                            kobo_ui::Node::Text { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if read.last() == Some(&paragraphs) {
+                        break;
+                    }
+                    read.push(paragraphs);
+                }
+                // A paragraph may carry on over a page turn, so the pages are
+                // read as one text.
+                let all = read.concat();
+                assert!(
+                    all.join(" ").contains("Creative Commons Attribution 4.0"),
+                    "{text_scale:?} {orientation:?}: {read:?}"
+                );
+                assert!(
+                    !all.iter()
+                        .any(|text| text.contains("2014") && text.contains("2024")),
+                    "{text_scale:?} {orientation:?}: {all:?}"
+                );
+            }
+        }
+    }
+
     /// Every screen a table touches during a fight, at every size the
     /// interface offers.
     #[test]

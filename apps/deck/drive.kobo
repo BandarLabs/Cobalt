@@ -29,6 +29,9 @@ clean
 shot pairing
 tap-id enter-address
 type 192.168.1.20
+# The address opens on the keys the runtime keeps for addresses, with where
+# the address comes from under the prompt.
+shot address-field
 tap-id kb.enter
 wait-for Now the pairing code
 expect The six characters kobo sidekick init printed beside the address.
@@ -57,7 +60,8 @@ tap-id repair
 wait-for Pair with your computer
 tap-id enter-address
 expect 192.168.1.20:9331
-tap-id kb.cancel
+# Back on the reader's keyboard puts it away; the second leaves pairing.
+tap Back
 tap back
 wait-for This reader is not on Wi-Fi.
 clean

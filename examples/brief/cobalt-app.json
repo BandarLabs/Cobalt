@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "glyph": "clock",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "Refreshes when the brief is stale, shows twelve stories with times in your own time zone, and keeps every story with its pictures so the whole brief reads without Wi-Fi. Reopens a document on the page you left."
+  "release_notes": "The source list marks the one showing now and keeps every list's description in view."
 }

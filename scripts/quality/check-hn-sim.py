@@ -259,7 +259,14 @@ def main():
                 # reader and how much room the saved articles take.
                 assert 'Ready offline: 1 article' in words(offline), words(offline)
                 assert 'Offline \u00b7' in words(offline), words(offline)
-                drive('tap A quieter way', 'wait-idle', 'tap-id read-article')
+                # The discussion is not kept, only the article: the reason is
+                # a banner carrying Join Wi-Fi, and the saved article is said
+                # to open from the book at the top.
+                drive('tap A quieter way', 'wait-for Join Wi-Fi')
+                discussion = words(capture('08b-discussion-offline'))
+                assert 'The article is saved on this reader' in discussion, discussion
+                checks.append('a discussion that cannot be fetched says why with Join Wi-Fi on the message')
+                drive('tap-id read-article')
                 kept = capture('09-article-offline')
                 assert 'rebuilt over a winter' in words(kept), words(kept)
                 assert len(requests) == before, requests[before:]

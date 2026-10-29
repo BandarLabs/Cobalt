@@ -3,9 +3,10 @@
 use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DenyReason, DeviceError,
-    DeviceIdentity, DeviceRequest, DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen,
-    ScreenBuilder, Task, TaskError, TaskId, TaskOutcome, UpdateChannel, WifiNetwork,
+    action_id, ActionId, BandAlign, BannerLevel, BatteryDetail, BluetoothDevice, Context,
+    DenyReason, DeviceError, DeviceIdentity, DeviceRequest, DeviceResult, FieldKind, Glyph,
+    Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, SlotWidth, Task, TaskError, TaskId,
+    TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -20,7 +21,20 @@ const CLOSE: &str = "close";
 const TOGGLE: &str = "toggle";
 const AUTO_COBALT: &str = "auto-cobalt";
 const AUTO_APPS: &str = "auto-apps";
-const BETA_UPDATES: &str = "beta-updates";
+/// The two answers of the update channel list. Choosing the one that is not
+/// current asks for confirmation first; choosing the current one does nothing.
+const CHANNEL_STABLE: &str = "channel-stable";
+const CHANNEL_BETA: &str = "channel-beta";
+/// The channel list's pager. Two answers always fit one page, so neither is
+/// drawn, but an option list names them all the same.
+const CHANNEL_PREVIOUS: &str = "channel-previous";
+const CHANNEL_NEXT: &str = "channel-next";
+/// The Wi-Fi password field. Tapping it does nothing: the keys are already
+/// under it.
+const PASSWORD_FIELD: &str = "wifi-password";
+/// Opens the update channel and the automatic-update switches from the
+/// update screen.
+const UPDATE_OPTIONS: &str = "update-options";
 const CONFIRM_CHANNEL: &str = "confirm-channel";
 const CANCEL_CHANNEL: &str = "cancel-channel";
 const RESCAN: &str = "rescan";
@@ -65,10 +79,35 @@ const fn release_window(channel: UpdateChannel) -> u32 {
     }
 }
 
+/// The lines under the two automatic-update switches: what happens now with
+/// each one as it is, rather than what tapping it would do.
+const fn auto_update_summaries(cobalt: bool, apps: bool) -> (&'static str, &'static str) {
+    (
+        if cobalt {
+            "Installs new versions itself"
+        } else {
+            "Installs only when you ask"
+        },
+        if apps {
+            "Apps update themselves"
+        } else {
+            "Apps update when you ask"
+        },
+    )
+}
+
 const fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
         UpdateChannel::Stable => "Stable",
         UpdateChannel::Beta => "Beta",
+    }
+}
+
+/// The answer in the update channel list that stands for `channel`.
+const fn channel_action(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => CHANNEL_STABLE,
+        UpdateChannel::Beta => CHANNEL_BETA,
     }
 }
 
@@ -89,6 +128,8 @@ enum View {
     Battery,
     About,
     Update,
+    /// The standing update choices: the channel and the two switches.
+    UpdateOptions,
     UpdateChannelConfirm,
 }
 
@@ -219,8 +260,9 @@ impl Topic {
 
 /// Whether trouble with this request belongs on the Update screen.
 ///
-/// The automatic-update switches sit under the update rows, so a runtime
-/// that cannot read or keep those choices reports it where they are shown.
+/// The automatic-update switches are reached from the update screen, so a
+/// runtime that cannot read or keep those choices reports it there, as well
+/// as over the choices themselves.
 fn update_screen_owns(request: &DeviceRequest) -> bool {
     matches!(
         request,
@@ -230,6 +272,24 @@ fn update_screen_owns(request: &DeviceRequest) -> bool {
             | DeviceRequest::ReadUpdateChannel
             | DeviceRequest::SetUpdateChannel { .. }
     )
+}
+
+/// Whether this request reads or keeps one of the standing update choices,
+/// whose trouble is also shown over the choices themselves.
+fn is_standing_choice(request: &DeviceRequest) -> bool {
+    matches!(
+        request,
+        DeviceRequest::ReadAutoUpdate
+            | DeviceRequest::SetAutoUpdate { .. }
+            | DeviceRequest::ReadUpdateChannel
+            | DeviceRequest::SetUpdateChannel { .. }
+    )
+}
+
+/// One part of the About page, kept whole on whichever page it lands.
+enum AboutPart {
+    Facts(&'static str, Vec<(String, String)>),
+    Text(&'static str, &'static str),
 }
 
 #[derive(Default)]
@@ -254,6 +314,7 @@ struct Settings {
     password: Keyboard,
     battery: Option<BatteryDetail>,
     identity: Option<DeviceIdentity>,
+    about_page: usize,
     /// This reader's address on the local network, when the runtime said.
     address: Option<String>,
     update: UpdateFlow,
@@ -263,6 +324,10 @@ struct Settings {
     /// rather than a guess that a tap would then contradict.
     auto_update: Option<(bool, bool)>,
     update_channel: Option<UpdateChannel>,
+    /// Why the runtime would not read or keep a standing update choice,
+    /// shown over the choices. The update screen hears it too, as it always
+    /// has.
+    choice_trouble: Option<String>,
     pending: Option<Pending>,
     delayed: Option<TaskId>,
     trouble: Option<(Topic, String)>,
@@ -278,9 +343,10 @@ impl Settings {
             View::Wifi => self.wifi_for(context),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
-            View::About => self.about(),
+            View::About => self.about_for(context),
             View::Update => self.update(),
-            View::UpdateChannelConfirm => self.update_channel_confirmation(),
+            View::UpdateOptions => self.update_options_for(context),
+            View::UpdateChannelConfirm => self.update_channel_confirmation_for(context),
         };
         context.set_screen(screen);
     }
@@ -296,6 +362,11 @@ impl Settings {
                 self.bluetooth_page = self
                     .bluetooth_page
                     .min(self.bluetooth_pages(context).len().saturating_sub(1));
+            }
+            View::About => {
+                self.about_page = self
+                    .about_page
+                    .min(self.about_pages(context).len().saturating_sub(1));
             }
             View::Wifi => {
                 self.wifi_page = self
@@ -476,10 +547,7 @@ impl Settings {
             }
             UpdateFlow::Ready { version, .. } => {
                 screen = screen
-                    .banner(
-                        kobo_sdk::BannerLevel::Info,
-                        format!("Cobalt {version} is available."),
-                    )
+                    .banner(BannerLevel::Info, format!("Cobalt {version} is available."))
                     .facts([("Installed", VERSION), ("Available", version.as_str())])
                     .text(
                         "The download is checked before it is installed. The version you have now is kept in case the update has to be undone.",
@@ -501,26 +569,30 @@ impl Settings {
                     )
                     .primary_button(CLOSE, "Close Cobalt");
             }
+            // The fix for being offline is joining a network, so that is
+            // what the banner offers; checking again only helps afterwards.
             UpdateFlow::Offline => {
                 screen = screen
                     .section_with_value("Installed", VERSION)
                     .banner(
-                        kobo_sdk::BannerLevel::Attention,
+                        BannerLevel::Attention,
                         "This reader is not on Wi-Fi. Join a network, then check again.",
                     )
-                    .buttons([(JOIN_WIFI, "Join Wi-Fi"), (CHECK, "Check again")]);
+                    .banner_action(JOIN_WIFI, "Join Wi-Fi")
+                    .button(CHECK, "Check again");
             }
             UpdateFlow::Failed(reason) => {
                 screen = screen
                     .section_with_value("Installed", VERSION)
-                    .banner(kobo_sdk::BannerLevel::Attention, reason.clone())
-                    .button(CHECK, "Try again");
+                    .banner(BannerLevel::Error, reason.clone())
+                    .banner_action(CHECK, "Try again");
             }
         }
-        // The standing choices, drawn only around the quiet states so an
-        // installation in progress keeps its screen to itself. Absent until
-        // the runtime has answered, because a switch drawn from a guess can
-        // be tapped into recording the opposite of what it showed.
+        // The way to the standing choices, offered only around the quiet
+        // states so an installation in progress keeps its screen to itself.
+        // Absent until the runtime has answered, because a switch drawn from
+        // a guess can be tapped into recording the opposite of what it
+        // showed.
         if matches!(
             self.update,
             UpdateFlow::Idle
@@ -529,57 +601,145 @@ impl Settings {
                 | UpdateFlow::Offline
                 | UpdateFlow::Failed(_)
         ) {
-            screen = self.auto_update_controls(screen);
+            if let Some(summary) = self.update_options_summary() {
+                screen = screen.rows([(
+                    UPDATE_OPTIONS,
+                    "Channel and automatic updates",
+                    summary,
+                    Glyph::Settings,
+                )]);
+            }
         }
         screen.build()
     }
 
-    fn auto_update_controls(&self, mut screen: ScreenBuilder) -> ScreenBuilder {
+    /// One line for the row that opens the standing choices: the channel,
+    /// and what updates without being asked.
+    fn update_options_summary(&self) -> Option<String> {
         let (Some((cobalt, apps)), Some(channel)) = (self.auto_update, self.update_channel) else {
-            return screen;
+            return None;
         };
-        screen = screen
-            .section_with_value(
-                "Update channel",
-                format!("{} · Cobalt {VERSION}", channel_name(channel)),
-            )
-            .text("Beta gets new versions of Cobalt and its apps sooner, and they may have more problems. You can change back here at any time, without a USB cable. Your apps, their data and your saved keys are kept either way.")
-            .button(
-                BETA_UPDATES,
-                if channel == UpdateChannel::Beta {
-                    "Change to Stable"
-                } else {
-                    "Change to Beta"
-                },
-            )
-            .section_with_value(
-                "Update Cobalt automatically",
-                if cobalt { "On" } else { "Off" },
-            )
-            .button(
-                AUTO_COBALT,
-                if cobalt {
-                    "Stop updating Cobalt automatically"
-                } else {
-                    "Update Cobalt automatically"
-                },
-            )
-            .section_with_value(
-                "Update apps automatically",
-                if apps { "On" } else { "Off" },
-            )
-            .button(
-                AUTO_APPS,
-                if apps {
-                    "Stop updating apps automatically"
-                } else {
-                    "Update apps automatically"
-                },
-            );
+        let automatic = match (cobalt, apps) {
+            (true, true) => "Cobalt and apps update on their own",
+            (true, false) => "Cobalt updates on its own",
+            (false, true) => "Apps update on their own",
+            (false, false) => "Updates only when you ask",
+        };
+        Some(format!("{} · {automatic}", channel_name(channel)))
+    }
+
+    /// The standing choices on a screen of their own.
+    ///
+    /// They shared the update screen until they became runtime controls,
+    /// and with the release status, a banner and its action above them the
+    /// screen ran off the foot of the panel at the default size held
+    /// sideways, and at the largest size either way.
+    ///
+    /// The sentence under the channels and the line under each channel say
+    /// nothing the confirmation does not say again, so where the panel
+    /// cannot hold them at this size they go, the sentence first, rather
+    /// than a switch going under the foot of the panel.
+    fn update_options_for(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        // Each step gives up one more thing, least needed first: the
+        // switches' own lines, which restate what the switch shows; the
+        // sentence that warns about Beta; the channels' lines; and last the
+        // list's prompt, which only repeats what the two choices under it
+        // say, and only where a refusal over the choices would otherwise push
+        // a switch off a panel held sideways.
+        let mut screen = self.update_options_shaped(0);
+        for given_up in 0..=4 {
+            screen = self.update_options_shaped(given_up);
+            if !screen
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+            {
+                break;
+            }
+        }
         screen
     }
 
+    #[cfg(test)]
+    fn update_options(&self) -> Screen {
+        self.update_options_for(&Context::default())
+    }
+
+    /// The update options with the first `given_up` of the things
+    /// [`Self::update_options_for`] can do without left out.
+    fn update_options_shaped(&self, given_up: usize) -> Screen {
+        let switch_lines = given_up < 1;
+        let explain = given_up < 2;
+        let summaries = given_up < 3;
+        let prompt = given_up < 4;
+        let mut screen = ScreenBuilder::new("settings-update-options")
+            .top_bar("Update options")
+            .owns_back(true);
+        if let Some(trouble) = &self.choice_trouble {
+            screen = screen.banner(BannerLevel::Error, trouble.clone());
+        }
+        let (Some((cobalt, apps)), Some(channel)) = (self.auto_update, self.update_channel) else {
+            return screen.text("Reading the update choices.").build();
+        };
+        let summary = |words: &'static str| if summaries { words } else { "" };
+        screen = screen
+            .option_list(
+                if prompt { "Update channel" } else { "" },
+                0,
+                CHANNEL_PREVIOUS,
+                CHANNEL_NEXT,
+                [
+                    (CHANNEL_STABLE, "Stable", summary("Tested versions")),
+                    (CHANNEL_BETA, "Beta", summary("New versions sooner")),
+                ],
+            )
+            .chosen(match channel {
+                UpdateChannel::Stable => 0,
+                UpdateChannel::Beta => 1,
+            });
+        if explain {
+            screen = screen.text("Beta versions may have more problems. You can change back here at any time, and your apps, their data and your saved keys are kept.");
+        }
+        // Each switch's line says what happens now with it as it is, as the
+        // Wi-Fi and Bluetooth switches do. They are the first thing to go
+        // where the panel cannot hold everything.
+        let (cobalt_now, apps_now) = if switch_lines {
+            auto_update_summaries(cobalt, apps)
+        } else {
+            ("", "")
+        };
+        screen
+            .toggle(
+                AUTO_COBALT,
+                "Update Cobalt automatically",
+                cobalt_now,
+                cobalt,
+            )
+            .toggle(AUTO_APPS, "Update apps automatically", apps_now, apps)
+            .build()
+    }
+
+    #[cfg(test)]
     fn update_channel_confirmation(&self) -> Screen {
+        self.update_channel_confirmation_for(&Context::default())
+    }
+
+    /// The confirmation, with its two answers stacked where the panel has
+    /// the height for them and side by side where it does not, which is a
+    /// panel held sideways at the largest sizes.
+    fn update_channel_confirmation_for(&self, context: &Context) -> Screen {
+        let stacked = self.update_channel_confirmation_shaped(false);
+        if stacked
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            self.update_channel_confirmation_shaped(true)
+        } else {
+            stacked
+        }
+    }
+
+    fn update_channel_confirmation_shaped(&self, side_by_side: bool) -> Screen {
         let current = self.update_channel.unwrap_or_default();
         let chosen = opposite_channel(current);
         let explanation = match chosen {
@@ -590,7 +750,8 @@ impl Settings {
                 "Cobalt and the App Store will offer Stable versions from now on. Nothing is downgraded, and your apps, their data and your saved keys are kept."
             }
         };
-        ScreenBuilder::new("settings-update-channel-confirm")
+        let confirm = format!("Use {} updates", channel_name(chosen));
+        let screen = ScreenBuilder::new("settings-update-channel-confirm")
             .top_bar("Confirm update channel")
             .owns_back(true)
             .facts([
@@ -598,39 +759,55 @@ impl Settings {
                 ("Current channel", channel_name(current).to_owned()),
                 ("New channel", channel_name(chosen).to_owned()),
             ])
-            .text(explanation)
-            .primary_button(
-                CONFIRM_CHANNEL,
-                format!("Use {} updates", channel_name(chosen)),
-            )
+            .text(explanation);
+        if side_by_side {
+            return screen
+                .band(
+                    BandAlign::Top,
+                    [
+                        (
+                            SlotWidth::Fill,
+                            Box::new(move |slot: ScreenBuilder| {
+                                slot.primary_button(CONFIRM_CHANNEL, confirm)
+                            })
+                                as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                        ),
+                        (
+                            SlotWidth::Fill,
+                            Box::new(|slot: ScreenBuilder| slot.button(CANCEL_CHANNEL, "Cancel")),
+                        ),
+                    ],
+                )
+                .build();
+        }
+        screen
+            .primary_button(CONFIRM_CHANNEL, confirm)
             .button(CANCEL_CHANNEL, "Cancel")
             .build()
     }
 
     fn bluetooth_prefix(&self) -> ScreenBuilder {
+        let summary = match self.bluetooth_state {
+            RadioState::Unknown => "Checking…".to_owned(),
+            RadioState::On => match self
+                .devices
+                .iter()
+                .filter(|device| device.connected)
+                .count()
+            {
+                0 => "Nothing connected".to_owned(),
+                connected => format!("{connected} connected"),
+            },
+            _ => "Turn on to find devices".to_owned(),
+        };
         let mut screen = ScreenBuilder::new("settings-bluetooth")
             .top_bar("Bluetooth")
             .owns_back(true)
-            .section_with_value(
-                "Bluetooth",
-                if self.bluetooth_state.enabled() {
-                    "On"
-                } else {
-                    "Off"
-                },
-            )
-            .button(
-                TOGGLE,
-                if self.bluetooth_state.enabled() {
-                    "Turn Bluetooth off"
-                } else {
-                    "Turn Bluetooth on"
-                },
-            );
+            .toggle(TOGGLE, "Bluetooth", summary, self.bluetooth_state.enabled());
         if let Some(trouble) = self.banner_for(Topic::Bluetooth) {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+            screen = screen.banner(BannerLevel::Error, trouble);
         } else if self.restart_on_exit {
-            screen = screen.banner(kobo_sdk::BannerLevel::Info,
+            screen = screen.banner(BannerLevel::Info,
                 "Bluetooth shares Wi-Fi and starts once per boot. Leaving Settings restarts the reader. Saved content is kept.");
         }
         screen
@@ -709,32 +886,21 @@ impl Settings {
     }
 
     fn wifi_prefix(&self) -> ScreenBuilder {
+        // The network joined is said under the switch, where the "Connected"
+        // fact under the heading used to be. Its row in the list below has
+        // the whole name if a long one is cut short here.
+        let summary = match (self.wifi_state, &self.connected_ssid) {
+            (RadioState::Unknown, _) => "Checking…".to_owned(),
+            (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
+            (RadioState::On, None) => "Not connected".to_owned(),
+            _ => "Turn on to see networks".to_owned(),
+        };
         let mut screen = ScreenBuilder::new("settings-wifi")
             .top_bar("Wi-Fi")
             .owns_back(true)
-            .section_with_value(
-                "Wi-Fi",
-                if self.wifi_state.enabled() {
-                    "On"
-                } else {
-                    "Off"
-                },
-            )
-            .button(
-                TOGGLE,
-                if self.wifi_state.enabled() {
-                    "Turn Wi-Fi off"
-                } else {
-                    "Turn Wi-Fi on"
-                },
-            );
+            .toggle(TOGGLE, "Wi-Fi", summary, self.wifi_state.enabled());
         if let Some(trouble) = self.banner_for(Topic::Wifi) {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
-        }
-        if self.wifi_state.enabled() {
-            if let Some(ssid) = &self.connected_ssid {
-                screen = screen.facts([("Connected", ssid.as_str())]);
-            }
+            screen = screen.banner(BannerLevel::Error, trouble);
         }
         screen
     }
@@ -815,27 +981,31 @@ impl Settings {
         self.wifi_for(&Context::default())
     }
 
+    /// The password for a secured network, typed on keys this application
+    /// draws.
+    ///
+    /// Not the runtime's text field: a secret typed there is saved by the
+    /// runtime and never handed back, and `JoinWifi` needs the password
+    /// itself. The runtime field has no mode that masks a secret and still
+    /// returns it, so this one stays app-drawn until it does.
+    ///
+    /// The field is a secret field, so the runtime draws a dot per
+    /// character. It is sent a mask of the same length rather than the
+    /// password, so the password is in no frame the runtime keeps.
     fn wifi_password(&self) -> Screen {
-        let count = self.password.text().chars().count();
-        let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
-            trouble
-        } else if count == 0 {
-            "Type the network password.".to_owned()
-        } else {
-            let clipped = count.min(24);
-            format!(
-                "Password: {}{}",
-                "•".repeat(clipped),
-                if count > clipped { "…" } else { "" }
-            )
-        };
-        ScreenBuilder::new("settings-wifi-password")
+        let typed = "x".repeat(self.password.text().chars().count());
+        let network = self.selected_ssid.as_deref().unwrap_or("this network");
+        let mut screen = ScreenBuilder::new("settings-wifi-password")
             .top_bar("Join Wi-Fi")
             .owns_back(true)
-            .heading(self.selected_ssid.as_deref().unwrap_or("Network"))
-            .text(guidance)
-            .keyboard(&self.password, "Join")
-            .build()
+            .field(PASSWORD_FIELD, typed, "Type the network password")
+            .field_label(format!("Password for {network}"))
+            .field_hint("8 to 63 characters")
+            .field_kind(FieldKind::Secret);
+        if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            screen = screen.field_error(trouble);
+        }
+        screen.keyboard(&self.password, "Join").build()
     }
 
     /// The banner for one topic, and nothing when the trouble belongs to
@@ -870,8 +1040,13 @@ impl Settings {
         let mut screen = ScreenBuilder::new("settings-battery")
             .top_bar("Battery")
             .owns_back(true);
-        if let Some(trouble) = self.banner_for(Topic::Battery) {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        // A failed reading carries the way to read again, in place of the
+        // button at the foot.
+        let trouble = self.banner_for(Topic::Battery);
+        if let Some(trouble) = &trouble {
+            screen = screen
+                .banner(BannerLevel::Error, trouble.clone())
+                .banner_action(RESCAN, "Read again");
         }
         let Some(detail) = &self.battery else {
             return screen.text("Reading the battery.").build();
@@ -914,24 +1089,24 @@ impl Settings {
         } else {
             screen = screen.section("Details").facts(facts);
         }
-        screen.button(RESCAN, "Read again").build()
+        if trouble.is_none() {
+            screen = screen.button(RESCAN, "Read again");
+        }
+        screen.build()
     }
 
-    /// Everything on this page names the reader it is drawn on: the matched
-    /// profile, the firmware and kernel read from the hardware when the page
-    /// asks, and the version this runtime was compiled as. A photograph of
-    /// this page doubles as evidence that a build ran on real hardware, but
-    /// the page itself stays a plain product page: the reader who opens it
-    /// is a customer looking at their device, not a contributor.
+    #[cfg(test)]
     fn about(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("settings-about")
-            .top_bar("About")
-            .owns_back(true);
-        if let Some(trouble) = self.banner_for(Topic::About) {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
-        }
+        self.about_for(&Context::default())
+    }
+
+    /// The parts of the About page, in reading order, each kept whole on
+    /// whichever page it lands: the reader itself, how a computer finds it,
+    /// and the details support asks for. Empty until the runtime has said
+    /// who this reader is.
+    fn about_parts(&self) -> Vec<AboutPart> {
         let Some(identity) = &self.identity else {
-            return screen.text("Reading this reader's details.").build();
+            return Vec::new();
         };
         let mut facts: Vec<(String, String)> = vec![
             ("Model".to_owned(), identity.model.clone()),
@@ -940,8 +1115,7 @@ impl Settings {
         if !identity.firmware.is_empty() {
             facts.push(("Kobo software".to_owned(), identity.firmware.clone()));
         }
-        let address = self.address.clone();
-        if let Some(address) = &address {
+        if let Some(address) = &self.address {
             facts.push(("Wi-Fi address".to_owned(), address.clone()));
         }
         let mut support: Vec<(String, String)> = vec![
@@ -960,19 +1134,85 @@ impl Settings {
         if !identity.kernel.is_empty() {
             support.push(("Kernel".to_owned(), identity.kernel.clone()));
         }
-        screen
-            .section("This reader")
-            .facts(facts)
-            .section("From your computer")
-            .text(if address.is_some() {
-                "kobo commands find this reader on Wi-Fi once kobo setup has saved it. If one asks which reader, give it the Wi-Fi address above with --device."
-            } else {
-                "kobo commands find this reader on Wi-Fi once kobo setup has saved it. Run kobo setup once with the reader plugged in over USB."
-            })
-            .section("For support")
-            .facts(support)
-            .button(RESCAN, "Read again")
-            .build()
+        let computer = if self.address.is_some() {
+            "Once kobo setup has saved this reader, kobo commands find it on Wi-Fi. If one asks which reader, give it --device and the Wi-Fi address."
+        } else {
+            "Run kobo setup once with the reader plugged in over USB. Then kobo commands find it on Wi-Fi."
+        };
+        vec![
+            AboutPart::Facts("This reader", facts),
+            AboutPart::Text("From your computer", computer),
+            AboutPart::Facts("For support", support),
+        ]
+    }
+
+    /// Which parts go on which page. One page wherever the whole of About
+    /// fits, which is every size but the largest few; there, each part moves
+    /// to the next page rather than running off the foot of this one, so the
+    /// owner who needs big type turns a page instead of losing a fact.
+    fn about_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let count = self.about_parts().len();
+        let all = (0..count).collect::<Vec<_>>();
+        let metrics = context.metrics();
+        // Measured as the last page, the one that also carries Read again,
+        // so a page that fits here fits wherever it lands.
+        let fits = |parts: &[usize], pages: usize| {
+            !self
+                .about_page_screen(parts, pages - 1, pages)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        };
+        if count == 0 || fits(&all, 1) {
+            return vec![all];
+        }
+        let mut pages: Vec<Vec<usize>> = Vec::new();
+        for part in all {
+            match pages.last_mut() {
+                Some(page) if fits(&[page.as_slice(), &[part]].concat(), 2) => page.push(part),
+                _ => pages.push(vec![part]),
+            }
+        }
+        pages
+    }
+
+    /// Everything on this page names the reader it is drawn on: the matched
+    /// profile, the firmware and kernel read from the hardware when the page
+    /// asks, and the version this runtime was compiled as. A photograph of
+    /// this page doubles as evidence that a build ran on real hardware, but
+    /// the page itself stays a plain product page: the reader who opens it
+    /// is a customer looking at their device, not a contributor.
+    fn about_for(&self, context: &Context) -> Screen {
+        let pages = self.about_pages(context);
+        let page = self.about_page.min(pages.len().saturating_sub(1));
+        self.about_page_screen(&pages[page], page, pages.len())
+    }
+
+    fn about_page_screen(&self, parts: &[usize], page: usize, pages: usize) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-about")
+            .top_bar("About")
+            .owns_back(true);
+        let trouble = self.banner_for(Topic::About);
+        if let Some(trouble) = &trouble {
+            screen = screen
+                .banner(BannerLevel::Error, trouble.clone())
+                .banner_action(RESCAN, "Read again");
+        }
+        if self.identity.is_none() {
+            return screen.text("Reading this reader's details.").build();
+        }
+        let all = self.about_parts();
+        for part in parts.iter().filter_map(|&index| all.get(index)) {
+            screen = match part {
+                AboutPart::Facts(title, facts) => screen.section(*title).facts(facts.clone()),
+                AboutPart::Text(title, text) => screen.section(*title).text(*text),
+            };
+        }
+        // Read again sits at the foot of the last page, after everything it
+        // reads, and only when a banner is not already offering it.
+        if trouble.is_none() && page + 1 >= pages {
+            screen = screen.button(RESCAN, "Read again");
+        }
+        page_controls(screen, page, pages).build()
     }
 
     fn refresh(context: &mut Context) {
@@ -1025,16 +1265,23 @@ impl Settings {
     }
 
     fn update_channel_action(&mut self, context: &mut Context, action: ActionId) -> bool {
-        if action == action_id(BETA_UPDATES) {
-            if self.update_channel.is_some() {
-                self.view = View::UpdateChannelConfirm;
-                self.show(context);
+        if action == action_id(CHANNEL_STABLE) || action == action_id(CHANNEL_BETA) {
+            // Only the answer that is not current asks anything; the current
+            // one is already chosen.
+            if let Some(channel) = self.update_channel {
+                if action == action_id(channel_action(opposite_channel(channel))) {
+                    self.view = View::UpdateChannelConfirm;
+                    self.show(context);
+                }
             }
+            return true;
+        }
+        if action == action_id(CHANNEL_PREVIOUS) || action == action_id(CHANNEL_NEXT) {
             return true;
         }
         if action == action_id(CONFIRM_CHANNEL) && self.view == View::UpdateChannelConfirm {
             if let Some(channel) = self.update_channel {
-                self.view = View::Update;
+                self.view = View::UpdateOptions;
                 context
                     .device()
                     .set_update_channel(opposite_channel(channel));
@@ -1043,7 +1290,7 @@ impl Settings {
             return true;
         }
         if action == action_id(CANCEL_CHANNEL) && self.view == View::UpdateChannelConfirm {
-            self.view = View::Update;
+            self.view = View::UpdateOptions;
             self.show(context);
             return true;
         }
@@ -1203,12 +1450,14 @@ impl Settings {
             View::Home => self.home_pages(context).len(),
             View::Bluetooth => self.bluetooth_pages(context).len(),
             View::Wifi => self.wifi_pages(context).len(),
+            View::About => self.about_pages(context).len(),
             _ => return,
         };
         let page = match self.view {
             View::Home => &mut self.home_page,
             View::Bluetooth => &mut self.bluetooth_page,
             View::Wifi => &mut self.wifi_page,
+            View::About => &mut self.about_page,
             _ => return,
         };
         let last = pages.saturating_sub(1);
@@ -1284,6 +1533,27 @@ impl Settings {
         }
     }
 
+    /// Files a failure or a refusal under whatever was asked for.
+    ///
+    /// When the request is not one of the rows, the standing update choices
+    /// or the update screen, there is nowhere honest to show it, so it is
+    /// dropped rather than shown under an unrelated heading. A refusal of a
+    /// radio reading may also settle that radio; see
+    /// [`Self::settle_unreadable_radio`].
+    fn took_trouble(&mut self, request: &DeviceRequest, words: &str, refused: Option<DenyReason>) {
+        if is_standing_choice(request) {
+            self.choice_trouble = Some(words.to_owned());
+        }
+        if update_screen_owns(request) {
+            self.update = UpdateFlow::Failed(words.to_owned());
+        } else if let Some(topic) = Topic::of(request) {
+            if let Some(reason) = refused {
+                self.settle_unreadable_radio(topic, reason);
+            }
+            self.fail(topic, words);
+        }
+    }
+
     fn took_update_channel(&mut self, request: &DeviceRequest, channel: UpdateChannel) {
         self.update_channel = Some(channel);
         if matches!(request, DeviceRequest::SetUpdateChannel { .. }) {
@@ -1320,10 +1590,10 @@ impl KoboApp for Settings {
             return;
         }
         if action == ActionId::BACK {
-            self.view = if self.view == View::UpdateChannelConfirm {
-                View::Update
-            } else {
-                View::Home
+            self.view = match self.view {
+                View::UpdateChannelConfirm => View::UpdateOptions,
+                View::UpdateOptions => View::Update,
+                _ => View::Home,
             };
             self.show(context);
         } else if action == action_id(BLUETOOTH) {
@@ -1340,10 +1610,14 @@ impl KoboApp for Settings {
             self.show(context);
         } else if action == action_id(ABOUT) {
             self.view = View::About;
+            self.about_page = 0;
             context.device().read_identity();
             self.show(context);
         } else if action == action_id(UPDATE) {
             self.view = View::Update;
+            self.show(context);
+        } else if action == action_id(UPDATE_OPTIONS) {
+            self.view = View::UpdateOptions;
             self.show(context);
         } else if action == action_id(JOIN_WIFI) {
             self.view = View::Wifi;
@@ -1372,6 +1646,7 @@ impl KoboApp for Settings {
                 | View::Battery
                 | View::About
                 | View::Update
+                | View::UpdateOptions
                 | View::UpdateChannelConfirm => {}
             }
         } else if action == action_id(RESCAN) {
@@ -1388,7 +1663,11 @@ impl KoboApp for Settings {
                 }
                 View::Battery => context.device().read_battery_detail(),
                 View::About => context.device().read_identity(),
-                View::Home | View::WifiPassword | View::Update | View::UpdateChannelConfirm => {}
+                View::Home
+                | View::WifiPassword
+                | View::Update
+                | View::UpdateOptions
+                | View::UpdateChannelConfirm => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -1463,33 +1742,22 @@ impl KoboApp for Settings {
             }
             DeviceResult::AutoUpdate { cobalt, apps } => {
                 self.auto_update = Some((cobalt, apps));
+                self.choice_trouble = None;
             }
             DeviceResult::UpdateChannel(channel) => {
                 self.took_update_channel(&request, channel);
+                self.choice_trouble = None;
             }
             DeviceResult::Identity(identity) => {
                 self.identity = Some(identity);
                 self.settled(Topic::About);
             }
-            // A failure belongs to whatever was asked for. When the request
-            // is not one of these rows or the Update screen, there is nowhere
-            // honest to show it, so it is dropped rather than shown under an
-            // unrelated heading. The automatic-update switches live on the
-            // Update screen, so their trouble is reported there.
+            // A failure belongs to whatever was asked for.
             DeviceResult::Failed(error) => {
-                if update_screen_owns(&request) {
-                    self.update = UpdateFlow::Failed(failure_words(error).to_owned());
-                } else if let Some(topic) = Topic::of(&request) {
-                    self.fail(topic, failure_words(error));
-                }
+                self.took_trouble(&request, failure_words(error), None);
             }
             DeviceResult::Denied(reason) => {
-                if update_screen_owns(&request) {
-                    self.update = UpdateFlow::Failed(refusal_words(reason).to_owned());
-                } else if let Some(topic) = Topic::of(&request) {
-                    self.settle_unreadable_radio(topic, reason);
-                    self.fail(topic, refusal_words(reason));
-                }
+                self.took_trouble(&request, refusal_words(reason), Some(reason));
             }
             DeviceResult::Done => match request {
                 DeviceRequest::ReadBluetooth
@@ -1522,7 +1790,8 @@ impl KoboApp for Settings {
             | DeviceResult::RemoteInstall(_)
             | DeviceResult::Library { .. }
             | DeviceResult::LibraryDocument { .. }
-            | DeviceResult::Secrets { .. } => {}
+            | DeviceResult::Secrets { .. }
+            | DeviceResult::Text(_) => {}
         }
         self.show(context);
     }
@@ -1918,8 +2187,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
-        CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
+        RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, CANCEL_CHANNEL, CHANNEL_BETA,
+        CHANNEL_STABLE, CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
@@ -1938,26 +2207,51 @@ mod tests {
     }
 
     #[test]
-    fn the_update_screen_offers_both_automatic_update_switches() {
+    fn the_update_screen_leads_to_the_channel_and_both_automatic_update_switches() {
         let settings = Settings {
-            view: View::Update,
+            view: View::UpdateOptions,
             auto_update: Some((true, false)),
             update_channel: Some(UpdateChannel::Beta),
             ..Settings::default()
         };
-        let screen = settings.update();
+        let row = settings
+            .update()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true))
+            .rect_of_action(action_id(super::UPDATE_OPTIONS));
+        assert!(row.is_some());
+        assert_eq!(
+            settings.update_options_summary().as_deref(),
+            Some("Beta · Cobalt updates on its own")
+        );
+        let screen = settings.update_options();
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(AUTO_COBALT)).is_some());
         assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_some());
-        assert!(layout.rect_of_action(action_id(BETA_UPDATES)).is_some());
-        let text = text_of(&screen);
-        assert!(
-            facts_of(&screen).contains(&format!("Beta · Cobalt {VERSION}")),
-            "{:?}",
-            screen.nodes
+        assert!(layout.rect_of_action(action_id(CHANNEL_STABLE)).is_some());
+        assert!(layout.rect_of_action(action_id(CHANNEL_BETA)).is_some());
+        // Each switch is drawn by the runtime from the runtime's own answer.
+        let switches: Vec<_> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Toggle { label, on, .. } => Some((label.as_str(), *on)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            switches,
+            [
+                ("Update Cobalt automatically", true),
+                ("Update apps automatically", false)
+            ]
         );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Options { prompt, selected: Some(1), .. } if prompt == "Update channel"
+        )));
+        let text = text_of(&screen);
         assert!(text.contains("change back here at any time"), "{text}");
         assert!(text.contains("saved keys are kept"), "{text}");
         assert!(!text.contains("state, and secrets"), "{text}");
@@ -1994,12 +2288,18 @@ mod tests {
             view: View::Update,
             ..Settings::default()
         };
-        let layout = settings
+        let update = settings
             .update()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(update
+            .rect_of_action(action_id(super::UPDATE_OPTIONS))
+            .is_none());
+        let layout = settings
+            .update_options()
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(AUTO_COBALT)).is_none());
         assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_none());
-        assert!(layout.rect_of_action(action_id(BETA_UPDATES)).is_none());
+        assert!(layout.rect_of_action(action_id(CHANNEL_BETA)).is_none());
     }
 
     #[test]
@@ -2815,6 +3115,11 @@ mod tests {
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(JOIN_WIFI)).is_some());
         assert!(layout.rect_of_action(action_id(CHECK)).is_some());
+        // Joining a network is what the banner about the network offers.
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { action: Some(action), .. } if action.action == action_id(JOIN_WIFI)
+        )));
         runner.action(action_id(JOIN_WIFI));
         assert_eq!(runner.app().view, View::Wifi);
     }
@@ -2869,6 +3174,512 @@ mod tests {
         let with = facts_of(&screen);
         assert!(with.contains("192.168.1.23"), "{with}");
         assert!(text_of(&screen).contains("--device"));
+    }
+
+    #[test]
+    fn the_about_page_turns_rather_than_running_off_the_panel_and_keeps_every_fact() {
+        for metrics in every_size_and_pose() {
+            let mut runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            runner.start();
+            runner.app_mut().identity = Some(DeviceIdentity {
+                profile_id: "CLARA_BW_391".to_owned(),
+                model: "Kobo Clara BW".to_owned(),
+                device_code: 391,
+                firmware: "4.41.23145".to_owned(),
+                kernel: "5.10.117".to_owned(),
+                runtime_version: "0.3.0".to_owned(),
+                panel_width: 1072,
+                panel_height: 1448,
+            });
+            runner.app_mut().address = Some("192.168.1.23".to_owned());
+            runner.action(action_id(super::ABOUT));
+            let pages = runner.app().about_pages(&runner.context()).len();
+            if metrics.text_scale.larger().is_some() && metrics.height > metrics.width {
+                assert_eq!(pages, 1, "About is one page where it fits");
+            }
+            let mut seen = String::new();
+            let mut rescans = 0;
+            for page in 0..pages {
+                let screen = runner.app().about_for(&runner.context());
+                fits(&screen, metrics, &format!("About page {page}"));
+                let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                rescans += usize::from(layout.rect_of_action(action_id(RESCAN)).is_some());
+                seen.push_str(&facts_of(&screen));
+                seen.push_str(&text_of(&screen));
+                if page + 1 < pages {
+                    assert!(layout.rect_of_action(action_id(MORE)).is_some());
+                    runner.action(action_id(MORE));
+                }
+            }
+            assert_eq!(rescans, 1, "{metrics:?}: Read again once, at the end");
+            for fact in [
+                "Kobo Clara BW",
+                "0.3.0",
+                "4.41.23145",
+                "192.168.1.23",
+                "CLARA_BW_391",
+                "1072 × 1448 pixels",
+                "391",
+                "5.10.117",
+                "--device",
+            ] {
+                assert!(seen.contains(fact), "{metrics:?}: {fact} is on no page");
+            }
+            runner.action(kobo_sdk::ActionId::BACK);
+            runner.action(action_id(super::ABOUT));
+            assert_eq!(runner.app().about_page, 0, "About opens on its first page");
+        }
+    }
+
+    /// Every screen this file changes, at the default and the largest text
+    /// size, held either way, measured through a runner so the faces are the
+    /// ones the runtime measures with.
+    fn every_size_and_pose() -> Vec<kobo_sdk::DisplayMetrics> {
+        let mut largest = CLARA_BW_METRICS;
+        while let Some(larger) = largest.text_scale.larger() {
+            largest.text_scale = larger;
+        }
+        [CLARA_BW_METRICS, largest]
+            .into_iter()
+            .flat_map(|metrics| {
+                [
+                    metrics,
+                    kobo_sdk::DisplayMetrics {
+                        width: metrics.height,
+                        height: metrics.width,
+                        ..metrics
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    fn fits(screen: &kobo_sdk::Screen, metrics: kobo_sdk::DisplayMetrics, what: &str) {
+        let report = screen.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(
+            !report.has_errors(),
+            "{what} on {metrics:?}: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn the_automatic_update_switches_say_what_is_true_now_and_read_whole_at_every_size() {
+        for (cobalt, apps) in [(true, true), (true, false), (false, true), (false, false)] {
+            let (cobalt_now, apps_now) = super::auto_update_summaries(cobalt, apps);
+            // Every step, smallest to largest. Settings reaches the scale
+            // through the SDK's metrics, which name no list of steps.
+            let mut smallest = CLARA_BW_METRICS.text_scale;
+            while let Some(smaller) = smallest.smaller() {
+                smallest = smaller;
+            }
+            let steps = std::iter::successors(Some(smallest), |scale| scale.larger());
+            for text_scale in steps {
+                for (width, height) in [(1072, 1448), (1448, 1072)] {
+                    let metrics = kobo_sdk::DisplayMetrics {
+                        text_scale,
+                        width,
+                        height,
+                        ..CLARA_BW_METRICS
+                    };
+                    let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+                    let settings = Settings {
+                        view: View::UpdateOptions,
+                        auto_update: Some((cobalt, apps)),
+                        update_channel: Some(UpdateChannel::Stable),
+                        ..Settings::default()
+                    };
+                    let screen = settings.update_options_for(&runner.context());
+                    let summaries: Vec<(String, bool)> = screen
+                        .nodes
+                        .iter()
+                        .filter_map(|node| match node {
+                            Node::Toggle { summary, on, .. } => Some((summary.clone(), *on)),
+                            _ => None,
+                        })
+                        .collect();
+                    let said = |now: &str, on: bool| {
+                        // Where the panel holds it, the line is there and says
+                        // what is true now; where it does not, it goes whole.
+                        if text_scale == CLARA_BW_METRICS.text_scale && width < height {
+                            (now.to_owned(), on)
+                        } else if summaries.iter().all(|(summary, _)| summary.is_empty()) {
+                            (String::new(), on)
+                        } else {
+                            (now.to_owned(), on)
+                        }
+                    };
+                    assert_eq!(
+                        summaries,
+                        [said(cobalt_now, cobalt), said(apps_now, apps)],
+                        "{text_scale:?} {width}x{height}"
+                    );
+                    // They restate the switch, so they go before the
+                    // sentence that warns about Beta.
+                    if summaries.iter().any(|(summary, _)| !summary.is_empty()) {
+                        assert!(
+                            format!("{screen:?}").contains("Beta versions may have more problems"),
+                            "{text_scale:?} {width}x{height}"
+                        );
+                    }
+                    let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+                    for (summary, _) in summaries.iter().filter(|(summary, _)| !summary.is_empty())
+                    {
+                        assert!(
+                            layout
+                                .nodes
+                                .iter()
+                                .any(|node| node.text_lines.iter().any(|line| line == summary)),
+                            "{summary:?} is cut at {text_scale:?} {width}x{height}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_update_screen_and_the_update_options_fit_at_every_size() {
+        let flows = [
+            super::UpdateFlow::Idle,
+            super::UpdateFlow::UpToDate {
+                latest: "0.1.0".to_owned(),
+            },
+            super::UpdateFlow::Ahead {
+                latest: "0.1.0".to_owned(),
+            },
+            super::UpdateFlow::Offline,
+            super::UpdateFlow::Failed(
+                "GitHub did not answer. Check that Wi-Fi reaches the internet, then try again."
+                    .to_owned(),
+            ),
+        ];
+        for metrics in every_size_and_pose() {
+            let runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            let context = runner.context();
+            for flow in &flows {
+                let settings = Settings {
+                    view: View::Update,
+                    update: flow.clone(),
+                    auto_update: Some((true, false)),
+                    update_channel: Some(UpdateChannel::Stable),
+                    ..Settings::default()
+                };
+                fits(&settings.update(), metrics, &format!("{flow:?}"));
+            }
+            for (cobalt, apps) in [(true, true), (false, false)] {
+                let mut settings = Settings {
+                    view: View::UpdateOptions,
+                    auto_update: Some((cobalt, apps)),
+                    update_channel: Some(UpdateChannel::Beta),
+                    ..Settings::default()
+                };
+                fits(&settings.update_options_for(&context), metrics, "options");
+                let confirm = settings.update_channel_confirmation_for(&context);
+                fits(&confirm, metrics, "confirm");
+                let layout = confirm.layout_with(&metrics, &Chrome::measuring(true));
+                for answer in [CONFIRM_CHANNEL, CANCEL_CHANNEL] {
+                    assert!(
+                        layout.rect_of_action(action_id(answer)).is_some(),
+                        "{answer}"
+                    );
+                }
+                settings.choice_trouble =
+                    Some("Something else is using that right now. Try again in a moment.".into());
+                let options = settings.update_options_for(&context);
+                fits(&options, metrics, "options with trouble");
+                let layout = options.layout_with(&metrics, &Chrome::measuring(true));
+                for choice in [CHANNEL_STABLE, CHANNEL_BETA, AUTO_COBALT, AUTO_APPS] {
+                    assert!(
+                        layout.rect_of_action(action_id(choice)).is_some(),
+                        "{choice}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn choosing_the_other_channel_asks_first_and_choosing_the_current_one_does_nothing() {
+        use kobo_sdk::{AppRunner, Command};
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        runner.app_mut().update_channel = Some(UpdateChannel::Stable);
+        runner.app_mut().auto_update = Some((false, false));
+        runner.action(action_id(super::UPDATE));
+        runner.action(action_id(super::UPDATE_OPTIONS));
+        let commands = runner.action(action_id(CHANNEL_STABLE));
+        assert_eq!(runner.app().view, View::UpdateOptions);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(_))));
+        runner.action(action_id(CHANNEL_BETA));
+        assert_eq!(runner.app().view, View::UpdateChannelConfirm);
+        let commands = runner.action(action_id(CONFIRM_CHANNEL));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::SetUpdateChannel {
+                channel: UpdateChannel::Beta
+            })
+        )));
+        assert_eq!(runner.app().view, View::UpdateOptions);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Update);
+    }
+
+    #[test]
+    fn a_choice_the_runtime_would_not_keep_is_said_over_the_choices() {
+        let mut settings = Settings {
+            view: View::UpdateOptions,
+            auto_update: Some((false, false)),
+            update_channel: Some(UpdateChannel::Stable),
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+            DeviceResult::Denied(DenyReason::Busy),
+        );
+        assert!(settings.update_options().nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, text, .. } if text.contains("Try again")
+        )));
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::ReadAutoUpdate,
+            DeviceResult::AutoUpdate {
+                cobalt: false,
+                apps: false,
+            },
+        );
+        assert!(!settings
+            .update_options()
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Banner { .. })));
+    }
+
+    #[test]
+    fn an_automatic_update_switch_applies_on_the_tap() {
+        use kobo_sdk::{AppRunner, Command};
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        runner.app_mut().update_channel = Some(UpdateChannel::Stable);
+        runner.app_mut().auto_update = Some((true, false));
+        runner.action(action_id(super::UPDATE));
+        let commands = runner.action(action_id(AUTO_APPS));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: true
+            })
+        )));
+    }
+
+    #[test]
+    fn a_failed_check_offers_to_try_again_from_its_error_banner_and_nowhere_else() {
+        let screen = Settings {
+            view: View::Update,
+            update: super::UpdateFlow::Failed("That took too long. Try again.".to_owned()),
+            ..Settings::default()
+        }
+        .update();
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, action: Some(action), .. }
+                if action.action == action_id(super::CHECK) && action.label == "Try again"
+        )));
+        assert!(!screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Button { action, .. } if *action == action_id(super::CHECK)
+        )));
+    }
+
+    #[test]
+    fn each_radio_is_a_switch_showing_its_state_and_a_tap_flips_it() {
+        use kobo_sdk::{AppRunner, Command};
+        for (view, open) in [
+            (View::Wifi, super::WIFI),
+            (View::Bluetooth, super::BLUETOOTH),
+        ] {
+            let mut runner = AppRunner::new(Settings::default());
+            runner.start();
+            runner.action(action_id(open));
+            runner.app_mut().wifi_state = RadioState::On;
+            runner.app_mut().bluetooth_state = RadioState::Off;
+            let screen = match view {
+                View::Wifi => runner.app().wifi(),
+                _ => runner.app().bluetooth(),
+            };
+            let on = screen.nodes.iter().find_map(|node| match node {
+                Node::Toggle { action, on, .. } if *action == action_id(TOGGLE) => Some(*on),
+                _ => None,
+            });
+            assert_eq!(on, Some(view == View::Wifi), "{view:?}");
+            let commands = runner.action(action_id(TOGGLE));
+            assert!(
+                commands.iter().any(|command| matches!(
+                    command,
+                    Command::Device(
+                        DeviceRequest::SetWifi { enabled: false }
+                            | DeviceRequest::SetBluetooth { enabled: true }
+                    )
+                )),
+                "{view:?}: {commands:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wifi_switch_says_which_network_is_joined() {
+        let settings = Settings {
+            wifi_state: RadioState::On,
+            connected_ssid: Some("Library".to_owned()),
+            ..Settings::default()
+        };
+        assert!(settings.wifi().nodes.iter().any(|node| matches!(
+            node,
+            Node::Toggle { summary, on: true, .. } if summary == "Connected to Library"
+        )));
+    }
+
+    /// The password goes to the runtime as a mask of its length, because the
+    /// runtime draws a secret field as dots anyway and keeps every frame it is
+    /// sent until the next one arrives.
+    #[test]
+    fn the_wifi_password_field_is_a_secret_that_never_carries_the_password() {
+        let mut settings = Settings {
+            view: View::WifiPassword,
+            selected_ssid: Some("Library".to_owned()),
+            ..Settings::default()
+        };
+        for character in "hunter22".chars() {
+            let column = "qwertyuiop".find(character);
+            if let Some(column) = column {
+                settings
+                    .password
+                    .press(action_id(&format!("kb.r0c{column}")));
+            }
+        }
+        let typed = settings.password.text().to_owned();
+        assert!(!typed.is_empty());
+        let screen = settings.wifi_password();
+        let field = screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                Node::Field {
+                    value,
+                    label,
+                    hint,
+                    kind,
+                    ..
+                } => Some((value.clone(), label.clone(), hint.clone(), *kind)),
+                _ => None,
+            })
+            .expect("a password field");
+        assert_eq!(field.0.chars().count(), typed.chars().count());
+        assert!(!format!("{:?}", screen.nodes).contains(&typed));
+        assert_eq!(field.1.as_deref(), Some("Password for Library"));
+        assert_eq!(field.2.as_deref(), Some("8 to 63 characters"));
+        assert_eq!(field.3, kobo_sdk::FieldKind::Secret);
+    }
+
+    #[test]
+    fn a_refused_wifi_password_is_said_under_the_field_at_every_size() {
+        for metrics in every_size_and_pose() {
+            let _runner = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics);
+            let settings = Settings {
+                view: View::WifiPassword,
+                selected_ssid: Some("A secured wireless network with a long name".to_owned()),
+                trouble: Some((
+                    Topic::Wifi,
+                    "A Wi-Fi password has 8 to 63 characters.".to_owned(),
+                )),
+                ..Settings::default()
+            };
+            let screen = settings.wifi_password();
+            assert!(screen.nodes.iter().any(|node| matches!(
+                node,
+                Node::Field { error: Some(error), .. } if error.contains("8 to 63")
+            )));
+            assert!(!screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Banner { .. } | Node::Heading { .. })));
+            fits(&screen, metrics, "Wi-Fi password");
+        }
+    }
+
+    #[test]
+    fn a_failed_reading_offers_to_read_again_from_its_banner_at_every_size() {
+        for metrics in every_size_and_pose() {
+            let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
+            let mut settings = Settings {
+                battery: Some(BatteryDetail {
+                    percent: Some(28),
+                    status: Some("Discharging".to_owned()),
+                    health: Some("Good".to_owned()),
+                    technology: Some("Li-ion".to_owned()),
+                    decidegrees: Some(290),
+                    microvolts: Some(3_720_000),
+                    microamps: Some(-180_000),
+                    charge_now: Some(420_000),
+                    charge_full: Some(1_480_000),
+                    charge_full_design: Some(1_500_000),
+                }),
+                identity: Some(DeviceIdentity {
+                    profile_id: "CLARA_BW_391".to_owned(),
+                    model: "Kobo Clara BW".to_owned(),
+                    device_code: 391,
+                    firmware: "4.41.23145".to_owned(),
+                    kernel: "5.10.117".to_owned(),
+                    runtime_version: "0.3.0".to_owned(),
+                    panel_width: 1072,
+                    panel_height: 1448,
+                }),
+                ..Settings::default()
+            };
+            for topic in [Topic::Battery, Topic::About] {
+                settings.trouble = Some((
+                    topic,
+                    "Something else is using that right now. Try again in a moment.".to_owned(),
+                ));
+                let screens = if topic == Topic::Battery {
+                    vec![settings.battery()]
+                } else {
+                    (0..settings.about_pages(&context).len())
+                        .map(|page| {
+                            settings.about_page = page;
+                            settings.about_for(&context)
+                        })
+                        .collect()
+                };
+                for screen in screens {
+                    let rescans = screen
+                        .nodes
+                        .iter()
+                        .filter(|node| match node {
+                            Node::Banner {
+                                action: Some(action),
+                                ..
+                            } => action.action == action_id(RESCAN),
+                            Node::Button { action, .. } => *action == action_id(RESCAN),
+                            _ => false,
+                        })
+                        .count();
+                    assert_eq!(rescans, 1, "{topic:?}: one way to read again");
+                    fits(&screen, metrics, &format!("{topic:?}"));
+                }
+            }
+        }
     }
 
     #[test]

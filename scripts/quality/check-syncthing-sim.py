@@ -102,7 +102,7 @@ def main():
                     shot='sync-fresh.png'))
 
                 drive('tap Set up Sync', 'wait-for Pair one computer folder',
-                      'expect Turn on Sync', 'expect-missing receive-only', 'wait-idle')
+                      'expect turn on Sync here', 'expect-missing receive-only', 'wait-idle')
                 capture('sync-guide')
                 result['checks'].append(dict(
                     name='guide walks through pairing one folder and turning Sync on',
@@ -176,16 +176,17 @@ def main():
                     name='a request nothing answers is reported rather than shown as starting forever',
                     shot='sync-not-started.png'))
 
-                drive('tap Turn off Sync', 'wait-for Sync is off', 'expect Turn on Sync',
-                      'wait-idle')
+                drive('tap-id toggle', 'wait-for Sync is off',
+                      'expect Paused. Your files stay here.', 'wait-idle')
                 capture('sync-paused')
                 result['checks'].append(dict(
-                    name='turning Sync off shows it off with the way back on',
+                    name='turning Sync off shows it off and says the files stay',
                     shot='sync-paused.png'))
 
                 stop()
                 ADDRESS = start()
-                drive('wait-for Turn on Sync', 'expect-missing First sync finished',
+                drive('wait-for Paused. Your files stay here.',
+                      'expect-missing First sync finished',
                       'expect Added to Vault', 'wait-idle', timeout=300)
                 capture('sync-restored')
                 result['checks'].append(dict(

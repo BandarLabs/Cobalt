@@ -108,6 +108,21 @@ fn one_of_every_node() -> Vec<Node> {
             value: "dickens".into(),
             placeholder: "Search the library".into(),
             clear: Some(ActionId(61)),
+            label: None,
+            hint: None,
+            error: None,
+            kind: kobo_ui::FieldKind::Text,
+        },
+        Node::Field {
+            id: NodeId(46),
+            action: ActionId(68),
+            value: "lip_token".into(),
+            placeholder: "Token".into(),
+            clear: None,
+            label: Some("Lichess token".into()),
+            hint: Some("From lichess.org, under API access tokens.".into()),
+            error: Some("Lichess refused this token.".into()),
+            kind: kobo_ui::FieldKind::Secret,
         },
         // Empty and with nothing to clear: both optional halves absent is
         // where a length mismatch hides.
@@ -117,6 +132,10 @@ fn one_of_every_node() -> Vec<Node> {
             value: String::new(),
             placeholder: String::new(),
             clear: None,
+            label: None,
+            hint: None,
+            error: None,
+            kind: kobo_ui::FieldKind::Text,
         },
         Node::Chips {
             id: NodeId(42),
@@ -299,6 +318,78 @@ fn one_of_every_node() -> Vec<Node> {
             id: NodeId(12),
             level: BannerLevel::Attention,
             text: "Battery low".into(),
+            action: None,
+        },
+        Node::Banner {
+            id: NodeId(18),
+            level: BannerLevel::Error,
+            text: "Lichess did not answer.".into(),
+            action: Some(BarAction::new(ActionId(69), "Check again")),
+        },
+        Node::Banner {
+            id: NodeId(19),
+            level: BannerLevel::Success,
+            text: "Signed in.".into(),
+            action: None,
+        },
+        Node::Rows {
+            id: NodeId(20),
+            rows: vec![
+                Row::new(ActionId(70), "Birds", "12 species", Glyph::Book)
+                    .checked(true)
+                    .with_badge(12)
+                    .with_button(ActionId(71), "Open"),
+                Row::new(ActionId(72), "Moths", "", Glyph::Book).checked(false),
+                Row {
+                    state: RowState::Mixed,
+                    ..Row::new(ActionId(73), "Beetles", "", Glyph::Book)
+                },
+            ],
+        },
+        Node::Toggle {
+            id: NodeId(21),
+            action: ActionId(74),
+            label: "Sleep".into(),
+            summary: "After five minutes".into(),
+            on: true,
+            state: ControlState::Disabled,
+        },
+        Node::SelectionBar {
+            id: NodeId(22),
+            count: 3,
+            actions: vec![
+                BarAction::new(ActionId(75), "Delete"),
+                BarAction::new(ActionId(76), "Move").with_glyph(Glyph::Folder),
+            ],
+        },
+        Node::Options {
+            id: NodeId(23),
+            prompt: "Time zone".into(),
+            options: vec![
+                kobo_ui::OptionRow::new(ActionId(77), "London", "UTC+0"),
+                kobo_ui::OptionRow::new(ActionId(78), "Paris", ""),
+            ],
+            selected: Some(1),
+            page: 0,
+            previous: ActionId(79),
+            next: ActionId(80),
+        },
+        Node::Code {
+            id: NodeId(24),
+            payload: "https://lichess.org/device".into(),
+            caption: "Scan to sign in".into(),
+        },
+        Node::Steps {
+            id: NodeId(25),
+            current: 1,
+            total: 3,
+            labels: vec!["Account".into(), "Sign in".into(), "Done".into()],
+        },
+        Node::Steps {
+            id: NodeId(26),
+            current: 0,
+            total: 1,
+            labels: Vec::new(),
         },
         Node::Skeleton {
             id: NodeId(13),
@@ -788,6 +879,7 @@ fn unknown_tags_are_rejected_rather_than_guessed() {
                         id: NodeId(1),
                         level: BannerLevel::Info,
                         text: String::new(),
+                        action: None,
                     }],
                 ),
                 0,
@@ -795,8 +887,9 @@ fn unknown_tags_are_rejected_rather_than_guessed() {
                 VERSION,
             )
             .expect("encode");
-            // The level byte sits after the screen header, node tag and id.
-            let position = screen.len() - 3;
+            // The level byte sits after the screen header, node tag and id,
+            // ahead of the empty text's length and the action flag.
+            let position = screen.len() - 4;
             screen[position] = 9;
             screen
         }),

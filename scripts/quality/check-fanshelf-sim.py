@@ -89,8 +89,9 @@ def main():
                 # names the last check, and downloads waiting chapters in place.
                 drive("tap The Clockwork Garden", "wait-for New chapters found",
                       "wait-for A synthetic demonstration work.",
-                      "wait-for Download new chapters", "expect Check for new chapters",
-                      "expect-missing Re-download")
+                      "wait-for Download new chapters", "expect-missing Re-download",
+                      "tap-id more", "expect Check for new chapters", "tap Back",
+                      "expect-missing Check for new chapters")
                 drive("clean", "shot fanshelf-work-update")
                 drive("tap back", "wait-for A Field Guide to Small Hours")
                 drive("tap A Field Guide to Small Hours", "wait-for Updates never checked")

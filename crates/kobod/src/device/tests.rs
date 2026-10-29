@@ -370,6 +370,7 @@ fn native_power_delivery_pauses_tasks_and_resumes_each_host_once() {
         painted: 0,
         started: std::time::Instant::now(),
         used: std::time::Instant::now(),
+        typing: None,
     }];
     let mut power = kobod::power::Power::default();
     apps[0].protocol = kobod::power::MIN_APP_PROTOCOL - 1;
@@ -514,6 +515,7 @@ fn hosted_peer(protocol: u8) -> (super::Hosted, kobo_protocol::channel::Stream, 
         painted: 0,
         started: std::time::Instant::now(),
         used: std::time::Instant::now(),
+        typing: None,
     };
     (hosted, client, root)
 }
@@ -1690,4 +1692,128 @@ fn a_binary_beside_the_runtime_answers_only_when_nothing_is_installed() {
         "nothing installed".to_owned()
     ))
     .is_err());
+}
+
+#[test]
+fn a_protocol_15_app_keeps_receiving_protocol_15() {
+    // Named after what fifteen added, now that sixteen is the newest: every
+    // application published before the runtime drew its own controls speaks
+    // fifteen, and keeps speaking it for as long as it is installed.
+    runtime_keeps_protocol_on_send_and_reply(kobo_protocol::PICTURE_BLEED_VERSION);
+    runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::PICTURE_BLEED_VERSION);
+}
+
+/// A screen of the controls protocol 16 added, each answering to its own
+/// action.
+fn controls_page() -> kobo_ui::Screen {
+    let row = kobo_ui::Row::new(
+        kobo_ui::ActionId(31),
+        "Field guide to birds",
+        "Version 1.4",
+        kobo_ui::Glyph::Book,
+    )
+    .checked(true)
+    .with_badge(3)
+    .with_button(kobo_ui::ActionId(32), "Update");
+    kobo_ui::Screen::new(
+        1,
+        vec![
+            kobo_ui::Node::Toggle {
+                id: kobo_ui::NodeId(1),
+                action: kobo_ui::ActionId(30),
+                label: "Night light".into(),
+                summary: "Warms the light after sunset.".into(),
+                on: false,
+                state: kobo_ui::ControlState::Enabled,
+            },
+            kobo_ui::Node::Rows {
+                id: kobo_ui::NodeId(2),
+                rows: vec![row],
+            },
+            kobo_ui::Node::SelectionBar {
+                id: kobo_ui::NodeId(3),
+                count: 1,
+                actions: vec![kobo_ui::BarAction::new(kobo_ui::ActionId(33), "Delete")],
+            },
+            kobo_ui::Node::Options {
+                id: kobo_ui::NodeId(4),
+                prompt: "Update channel".into(),
+                options: vec![
+                    kobo_ui::OptionRow::new(kobo_ui::ActionId(34), "Stable", ""),
+                    kobo_ui::OptionRow::new(kobo_ui::ActionId(35), "Beta", ""),
+                ],
+                selected: Some(0),
+                page: 0,
+                previous: kobo_ui::ActionId(36),
+                next: kobo_ui::ActionId(37),
+            },
+        ],
+    )
+}
+
+#[test]
+fn a_tap_on_each_protocol_16_control_reaches_the_application_as_its_action() {
+    let screen = controls_page();
+    let chrome = kobo_ui::Chrome::default();
+    let metrics = super::metrics_for(&screen);
+    let layout = screen.layout_with(&metrics, &chrome);
+    let (mut runtime, mut app) = std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+    app.set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("read timeout");
+    for action in [30, 31, 32, 33, 35].map(kobo_ui::ActionId) {
+        let rect = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind.acts_on() == Some(action))
+            .map(|node| node.rect)
+            .expect("the control is on the panel");
+        let tap = kobo_hal::touch::TouchEvent::Up {
+            x: u32::try_from(rect.x + rect.width / 2).expect("inside the panel"),
+            y: u32::try_from(rect.y + rect.height / 2).expect("inside the panel"),
+        };
+        assert_eq!(
+            super::deliver_touch(
+                &mut runtime,
+                tap,
+                Some(&screen),
+                &chrome,
+                false,
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::LandscapeTurn::Clockwise,
+                kobo_protocol::CONTROLS_VERSION,
+                kobo_ui::TopBarState::Hidden,
+            )
+            .expect("tap"),
+            super::Tap::Handled
+        );
+        let frame = kobo_protocol::read_from(&mut app).expect("action");
+        assert_eq!(frame.version, kobo_protocol::CONTROLS_VERSION);
+        assert_eq!(frame.message, Message::Action { action });
+    }
+}
+
+#[test]
+fn a_protocol_15_application_cannot_send_a_protocol_16_control() {
+    // Encoded as sixteen and relabelled fifteen, which is what a peer that
+    // ignored its own version would send. The runtime refuses the frame and
+    // lets the application go rather than drawing a control its protocol
+    // has no reading for.
+    let mut bytes = kobo_protocol::encode(&Frame {
+        version: kobo_protocol::CONTROLS_VERSION,
+        request_id: 1,
+        message: Message::SetScreen(controls_page()),
+    })
+    .expect("encodes at sixteen");
+    bytes[4] = kobo_protocol::PICTURE_BLEED_VERSION;
+    let (runtime, mut application) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    super::pump_application(&runtime, &sender, 43, kobo_protocol::PICTURE_BLEED_VERSION)
+        .expect("start application pump");
+    application.write_all(&bytes).expect("send the frame");
+    assert!(matches!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("application rejection"),
+        super::Event::AppGone(43)
+    ));
 }

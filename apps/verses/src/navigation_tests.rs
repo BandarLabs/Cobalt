@@ -227,12 +227,18 @@ fn author_search_and_back_cancel_work_without_stale_navigation() {
     );
     assert_eq!(screen(&runner), before);
     tap(&mut runner, "search");
-    runner.app_mut().keyboard = Keyboard::with_text("review");
+    tap(&mut runner, "search-field");
+    runner.cancel_text();
+    assert_eq!(
+        runner.app().view,
+        View::Search,
+        "backing out of the keyboard left the search"
+    );
     runner.action(ActionId::BACK);
     assert_eq!(runner.app().view, View::Browse);
     tap(&mut runner, "search");
-    runner.app_mut().keyboard = Keyboard::with_text("review");
-    tap(&mut runner, "kb.enter");
+    tap(&mut runner, "search-field");
+    runner.type_text("review");
     let request = runner.app().task.expect("new search");
     tap(&mut runner, "search");
     assert_eq!(runner.app().view, View::Search);
@@ -328,5 +334,45 @@ fn every_bundled_poem_is_protocol_valid_at_every_text_size() {
                 .rect_of_action(action_id("card"))
                 .is_some());
         }
+    }
+}
+
+#[test]
+fn the_search_screen_fits_every_text_size_and_its_box_asks_for_what_the_scope_looks_in() {
+    for text_scale in TextScale::STEPS {
+        let mut runner = AppRunner::with_metrics(
+            Verses {
+                view: View::Search,
+                notice: Some("PoetryDB did not answer. Try the search again.".into()),
+                ..Verses::default()
+            },
+            DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            },
+        );
+        tap(&mut runner, "scope-poet");
+        let drawn = screen(&runner);
+        let metrics = runner.context().metrics();
+        let chrome = Chrome::for_screen(&drawn, false, Chrome::measuring(true).status);
+        let diagnostics = drawn.diagnostics(&metrics, &chrome);
+        assert!(
+            !diagnostics.has_errors(),
+            "{text_scale:?}: {:?}",
+            diagnostics.issues
+        );
+        tap(&mut runner, "suggest-John Keats");
+        assert_eq!(runner.app().view, View::Results);
+        runner.action(ActionId::BACK);
+        tap(&mut runner, "search");
+        tap(&mut runner, "scope-poet");
+        let commands = runner.action(action_id("search-field"));
+        assert!(matches!(
+            kobo_sdk::keyboard::testing::asked(&commands),
+            Some(kobo_sdk::DeviceRequest::TypeText { prompt, submit, .. })
+                if prompt == "A poet's name" && submit == "Search"
+        ));
+        runner.type_text("Keats");
+        assert_eq!(runner.app().view, View::Results);
     }
 }
