@@ -510,7 +510,10 @@ impl Books {
             .find(|recent| recent.id == document.id)
             .cloned();
         let about: Build = Box::new(move |slot: ScreenBuilder| {
-            let slot = slot.heading(title);
+            // A level down from the page's own heading: the title of one book
+            // beside its cover, not a headline over the whole page. At the
+            // top level, a three-word title already took two lines.
+            let slot = slot.heading_at_level(2, title);
             let slot = match author {
                 Some(author) => slot.secondary(author),
                 None => slot,
