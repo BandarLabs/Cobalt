@@ -39,9 +39,11 @@ fixture results are not substitutes.
 
 Firmware branches not listed here have not been reviewed on that model, and
 neither have devices missing from the table. Both still start, after the owner
-has been told what is untested and has agreed. What that notice cannot do is
-turn either into tested hardware: adding a row still takes a read-only probe
-and the applicable attended evidence.
+has been told what is untested and has agreed. `kobo setup` installs on them
+too, and says what is untested before asking to continue. Only firmware 5.x is
+refused, because NickelMenu cannot start Cobalt there. What that notice cannot
+do is turn either into tested hardware: adding a row still takes a read-only
+probe and the applicable attended evidence.
 
 ### Elipsa 2E portrait orientations
 
