@@ -814,7 +814,9 @@ mod colour;
 mod environment;
 pub mod vector;
 
-pub use colour::{Accent, Appearance, Paint, Palette, Shades, LOW_BATTERY_PERCENT, PANEL_LEVEL};
+pub use colour::{
+    Accent, Appearance, Paint, Palette, ScreenAccent, Shades, LOW_BATTERY_PERCENT, PANEL_LEVEL,
+};
 
 /// Grayscale values used by the built-in monochrome design system.
 ///
@@ -1740,14 +1742,17 @@ pub struct Screen {
     /// halfway down the page.
     pub overlay: Option<Box<Overlay>>,
 
-    /// The application's colour, when it has one. See [`Accent`].
+    /// The screen's colour, when it has one. See [`Accent`] and
+    /// [`ScreenAccent`].
     ///
     /// Carried by the screen rather than agreed once per session, so the
     /// runtime can draw a screen it is holding for a background application
     /// without remembering anything else about it, and so a reading page can
     /// leave its accent off while the list that opened it keeps one. On a
-    /// greyscale panel it changes nothing at all.
-    pub accent: Option<Accent>,
+    /// greyscale panel it changes nothing at all. A screen made with
+    /// [`Screen::new`] is plain; the SDK's builder leaves the choice to the
+    /// application unless the screen makes one.
+    pub accent: ScreenAccent,
 }
 
 /// What paging means on a laid-out screen right now.
@@ -1886,14 +1891,16 @@ impl Screen {
             text_scale: None,
             hold: None,
             overlay: None,
-            accent: None,
+            accent: ScreenAccent::Plain,
         }
     }
 
-    /// Gives the screen its application's colour. See [`Accent`].
+    /// Decides this screen's colour: an accent of its own, or none at all.
+    /// See [`Accent`]. Either answer is final, where a screen from the SDK's
+    /// builder that has not made one inherits its application's.
     #[must_use]
     pub const fn with_accent(mut self, accent: Option<Accent>) -> Self {
-        self.accent = accent;
+        self.accent = ScreenAccent::decided(accent);
         self
     }
 
@@ -14456,7 +14463,7 @@ fn render_all_with_selected_font(
     });
     surface.fill_rect(clip, tone::PAPER);
     let layout = screen.layout_with(metrics, chrome);
-    let palette = Palette::new(chrome.appearance, screen.accent);
+    let palette = Palette::new(chrome.appearance, screen.accent.chosen());
     let prose = layout.prose_face;
     for node in layout.nodes {
         if node.rect.intersection(clip).is_none() {

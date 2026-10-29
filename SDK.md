@@ -277,6 +277,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `top_bar_action(name, label)` | One trailing control in the top bar. |
 | `top_bar_glyph(name, label, glyph)` | A trailing top-bar control drawn with a built-in glyph. |
 | `accent(accent)` | This screen's colour on a colour reader, one of a closed set. Usually set once with `KoboApp::accent` instead. |
+| `without_accent()` | Keeps this screen's bar on paper although the application has an accent: for a reader's page, a photograph, a letter. |
 | `owns_back(bool)` | Ask for Back as an action before it leaves the app. |
 | `nav_bar(selected, [(name, label), ...])` | The pinned bottom bar of *destinations*. At least two. |
 | `action_bar([(name, label), ...])` | The same slot, carrying *verbs* instead. At most three. |
@@ -944,8 +945,9 @@ reader already knows (Hacker News is orange), or a subject that has a colour
 of its own. Most utilities are better left with none. A greyscale reader
 ignores the accent entirely and draws what it always drew; the SDK's tests
 hold that the greyscale frame is byte for byte the one drawn before accents
-existed. A screen that should differ from the rest, such as a reading page,
-can name its own with `ScreenBuilder::accent`. Accents travel on protocol 17
+existed. A screen that should differ from the rest can name its own with
+`ScreenBuilder::accent`, and a reading page can decline the application's with
+`without_accent()`. Accents travel on protocol 17
 and need Cobalt 0.3.32 or later on the reader; an older runtime draws the
 screen without one.
 

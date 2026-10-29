@@ -5,10 +5,10 @@ use crate::{
     BarAction, BottomAction, Caret, Cell, Chip, ControlState, DiagnosticSeverity, DialogAction,
     Emphasis, Failure, FieldKind, Fold, FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue,
     LayoutIssueKind, NavBar, Node, NodeId, OptionRow, Overlay, OverlayKind, ParagraphPresentation,
-    Percent, QuoteRole, RichTextSpan, Row, RowLead, RowState, Screen, ScreenBuilder, SlotWidth,
-    Space, StandardState, Tile, TilePicture, TileShape, TopBar, TransferFailure, JOIN_WIFI,
-    MAX_BAND_SLOTS, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_OPTIONS, MAX_QUOTE_DEPTH,
-    MAX_ROWS, MAX_SELECTION_ACTIONS, MAX_STEPS, MAX_TERMINAL_ROWS,
+    Percent, QuoteRole, RichTextSpan, Row, RowLead, RowState, Screen, ScreenAccent, ScreenBuilder,
+    SlotWidth, Space, StandardState, Tile, TilePicture, TileShape, TopBar, TransferFailure,
+    JOIN_WIFI, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_OPTIONS,
+    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_SELECTION_ACTIONS, MAX_STEPS, MAX_TERMINAL_ROWS,
 };
 
 impl ScreenBuilder {
@@ -28,7 +28,7 @@ impl ScreenBuilder {
             overlay: None,
             reading: false,
             reading_font: None,
-            accent: None,
+            accent: ScreenAccent::Inherit,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -1022,7 +1022,7 @@ impl ScreenBuilder {
         self
     }
 
-    /// Gives this screen the application's colour, on readers that have one.
+    /// Gives this screen a colour of its own, on readers that have one.
     ///
     /// One of a closed set, never a value: see [`Accent`]. On a colour panel
     /// the top bar takes the accent's tint and the primary control and every
@@ -1032,7 +1032,20 @@ impl ScreenBuilder {
     /// screen that should differ from the rest.
     #[must_use]
     pub const fn accent(mut self, accent: Accent) -> Self {
-        self.accent = Some(accent);
+        self.accent = ScreenAccent::Own(accent);
+        self
+    }
+
+    /// Keeps this screen's bar on paper and its controls in the platform's
+    /// cobalt even though the application has an accent.
+    ///
+    /// For a page that is somebody else's work rather than the application's:
+    /// a reader's page, a photograph, a letter. Without this a screen that
+    /// says nothing about colour takes the application's, which is what every
+    /// other screen wants.
+    #[must_use]
+    pub const fn without_accent(mut self) -> Self {
+        self.accent = ScreenAccent::Plain;
         self
     }
 

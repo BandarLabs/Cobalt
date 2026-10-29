@@ -5780,7 +5780,7 @@ fn encode_screen(
     // screen encoded at an earlier protocol on behalf of one is written
     // exactly as it was, accent or no accent.
     if version >= ACCENT_VERSION {
-        output.push(screen.accent.map_or(0, Accent::wire_value));
+        output.push(screen.accent.chosen().map_or(0, Accent::wire_value));
     }
     Ok(())
 }
@@ -7152,7 +7152,7 @@ fn decode_screen(
     };
     let mut screen = Screen::new(id, nodes);
     screen.overlay = overlay;
-    screen.accent = accent;
+    screen.accent = kobo_ui::ScreenAccent::decided(accent);
     screen.top_bar = top_bar;
     screen.nav_bar = nav_bar;
     // Only when there is no bar. A frame carrying both is a peer that built

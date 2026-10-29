@@ -40,10 +40,10 @@ pub use kobo_ui::{
     FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
     Orientation, Overlay, OverlayKind, ParagraphAlignment, ParagraphPresentation, Percent,
     PictureFormat, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState, Screen,
-    SlotWidth, Space, TableRow, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
-    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
-    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    ScreenAccent, SlotWidth, Space, TableRow, TextHit, TextPresentation, TextSelection, Tile,
+    TilePicture, TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS,
+    MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH,
+    MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 /// The runtime-drawn controls of protocol 16, and the limits that fix their
 /// footprints.
@@ -475,7 +475,9 @@ pub struct ScreenBuilder {
     overlay: Option<Box<Overlay>>,
     reading: bool,
     reading_font: Option<FontHandle>,
-    accent: Option<Accent>,
+    /// Left to the application unless the screen decides; see
+    /// [`ScreenBuilder::accent`] and [`ScreenBuilder::without_accent`].
+    accent: ScreenAccent,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -3408,14 +3410,16 @@ impl<A: KoboApp> AppRunner<A> {
             self.retrying.insert(task, work);
         }
         let mut commands = context.take_commands();
-        // The application's colour, for every screen that did not pick one of
-        // its own. Here rather than in the builder because a builder does not
-        // know which application it is building for, and the alternative is
-        // every screen helper in every application repeating the same call.
-        let accent = self.app.accent();
+        // The application's colour, for every screen that left the choice to
+        // it. Here rather than in the builder because a builder does not know
+        // which application it is building for, and the alternative is every
+        // screen helper in every application repeating the same call. A
+        // screen that chose none keeps none: a reader's page is somebody
+        // else's work, and it said so.
+        let accent = ScreenAccent::decided(self.app.accent());
         for command in &mut commands {
             if let Command::SetScreen(screen) = command {
-                if screen.accent.is_none() {
+                if screen.accent == ScreenAccent::Inherit {
                     screen.accent = accent;
                 }
             }
@@ -5477,5 +5481,76 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
         if leaving {
             return Ok(());
         }
+    }
+}
+
+#[cfg(test)]
+mod accent_tests {
+    use super::*;
+
+    /// An orange application that shows three screens at once: one that
+    /// leaves the colour to the application, one with a colour of its own,
+    /// and a reader's page that asked for none.
+    struct Orange;
+
+    impl KoboApp for Orange {
+        fn accent(&self) -> Option<Accent> {
+            Some(Accent::Orange)
+        }
+
+        fn on_start(&mut self, context: &mut Context) {
+            context.set_screen(ScreenBuilder::new("list").top_bar("List").build());
+            context.set_screen(
+                ScreenBuilder::new("teal")
+                    .top_bar("Teal")
+                    .accent(Accent::Teal)
+                    .build(),
+            );
+            context.set_screen(
+                ScreenBuilder::new("page")
+                    .top_bar("Page")
+                    .without_accent()
+                    .build(),
+            );
+        }
+
+        fn on_action(&mut self, _: &mut Context, _: ActionId) {}
+    }
+
+    #[test]
+    fn a_screen_inherits_the_apps_accent_unless_it_decided_for_itself() {
+        let accents: Vec<ScreenAccent> = AppRunner::new(Orange)
+            .start()
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.accent),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            accents,
+            [
+                ScreenAccent::Own(Accent::Orange),
+                ScreenAccent::Own(Accent::Teal),
+                ScreenAccent::Plain
+            ],
+            "inherit, own colour, explicitly none"
+        );
+    }
+
+    #[test]
+    fn an_app_without_an_accent_leaves_every_screen_plain() {
+        struct Plain;
+        impl KoboApp for Plain {
+            fn on_start(&mut self, context: &mut Context) {
+                context.set_screen(ScreenBuilder::new("list").top_bar("List").build());
+            }
+            fn on_action(&mut self, _: &mut Context, _: ActionId) {}
+        }
+        let commands = AppRunner::new(Plain).start();
+        let Some(Command::SetScreen(screen)) = commands.first() else {
+            panic!("a screen was shown");
+        };
+        assert_eq!(screen.accent, ScreenAccent::Plain, "the runner decided it");
     }
 }

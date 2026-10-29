@@ -50,7 +50,7 @@ fn a_screen_encoded_for_an_older_runtime_is_written_exactly_as_it_was() {
     );
     assert_eq!(
         round_trip(BEFORE, &accented(Some(Accent::Orange))).accent,
-        None
+        kobo_ui::ScreenAccent::Plain
     );
     // And the current protocol costs exactly the one byte more.
     let current = encode(&frame(VERSION, accented(None))).expect("encodes");
@@ -73,7 +73,7 @@ fn an_accent_this_runtime_has_no_name_for_is_read_as_none_rather_than_refused() 
     let last = bytes.len() - 1;
     bytes[last] = 250;
     match decode(&bytes).expect("an unknown accent decodes").message {
-        Message::SetScreen(screen) => assert_eq!(screen.accent, None),
+        Message::SetScreen(screen) => assert_eq!(screen.accent, kobo_ui::ScreenAccent::Plain),
         other => panic!("expected a screen, got {other:?}"),
     }
 }

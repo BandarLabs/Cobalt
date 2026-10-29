@@ -84,6 +84,48 @@ pub enum Accent {
     Brown = 9,
 }
 
+/// What a screen has said about its colour.
+///
+/// Three answers rather than an optional accent, because two of them look
+/// the same on the wire and mean different things to the SDK: a screen that
+/// said nothing takes its application's accent, and a screen that said
+/// "none" keeps a paper bar however orange the application is, which is what
+/// a reader's page or a photograph wants. The runtime is only ever sent a
+/// decided answer; it draws [`Self::Plain`] and [`Self::Inherit`] alike.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum ScreenAccent {
+    /// Left to the application. The SDK's runner replaces this with the
+    /// application's accent, or with [`Self::Plain`], before the screen is
+    /// sent.
+    #[default]
+    Inherit,
+    /// None, on purpose: a paper bar and the platform's own controls.
+    Plain,
+    /// A colour of this screen's own.
+    Own(Accent),
+}
+
+impl ScreenAccent {
+    /// The accent the painter draws, if any.
+    #[must_use]
+    pub const fn chosen(self) -> Option<Accent> {
+        match self {
+            Self::Own(accent) => Some(accent),
+            Self::Inherit | Self::Plain => None,
+        }
+    }
+
+    /// A decided answer from an optional accent: `Some` is a colour of the
+    /// screen's own and `None` is plain, never inherited.
+    #[must_use]
+    pub const fn decided(accent: Option<Accent>) -> Self {
+        match accent {
+            Some(accent) => Self::Own(accent),
+            None => Self::Plain,
+        }
+    }
+}
+
 /// The two shades every accent is made of.
 ///
 /// Two and not one, because one colour cannot carry both ink and paper text at
