@@ -1,10 +1,11 @@
 # Colour accents, as the simulator shows them
 
-Captures from the simulator sweep that accompanied the colour accents change,
+Captures from the simulator sweeps that accompanied the colour accents change,
 for reviewing the palette against the grey design it is laid over. Taken with
 `scripts/check-apps-sim.py` under `KOBO_SIM_PROFILE=clara-colour-393` and
-`clara-bw-391`, plus two panel-view shots taken by hand, and halved in size for
-the repository. Nothing here is a photograph of a reader.
+`clara-bw-391`, plus a few shots taken by hand, and halved in size for the
+repository. Nothing here is a photograph of a reader. The screen-by-screen
+review of every application is in [audit.md](audit.md).
 
 Three views of the same screens:
 
@@ -33,3 +34,20 @@ destination wear the strong shade; the error banner is the platform's red
 with its mark and outline kept; everything else, every word included, is the
 grey it was. The Hacker News panel view was taken offline while the front page
 was still being fetched, which is why it shows the skeleton rows.
+
+## Boards, puzzles, fields, the status band and a photograph
+
+| Screen | bw | colour ideal |
+|---|---|---|
+| Lichess: brown dark squares, the square in hand in cobalt tint | ![](lichess-bw.png) | ![](lichess-colour-ideal.png) |
+| Crossword: the word being solved in cobalt tint | ![](crossword-bw.png) | ![](crossword-colour-ideal.png) |
+| Sudoku: the selected cell in cobalt, peers on the quiet grey | ![](sudoku-bw.png) | ![](sudoku-colour-ideal.png) |
+| Backgammon: brown points | ![](backgammon-bw.png) | ![](backgammon-colour-ideal.png) |
+| PaperTerm: a refused address in red | ![](paperterm-field-bw.png) | ![](paperterm-field-colour-ideal.png) |
+| Frame: a pushed photograph kept in colour | | ![](frame-photo-colour-ideal.png) |
+
+The status band on a colour reader, with the battery at fifteen percent, then
+charging, then at seventy-two percent. The radio is struck through because the
+simulator was offline.
+
+![](status-band-colour.png)

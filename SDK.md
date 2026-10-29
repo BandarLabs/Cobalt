@@ -908,17 +908,36 @@ colour reader an accent does one thing with several parts:
 - the top bar is filled with the tint, its title and controls still in ink;
 - the primary button is filled with the strong shade, its label in paper;
 - the mark under the current destination, a selected chip or tab, a switch
-  that is on, a ticked box, a chosen option, the filled part of a progress bar
-  and the steps already taken all take the strong shade.
+  that is on, a ticked box, a chosen option, the filled part of a progress bar,
+  the steps already taken and the selected cell of a pencil puzzle all take
+  the strong shade;
+- the square in hand on a chess or draughts board, and the word a crossword
+  is solving, take the tint.
 
 An application with no accent keeps a paper bar and has its controls drawn in
-the platform's own cobalt. Banners take the platform's colours whatever the
-application's accent is, green for success, red for an error and amber for
-attention, and they keep their mark and outline, because colour is never the
-only signal: a reader who cannot tell red from green loses nothing. Text is
-never coloured. Colour on this panel is drawn at half the resolution of the
-greys, so a coloured word is a soft word, and the tone of every run of text is
-decided by what it sits on.
+the platform's own cobalt. Some colours are the platform's whatever the
+application's accent is, the way every phone draws its own red for an error:
+banners are green for success, red for an error and amber for attention, and
+keep their mark and outline; a text field whose value was refused is tinted
+red under the note that says why; the dark squares of a chess or draughts board
+and the shaded points of a backgammon table are brown, because a board should
+look like a board whatever the application's colour; and in the status band the battery
+turns red at twenty percent and green while charging, and the radio turns
+amber when it is on but nothing gets through. Colour is never the only signal,
+so a reader who cannot tell red from green loses nothing. Text is never
+coloured. Colour on this panel is drawn at half the resolution of the greys, so
+a coloured word is a soft word, and the tone of every run of text is decided
+by what it sits on.
+
+Pictures are the one place an application decides about colour itself, because
+only it holds the bytes. `context.panel_shows_colour()` says whether the
+reader can show colour; read the picture with `kobo_image::decode_colour` when
+it can and `decode` when it cannot, and hand both planes to
+`context.put_picture_shown(handle, width, height, grey, colour)`, which sends
+the colour only where it will be seen. A colour picture costs three times the
+bytes of a grey one on the wire and twice the memory to read, which is why it
+is asked for and not assumed. Frame, Fieldbook, Flashcards, Gutenbird and every
+reader built on `kobo-bookview` do this.
 
 Set an accent for the reasons a phone platform would call a tint: a brand the
 reader already knows (Hacker News is orange), or a subject that has a colour
