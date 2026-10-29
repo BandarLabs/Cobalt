@@ -512,7 +512,7 @@ use super::{
 use super::{
     parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
     RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT,
-    REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS,
+    REMOTE_COMMAND_TIMEOUT, REMOTE_SMOKE_TIMEOUT_SECONDS,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -1666,7 +1666,7 @@ fn remote_session_uses_stdin_only_and_fixed_safe_artifacts() {
     assert!(cleanup.contains("[ \"$actual\" = \"$token\" ]"));
     assert!(cleanup.contains("rm -f \"$bin\" \"$owner\""));
     assert!(cleanup.contains("rmdir \"$dir\""));
-    assert_eq!(REMOTE_CONNECT_TIMEOUT_SECONDS, 10);
+    assert_eq!(kobo_host::transport::CONNECT_TIMEOUT_SECONDS, 10);
     assert_eq!(REMOTE_COMMAND_TIMEOUT.as_secs(), 60);
     assert_eq!(REMOTE_CLEANUP_TIMEOUT.as_secs(), 5);
     #[cfg(feature = "device-write")]

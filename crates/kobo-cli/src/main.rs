@@ -11,6 +11,11 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use kobo_host::connect;
+use kobo_host::transport::{
+    run_session as run_shell_session, session_error as remote_shell_error,
+    take_pipe as take_remote_pipe, wait_for_child as wait_for_remote_child,
+    Output as RemoteShellOutput, Tty,
+};
 
 mod account;
 mod apps;
@@ -298,7 +303,6 @@ removes the exact Cobalt NickelMenu entry and preserves owner folders under
 .adds/cobalt.recovery.N. Inspect recovery and .adds/cobalt.unusable[.N]
 directories before deleting them. Nothing is written to the system partition.";
 
-const REMOTE_CONNECT_TIMEOUT_SECONDS: u64 = 10;
 const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const REMOTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Session commands search the reader libraries, which are large, so they need
@@ -4830,50 +4834,13 @@ pub fn device_key_path() -> Option<PathBuf> {
     key.is_file().then_some(key)
 }
 
-/// An `ssh` invocation that will offer the reader's key.
-///
-/// Without `-i` this offered only the default identities, and the reader's key
-/// is deliberately not one of those, so every connection failed on a reader
-/// that was set up correctly. `IdentitiesOnly` prevents a busy SSH agent from
-/// exhausting the reader's authentication attempts before this key is tried.
+/// A non-interactive `ssh` to the reader, offering its key when there is one.
 fn remote_shell_command(remote: &str) -> Command {
     remote_ssh_command(remote, Tty::No)
 }
 
-/// Whether the reader should be given a terminal.
-///
-/// Every other caller wants `No`: a script is piped in and read back, and a
-/// terminal would echo the script into the output. `Yes` exists for the one
-/// verb that hands the session to a person, where line editing, job control
-/// and a prompt are the whole point.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tty {
-    No,
-    Yes,
-}
-
 fn remote_ssh_command(remote: &str, tty: Tty) -> Command {
-    let mut command = Command::new("ssh");
-    command
-        .args([
-            if tty == Tty::Yes { "-t" } else { "-T" },
-            "-o",
-            "BatchMode=yes",
-            "-o",
-        ])
-        .arg(format!("ConnectTimeout={REMOTE_CONNECT_TIMEOUT_SECONDS}"));
-    if let Some(key) = device_key_path() {
-        command.args(["-o", "IdentitiesOnly=yes", "-i"]).arg(key);
-    }
-    command.arg(remote);
-    command
-}
-
-#[derive(Debug)]
-struct RemoteShellOutput {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    kobo_host::transport::ssh_command(remote, tty, device_key_path().as_deref())
 }
 
 fn run_remote_shell(
@@ -4882,127 +4849,6 @@ fn run_remote_shell(
     timeout: Duration,
 ) -> Result<RemoteShellOutput, String> {
     run_shell_session(remote_shell_command(remote), script, timeout)
-}
-
-/// [`run_remote_shell`] over an `ssh` command the caller has already shaped.
-fn run_shell_session(
-    mut command: Command,
-    script: &str,
-    timeout: Duration,
-) -> Result<RemoteShellOutput, String> {
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("start remote shell: {error}"))?;
-    let stdin_handle = child.stdin.take();
-    let stdin = take_remote_pipe(&mut child, stdin_handle, "stdin")?;
-    let stdout_handle = child.stdout.take();
-    let stdout = take_remote_pipe(&mut child, stdout_handle, "stdout")?;
-    let stderr_handle = child.stderr.take();
-    let stderr = take_remote_pipe(&mut child, stderr_handle, "stderr")?;
-    let script = script.as_bytes().to_vec();
-    let writer = thread::spawn(move || -> std::io::Result<()> {
-        let mut stdin = stdin;
-        stdin.write_all(&script)?;
-        stdin.flush()
-    });
-    let stdout_reader = thread::spawn(move || read_remote_pipe(stdout));
-    let stderr_reader = thread::spawn(move || read_remote_pipe(stderr));
-    let status = wait_for_remote_child(&mut child, "remote shell session", timeout);
-    let writer_result = writer
-        .join()
-        .map_err(|_| "remote shell stdin writer panicked".to_owned())?;
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| "remote shell stdout reader panicked".to_owned())?
-        .map_err(|error| format!("read remote stdout: {error}"))?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| "remote shell stderr reader panicked".to_owned())?
-        .map_err(|error| format!("read remote stderr: {error}"))?;
-    let status = status.map_err(|error| remote_shell_error(error, &stdout, &stderr))?;
-    if let Err(error) = writer_result {
-        // A script that decides not to read the rest of its input (because it
-        // refused, or because it ended in `exec`) closes the pipe under this
-        // writer, and that is not a transport failure. The device answered;
-        // its status and its stderr are what the caller has to be told, and
-        // reporting a broken pipe instead buries a plain refusal under advice
-        // about Wi-Fi and sleeping readers.
-        if error.kind() != std::io::ErrorKind::BrokenPipe {
-            return Err(remote_shell_error(
-                format!("write remote script: {error}"),
-                &stdout,
-                &stderr,
-            ));
-        }
-    }
-    Ok(RemoteShellOutput {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-fn remote_shell_error(message: String, stdout: &[u8], stderr: &[u8]) -> String {
-    let stdout = String::from_utf8_lossy(stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
-    let mut result = message;
-    if !stdout.is_empty() {
-        result.push_str("; stdout: ");
-        result.push_str(&stdout);
-    }
-    if !stderr.is_empty() {
-        result.push_str("; stderr: ");
-        result.push_str(&stderr);
-    }
-    result
-}
-
-fn read_remote_pipe(mut pipe: impl Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    pipe.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn take_remote_pipe<T>(child: &mut Child, pipe: Option<T>, name: &str) -> Result<T, String> {
-    pipe.ok_or_else(|| {
-        terminate_remote_child(child);
-        format!("start remote shell: {name} was not captured")
-    })
-}
-
-fn terminate_remote_child(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn wait_for_remote_child(
-    child: &mut Child,
-    description: &str,
-    timeout: Duration,
-) -> Result<ExitStatus, String> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {}
-            Err(error) => {
-                terminate_remote_child(child);
-                return Err(format!("{description}: inspect child: {error}"));
-            }
-        }
-        if Instant::now() >= deadline {
-            terminate_remote_child(child);
-            return Err(format!(
-                "{description} timed out after {} seconds",
-                timeout.as_secs()
-            ));
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
