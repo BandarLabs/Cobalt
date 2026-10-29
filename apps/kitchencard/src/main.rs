@@ -62,6 +62,8 @@ struct Kitchen {
     offline: bool,
     keyboard: Keyboard,
     editing: Option<Setting>,
+    /// The owner tapped Check again and is owed an answer either way.
+    checking: bool,
 }
 
 impl Kitchen {
@@ -290,24 +292,29 @@ impl Kitchen {
         self.dropped = 0;
     }
 
+    /// The real cause, never "check the address" for a refused token: a
+    /// wrong address cannot answer 401, and an owner sent to retype a correct
+    /// address never finds the expired token.
     fn fail(&mut self, error: kobo_sdk::TaskError) {
-        match error {
-            kobo_sdk::TaskError::NoCredential => self.problem(format!(
-                "No credential named {} yet. On your computer run kobo secret set {}.",
-                self.credential, self.credential
-            )),
-            kobo_sdk::TaskError::Offline => {
-                self.offline = true;
-                self.problem("Off the air. Saved recipes still cook.");
-            }
-            kobo_sdk::TaskError::Denied => self.problem(format!(
-                "Mealie refused the `{}` credential. Check the token on your computer.",
-                self.credential
-            )),
-            _ => self.problem(format!(
-                "Mealie did not answer at {}. Check the address in settings.",
-                self.server
-            )),
+        if error == kobo_sdk::TaskError::Offline {
+            self.offline = true;
+        }
+        let problem = kobo_sdk::failure::Service::new("Mealie")
+            .at(&self.server)
+            .fixed_by("Run kobo connect kitchencard on your computer.")
+            .explain(error);
+        self.problem(if self.recipes.is_empty() {
+            problem.message
+        } else {
+            format!("{} Saved recipes still cook.", problem.message)
+        });
+    }
+
+    /// Reads the saved address again, which `kobo connect kitchencard` may
+    /// have written while the app was away.
+    fn reload_config(&mut self, context: &mut Context) {
+        if self.editing.is_none() && self.task.is_none() {
+            context.store().load(CONFIG);
         }
     }
 
@@ -532,12 +539,11 @@ impl Kitchen {
             .splash(
                 Some(Glyph::Book),
                 "Connect Mealie",
-                "Install your Mealie API token from a computer, then add the address here.",
+                "Run this on your computer. It asks for your Mealie address and API token, checks them, and sets Kitchen Card up.",
             )
-            .section("On your computer")
-            .command("kobo pair")
-            .command("kobo secret set mealie")
-            .primary_button("settings", "Add address")
+            .command("kobo connect kitchencard")
+            .primary_button("check-again", "Check again")
+            .button("settings", "Type the address here")
             .build(),
             View::Tonight if self.recipes.is_empty() => {
                 let mut screen = Self::banner(
@@ -632,41 +638,23 @@ impl Kitchen {
                         .build();
                 }
                 let step = self.step.min(recipe.steps.len() - 1);
-                let last = step + 1 == recipe.steps.len();
-                let mut screen = ScreenBuilder::new("kitchencard")
-                    .top_bar(format!("Cooking · {} of {}", step + 1, recipe.steps.len()))
-                    .tabs(0, [("cook", "Steps"), ("ingredients", "Ingredients")])
-                    .secondary(&recipe.name);
-                if let Some((on, minutes)) = self.timer {
-                    screen = screen.banner(
-                        BannerLevel::Info,
-                        format!("Timer running: {minutes} min, set on step {}.", on + 1),
-                    );
+                // The step is what a cook reads from across the counter, so
+                // it is set large. A step too long for the page at that size
+                // keeps body type rather than losing its end or its buttons.
+                let large = self.cook_screen(recipe, step, true);
+                let metrics = context.metrics();
+                let chrome =
+                    kobo_sdk::Chrome::for_screen(&large, false, kobo_sdk::Chrome::measuring(true).status);
+                let fits = !large
+                    .diagnostics(&metrics, &chrome)
+                    .issues
+                    .iter()
+                    .any(|issue| issue.severity == kobo_sdk::DiagnosticSeverity::Error);
+                if fits {
+                    large
+                } else {
+                    self.cook_screen(recipe, step, false)
                 }
-                screen = screen.text(&recipe.steps[step]);
-                let mut has_primary = false;
-                if self.timer.is_none() {
-                    if let Some(minutes) = step_timer(&recipe.steps[step]) {
-                        screen = if last {
-                            screen.button("timer", format!("Start {minutes} min timer"))
-                        } else {
-                            has_primary = true;
-                            screen.primary_button("timer", format!("Start {minutes} min timer"))
-                        };
-                    }
-                }
-                if self.timer.is_some() {
-                    screen = screen.button("stop-timer", "Stop the timer");
-                }
-                if last {
-                    screen = screen.primary_button("finish", "Finish");
-                } else if !has_primary {
-                    screen = screen.primary_button("next", "Next step");
-                }
-                screen
-                    .page_turns("previous", "next")
-                    .reading_menu("tonight")
-                    .build()
             }
             View::Ingredients => self.ingredients_screen(context),
             View::Finished => {
@@ -696,6 +684,50 @@ impl Kitchen {
     }
 }
 
+impl Kitchen {
+    fn cook_screen(&self, recipe: &Recipe, step: usize, large: bool) -> Screen {
+        let last = step + 1 == recipe.steps.len();
+        let mut screen = ScreenBuilder::new("kitchencard")
+            .top_bar(format!("Cooking · {} of {}", step + 1, recipe.steps.len()))
+            .tabs(0, [("cook", "Steps"), ("ingredients", "Ingredients")])
+            .secondary(&recipe.name);
+        if let Some((on, minutes)) = self.timer {
+            screen = screen.banner(
+                BannerLevel::Info,
+                format!("Timer running: {minutes} min, set on step {}.", on + 1),
+            );
+        }
+        screen = if large {
+            screen.heading_at_level(2, &recipe.steps[step])
+        } else {
+            screen.text(&recipe.steps[step])
+        };
+        let mut has_primary = false;
+        if self.timer.is_none() {
+            if let Some(minutes) = step_timer(&recipe.steps[step]) {
+                screen = if last {
+                    screen.button("timer", format!("Start {minutes} min timer"))
+                } else {
+                    has_primary = true;
+                    screen.primary_button("timer", format!("Start {minutes} min timer"))
+                };
+            }
+        }
+        if self.timer.is_some() {
+            screen = screen.button("stop-timer", "Stop the timer");
+        }
+        if last {
+            screen = screen.primary_button("finish", "Finish");
+        } else if !has_primary {
+            screen = screen.primary_button("next", "Next step");
+        }
+        screen
+            .page_turns("previous", "next")
+            .reading_menu("tonight")
+            .build()
+    }
+}
+
 /// The first duration a step names, in minutes: "20 minutes", "5 min",
 /// "30-35 minutes" (the start of a range).
 fn step_timer(step: &str) -> Option<u32> {
@@ -720,6 +752,14 @@ fn step_timer(step: &str) -> Option<u32> {
 }
 
 impl KoboApp for Kitchen {
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.reload_config(context);
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.reload_config(context);
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         "mealie".clone_into(&mut self.credential);
         self.servings = 2;
@@ -766,6 +806,7 @@ impl KoboApp for Kitchen {
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == CONFIG {
+                let before = (self.server.clone(), self.credential.clone());
                 if let Some(value) = &value {
                     let text = String::from_utf8_lossy(value);
                     let mut parts = text.lines();
@@ -778,7 +819,20 @@ impl KoboApp for Kitchen {
                         .unwrap_or("mealie")
                         .clone_into(&mut self.credential);
                 }
-                self.open_cache(context);
+                if self.snapshot.is_none()
+                    || before != (self.server.clone(), self.credential.clone())
+                {
+                    if self.snapshot.is_some() {
+                        self.recipes.clear();
+                        self.recipes_origin = None;
+                    }
+                    self.open_cache(context);
+                }
+                if std::mem::take(&mut self.checking) && !self.ready() {
+                    self.problem(
+                        "No account has arrived from the computer yet. Run the command, then check again.",
+                    );
+                }
             }
             if key == TONIGHT {
                 if let Some(value) = &value {
@@ -848,6 +902,10 @@ impl KoboApp for Kitchen {
                     }
                 }
             }
+        } else if action == action_id("check-again") {
+            self.note = None;
+            self.checking = true;
+            self.reload_config(context);
         } else if action == action_id("settings") {
             self.view = Some(View::Settings);
         } else if action == action_id("server") {

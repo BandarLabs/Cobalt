@@ -10,3 +10,21 @@ wait-for Save a copy
 expect Ready for your computer.
 clean
 shot verses-card
+
+# The offline shelf, filed by poet, and a sonnet whole on one page: it used to
+# split eleven lines and then three.
+tap Back
+wait-for Today's poem
+tap Browse
+wait-for Poems
+expect The Lamb
+clean
+shot browse
+tap How Do I Love Thee?
+wait-for I shall but love thee better after death.
+expect How do I love thee? Let me count the ways.
+expect-missing 1 of 2
+clean
+shot sonnet
+tap Back
+wait-for Poems

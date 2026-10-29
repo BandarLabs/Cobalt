@@ -1,0 +1,13 @@
+# sweep: after-main
+wait-for Right answer
+expect Question 1 of 10
+expect-missing Play with friends
+clean
+shot resumed
+tap-id continue
+expect Ada's turn
+tap-id game-more
+tap New game
+expect Start a new game?
+tap New game
+expect Difficulty

@@ -2,10 +2,12 @@
 """Verify the Sync app against fixture supervisor status in the simulator.
 
 No Syncthing engine runs here: the app only ever reads the runtime-owned
-status and import-report files, so writing those files exactly the way the
-supervisor writes them exercises every screen the owner can reach - first
-run, pairing guide, running transfer, completed window with imports,
-conflict, pause and restart persistence. Run:
+status and import-report files and saves the request the runtime answers, so
+writing those files exactly the way the supervisor writes them exercises every
+screen the owner can reach: first run, pairing guide, Sync now, a running sync
+followed without a refresh, a finished sync with imports, a conflict, a
+computer that was not found, a request nothing answers, turning Sync off and
+restart persistence. Run:
 python3 scripts/quality/check-syncthing-sim.py --output target/sim-check/syncthing
 """
 import argparse
@@ -89,62 +91,102 @@ def main():
 
             try:
                 ADDRESS = start()
-                drive('wait-for Refresh status', 'wait-idle', timeout=300)
+                drive('wait-for Sync now', 'wait-idle', timeout=300)
+                drive('expect Not run yet', 'expect No sync has finished yet',
+                      'expect When on Wi-Fi', 'expect-missing Refresh status',
+                      'expect-missing window', 'expect-missing Peers')
                 capture('sync-fresh')
                 result['checks'].append(dict(
-                    name='fresh start shows never-synced facts and the setup row',
+                    name='fresh start says nothing has run, offers Sync now and the setup row, '
+                         'with no Syncthing words and no refresh button',
                     shot='sync-fresh.png'))
 
-                drive('tap Set up Sync', 'wait-for Pair one computer folder', 'wait-idle')
+                drive('tap Set up Sync', 'wait-for Pair one computer folder',
+                      'expect Turn on Sync', 'expect-missing receive-only', 'wait-idle')
                 capture('sync-guide')
                 result['checks'].append(dict(
-                    name='guide walks through pairing one folder and the fixed set',
+                    name='guide walks through pairing one folder and turning Sync on',
                     shot='sync-guide.png'))
-                drive('tap Back', 'wait-for Refresh status', 'wait-idle')
+                drive('tap Back', 'wait-for Sync now', 'wait-idle')
 
-                write_status(f'running\n4096\nSyncing folders.\n1\n0\n0')
-                drive('tap Refresh status', 'wait-for Syncing', 'wait-idle')
+                # Sync now saves the request the runtime answers. Nothing else
+                # can start a sync, so the file is the whole contract.
+                drive('tap Sync now', 'wait-for Starting', 'wait-idle')
+                assert (state / 'sync-request').is_file(), 'Sync now did not ask the runtime'
+                result['checks'].append(dict(
+                    name='Sync now saves the request the runtime starts a sync from'))
+
+                # What the runtime does as the sync starts. The app follows it
+                # without anybody tapping anything.
+                (state / 'sync-request').unlink()
+                (state / 'sync-last-attempt').write_text(str(int(time.time())))
+                write_status('running\n4096\nSyncing folders.\n1\n0\n0')
+                drive('wait-for Left to move', 'expect Syncing. This takes up to five minutes.',
+                      'wait-idle')
                 capture('sync-running')
                 result['checks'].append(dict(
-                    name='running window shows state, bytes remaining and peers online',
+                    name='a running sync is followed on its own, with bytes left and computers found',
                     shot='sync-running.png'))
 
-                write_status(f'idle\n0\nLast sync: complete. vault: 2 files imported.\n1\n{LAST_SUCCESS}\n0')
+                write_status(f'idle\n0\nSync finished. Vault: 2 files imported.\n1\n{LAST_SUCCESS}\n0')
                 (state / 'sync-ingest').write_text(f'vault\t2\t4096\t{LAST_SUCCESS}')
-                drive('tap Refresh status', 'wait-for First sync complete', 'wait-idle')
+                drive('wait-for First sync finished', 'expect Added to Vault', 'wait-idle')
                 capture('sync-first-complete')
                 result['checks'].append(dict(
-                    name='first verified sync is celebrated once, with last success, next window and the Vault import',
+                    name='first finished sync is announced once, with last sync, next sync and the Vault import',
                     shot='sync-first-complete.png'))
 
-                drive('tap Folders', 'wait-for sync/vault', 'wait-idle')
+                drive('tap Folders', 'wait-for sync/vault',
+                      'expect Notes, from the computer to Vault', 'expect-missing Receive only',
+                      'wait-idle')
                 capture('sync-folders')
                 result['checks'].append(dict(
-                    name='folders view explains the fixed set and which folders import',
+                    name='folders view says in plain words which way each folder goes',
                     shot='sync-folders.png'))
                 drive('tap About', 'wait-for MPL-2.0', 'wait-idle')
                 capture('sync-about')
                 result['checks'].append(dict(
                     name='engine attribution stays reachable',
                     shot='sync-about.png'))
-                drive('tap Back', 'wait-for Refresh status', 'wait-idle')
+                drive('tap Back', 'tap Back', 'wait-for Sync now', 'wait-idle')
 
-                write_status(f'conflict\n0\n2 file(s) could not sync. They retry on the next window.\n1\n{LAST_SUCCESS}\n2')
-                drive('tap Refresh status', 'wait-for could not sync', 'wait-idle')
+                # Coming back to the app reads what the runtime wrote meanwhile.
+                write_status(f'conflict\n0\n2 file(s) could not sync. Sync tries them again next time.\n1\n{LAST_SUCCESS}\n2')
+                drive('lifecycle background', 'lifecycle foreground',
+                      'wait-for could not sync', 'expect Files not synced', 'wait-idle')
                 capture('sync-conflict')
                 result['checks'].append(dict(
-                    name='conflict state is distinct and names the retry path',
+                    name='conflict state is distinct, counted and names the retry',
                     shot='sync-conflict.png'))
 
-                drive('tap Back', 'tap Pause Sync', 'wait-for Sync is off', 'wait-idle')
+                write_status(f'timed-out\n0\nThe computer was not found. Run kobo sync run on it, keep both on the same network, then tap Sync now.\n0\n{LAST_SUCCESS}\n0')
+                drive('lifecycle background', 'lifecycle foreground',
+                      'wait-for The computer was not found', 'expect Did not finish', 'wait-idle')
+                capture('sync-not-found')
+                result['checks'].append(dict(
+                    name='a sync that found no computer says so and names the fix',
+                    shot='sync-not-found.png'))
+
+                # A runtime too old to answer: the request is never picked up.
+                drive('tap Sync now', 'wait-for Starting', 'wait 32000',
+                      'wait-for Sync has not started', 'expect Not started', 'wait-idle',
+                      timeout=120)
+                capture('sync-not-started')
+                result['checks'].append(dict(
+                    name='a request nothing answers is reported rather than shown as starting forever',
+                    shot='sync-not-started.png'))
+
+                drive('tap Turn off Sync', 'wait-for Sync is off', 'expect Turn on Sync',
+                      'wait-idle')
                 capture('sync-paused')
                 result['checks'].append(dict(
-                    name='pause shows the service off with the resume path',
+                    name='turning Sync off shows it off with the way back on',
                     shot='sync-paused.png'))
 
                 stop()
                 ADDRESS = start()
-                drive('wait-for Refresh status', 'wait-idle', timeout=300)
+                drive('wait-for Turn on Sync', 'expect-missing First sync finished',
+                      'expect Added to Vault', 'wait-idle', timeout=300)
                 capture('sync-restored')
                 result['checks'].append(dict(
                     name='restart keeps config, import report and the seen first sync (no repeated banner)',

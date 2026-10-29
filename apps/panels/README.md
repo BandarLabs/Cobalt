@@ -27,17 +27,33 @@ library.
 
 ## Adding a comic from your computer
 
+Set up the reader once over USB, if you have not already: `kobo setup`. Then:
+
 ```sh
 kobo panels inspect COMIC.cbz                  # check the file
-kobo panels push COMIC.cbz --device IP         # send it to the reader
+kobo panels push garden.cbz harbour.cbz        # send them to the reader
 ```
 
-Then open Panels and choose **Add comic**. `kobo panels preview COMIC.cbz
---out DIRECTORY` shows its pages on the computer first.
+Each push adds to what you sent before, each comic under its own title, so a
+second push never loses the first. The push ends by listing every comic
+waiting. The next time you open Panels or come back to it, it adds them to its
+shelf by itself, with the same check as **Add comic**. Once Panels has its own
+copy, the sent file is deleted from the reader. **Add comic** lists what was
+sent, marked **On your shelf** once added.
+
+- `--replace` drops the other comics still waiting.
+- Sending a comic again under the same title replaces the copy still waiting.
+- Up to 16 comics can wait at once.
+- Commands use the reader `kobo setup` saved. Add `--device IP` for another
+  reader, or `--sim` to try a command on the simulator.
+
+`kobo panels preview COMIC.cbz --out DIRECTORY` shows its pages on the
+computer first.
 
 ### Over USB, without the command
 
-1. Choose **Add comic** for the guide.
+1. Choose **Add comic** for the guide. When comics from your computer are
+   waiting, choose **Over USB** on that list.
 2. Connect the reader by USB and copy your comic to
    `.adds/cobalt/data/panels/volume.cbz`. The folder is hidden, and you may
    need to create `panels`.

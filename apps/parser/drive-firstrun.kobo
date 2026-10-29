@@ -1,3 +1,4 @@
+# sweep: --bare
 # First run on an empty shelf (run with --bare): the bundled tutorial seeds
 # itself, and the walkthrough plays it from the gatehouse to the ending.
 wait-for Interactive fiction

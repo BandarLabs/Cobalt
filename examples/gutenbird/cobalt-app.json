@@ -2,12 +2,12 @@
   "id": "gutenbird",
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
-  "summary": "Browse OPDS libraries and read their books on your Kobo.",
-  "version": "1.0.23",
+  "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
+  "version": "1.0.24",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "The keyboard types every symbol now: on the ?123 keys, tap Shift for % $ ^ * [ ] { } < > \\ | ~ and the backtick."
+  "release_notes": "On this device lists the books you have downloaded and opens them offline, Gutenbird reopens the book you were reading, and a book downloads with one tap without choosing an edition. Reopens a document on the page you left."
 }

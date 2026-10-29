@@ -316,7 +316,7 @@ fn stale_poll_does_not_consume_a_new_connection_test() {
                 .banner
                 .as_deref()
                 .unwrap()
-                .contains("refused the token"));
+                .contains("did not accept your account"));
         }
     }
 }
@@ -345,4 +345,34 @@ fn stale_poll_does_not_consume_the_latest_temperature_change() {
         .starts_with("Couldn't set the temperature."));
     assert_eq!(runner.app().climate_of("climate.room").target, Some(21.0));
     assert!(runner.app().task.is_none());
+}
+
+#[test]
+fn an_address_written_from_the_computer_opens_the_panel_on_check_again() {
+    let mut runner = kobo_sdk::AppRunner::new(HomePanel::default());
+    runner.start();
+    for key in [BASE, TILES, STATES, CLIMATE, SETTINGS, LASTOK] {
+        runner.store_result(StoreResult::Loaded {
+            key: key.into(),
+            value: None,
+        });
+    }
+    assert!(runner.app().view == View::Setup);
+    runner.action(action_id(CHECK_AGAIN));
+    runner.store_result(StoreResult::Loaded {
+        key: BASE.into(),
+        value: None,
+    });
+    assert!(runner
+        .app()
+        .banner
+        .as_deref()
+        .unwrap()
+        .contains("No address has arrived"));
+    runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+    runner.store_result(StoreResult::Loaded {
+        key: BASE.into(),
+        value: Some(b"https://ha.example".to_vec()),
+    });
+    assert!(runner.app().view == View::Grid);
 }

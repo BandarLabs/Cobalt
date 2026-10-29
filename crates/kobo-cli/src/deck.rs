@@ -7,14 +7,19 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-const USAGE: &str = "usage: kobo deck init [--preset build|home] [--home DIR]\n\
+const USAGE: &str = concat!(
+    "usage: kobo deck init [--preset build|home] [--home DIR]\n\
                      \x20      kobo deck set PAD [--page NAME] --label LABEL [--detail TEXT] \
                      (--run CMD | --url URL | --launch APP) [--confirm | --no-confirm] [--home DIR]\n\
                      \x20      kobo deck ls [--home DIR]\n\
                      \x20      kobo deck show [--json] [--home DIR]\n\
-                     \x20      kobo deck push (--sim | --device IP | --out PATH) [--home DIR]\n\
+                     \x20      kobo deck push ",
+    "[", crate::targets::target_flags!(), " | --out PATH]",
+    " [--home DIR]\n\
                      Assign a pad (1-15) on the computer-owned deck.toml. --launch and --url\n\
-                     become shell commands Sidekick runs from the owner's home directory.";
+                     become shell commands Sidekick runs from the owner's home directory.\n",
+    crate::targets::saved_reader_note!(),
+);
 const DEFAULT_PAGE: &str = "Home";
 const MAX_PAGES: usize = 6;
 /// How many pads one page holds.
@@ -79,7 +84,7 @@ fn init(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     println!("Deck config directory ready: {}", directory.display());
     let Some(preset) = preset else {
-        println!("Assign pads with kobo deck set, then kobo deck push --sim or --device IP.");
+        println!("Assign pads with kobo deck set. A paired Deck picks up each change by itself.");
         println!("Or start from one: kobo deck init --preset build, or --preset home.");
         return Ok(());
     };
@@ -90,7 +95,9 @@ fn init(arguments: &[String]) -> Result<(), String> {
             path.display()
         ));
     }
-    let layout = preset.layout();
+    let project =
+        env::current_dir().map_err(|error| format!("find the folder this was run in: {error}"))?;
+    let layout = preset.layout(&project, cfg!(target_os = "macos"));
     write_layout(&path, &layout)?;
     println!(
         "Wrote the {} preset to {}: {} pad(s) across {} page(s).",
@@ -99,7 +106,19 @@ fn init(arguments: &[String]) -> Result<(), String> {
         layout.pad_count(),
         layout.pages.len()
     );
-    println!("Change any of them with kobo deck set, then kobo deck push --sim or --device IP.");
+    if preset == Preset::Build {
+        println!("Its pads run in {}.", project.display());
+        if env::var_os("HOME").is_some_and(|home| Path::new(&home) == project) {
+            println!(
+                "That is your home folder. Run this from your project folder instead, or edit \
+                 the run lines in deck.toml."
+            );
+        }
+    }
+    println!(
+        "Change any pad with kobo deck set. A paired Deck picks up each change by itself; \
+         pair it with kobo sidekick init if you have not."
+    );
     Ok(())
 }
 
@@ -132,28 +151,18 @@ impl Preset {
         }
     }
 
-    fn layout(self) -> Layout {
-        let keys: Vec<(&str, &str, &str, bool)> = match self {
-            Self::Build => vec![
-                ("Test", "cargo test", "cargo test --workspace", false),
-                ("Format", "cargo fmt", "cargo fmt --all", false),
-                ("Lint", "cargo clippy", "cargo clippy --workspace", false),
-                ("Build", "release build", "cargo build --release", false),
-                ("Status", "git status", "git status --short", false),
-                ("Pull", "git pull", "git pull --ff-only", false),
-                // The one that asks first, because it is the one that is hard
-                // to take back from the other side of the room.
-                ("Deploy", "deploy the site", "make deploy", true),
-            ],
-            Self::Home => vec![
-                ("Music", "play the playlist", "playerctl play", false),
-                ("Pause", "pause it", "playerctl pause", false),
-                ("Next", "next track", "playerctl next", false),
-                ("Lights", "lights on", "lights on", false),
-                ("Dim", "lights low", "lights dim", false),
-                ("Timer", "ten minutes", "timer 10m", false),
-                ("Lock", "lock the screen", "loginctl lock-session", true),
-            ],
+    /// The preset's pads, for a project in `project` on this kind of computer.
+    ///
+    /// The helper runs every pad from the owner's home folder, so the build
+    /// pads used to run `cargo test` in a folder with no project in it. They
+    /// now change into the folder `init` was run from first. The home pads
+    /// used to be Linux tools and two commands that do not exist anywhere;
+    /// they are now the ones each kind of computer actually has.
+    fn layout(self, project: &Path, macos: bool) -> Layout {
+        let keys = match self {
+            Self::Build => build_keys(project),
+            Self::Home if macos => mac_home_keys(),
+            Self::Home => linux_home_keys(),
         };
         Layout {
             pages: vec![Page {
@@ -166,13 +175,116 @@ impl Preset {
                     .map(|(label, detail, run, confirm)| Key {
                         label: label.to_owned(),
                         detail: detail.to_owned(),
-                        run: run.to_owned(),
+                        run,
                         confirm,
                     })
                     .collect(),
             }],
         }
     }
+}
+
+/// One pad as a preset writes it: label, detail, command, asks first.
+type PresetKey = (&'static str, &'static str, String, bool);
+
+fn build_keys(project: &Path) -> Vec<PresetKey> {
+    let here = format!("cd {} && ", shell_quote(&project.display().to_string()));
+    [
+        ("Test", "cargo test", "cargo test --workspace", false),
+        ("Format", "cargo fmt", "cargo fmt --all", false),
+        ("Lint", "cargo clippy", "cargo clippy --workspace", false),
+        ("Build", "release build", "cargo build --release", false),
+        ("Status", "git status", "git status --short", false),
+        ("Pull", "git pull", "git pull --ff-only", false),
+        // The one that asks first, because it is the one that is
+        // hard to take back from the other side of the room.
+        ("Deploy", "deploy the site", "make deploy", true),
+    ]
+    .into_iter()
+    .map(|(label, detail, run, confirm)| (label, detail, format!("{here}{run}"), confirm))
+    .collect()
+}
+
+fn mac_home_keys() -> Vec<PresetKey> {
+    let music = |verb: &str| format!("osascript -e 'tell application \"Music\" to {verb}'");
+    vec![
+        ("Play", "start the music", music("play"), false),
+        ("Pause", "pause the music", music("pause"), false),
+        ("Next", "next track", music("next track"), false),
+        (
+            "Louder",
+            "volume up",
+            "osascript -e 'set volume output volume ((output volume of (get volume settings)) + 10)'".to_owned(),
+            false,
+        ),
+        (
+            "Quieter",
+            "volume down",
+            "osascript -e 'set volume output volume ((output volume of (get volume settings)) - 10)'".to_owned(),
+            false,
+        ),
+        (
+            "Mute",
+            "mute or unmute",
+            "osascript -e 'set volume output muted (not (output muted of (get volume settings)))'".to_owned(),
+            false,
+        ),
+        (
+            "Timer",
+            "five minutes",
+            "sleep 300 && osascript -e 'display notification \"Five minutes are up.\" with title \"Deck\"'".to_owned(),
+            false,
+        ),
+        ("Screen off", "sleep the display", "pmset displaysleepnow".to_owned(), true),
+    ]
+}
+
+fn linux_home_keys() -> Vec<PresetKey> {
+    vec![
+        (
+            "Play",
+            "start the music",
+            "playerctl play".to_owned(),
+            false,
+        ),
+        (
+            "Pause",
+            "pause the music",
+            "playerctl pause".to_owned(),
+            false,
+        ),
+        ("Next", "next track", "playerctl next".to_owned(), false),
+        (
+            "Louder",
+            "volume up",
+            "pactl set-sink-volume @DEFAULT_SINK@ +10%".to_owned(),
+            false,
+        ),
+        (
+            "Quieter",
+            "volume down",
+            "pactl set-sink-volume @DEFAULT_SINK@ -10%".to_owned(),
+            false,
+        ),
+        (
+            "Mute",
+            "mute or unmute",
+            "pactl set-sink-mute @DEFAULT_SINK@ toggle".to_owned(),
+            false,
+        ),
+        (
+            "Timer",
+            "five minutes",
+            "sleep 300 && notify-send Deck 'Five minutes are up.'".to_owned(),
+            false,
+        ),
+        (
+            "Lock",
+            "lock the screen",
+            "loginctl lock-session".to_owned(),
+            true,
+        ),
+    ]
 }
 
 fn parse_init(arguments: &[String]) -> Result<(Option<Preset>, Option<&str>), String> {
@@ -529,6 +641,11 @@ fn config_dir(home: Option<&str>) -> Result<PathBuf, String> {
     if let Some(home) = home {
         return Ok(PathBuf::from(home));
     }
+    // The helper reads deck.toml from its own folder, which this variable
+    // moves; the companion follows it so both look at the same file.
+    if let Some(root) = env::var_os("KOBO_SIDEKICK_CONFIG_DIR") {
+        return Ok(PathBuf::from(root).join("sidekick"));
+    }
     let Some(user) = kobo_abi::home_directory() else {
         return Err(format!("no HOME to look in; pass --home DIR\n{USAGE}"));
     };
@@ -540,7 +657,7 @@ fn config_path(home: Option<&str>) -> Result<PathBuf, String> {
 }
 
 fn sim_root() -> PathBuf {
-    env::temp_dir().join("cobalt-sim-state").join("deck")
+    kobo_sim::simulated_state_root("deck")
 }
 
 fn page_mut<'a>(layout: &'a mut Layout, name: &str) -> Result<&'a mut Page, String> {
@@ -964,7 +1081,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 fn transfer(host: &str, snapshot: &str, pads: usize) -> Result<(), String> {
     let output = remote(host, &transfer_script(snapshot, pads))?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
-    println!("Pairing was preserved. Open Deck and pair with the computer if needed.");
+    println!("Pairing was kept. If Deck is not paired yet, run kobo sidekick init.");
     Ok(())
 }
 
@@ -1011,11 +1128,12 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::{
-        command, config_path, launch_command, load, open_url_command, parse_toml, sim_root,
-        write_store, CACHE_KEY, LOCAL_PAIRING, PAIRED_KEY,
+        command, config_path, launch_command, load, open_url_command, parse_toml, push_toml_string,
+        sim_root, validate_detail, validate_label, write_store, Layout, Preset, CACHE_KEY,
+        LOCAL_PAIRING, PAIRED_KEY,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn home() -> PathBuf {
@@ -1101,6 +1219,59 @@ mod tests {
         let second = command(&args(&["init", "--preset", "home", "--home", &owner]));
         assert!(second.is_err(), "a preset wrote over an existing deck");
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn build_pads_run_in_the_project_folder_rather_than_the_home_folder() {
+        let layout = Preset::Build.layout(Path::new("/work/my app"), false);
+        for key in &layout.pages[0].keys {
+            assert!(
+                key.run.starts_with("cd '/work/my app' && "),
+                "{} runs from home: {}",
+                key.label,
+                key.run
+            );
+        }
+    }
+
+    #[test]
+    fn home_pads_are_commands_each_kind_of_computer_actually_has() {
+        let mac = Preset::Home.layout(Path::new("/"), true);
+        let linux = Preset::Home.layout(Path::new("/"), false);
+        let runs = |layout: &Layout| {
+            layout.pages[0]
+                .keys
+                .iter()
+                .map(|key| key.run.clone())
+                .collect::<Vec<_>>()
+        };
+        for run in runs(&mac) {
+            for linux_only in ["playerctl", "loginctl", "pactl", "notify-send"] {
+                assert!(
+                    !run.contains(linux_only),
+                    "macOS pad uses {linux_only}: {run}"
+                );
+            }
+        }
+        for layout in [&mac, &linux] {
+            for key in &layout.pages[0].keys {
+                validate_label(&key.label).expect("label fits the pad");
+                validate_detail(&key.detail).expect("detail fits the pad");
+                assert!(!key.run.starts_with("lights") && !key.run.starts_with("timer "));
+            }
+            // The round trip through deck.toml keeps quoting intact.
+            let mut body = String::new();
+            for key in &layout.pages[0].keys {
+                body.push_str("[[page]]\nname = \"Home\"\n[[page.key]]\nlabel = ");
+                push_toml_string(&mut body, &key.label);
+                body.push_str("\nrun = ");
+                push_toml_string(&mut body, &key.run);
+                body.push('\n');
+                let parsed = parse_toml(&body).expect("parses");
+                assert_eq!(parsed.pages.last().unwrap().keys[0].run, key.run);
+                body.clear();
+            }
+        }
     }
 
     #[test]

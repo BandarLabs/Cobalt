@@ -468,6 +468,12 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     if options.command.is_empty() {
         return Err("kobo stream needs a command after --".to_owned());
     }
+    if let Some(address) = refresh_for_current_address()? {
+        eprintln!(
+            "This computer is now at {address}, so Paperterm's certificate was renewed to name it.\r\n\
+             If the reader was paired at an older address, run kobo stream init to update it.\r"
+        );
+    }
     let identity = Identity::load()?;
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
     let listener = TcpListener::bind(("0.0.0.0", options.port))
@@ -822,76 +828,7 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
     let leaf = directory.join("cert.pem");
     let leaf_key = directory.join("key.pem");
     if !leaf.exists() || !leaf_key.exists() || !requested_hosts.is_empty() {
-        let request = directory.join("leaf.csr");
-        let extensions = directory.join("leaf.ext");
-        let serial = directory.join("ca-cert.srl");
-        let mut names = vec!["IP:127.0.0.1".to_owned()];
-        names.extend(requested_hosts.iter().map(|host| {
-            if host.parse::<std::net::IpAddr>().is_ok() {
-                format!("IP:{host}")
-            } else {
-                format!("DNS:{host}")
-            }
-        }));
-        std::fs::write(
-            &extensions,
-            format!(
-                "subjectAltName={}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
-                names.join(",")
-            ),
-        )
-        .map_err(|error| format!("write leaf extensions: {error}"))?;
-        let request_output = Command::new("openssl")
-            .args(["req", "-newkey", "rsa:2048", "-nodes", "-keyout"])
-            .arg(&leaf_key)
-            .arg("-out")
-            .arg(&request)
-            .args(["-subj", "/CN=kobo-stream"])
-            .output()
-            .map_err(|error| format!("run openssl: {error}"))?;
-        if !request_output.status.success() {
-            return Err(format!(
-                "openssl refused the stream leaf: {}",
-                String::from_utf8_lossy(&request_output.stderr)
-            ));
-        }
-        let signed = Command::new("openssl")
-            .args([
-                "x509",
-                "-req",
-                "-sha256",
-                "-days",
-                "3650",
-                "-CAcreateserial",
-            ])
-            .arg("-in")
-            .arg(&request)
-            .arg("-CA")
-            .arg(&ca)
-            .arg("-CAkey")
-            .arg(&key)
-            .arg("-CAserial")
-            .arg(&serial)
-            .arg("-extfile")
-            .arg(&extensions)
-            .arg("-out")
-            .arg(&leaf)
-            .output()
-            .map_err(|error| format!("run openssl: {error}"))?;
-        let _ = std::fs::remove_file(request);
-        let _ = std::fs::remove_file(extensions);
-        if !signed.status.success() {
-            return Err(format!(
-                "openssl refused to sign the stream leaf: {}",
-                String::from_utf8_lossy(&signed.stderr)
-            ));
-        }
-        let authority =
-            std::fs::read_to_string(&ca).map_err(|error| format!("read authority: {error}"))?;
-        let certificate =
-            std::fs::read_to_string(&leaf).map_err(|error| format!("read stream leaf: {error}"))?;
-        std::fs::write(&leaf, format!("{certificate}{authority}"))
-            .map_err(|error| format!("write stream chain: {error}"))?;
+        mint_leaf(&directory, &requested_hosts)?;
     }
     let pairing_path = directory.join("pairing");
     let pairing = std::fs::read_to_string(&pairing_path)
@@ -917,6 +854,165 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Mints a leaf naming loopback and `hosts`, signed by the stream authority.
+///
+/// The authority is what the reader trusts, so a new leaf costs nothing on
+/// the reader's side: it is how a change of address is absorbed without a
+/// cable or a second `kobo trust set`.
+fn mint_leaf(directory: &std::path::Path, hosts: &[String]) -> Result<(), String> {
+    let ca = directory.join("ca-cert.pem");
+    let key = directory.join("ca-key.pem");
+    let leaf = directory.join("cert.pem");
+    let leaf_key = directory.join("key.pem");
+    let request = directory.join("leaf.csr");
+    let extensions = directory.join("leaf.ext");
+    let serial = directory.join("ca-cert.srl");
+    let mut names = vec!["IP:127.0.0.1".to_owned()];
+    names.extend(hosts.iter().map(|host| {
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            format!("IP:{host}")
+        } else {
+            format!("DNS:{host}")
+        }
+    }));
+    std::fs::write(
+        &extensions,
+        format!(
+            "subjectAltName={}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
+            names.join(",")
+        ),
+    )
+    .map_err(|error| format!("write leaf extensions: {error}"))?;
+    let request_output = Command::new("openssl")
+        .args(["req", "-newkey", "rsa:2048", "-nodes", "-keyout"])
+        .arg(&leaf_key)
+        .arg("-out")
+        .arg(&request)
+        .args(["-subj", "/CN=kobo-stream"])
+        .output()
+        .map_err(|error| format!("run openssl: {error}"))?;
+    if !request_output.status.success() {
+        return Err(format!(
+            "openssl refused the stream leaf: {}",
+            String::from_utf8_lossy(&request_output.stderr)
+        ));
+    }
+    let signed = Command::new("openssl")
+        .args([
+            "x509",
+            "-req",
+            "-sha256",
+            "-days",
+            "3650",
+            "-CAcreateserial",
+        ])
+        .arg("-in")
+        .arg(&request)
+        .arg("-CA")
+        .arg(&ca)
+        .arg("-CAkey")
+        .arg(&key)
+        .arg("-CAserial")
+        .arg(&serial)
+        .arg("-extfile")
+        .arg(&extensions)
+        .arg("-out")
+        .arg(&leaf)
+        .output()
+        .map_err(|error| format!("run openssl: {error}"))?;
+    let _ = std::fs::remove_file(request);
+    let _ = std::fs::remove_file(extensions);
+    if !signed.status.success() {
+        return Err(format!(
+            "openssl refused to sign the stream leaf: {}",
+            String::from_utf8_lossy(&signed.stderr)
+        ));
+    }
+    let authority =
+        std::fs::read_to_string(&ca).map_err(|error| format!("read authority: {error}"))?;
+    let certificate =
+        std::fs::read_to_string(&leaf).map_err(|error| format!("read stream leaf: {error}"))?;
+    std::fs::write(&leaf, format!("{certificate}{authority}"))
+        .map_err(|error| format!("write stream chain: {error}"))?;
+    Ok(())
+}
+
+/// Renews the leaf when this computer's address is not one it names.
+///
+/// The certificate used to be minted only by `init`, so the day the router
+/// handed the computer a new address every session failed its handshake and
+/// nothing said why. Each session now checks first. The new leaf keeps any
+/// name the owner gave with `--host` and drops numeric addresses this
+/// computer no longer has, so the pairing details stop listing dead ones.
+/// Only a session renews: reading the pairing details leaves the identity
+/// exactly as it was. Returns the new address when it renewed, `None` when
+/// nothing changed.
+pub fn refresh_for_current_address() -> Result<Option<String>, String> {
+    let directory = identity_dir()?;
+    if !directory.join("ca-cert.pem").exists() || !directory.join("ca-key.pem").exists() {
+        return Ok(None);
+    }
+    let Some(current) = lan_address() else {
+        return Ok(None);
+    };
+    let saved = std::fs::read_to_string(directory.join("hosts")).unwrap_or_default();
+    let Some(hosts) = hosts_after_move(&saved, &current) else {
+        return Ok(None);
+    };
+    mint_leaf(&directory, &hosts)?;
+    std::fs::write(directory.join("hosts"), hosts.join("\n"))
+        .map_err(|error| format!("save computer addresses: {error}"))?;
+    Ok(Some(current))
+}
+
+/// The addresses a renewed leaf should name, or `None` when `current` is
+/// already among the saved ones.
+fn hosts_after_move(saved: &str, current: &str) -> Option<Vec<String>> {
+    let saved: Vec<&str> = saved
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if saved.contains(&current) {
+        return None;
+    }
+    let mut hosts = vec![current.to_owned()];
+    hosts.extend(
+        saved
+            .into_iter()
+            .filter(|host| host.parse::<std::net::IpAddr>().is_err())
+            .map(str::to_owned),
+    );
+    Some(hosts)
+}
+
+/// The address the reader will dial: whichever interface routes outward.
+/// Connecting a UDP socket sends nothing; it only asks the kernel which
+/// source address it would use.
+fn lan_address() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    let std::net::IpAddr::V4(address) = socket.local_addr().ok()?.ip() else {
+        return None;
+    };
+    Some(address.to_string())
+}
+
+/// The pairing code this computer's Paperterm host answers to.
+pub fn saved_code() -> Result<String, String> {
+    Ok(Identity::load()?.pairing)
+}
+
+/// Where the stream authority the reader must trust is kept.
+pub fn authority_path() -> Result<PathBuf, String> {
+    let path = identity_dir()?.join("ca-cert.pem");
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!("no {}; run kobo stream init", path.display()))
+    }
+}
+
 /// Shows saved connection details without replacing the identity or pairing code.
 pub fn pairing_instructions(port: u16) -> Result<String, String> {
     Ok(format!("{}\n\n{FIRST_TIME_HELP}", pairing_details(port)?))
@@ -925,7 +1021,7 @@ pub fn pairing_instructions(port: u16) -> Result<String, String> {
 /// What to do with a freshly minted identity, for a caller that has not
 /// already done it. Named so a test can hold it to saying so without a
 /// filesystem identity to load.
-const FIRST_TIME_HELP: &str = "First time: run kobo trust set stream --device READER_IP.\nThen open Paperterm and enter the computer address and pairing code.\nKeep both devices on the same network and the computer awake.";
+const FIRST_TIME_HELP: &str = "First time: run kobo stream init. It pairs Paperterm on your reader, so there is nothing to type there.\nKeep both devices on the same network and the computer awake.";
 
 /// The address and code alone, with no advice about what to do with them.
 ///
@@ -1319,14 +1415,34 @@ mod tests {
     }
 
     #[test]
+    fn a_computer_that_moved_gets_a_certificate_for_its_new_address_and_keeps_its_names() {
+        let hosts = super::hosts_after_move("192.168.1.20\nstudio.local\n", "192.168.1.31")
+            .expect("the new address is not named yet");
+        assert_eq!(hosts, ["192.168.1.31", "studio.local"]);
+        assert_eq!(
+            super::hosts_after_move("192.168.1.31\nstudio.local", "192.168.1.31"),
+            None,
+            "an unchanged address re-minted the certificate"
+        );
+        assert_eq!(
+            super::hosts_after_move("", "10.0.0.4").expect("first address"),
+            ["10.0.0.4"]
+        );
+    }
+
+    #[test]
+    fn first_time_help_sends_the_owner_to_the_one_pairing_command() {
+        assert!(super::FIRST_TIME_HELP.contains("kobo stream init"));
+        assert!(!super::FIRST_TIME_HELP.contains("trust set"));
+    }
+
+    #[test]
     fn missing_saved_address_explains_how_to_finish_setup() {
         let details = super::format_pairing("", "ABC123", 9123);
         assert!(details.contains("kobo stream init --host COMPUTER_IP"));
-        // Installing the trust root moved out of the details and into the
-        // first-time advice, because a caller that has just installed it must
-        // not repeat the instruction back to the owner.
+        // What to do next is the caller's to say, because a caller that has
+        // just paired the reader must not repeat the instruction back.
         assert!(!details.contains("kobo trust set stream --device READER_IP"));
-        assert!(super::FIRST_TIME_HELP.contains("kobo trust set stream --device READER_IP"));
     }
     use super::*;
 

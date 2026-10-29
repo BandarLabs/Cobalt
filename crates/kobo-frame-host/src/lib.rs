@@ -624,16 +624,43 @@ fn field(value: &str) -> String {
         .collect()
 }
 
+/// The album a push files its photos under: the folder they came from.
+///
+/// A single photo belongs to the folder it was sent from too. Named after the
+/// file itself, a one-photo push became an album called `IMG_2041.jpg`,
+/// which reads as a file name rather than an album.
 fn album_name(input: &Path) -> String {
-    input
-        .file_name()
-        .or_else(|| input.parent().and_then(Path::file_name))
+    let resolved = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+    let folder = if resolved.is_file() {
+        resolved.parent().map(Path::to_path_buf)
+    } else {
+        Some(resolved)
+    };
+    folder
+        .as_deref()
+        .and_then(Path::file_name)
         .and_then(|name| name.to_str())
         .map_or_else(|| "Photos".to_owned(), field)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_single_photo_is_filed_under_the_folder_it_came_from() {
+        let folder = std::env::temp_dir().join(format!("Summer holiday {}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("folder");
+        let photo = folder.join("IMG_2041.jpg");
+        std::fs::write(&photo, b"x").expect("photo");
+        let expected = folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("name")
+            .to_owned();
+        assert_eq!(super::album_name(&photo), expected);
+        assert_eq!(super::album_name(&folder), expected);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     #[test]
     fn digest_map_round_trips() {
         let digest = "a".repeat(64);

@@ -18,3 +18,31 @@ tap View results
 expect Spells
 clean
 shot spell-results
+# A party member's hit points move five at a time, and a spell level holds
+# several slots that a long rest gives back.
+tap Back
+tap-id party
+tap-id party-add
+type moss
+tap-id kb.enter
+type 14
+tap-id kb.enter
+type 20
+tap-id kb.enter
+type 20
+tap-id kb.enter
+wait-for moss
+tap moss
+tap-id hp-down-5
+expect 15/20
+tap-id next
+tap-id slots-setup
+tap-id slot-0
+tap-id slot-0
+tap-id slots-spend
+tap-id slot-0
+expect 1st · 1 of 2 left
+clean
+shot party-slots
+tap Long rest
+expect 1st · 2 of 2 left

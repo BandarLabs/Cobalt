@@ -11,12 +11,22 @@ const NORMALIZED_EDGE: u32 = 360;
 const MAX_TRANSFER_BYTES: usize = 256 * 1024;
 const MIN_SIDE: usize = 5;
 const MAX_SIDE: usize = 25;
-const MAX_IMPORTED: usize = 12;
+/// The most photo puzzles the reader keeps; the app reads no more.
+const MAX_IMPORTED: usize = 24;
 const MAX_NAME: usize = 48;
-const USAGE: &str = "usage:
+const USAGE: &str = concat!(
+    "usage:
   kobo nonograms preview IMAGE --out DIRECTORY
-  kobo nonograms push IMAGE --name NAME --size N [--add IMAGE --name NAME --size N]... (--sim | --device IP | --out DIRECTORY)
-N is from 5 to 25. A push synchronizes the named imported-puzzle shelf.";
+  kobo nonograms push IMAGE --name NAME --size N [--add IMAGE --name NAME --size N]... ",
+    "[",
+    crate::targets::target_flags!(),
+    " | --out DIRECTORY] [--replace]",
+    "
+N is from 5 to 25. A push adds its puzzles to the photos already on the reader,
+replacing one made from the same photo at the same size. --replace keeps only
+the puzzles it names.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Destination<'a> {
@@ -36,6 +46,7 @@ struct Import<'a> {
 struct Push<'a> {
     imports: Vec<Import<'a>>,
     destination: Destination<'a>,
+    replace: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -55,9 +66,9 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     }
     let push = parse_push(arguments)?;
     let prepared = prepare_imports(&push.imports)?;
-    publish(&prepared, &push.destination)?;
+    let on_reader = publish(&prepared, &push.destination, push.replace)?;
     println!(
-        "Synchronized {} Nonograms {}.",
+        "Sent {} photo {}.",
         prepared.len(),
         if prepared.len() == 1 {
             "puzzle"
@@ -65,7 +76,65 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             "puzzles"
         }
     );
+    print_on_reader(&on_reader);
     Ok(())
+}
+
+/// One manifest line: the photo file, the puzzle's name and its grid side.
+fn entries(manifest: &str) -> Vec<(String, String, usize)> {
+    manifest
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let (Some(file), Some(name), Some(side), None) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+            else {
+                return None;
+            };
+            Some((file.to_owned(), name.to_owned(), side.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// The reader's list after this push: the puzzles already there keep their
+/// place, one made from the same photo at the same size is replaced, and
+/// new ones go last. `--replace` keeps only the pushed puzzles.
+fn merged_manifest(existing: &str, prepared: &[Prepared], replace: bool) -> Result<String, String> {
+    let mut output = String::new();
+    let mut count = 0;
+    if !replace {
+        for (file, name, side) in entries(existing) {
+            if prepared.iter().any(|entry| entry.file == file) {
+                continue;
+            }
+            writeln!(output, "{file}\t{name}\t{side}").unwrap();
+            count += 1;
+        }
+    }
+    output.push_str(&manifest(prepared));
+    count += prepared.len();
+    if count > MAX_IMPORTED {
+        return Err(format!(
+            "the reader would hold {count} photo puzzles and keeps at most {MAX_IMPORTED}. \
+             Push with --replace to keep only the photos you name"
+        ));
+    }
+    Ok(output)
+}
+
+fn print_on_reader(manifest: &str) {
+    let puzzles = entries(manifest)
+        .into_iter()
+        .map(|(_, name, side)| format!("{name} ({side}\u{d7}{side})"))
+        .collect::<Vec<_>>();
+    match puzzles.len() {
+        0 => println!("No photo puzzles are on the reader."),
+        1 => println!("On the reader: 1 photo puzzle, {}.", puzzles[0]),
+        count => println!(
+            "On the reader: {count} photo puzzles, {}.",
+            puzzles.join(", ")
+        ),
+    }
 }
 
 fn parse_push(arguments: &[String]) -> Result<Push<'_>, String> {
@@ -79,6 +148,7 @@ fn parse_push(arguments: &[String]) -> Result<Push<'_>, String> {
         side: 0,
     }];
     let mut destination = None;
+    let mut replace = false;
     let mut index = 2;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -133,6 +203,10 @@ fn parse_push(arguments: &[String]) -> Result<Push<'_>, String> {
                 set_destination(&mut destination, Destination::Output(output))?;
                 index += 2;
             }
+            "--replace" => {
+                replace = true;
+                index += 1;
+            }
             _ => return Err(USAGE.to_owned()),
         }
     }
@@ -143,6 +217,7 @@ fn parse_push(arguments: &[String]) -> Result<Push<'_>, String> {
     Ok(Push {
         imports,
         destination: destination.ok_or_else(|| USAGE.to_owned())?,
+        replace,
     })
 }
 
@@ -243,18 +318,26 @@ fn manifest(prepared: &[Prepared]) -> String {
     output
 }
 
-fn publish(prepared: &[Prepared], destination: &Destination<'_>) -> Result<(), String> {
+/// Sends the puzzles and answers the reader's list as it now stands.
+fn publish(
+    prepared: &[Prepared],
+    destination: &Destination<'_>,
+    replace: bool,
+) -> Result<String, String> {
     match destination {
         Destination::Simulator => publish_local(
-            &std::env::temp_dir().join("cobalt-sim-data/nonograms"),
+            &kobo_sim::simulated_data_root("nonograms"),
             prepared,
+            replace,
         ),
-        Destination::Output(path) => publish_local(Path::new(path), prepared),
-        Destination::Device(host) => transfer(prepared, host),
+        Destination::Output(path) => publish_local(Path::new(path), prepared, replace),
+        Destination::Device(host) => transfer(prepared, host, replace),
     }
 }
 
-fn publish_local(root: &Path, prepared: &[Prepared]) -> Result<(), String> {
+fn publish_local(root: &Path, prepared: &[Prepared], replace: bool) -> Result<String, String> {
+    let existing = fs::read_to_string(root.join(MANIFEST)).unwrap_or_default();
+    let list = merged_manifest(&existing, prepared, replace)?;
     fs::create_dir_all(root).map_err(|error| format!("create {}: {error}", root.display()))?;
     let staging = root.join(format!(".nonograms-import-{}", std::process::id()));
     if staging.exists() {
@@ -266,7 +349,7 @@ fn publish_local(root: &Path, prepared: &[Prepared]) -> Result<(), String> {
             fs::write(staging.join(&entry.file), &entry.png)
                 .map_err(|error| format!("write {}: {error}", entry.file))?;
         }
-        fs::write(staging.join(MANIFEST), manifest(prepared))
+        fs::write(staging.join(MANIFEST), &list)
             .map_err(|error| format!("write {MANIFEST}: {error}"))?;
         for entry in prepared {
             fs::rename(staging.join(&entry.file), root.join(&entry.file))
@@ -274,10 +357,23 @@ fn publish_local(root: &Path, prepared: &[Prepared]) -> Result<(), String> {
         }
         fs::rename(staging.join(MANIFEST), root.join(MANIFEST))
             .map_err(|error| format!("publish {MANIFEST}: {error}"))?;
+        if replace {
+            let kept = entries(&list);
+            for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+                let name = entry.map_err(|error| error.to_string())?.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with("photo-")
+                    && name.ends_with(".png")
+                    && !kept.iter().any(|(file, _, _)| *file == name)
+                {
+                    let _ = fs::remove_file(root.join(name.as_ref()));
+                }
+            }
+        }
         Ok(())
     })();
     let _ = fs::remove_dir_all(&staging);
-    result
+    result.map(|()| list)
 }
 
 #[derive(Clone, Debug)]
@@ -584,8 +680,23 @@ fn png_crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
-fn transfer(prepared: &[Prepared], host: &str) -> Result<(), String> {
-    let script = transfer_script(prepared);
+fn transfer(prepared: &[Prepared], host: &str, replace: bool) -> Result<String, String> {
+    let read = format!("if [ -f '{ROOT}/{MANIFEST}' ]; then cat '{ROOT}/{MANIFEST}'; fi\n");
+    let existing = super::run_remote_shell(
+        &format!("root@{host}"),
+        &read,
+        super::REMOTE_COMMAND_TIMEOUT,
+    )
+    .map_err(super::unreachable_device)?;
+    if !existing.status.success() {
+        return Err("the reader could not read its list of photo puzzles".to_owned());
+    }
+    let list = merged_manifest(
+        &String::from_utf8_lossy(&existing.stdout),
+        prepared,
+        replace,
+    )?;
+    let script = transfer_script(prepared, &list, replace);
     let output = super::run_remote_shell(
         &format!("root@{host}"),
         &script,
@@ -598,10 +709,9 @@ fn transfer(prepared: &[Prepared], host: &str) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    Ok(())
+    Ok(list)
 }
-fn transfer_script(prepared: &[Prepared]) -> String {
+fn transfer_script(prepared: &[Prepared], list: &str, replace: bool) -> String {
     let mut script = format!(
         "set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\nstage=\"$root/.import.$$\"\nmkdir \"$stage\"\ntrap 'rm -rf \"$stage\"' EXIT HUP INT TERM\n"
     );
@@ -611,7 +721,7 @@ fn transfer_script(prepared: &[Prepared]) -> String {
         let sha = kobo_net::sha256::hex_digest(&entry.png);
         writeln!(script,"base64 -d > \"$stage/{}\" <<'KOBO_NONOGRAM_PHOTO'\n{}\nKOBO_NONOGRAM_PHOTO\ntest \"$(wc -c < \"$stage/{}\")\" = '{}'\nset -- $(sha256sum \"$stage/{}\"); test \"$1\" = '{}'\n",entry.file,encoded,entry.file,bytes,entry.file,sha).unwrap();
     }
-    let encoded = super::base64_encode(manifest(prepared).as_bytes());
+    let encoded = super::base64_encode(list.as_bytes());
     writeln!(script,"base64 -d > \"$stage/{MANIFEST}\" <<'KOBO_NONOGRAM_MANIFEST'\n{encoded}\nKOBO_NONOGRAM_MANIFEST").unwrap();
     for entry in prepared {
         writeln!(
@@ -621,7 +731,20 @@ fn transfer_script(prepared: &[Prepared]) -> String {
         )
         .unwrap();
     }
-    writeln!(script,"mv -f \"$stage/{MANIFEST}\" \"$root/{MANIFEST}\"\nsync\nprintf 'Transferred {} Nonograms puzzles\\n'",prepared.len()).unwrap();
+    writeln!(script, "mv -f \"$stage/{MANIFEST}\" \"$root/{MANIFEST}\"").unwrap();
+    if replace {
+        let kept = entries(list)
+            .into_iter()
+            .map(|(file, _, _)| file)
+            .collect::<Vec<_>>()
+            .join(" ");
+        writeln!(
+            script,
+            "for old in \"$root\"/photo-*.png; do\n  [ -e \"$old\" ] || continue\n  case \" {kept} \" in *\" ${{old##*/}} \"*) ;; *) rm -f \"$old\" ;; esac\ndone"
+        )
+        .unwrap();
+    }
+    writeln!(script, "sync").unwrap();
     script
 }
 
@@ -678,7 +801,7 @@ mod tests {
             "--size".into(),
             "5".into(),
         ];
-        for n in 1..=12 {
+        for n in 1..=MAX_IMPORTED {
             too_many.extend([
                 "--add".into(),
                 "a.png".into(),
@@ -733,13 +856,57 @@ mod tests {
                 png: b"earth".to_vec(),
             },
         ];
-        publish_local(&root, &prepared).unwrap();
+        publish_local(&root, &prepared, false).unwrap();
         assert_eq!(
             fs::read_to_string(root.join(MANIFEST)).unwrap(),
             "moon.png\tThe Moon\t5\nearth.PNG\tEarth\t25\n"
         );
         assert_eq!(fs::read(root.join("moon.png")).unwrap(), b"moon");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn prepared(file: &str, name: &str) -> Prepared {
+        Prepared {
+            file: file.into(),
+            name: name.into(),
+            side: 9,
+            png: name.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_second_push_adds_to_the_photos_already_on_the_reader() {
+        let root = std::env::temp_dir().join(format!("nonograms-add-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        publish_local(&root, &[prepared("photo-9-aaa.png", "Harbour")], false).unwrap();
+        let list = publish_local(&root, &[prepared("photo-9-bbb.png", "Garden")], false).unwrap();
+        assert_eq!(
+            list,
+            "photo-9-aaa.png\tHarbour\t9\nphoto-9-bbb.png\tGarden\t9\n"
+        );
+        let renamed =
+            publish_local(&root, &[prepared("photo-9-aaa.png", "Old harbour")], false).unwrap();
+        assert_eq!(
+            renamed,
+            "photo-9-bbb.png\tGarden\t9\nphoto-9-aaa.png\tOld harbour\t9\n"
+        );
+        let mirrored = publish_local(&root, &[prepared("photo-9-ccc.png", "Moon")], true).unwrap();
+        assert_eq!(mirrored, "photo-9-ccc.png\tMoon\t9\n");
+        assert!(!root.join("photo-9-aaa.png").exists());
+        assert!(root.join("photo-9-ccc.png").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_full_reader_is_named_with_the_way_out() {
+        let mut full = String::new();
+        for index in 0..MAX_IMPORTED {
+            writeln!(full, "photo-9-{index}.png\tPhoto {index}\t9").unwrap();
+        }
+        let error =
+            merged_manifest(&full, &[prepared("photo-9-new.png", "New")], false).unwrap_err();
+        assert!(error.contains("--replace"), "{error}");
+        assert!(merged_manifest(&full, &[prepared("photo-9-new.png", "New")], true).is_ok());
     }
 
     #[test]
@@ -750,7 +917,9 @@ mod tests {
             side: 5,
             png: b"moon".to_vec(),
         }];
-        let script = transfer_script(&prepared);
+        let script = transfer_script(&prepared, "moon.png\tMoon\t5\n", false);
+        assert!(!script.contains("rm -f \"$old\""));
+        assert!(transfer_script(&prepared, "moon.png\tMoon\t5\n", true).contains("rm -f \"$old\""));
         assert!(
             script.find("mv -f \"$stage/moon.png\"").unwrap()
                 < script.find("mv -f \"$stage/imported.txt\"").unwrap()

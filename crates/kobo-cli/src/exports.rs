@@ -10,7 +10,12 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-const USAGE: &str = "Receive the copy you prepared with Export in a reader app.\n\nusage: kobo export --app APP (--device ADDRESS | --sim) --out FOLDER\n\nThe reader keeps its copy. Existing computer files are never replaced.\nFor a reader, use the SSH connection enabled during kobo setup.";
+const USAGE: &str = concat!(
+    "Receive the copy you prepared with Export in a reader app.\n\nusage: kobo export --app APP ",
+    crate::targets::target_choice!(),
+    " --out FOLDER\n\nThe reader keeps its copy. Existing computer files are never replaced.\nFor a reader, use the SSH connection enabled during kobo setup.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
@@ -42,7 +47,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             let root = if data {
                 kobo_sim::simulated_data_root(app)
             } else {
-                std::env::temp_dir().join("cobalt-sim-state").join(app)
+                kobo_sim::simulated_state_root(app)
             };
             bounded_file(&root.join(key), maximum)
         }

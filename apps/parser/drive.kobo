@@ -2,6 +2,7 @@
 # save/restore round trip through the slot picker.
 wait-for Interactive fiction
 wait-for Lamplight
+expect-missing Refresh library
 clean
 shot parser-library
 tap Lamplight
@@ -11,6 +12,14 @@ tap Lamplight
 wait-for light.
 clean
 shot parser-opening
+# A verb that needs an object asks which thing instead of sending "open".
+tap OPEN
+wait-for Open what?
+expect CRATE
+clean
+shot parser-open-what
+tap CRATE
+wait-for open crate
 tap Keyboard
 type save
 tap Run

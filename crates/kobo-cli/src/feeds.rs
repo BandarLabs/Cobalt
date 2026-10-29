@@ -10,11 +10,16 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-const USAGE: &str = "usage: kobo feeds check FILE\n\
-                     \x20      kobo feeds push FILE (--device IP | --sim)\n\
+const USAGE: &str = concat!(
+    "usage: kobo feeds check FILE\n\
+                     \x20      kobo feeds push FILE ",
+    crate::targets::target_choice!(),
+    "\n\
                      check reads an OPML subscription list on this computer.\n\
                      push copies a checked list to the reader's Feeds shelf,\n\
-                     where Feeds ▸ Import OPML lists it.";
+                     where Feeds ▸ Import OPML lists it.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 /// Where the reader keeps the files Feeds may read.
 const DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/data/rss";

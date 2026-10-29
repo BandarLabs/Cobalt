@@ -11,6 +11,7 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod account;
 mod apps;
 mod authorize;
 mod beta_store_smoke;
@@ -29,6 +30,7 @@ mod flashcards;
 mod frame;
 mod frame_preview;
 mod frame_recovery;
+mod harden;
 mod host_release;
 mod menu;
 mod musicstand;
@@ -211,7 +213,7 @@ const START_SCRIPT: &str = "\
 # stock reader, so nothing here needs undoing by hand.
 set -e
 root=/mnt/onboard/.adds/cobalt
-# `kobo setup --enable-ssh` leaves only a public key here. The reader's
+# `kobo setup` may leave only a public key here. The reader's
 # root-owned menu action can finish the step a USB volume cannot.
 staged_key=\"$root/bootstrap/authorized_key\"
 if [ -s \"$staged_key\" ]; then
@@ -432,6 +434,12 @@ fn main() -> ExitCode {
     // make `kobo shell` the one thing here that cannot be tested for in a
     // script.
     if arguments.first().map(|command| canonical(command)) == Some("shell") {
+        // Only the first word: everything after it is the reader's command,
+        // and `kobo shell grep -h` means grep's -h, not this one.
+        if matches!(arguments.get(1).map(String::as_str), Some("--help" | "-h")) {
+            println!("{}", reference_usage("shell"));
+            return ExitCode::SUCCESS;
+        }
         let arguments = match with_default_reader(&arguments) {
             Ok(filled) => filled,
             Err(error) => {
@@ -528,51 +536,82 @@ fn run_owner_menu() -> Result<(), String> {
     Ok(())
 }
 
+/// What `kobo send --help` prints.
+const SEND_USAGE: &str = concat!(
+    "usage: kobo send FILE [--to APP] [--replace] ",
+    targets::target_choice!(),
+    "\n       kobo send --preview FILE --out DIRECTORY [--to APP] [--profile PROFILE]\n",
+    "       kobo send --retry\n",
+    "\n",
+    "Sends a file or folder to the app on the reader that opens it, adds it to\n",
+    "what is already there, and says which app received it:\n",
+    "  photos, or a folder of them         Frame\n",
+    "  a PDF                               Music Stand or Needles: you are asked\n",
+    "  a folder of PDF scores              Music Stand\n",
+    "  Markdown notes, or a folder of them Vault\n",
+    "  OPML lists                          Feeds\n",
+    "  CBZ comics                          Panels\n",
+    "  story files                         Parser\n",
+    "  APKG/COLPKG decks                   Flashcards, which imports them first\n",
+    "\n",
+    "--to APP chooses the app yourself, for a file more than one app opens.\n",
+    "--replace sends to an app that keeps one thing at a time (Panels keeps\n",
+    "one comic) without asking first.\n",
+    "--preview renders or checks the file on this computer; nothing is sent.\n",
+    "--retry repeats the last send that failed.\n",
+    targets::saved_reader_note!()
+);
+
 /// Sends a file to the companion that reads it.
 ///
-/// The owner names the file; [`detect`] names the companion. An explicit
-/// path is the command line's half of the bargain (the guided surface asks
-/// for one when it is driving), an ambiguous container is settled by `--app`
-/// or by asking, and the target flags are the shared ones, so a saved reader
-/// name works here exactly as it does everywhere else. `--preview` looks
-/// before anything is sent, and every acknowledged send leaves a receipt,
-/// so re-sending an unchanged file is reported as already done rather than
-/// pushed twice.
+/// The owner names the file; [`detect`] names the companion. A format two
+/// apps read is settled by `--to` or by asking, and the target flags are the
+/// shared ones, so a saved reader name works here exactly as it does
+/// everywhere else. `--preview` looks before anything is sent, and every
+/// acknowledged send leaves a receipt, so re-sending an unchanged file is
+/// reported as already done rather than pushed twice.
 fn send_file(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo send FILE [--app APP] (--sim | --device IP | --reader NAME)\n\
-                         \x20      kobo send --preview FILE --out DIRECTORY [--app APP] [--profile PROFILE]\n\
-                         \x20      send routes a file to the companion that reads it:\n\
-                         \x20      photos to Frame, OPML lists to Feeds, CBZ comics to Panels,\n\
-                         \x20      story files to Parser, APKG/COLPKG decks to Flashcards.\n\
-                         \x20      --app settles a container more than one companion reads.\n\
-                         \x20      --preview renders or checks the content locally; nothing is sent.\n\
-                         \x20      --retry repeats the kept selection after a failed send.";
     if wants_help(arguments) {
-        return print_command_help(USAGE);
+        return print_command_help(SEND_USAGE);
     }
     let (arguments, target_words) = send_arguments(arguments)?;
     let (target, rest) = targets::TargetArgs::parse(&arguments)?;
-    let options = SendOptions::parse(&rest, USAGE)?;
-    let file = options.file.ok_or_else(|| console::usage(USAGE))?;
+    let options = SendOptions::parse(&rest)?;
+    let file = options
+        .file
+        .ok_or_else(|| console::usage("kobo send FILE [--to APP]: name the file to send"))?;
     let path = Path::new(&file);
-    if !path.is_file() {
-        return Err(console::usage(format!(
-            "{file}: no such file on this computer"
-        )));
+    let folder = path.is_dir();
+    if !folder && !path.is_file() {
+        return Err(format!("{file} is not a file or folder on this computer."));
     }
-    let candidates = detect::candidates(path);
+    let candidates = if folder {
+        detect::folder_candidates(path)
+    } else {
+        detect::candidates(path)
+    };
     let chosen = match detect::choose(&candidates, options.app.as_deref()) {
         Ok(companion) => companion,
-        Err(detect::ChooseError::Ambiguous(offered)) => match pick_companion(&offered)? {
+        Err(detect::ChooseError::Ambiguous(offered)) => match pick_companion(&file, &offered)? {
             Some(companion) => companion,
             None => return Ok(()),
         },
         Err(detect::ChooseError::Message(error)) => return Err(error),
     };
+    if folder && !chosen.takes_folders() {
+        return Err(console::usage(format!(
+            "{} takes one file at a time, not a folder: kobo send FILE --to {}",
+            chosen.title(),
+            chosen.name()
+        )));
+    }
 
     // Preview is local by definition: it renders or checks for the owner's
     // eyes on this computer, so target flags are a misunderstanding.
     if options.preview {
+        if folder {
+            return Err(console::usage("--preview takes one file, not a folder"));
+        }
         if target != targets::TargetArgs::default() {
             return Err(console::usage(
                 "a preview is local; it takes no target flags",
@@ -588,43 +627,39 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
     if options.out.is_some() || options.profile.is_some() {
         return Err(console::usage("--out and --profile belong to --preview"));
     }
+    // Answered before any reader is looked for: these send nothing, and an
+    // owner told how to send a deck should not first wait out a sweep.
+    if let Some(advice) = not_a_push(chosen, &file) {
+        return advice;
+    }
 
-    let resolved = target.resolve()?;
-    // A receipt belongs to a reader, not to one spelling of it: a nickname
-    // and its address are the same device, and the serial outlives a new
-    // DHCP lease. Fall back to the address only when no serial answers.
-    let target_label = match &resolved {
-        targets::Target::Simulator => "sim".to_owned(),
-        targets::Target::Address(host) => {
-            targets::probe_serial(host).unwrap_or_else(|| host.clone())
-        }
-        targets::Target::Nickname(name) => {
-            let host = targets::resolve_nickname(name)?;
-            targets::probe_serial(&host).unwrap_or(host)
-        }
-    };
-    let device_flags = match resolved {
-        targets::Target::Simulator => vec!["--sim".to_owned()],
-        targets::Target::Address(host) => vec!["--device".to_owned(), host],
-        targets::Target::Nickname(name) => {
-            vec!["--device".to_owned(), targets::resolve_nickname(&name)?]
-        }
-    };
+    let (reader_label, device_flags, target_label) = send_target(&target.resolve()?)?;
 
     // Preparing is real work: hashing the content is what makes "already
-    // sent" mean the same bytes, and it is what a resumed send compares.
-    console::Console::progress(&format!("preparing {file} for {}", chosen.name()));
-    let sha = receipts::hash_file(path)?;
+    // sent" mean the same bytes, and it is what a resumed send compares. A
+    // folder has no one hash; the apps that take folders compare what is
+    // already on the reader themselves and send only what changed.
+    console::Console::progress(&format!("preparing {file} for {}", chosen.title()));
+    let sha = if folder {
+        None
+    } else {
+        Some(receipts::hash_file(path)?)
+    };
     let receipts_path = receipts::receipts_path();
     let mut ledger = receipts::Receipts::load(&receipts_path)?;
-    if chosen != detect::Companion::Flashcards {
-        if let Some(receipt) = ledger.find(chosen.name(), &target_label, &sha) {
-            println!(
-                "{file} is unchanged since it was sent to {target_label} (receipt at {}); nothing to do",
-                receipt.at
-            );
-            return Ok(());
-        }
+    if sha
+        .as_ref()
+        .is_some_and(|sha| ledger.find(chosen.name(), &target_label, sha).is_some())
+    {
+        println!(
+            "{file} is unchanged since it was sent to {} on {reader_label}, so there is \
+             nothing to send.",
+            chosen.title(),
+        );
+        return Ok(());
+    }
+    if !options.replace && !replacing_is_agreed(chosen, &file, &reader_label)? {
+        return Ok(());
     }
 
     send_dispatch(
@@ -636,14 +671,101 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         &mut ledger,
         &receipts_path,
         sha,
-    )
+    )?;
+    println!("Sent {file} to {} on {reader_label}.", chosen.title());
+    Ok(())
+}
+
+/// Where a send goes, three ways: the words that tell the owner, the flags
+/// the companion reads, and the label its receipt is kept under.
+///
+/// A receipt belongs to a reader, not to one spelling of it: a nickname and
+/// its address are the same device, and the serial outlives a new DHCP lease.
+/// The address stands in only when no serial answers.
+fn send_target(resolved: &targets::Target) -> Result<(String, Vec<String>, String), String> {
+    let reader_label = match resolved {
+        targets::Target::Simulator => "the simulator".to_owned(),
+        targets::Target::Address(host) => format!("the reader at {host}"),
+        targets::Target::Nickname(name) => format!("\"{name}\""),
+    };
+    let device_flags = match resolved {
+        targets::Target::Simulator => vec!["--sim".to_owned()],
+        targets::Target::Address(host) => vec!["--device".to_owned(), host.clone()],
+        targets::Target::Nickname(name) => {
+            vec!["--device".to_owned(), targets::resolve_nickname(name)?]
+        }
+    };
+    let target_label = match device_flags.as_slice() {
+        [_, host] => targets::probe_serial(host).unwrap_or_else(|| host.clone()),
+        _ => "sim".to_owned(),
+    };
+    Ok((reader_label, device_flags, target_label))
+}
+
+/// The answer for an app that takes this file some other way than a push.
+///
+/// Decks are a two-step import and Fanshelf fetches its own books. Each says
+/// how it is done instead of pretending a push happened, and neither claims
+/// success: nothing reached the reader.
+fn not_a_push(chosen: detect::Companion, file: &str) -> Option<Result<(), String>> {
+    let advice = match chosen {
+        detect::Companion::Flashcards => format!(
+            "{file} is a study deck. Flashcards imports decks into a collection first, then \
+             copies it over USB:\n  kobo flashcards import {file} --merge COLLECTION.cobfc\n  \
+             kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
+        ),
+        detect::Companion::Fanshelf => format!(
+            "{file} is an EPUB book. Fanshelf downloads the works on its shelf itself: add \
+             the work from the app on the reader."
+        ),
+        _ => return None,
+    };
+    Some(Err(console::unsupported(advice)))
+}
+
+/// Whether a send to an app that keeps one thing at a time may go ahead.
+///
+/// A terminal is asked. A pipe cannot be, so it is told to say `--replace`,
+/// because quietly replacing the pattern an owner was halfway through is the
+/// one outcome a send must never have.
+fn replacing_is_agreed(
+    chosen: detect::Companion,
+    file: &str,
+    reader_label: &str,
+) -> Result<bool, String> {
+    let Some(what) = chosen.replaces() else {
+        return Ok(true);
+    };
+    let warning = format!(
+        "{} keeps one {what} at a time, so sending {file} replaces the {what} on \
+         {reader_label}.",
+        chosen.title()
+    );
+    if !std::io::stdin().is_terminal() {
+        eprintln!("{warning} Add --replace to send it anyway.");
+        return Err(console::usage(format!(
+            "kobo send {file} --to {} --replace",
+            chosen.name()
+        )));
+    }
+    print!("{warning} Replace it? [y/N] ");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("read the answer: {error}"))?;
+    if confirmation_answer(&answer) {
+        Ok(true)
+    } else {
+        println!("Nothing was sent.");
+        Ok(false)
+    }
 }
 
 /// The transfer itself: keep the selection, dispatch to the companion, and
 /// only past its acknowledgement clear the pending send and write the
-/// receipt - an interrupted transfer keeps the one and never gains the
-/// other, which is what makes the next send a resume rather than a
-/// duplicate.
+/// receipt. An interrupted transfer keeps the one and never gains the other,
+/// which is what makes the next send a resume rather than a duplicate.
 #[allow(clippy::too_many_arguments)]
 fn send_dispatch(
     chosen: detect::Companion,
@@ -653,7 +775,7 @@ fn send_dispatch(
     target_words: &str,
     ledger: &mut receipts::Receipts,
     receipts_path: &std::path::Path,
-    sha: String,
+    sha: Option<String>,
 ) -> Result<(), String> {
     let pending_path = receipts::pending_path();
     let pending = receipts::Pending {
@@ -672,34 +794,29 @@ fn send_dispatch(
         detect::Companion::Panels => panels::command(&forwarded),
         detect::Companion::Parser => parser_command(&forwarded),
         detect::Companion::Needles => needles::command(&forwarded),
-        detect::Companion::Flashcards => {
-            // Decks are a two-step import, not a push: the helper merges into
-            // a collection, and staging needs a mounted reader. Say so with
-            // the real commands rather than pretending a push happened.
-            println!(
-                "{file} is a study deck. Decks import into a collection first, then stage:\n  kobo flashcards import {file} --merge COLLECTION.cobfc\n  kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
-            );
-            receipts::Pending::clear(&pending_path);
-            return Ok(());
-        }
-        detect::Companion::Fanshelf => {
-            // Fanshelf downloads the works on its shelf itself, from the
-            // reader; there is no host-side shelf push to forward to. Say so
-            // rather than pretending a push happened.
-            println!(
-                "{file} is an EPUB book. Fanshelf shelves works it downloads itself: add the work from the app on the reader."
-            );
+        detect::Companion::MusicStand => musicstand::command(&forwarded),
+        detect::Companion::Vault => vault_push(file, device_flags),
+        detect::Companion::Flashcards | detect::Companion::Fanshelf => {
+            // Answered by not_a_push before anything is resolved, so these
+            // never reach a transfer.
             receipts::Pending::clear(&pending_path);
             return Ok(());
         }
     };
     if let Err(error) = sent {
         return Err(console::Console::with_details(
-            format!("{error}\nThe selection is kept; retry with: kobo send --retry"),
+            format!(
+                "{}\n{} did not receive {file}. The selection is kept; retry with: kobo send --retry",
+                console::display(&error),
+                chosen.title()
+            ),
             &format!("forwarded: kobo {} {}", chosen.name(), forwarded.join(" ")),
         ));
     }
     receipts::Pending::clear(&pending_path);
+    let Some(sha) = sha else {
+        return Ok(());
+    };
     ledger.record(receipts::Receipt {
         file: file.to_owned(),
         app: chosen.name().to_owned(),
@@ -712,15 +829,43 @@ fn send_dispatch(
             "note: the send's receipt could not be written ({error}); the send itself finished"
         );
     }
-    console::Console::progress(&format!("sent to {target_label}"));
     Ok(())
+}
+
+/// Sends a notes folder, or one note, to Vault.
+///
+/// Vault takes folders and adds what they hold to the shelf, so one note
+/// travels in a folder of its own, made for the push and removed after it.
+/// The note keeps its file name, which is what Vault shows it as.
+fn vault_push(file: &str, device_flags: &[String]) -> Result<(), String> {
+    let path = Path::new(file);
+    if path.is_dir() {
+        let mut forwarded = vec!["push".to_owned(), file.to_owned()];
+        forwarded.extend(device_flags.iter().cloned());
+        return vault::command(&forwarded);
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("{file} has no file name"))?;
+    let folder = env::temp_dir().join(format!("kobo-send-note-{}", std::process::id()));
+    fs::create_dir_all(&folder).map_err(|error| format!("create {}: {error}", folder.display()))?;
+    let sent = fs::copy(path, folder.join(name))
+        .map_err(|error| format!("copy {file}: {error}"))
+        .and_then(|_| {
+            let mut forwarded = vec!["push".to_owned(), folder.display().to_string()];
+            forwarded.extend(device_flags.iter().cloned());
+            vault::command(&forwarded)
+        });
+    let _ = fs::remove_dir_all(&folder);
+    sent
 }
 
 /// The arguments a send runs with, and its target flags as words.
 ///
 /// Ordinarily the arguments as given. With `--retry` they are rebuilt from
 /// the kept pending send: same file, same companion, same target, none of
-/// it retyped.
+/// it retyped. A retry is the owner repeating a send they already agreed to,
+/// so it carries `--replace` rather than asking a second time.
 fn send_arguments(arguments: &[String]) -> Result<(Vec<String>, String), String> {
     if !arguments.iter().any(|argument| argument == "--retry") {
         return Ok((arguments.to_vec(), target_words(arguments)));
@@ -728,12 +873,19 @@ fn send_arguments(arguments: &[String]) -> Result<(Vec<String>, String), String>
     let pending_path = receipts::pending_path();
     let pending = receipts::Pending::load(&pending_path)?
         .ok_or_else(|| console::target("nothing is waiting to be retried"))?;
-    let mut rebuilt = vec![pending.file.clone()];
+    let mut rebuilt = vec![pending.file.clone(), "--replace".to_owned()];
+    // The kept file is sent as it was named, folder or not.
     if let Some(app) = pending.app.clone() {
-        rebuilt.push("--app".to_owned());
+        rebuilt.push("--to".to_owned());
         rebuilt.push(app);
     }
-    rebuilt.extend(pending.target.split(' ').map(str::to_owned));
+    rebuilt.extend(
+        pending
+            .target
+            .split(' ')
+            .filter(|word| !word.is_empty())
+            .map(str::to_owned),
+    );
     console::Console::progress(&format!("retrying the kept send of {}", pending.file));
     let words = pending.target.clone();
     Ok((rebuilt, words))
@@ -799,29 +951,37 @@ fn target_words(arguments: &[String]) -> String {
 
 /// What a send run was asked for, beyond the shared target flags.
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent request from the command line"
+)]
 struct SendOptions {
     file: Option<String>,
     app: Option<String>,
     preview: bool,
+    replace: bool,
     out: Option<String>,
     profile: Option<String>,
 }
 
 impl SendOptions {
-    fn parse(arguments: &[String], usage: &str) -> Result<Self, String> {
+    /// Reads the options. `--app` is the old spelling of `--to`, kept so a
+    /// kept retry and a remembered command still work.
+    fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut options = Self::default();
         let mut arguments = arguments.iter();
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
-                "--app" if options.app.is_none() => {
+                "--to" | "--app" if options.app.is_none() => {
                     options.app = Some(
                         arguments
                             .next()
-                            .ok_or_else(|| console::usage("--app takes a companion name"))?
+                            .ok_or_else(|| console::usage("--to takes an app name"))?
                             .clone(),
                     );
                 }
                 "--preview" if !options.preview => options.preview = true,
+                "--replace" if !options.replace => options.replace = true,
                 "--out" if options.out.is_none() => {
                     options.out = Some(
                         arguments
@@ -841,27 +1001,40 @@ impl SendOptions {
                 _ if options.file.is_none() && !argument.starts_with('-') => {
                     options.file = Some(argument.clone());
                 }
-                _ => return Err(console::usage(usage)),
+                other => {
+                    return Err(console::usage(format!(
+                        "kobo send does not know {other}. See kobo send --help."
+                    )))
+                }
             }
         }
         Ok(options)
     }
 }
 
-/// Asks which companion an ambiguous container goes to. A pipe cannot ask,
-/// so it gets a usage error naming `--app`; a blank answer cancels.
-fn pick_companion(candidates: &[detect::Companion]) -> Result<Option<detect::Companion>, String> {
-    let names: Vec<String> = candidates
-        .iter()
-        .map(|companion| companion.name().to_owned())
-        .collect();
+/// Asks which app a file several apps open goes to. A pipe cannot ask, so it
+/// gets the choices as `--to` lines; a blank answer cancels.
+fn pick_companion(
+    file: &str,
+    candidates: &[detect::Companion],
+) -> Result<Option<detect::Companion>, String> {
+    let question = format!("{file} could go to more than one app:");
     if !std::io::stdin().is_terminal() {
+        eprintln!(
+            "{question}\n{}\nSend it again with the one you mean.",
+            detect::choices(candidates)
+        );
+        let names: Vec<&str> = candidates.iter().map(|app| app.name()).collect();
         return Err(console::usage(format!(
-            "several companions could take it: {} - name one with --app ({})",
-            names.join(", "),
+            "kobo send {file} --to {}",
             names.join("|")
         )));
     }
+    let names: Vec<String> = candidates
+        .iter()
+        .map(|companion| format!("{}, for {}", companion.title(), companion.purpose()))
+        .collect();
+    println!("{question}");
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut output = std::io::stdout();
@@ -869,7 +1042,7 @@ fn pick_companion(candidates: &[detect::Companion]) -> Result<Option<detect::Com
         &mut input,
         &mut output,
         &names,
-        "Send it to which companion (blank cancels): ",
+        "Send it to which app (blank cancels): ",
     )?
     .map(|index| candidates[index]))
 }
@@ -881,7 +1054,7 @@ fn send_preview(
     out: Option<&str>,
     profile: Option<&str>,
 ) -> Result<(), String> {
-    let app_name = app.name();
+    let app_name = app.title();
     match app {
         detect::Companion::Frame | detect::Companion::Panels => {
             let out = out.ok_or_else(|| {
@@ -903,6 +1076,7 @@ fn send_preview(
         }
         detect::Companion::Feeds => feeds::command(&["check".to_owned(), file.to_owned()]),
         detect::Companion::Parser => parser_command(&["inspect".to_owned(), file.to_owned()]),
+        detect::Companion::Vault => vault::command(&["preview".to_owned(), file.to_owned()]),
         detect::Companion::Needles => {
             let out = out.ok_or_else(|| {
                 console::usage(format!("a {app_name} preview needs --out DIRECTORY"))
@@ -913,6 +1087,13 @@ fn send_preview(
                 "--out".to_owned(),
                 out.to_owned(),
             ])
+        }
+        detect::Companion::MusicStand => {
+            println!(
+                "Music Stand has no preview on this computer. To see what a send would add \
+                 to the shelf on the reader:\n  kobo musicstand plan {file}"
+            );
+            Ok(())
         }
         detect::Companion::Flashcards => {
             println!(
@@ -930,7 +1111,8 @@ fn send_preview(
 }
 
 /// The command line as it will run: an alias spelled out, and the reader it
-/// acts on filled in from `kobo pair` or `KOBO_READER` when none is named.
+/// acts on filled in from the one `kobo setup` or `kobo pair` saved, or from
+/// `KOBO_READER`, when none is named.
 ///
 /// The alias goes first so `kobo logcat` finds the same reader `kobo logs`
 /// does, rather than being the one spelling that still asks for an address.
@@ -941,13 +1123,21 @@ fn with_default_reader(arguments: &[String]) -> Result<Vec<String>, String> {
     }
     targets::with_reader(
         &line,
-        targets::configured_default(),
+        targets::configured(),
         targets::resolve_nickname,
         |said| eprintln!("{said}"),
     )
 }
 
 fn run(arguments: &[String]) -> Result<(), String> {
+    if let Some(help) = unanswered_help(arguments) {
+        return print_command_help(&help);
+    }
+    run_command(arguments)
+}
+
+/// [`run`], once a request for help has been answered.
+fn run_command(arguments: &[String]) -> Result<(), String> {
     let filled = with_default_reader(arguments)?;
     let arguments = filled.as_slice();
     let Some(command) = arguments.first().map(String::as_str) else {
@@ -964,6 +1154,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "musicstand" => musicstand::command(&arguments[1..]),
         "post" => post::command(&arguments[1..]),
         "readlater" => readlater::command(&arguments[1..]),
+        "connect" => account::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
@@ -1065,7 +1256,7 @@ fn version_command(arguments: &[String]) -> Result<(), String> {
         [flag] if flag == "--full" => {
             println!("kobo {}", env!("CARGO_PKG_VERSION"));
             println!("host: {} {}", std::env::consts::OS, std::env::consts::ARCH);
-            for helper in ["kobo-doctor", "flashcards-import"] {
+            for helper in ["kobo-doctor", "kobo-sidekickd", "flashcards-import"] {
                 println!("helper: {}", helper_status(helper));
             }
             println!(
@@ -1093,8 +1284,12 @@ fn helper_status(name: &str) -> String {
     // failed rather than guessing either way.
     match Command::new(sibling_binary(name)).arg("--version").output() {
         Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout);
-            format!("{name} {}", version.trim())
+            // Helpers answer "NAME VERSION", some with more lines after it.
+            // One line per helper, named once, keeps the report readable.
+            let reply = String::from_utf8_lossy(&output.stdout);
+            let first = reply.lines().next().unwrap_or("").trim();
+            let version = first.strip_prefix(name).map_or(first, str::trim_start);
+            format!("{name} {version}")
         }
         Ok(output) => format!("{name} present but --version exited {}", output.status),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1104,10 +1299,15 @@ fn helper_status(name: &str) -> String {
     }
 }
 
-const PARSER_USAGE: &str = "usage: kobo parser inspect FILE\n\
-                         \x20      kobo parser push FILE (--sim | --device IP) [--replace]\n\
-                         inspect reports format, title and Parser compatibility.\n\
-                         push validates with the interpreter's shared inspector first.";
+const PARSER_USAGE: &str = concat!(
+    "usage: kobo parser inspect FILE\n\
+     \x20      kobo parser push FILE ",
+    targets::target_choice!(),
+    " [--replace]\n\
+     inspect reports format, title and Parser compatibility.\n\
+     push validates with the interpreter's shared inspector first.\n",
+    targets::saved_reader_note!(),
+);
 
 fn parser_command(arguments: &[String]) -> Result<(), String> {
     if wants_help(arguments) {
@@ -1173,20 +1373,39 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let info = kobo_zstory::StoryInfo::inspect(&bytes, file).map_err(|error| error.to_string())?;
     let name = info.shelf_name(file);
-    match target.ok_or_else(|| PARSER_USAGE.to_owned())? {
+    let shelf = match target.ok_or_else(|| PARSER_USAGE.to_owned())? {
         host if host.is_empty() => parser_publish_local(&name, &bytes, replace)?,
         host => parser_publish_remote(&host, &name, &bytes, replace)?,
-    }
+    };
     println!(
         "Parser story ready: {} ({}, {})",
         info.title,
         info.format(),
         info.compatibility()
     );
+    println!("{}", parser_shelf_summary(&shelf));
     Ok(())
 }
 
-fn parser_publish_local(name: &str, bytes: &[u8], replace: bool) -> Result<(), String> {
+/// What a push leaves on the reader, said once the transfer is done.
+///
+/// A push adds a story, and an owner who cannot see what is already there
+/// pushes the same one twice or wonders where an earlier one went.
+fn parser_shelf_summary(shelf: &[String]) -> String {
+    let mut stories = shelf
+        .iter()
+        .filter(|name| !name.starts_with('.'))
+        .filter_map(|name| name.rsplit_once(".z").map(|(stem, _)| stem.to_owned()))
+        .collect::<Vec<_>>();
+    stories.sort();
+    match stories.len() {
+        0 => "Parser has no stories yet.".to_owned(),
+        1 => format!("Parser now holds 1 story: {}.", stories[0]),
+        count => format!("Parser now holds {count} stories: {}.", stories.join(", ")),
+    }
+}
+
+fn parser_publish_local(name: &str, bytes: &[u8], replace: bool) -> Result<Vec<String>, String> {
     let root = kobo_sim::simulated_data_root("parser");
     fs::create_dir_all(&root).map_err(|e| format!("create Parser shelf: {e}"))?;
     let final_path = root.join(name);
@@ -1197,14 +1416,19 @@ fn parser_publish_local(name: &str, bytes: &[u8], replace: bool) -> Result<(), S
     }
     let partial = root.join(format!(".{name}.{}.writing", std::process::id()));
     fs::write(&partial, bytes).map_err(|e| format!("write Parser staging file: {e}"))?;
-    fs::rename(&partial, &final_path).map_err(|e| format!("publish Parser story: {e}"))
+    fs::rename(&partial, &final_path).map_err(|e| format!("publish Parser story: {e}"))?;
+    let entries = fs::read_dir(&root).map_err(|e| format!("list Parser shelf: {e}"))?;
+    Ok(entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect())
 }
 fn parser_publish_remote(
     host: &str,
     name: &str,
     bytes: &[u8],
     replace: bool,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let encoded = base64_encode(bytes);
     let count = bytes.len();
     let digest = kobo_net::sha256::hex_digest(bytes);
@@ -1214,7 +1438,7 @@ fn parser_publish_remote(
         "test ! -e \"$final\""
     };
     let script = format!(
-        "set -eu\nroot=/mnt/onboard/.adds/cobalt/data/parser\nmkdir -p \"$root\"\npartial=\"$root/.{name}.$$.writing\"\nfinal=\"$root/{name}\"\n{overwrite}\ntrap 'rm -f \"$partial\"' EXIT HUP INT TERM\nbase64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n{encoded}\nKOBO_PARSER_STORY\ntest \"$(wc -c < \"$partial\")\" = '{count}'\nset -- $(sha256sum \"$partial\"); test \"$1\" = '{digest}'\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$final\"\nsync\n"
+        "set -eu\nroot=/mnt/onboard/.adds/cobalt/data/parser\nmkdir -p \"$root\"\npartial=\"$root/.{name}.$$.writing\"\nfinal=\"$root/{name}\"\n{overwrite}\ntrap 'rm -f \"$partial\"' EXIT HUP INT TERM\nbase64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n{encoded}\nKOBO_PARSER_STORY\ntest \"$(wc -c < \"$partial\")\" = '{count}'\nset -- $(sha256sum \"$partial\"); test \"$1\" = '{digest}'\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$final\"\nsync\nls -1 \"$root\"\n"
     );
     let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_COMMAND_TIMEOUT)
         .map_err(unreachable_device)?;
@@ -1224,7 +1448,10 @@ fn parser_publish_remote(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1301,13 +1528,18 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 /// reader happens to answer.
 fn stream_init(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str =
-        "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]";
+        "usage: kobo stream init [--sim | --device IP | --reader NAME] [--host ADDRESS ...]";
     let mut device = None;
     let mut nickname = None;
+    let mut simulator = false;
     let mut hosts = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
+            "--sim" => {
+                simulator = true;
+                index += 1;
+            }
             "--device" | "-s" => {
                 device = Some(arguments.get(index + 1).ok_or(USAGE)?.clone());
                 index += 2;
@@ -1323,6 +1555,12 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
             }
             _ => return Err(USAGE.to_owned()),
         }
+    }
+    if simulator {
+        if device.is_some() || nickname.is_some() {
+            return Err(USAGE.to_owned());
+        }
+        return stream_init_simulator(&hosts);
     }
     // A reader named on the command line is checked before anything is minted
     // or printed, so a typo does not leave a half-done pairing behind.
@@ -1353,30 +1591,106 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
     // was refused. The certificate is still kept, because it is what the
     // instruction below needs, but nothing here claims to be ready.
     let ReaderSearch::Found(reader) = search else {
+        let why = match search {
+            ReaderSearch::NoneAnswered => format!(
+                "No reader answered, so the trust root is not installed and Paperterm cannot \
+                 pair yet. {} Then run this again.",
+                targets::wake_step(None)
+            ),
+            _ => search.explain("kobo stream init --device READER_IP"),
+        };
         return Err(format!(
-            "{}\n\nThe computer's identity and pairing code are saved and stay valid:\n{}",
-            search.explain(),
+            "{why}\n\nThe computer's identity and pairing code are saved and stay valid:\n{}",
             kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
         ));
     };
+    stream_pair_reader(
+        &reader,
+        hosts.get(1).map(String::as_str),
+        nickname.as_deref(),
+    )
+}
+
+/// Installs Paperterm's trust root on a found reader and writes its pairing
+/// there, then says what the owner has left to do.
+fn stream_pair_reader(
+    reader: &str,
+    computer: Option<&str>,
+    nickname: Option<&str>,
+) -> Result<(), String> {
     let authority = stream_authority()?;
-    println!("Installing the trust root on {reader}.");
-    trust_set("stream", &authority, &SecretTarget::Device(reader.clone()))?;
+    let root = fs::read_to_string(&authority)
+        .map_err(|error| format!("read {}: {error}", authority.display()))?;
+    // The pairing is written onto the reader in the same visit as the trust
+    // root, so Paperterm opens connected instead of asking for an address and
+    // a code the owner has to copy across the room. Without an address for
+    // this computer there is nothing to write, and the details are printed.
+    let apps = match computer {
+        Some(computer) => {
+            let address = if computer.parse::<std::net::Ipv6Addr>().is_ok() {
+                format!("[{computer}]:{}", kobo_stream::DEFAULT_PORT)
+            } else {
+                format!("{computer}:{}", kobo_stream::DEFAULT_PORT)
+            };
+            vec![sidekick::AppPairing::paperterm(
+                &address,
+                &kobo_stream::saved_code()?,
+            )]
+        }
+        None => Vec::new(),
+    };
+    println!("Pairing Paperterm on {reader}.");
+    let restart = sidekick::deliver(reader, &[("stream", root)], &apps)?;
     // Remember the pairing by serial, so the next command can name this
     // reader and find it again after its address changes.
-    if let Some(identity) = identify_device(&reader).filter(connect::Identity::is_kobo) {
+    if let Some(identity) = identify_device(reader).filter(connect::Identity::is_kobo) {
         let path = readers::store_path();
         let mut store = readers::Store::load(&path)?;
-        store.record_pairing(&identity.serial, &reader, nickname.as_deref());
+        store.record_pairing(&identity.serial, reader, nickname);
         store.save(&path)?;
     }
-    // Said once the trust root is actually on the reader, and carrying the
-    // address and code the owner now needs, which the mint used to print
-    // before anyone knew whether this point would be reached.
-    println!(
-        "Paperterm is paired with {reader}. Open it on the reader and enter:\n{}",
-        kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
+    // Said once the reader actually holds the pairing, which the mint used to
+    // claim before anyone knew whether this point would be reached.
+    if apps.is_empty() {
+        println!(
+            "Paperterm on {reader} trusts this computer. Open it on the reader and enter:\n{}",
+            kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
+        );
+    } else {
+        println!(
+            "Paperterm on {reader} is paired with this computer. There is nothing to type on the reader."
+        );
+    }
+    if restart {
+        println!("Close Cobalt on the reader and open it again, once, so it trusts this computer.");
+    }
+    println!("Next: run kobo stream terminal, then open Paperterm on the reader.");
+    Ok(())
+}
+
+/// Pairs Paperterm in the simulator on this computer.
+///
+/// The simulator reaches the computer over loopback and reads its trust roots
+/// from this computer's own directory, which the mint fills, so the only
+/// thing left is the pairing in its app state. Without this the simulator
+/// checks had to call the reader form of `init`, which looks for readers on
+/// the network when none is saved.
+fn stream_init_simulator(hosts: &[String]) -> Result<(), String> {
+    let mut hosts = hosts.to_vec();
+    if hosts.is_empty() {
+        hosts = vec!["--host".to_owned(), "127.0.0.1".to_owned()];
+    }
+    kobo_stream::init(&hosts)?;
+    let state = kobo_sim::simulated_state_root("paperterm");
+    fs::create_dir_all(&state).map_err(|error| format!("create {}: {error}", state.display()))?;
+    let pairing = format!(
+        "127.0.0.1:{}\n{}",
+        kobo_stream::DEFAULT_PORT,
+        kobo_stream::saved_code()?
     );
+    fs::write(state.join("pairing"), pairing)
+        .map_err(|error| format!("write {}: {error}", state.join("pairing").display()))?;
+    println!("Paired Paperterm in the simulator. Next: kobo stream terminal, then open Paperterm.");
     Ok(())
 }
 
@@ -1408,7 +1722,7 @@ fn saved_reader_search(nickname: Option<&str>) -> Result<ReaderSearch, String> {
                  pair. Name it: kobo stream init --reader NAME",
             store.readers.len()
         ))),
-        None => Ok(choose_reader()),
+        None => Ok(choose_reader_waiting().0),
     }
 }
 
@@ -1433,54 +1747,69 @@ impl ReaderSearch {
     ///
     /// Each case earns its own next step: a reader that is not on the network
     /// has to be put there, and a reader that is one of several only has to be
-    /// named, which is a different sentence and a different fix.
-    fn explain(&self) -> String {
+    /// named, which is a different sentence and a different fix. `named` is
+    /// the command line that names one, for the caller to fill in.
+    fn explain(&self, named: &str) -> String {
         match self {
             Self::Found(_) => String::new(),
             Self::NoRoute => "This computer has no route to a network, so no reader can be \
                  reached from here. Join the Wi-Fi the reader is on and run this again."
                 .to_owned(),
-            Self::NoneAnswered => "No reader was reached, so the trust root is not installed \
-                 and Paperterm cannot pair yet.\n\nPut the reader on this Wi-Fi and run this \
-                 again, or name it directly:\n  kobo stream init --device READER_IP\n\nThe \
-                 reader does not show its own address anywhere on the device yet, so take \
-                 READER_IP from the list of clients on your router."
-                .to_owned(),
+            Self::NoneAnswered => console::display(&targets::not_answering(None, false)).to_owned(),
             Self::Several(count) => format!(
-                "{count} readers answered, so this will not guess which one to pair. Name the \
-                 one you want from the addresses listed above:\n  kobo stream init --device \
-                 READER_IP"
+                "{count} readers answered, so this will not guess which one to use. Name the \
+                 one you want from the addresses listed above:\n  {named}"
             ),
         }
     }
 }
 
-/// The readers on this network, named, and the one to use.
-///
-/// One reader is chosen without asking, because there is nothing to choose.
-/// Several are listed by what they are rather than by address alone, because
-/// "192.168.1.23" is not how anybody knows their own reader.
+/// The default name `kobo pair` and `kobo setup` save a reader under.
+const DEFAULT_READER_NAME: &str = "kobo";
+
+/// What `kobo pair --help` prints. Its own constant, because the usage error
+/// used to be built by wrapping a string that already began "usage:", and
+/// the owner who asked for help read "kobo: usage: usage:" and an exit of 2.
+const PAIR_USAGE: &str = "usage: kobo pair [NAME] [--device IP]
+
+Saves the reader on this network as NAME, or as kobo when no name is given,
+so commands that act on a reader find it without an address. kobo setup
+already saves the reader it sets up; run pair to give a reader a new name or
+to save one that was set up from another computer.
+
+When no reader answers, pair asks you to wake it and keeps looking for a
+minute before giving up.";
+
 /// Saves the reader on this network under a name, so companion commands can
 /// find it without being told its address.
 ///
 /// Every app that is set up from a computer used to end its instructions with
 /// `--device IP`, and nothing on the reader says what that is. After this,
 /// `kobo frame push PHOTOS` goes to the reader saved here, and the reader is
-/// found again by its serial when its address changes.
+/// found again by its serial when its address changes. `kobo setup` saves
+/// the reader the same way when it sees it come back on Wi-Fi, so this is for
+/// renaming and for a reader prepared elsewhere.
 fn pair_command(arguments: &[String]) -> Result<(), String> {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        return print_command_help(PAIR_USAGE);
+    }
     let (target, rest) = targets::TargetArgs::parse(arguments)?;
     let name = match rest.as_slice() {
-        [] => "kobo".to_owned(),
+        [] => DEFAULT_READER_NAME.to_owned(),
         [name] if !name.starts_with('-') => name.clone(),
-        _ => return Err(console::usage("usage: kobo pair [NAME] [--device IP]")),
+        _ => return Err(console::usage("kobo pair [NAME] [--device IP]")),
     };
     let address = if target.is_empty() {
-        match choose_reader() {
+        let (search, waited) = choose_reader_waiting();
+        match search {
             ReaderSearch::Found(address) => address,
+            ReaderSearch::NoneAnswered => return Err(targets::not_answering(None, waited)),
             other => {
-                return Err(format!(
-                    "{}\nName the one you mean: kobo pair {name} --device IP",
-                    other.explain()
+                return Err(console::target(
+                    other.explain(&format!("kobo pair {name} --device IP")),
                 ))
             }
         }
@@ -1495,23 +1824,57 @@ fn pair_command(arguments: &[String]) -> Result<(), String> {
     };
     let identity = identify_device(&address)
         .filter(connect::Identity::is_kobo)
-        .ok_or_else(|| format!("{address} did not answer as a Kobo"))?;
+        .ok_or_else(|| console::target(format!("{address} did not answer as a Kobo")))?;
     let path = readers::store_path();
     let mut store = readers::Store::load(&path)?;
     store.name(&identity.serial, &address, &name)?;
     store.save(&path)?;
     println!(
-        "Saved {} as \"{name}\" at {address}.\nCommands that act on a reader now use it, for example:\n  kobo frame push ~/Pictures/family",
-        identity.summary()
+        "{}",
+        saved_reader_line(&identity.summary(), &name, &address)
     );
     Ok(())
 }
 
+/// What `pair` and `setup` print once a reader is saved, so the two say the
+/// same thing about the same outcome.
+fn saved_reader_line(summary: &str, name: &str, address: &str) -> String {
+    format!(
+        "Saved {summary} as \"{name}\" at {address}.\nCommands that act on a reader now use \
+         it, for example:\n  kobo frame push ~/Pictures/family"
+    )
+}
+
+/// [`choose_reader`], given a minute for a sleeping reader to wake, and
+/// whether that minute was spent.
+///
+/// Only a sweep that found nothing is repeated. No route and several readers
+/// are not fixed by waiting, so they are answered at once. The wait itself
+/// happens only with a person at the terminal (see [`targets::wake_pause`]).
+fn choose_reader_waiting() -> (ReaderSearch, bool) {
+    let mut pause = targets::wake_pause(None);
+    let mut search = choose_reader();
+    let mut waited = false;
+    while matches!(search, ReaderSearch::NoneAnswered) && pause() {
+        waited = true;
+        search = sweep_for_readers(false);
+    }
+    (search, waited)
+}
+
 fn choose_reader() -> ReaderSearch {
+    sweep_for_readers(true)
+}
+
+/// One sweep of the local network for readers, announced on the first look
+/// and quiet on the repeats a wait makes.
+fn sweep_for_readers(announce: bool) -> ReaderSearch {
     let Some(subnet) = connect::local_subnet() else {
         return ReaderSearch::NoRoute;
     };
-    println!("Looking for readers on {subnet}.1-254.");
+    if announce {
+        println!("Looking for readers on {subnet}.1-254.");
+    }
     let mut readers = Vec::new();
     for address in connect::sweep(&subnet, connect::PROBE_TIMEOUT) {
         let host = address.to_string();
@@ -1643,19 +2006,20 @@ fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'stat
     }
 }
 
-const STREAM_START: &str = "Paperterm shares a computer terminal with your reader.
+/// The one Paperterm recipe. The app's own setup pages, its README and its
+/// Store steps say the same three things in the same order, because three
+/// recipes that disagreed were how owners ended up typing codes by hand.
+const STREAM_START: &str = "Paperterm shares a terminal on this computer with your reader.
 
-Start with a connection check:
-  kobo stream demo
+1. Pair once: kobo stream init
+   It pairs Paperterm on your saved reader, so there is nothing to type there.
+   kobo sidekick init does the same and pairs Sidekick and Deck too.
+2. Share a terminal: kobo stream terminal
+3. Open Paperterm on the reader.
 
-Then choose a session:
-  kobo stream terminal    Open your usual shell
+Other sessions:
   kobo stream monitor     Watch this computer's processes with top
-
-First use: run kobo stream init. It finds this computer's address, finds the
-readers on this network, and installs the trust root on the one you choose;
-name a reader outright with --device IP. Open Paperterm on the reader and
-enter the computer address and pairing code it prints.
+  kobo stream demo        A connection check that runs no commands
 
 Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
 For custom commands and other advanced options: kobo stream --help";
@@ -2707,7 +3071,16 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
             .local_addr()
             .map_err(|error| format!("read simulator address: {error}"))?
     );
-    serve_app(&server, &session, &mut app)
+    println!(
+        "Companion --sim commands deliver to {} (set {} to use another folder).",
+        kobo_sim::simulated_data_root("").display(),
+        kobo_sim::SIM_DATA_VARIABLE
+    );
+    println!(
+        "Library apps read documents from {}.",
+        kobo_sim::simulated_library_root().display()
+    );
+    serve_app(&server, session, &mut app, &executable, &dev_session.socket)
 }
 
 fn dev_capture_source(executable: &Path) -> Result<kobo_sim::CaptureSource, String> {
@@ -2750,12 +3123,35 @@ struct DevSessionGuard {
     socket: PathBuf,
 }
 
+/// The longest socket path macOS and Linux both accept, leaving room for the
+/// terminating NUL.
+const SOCKET_PATH_LIMIT: usize = 100;
+
+/// Where a dev session keeps its socket.
+///
+/// A private `TMPDIR` deep in a project folder is a sensible way to keep runs
+/// apart, but a Unix socket path is capped at about a hundred bytes, and the
+/// simulator refused to start under one with `path must be shorter than
+/// SUN_LEN`. The session then lives in `/tmp`, still in a directory only this
+/// user can enter.
+fn dev_session_root(temporary: &Path, name: &str) -> PathBuf {
+    let preferred = temporary.join(name);
+    if preferred.join("app.sock").as_os_str().len() <= SOCKET_PATH_LIMIT {
+        preferred
+    } else {
+        Path::new("/tmp").join(name)
+    }
+}
+
 impl DevSessionGuard {
     fn new() -> Result<Self, String> {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        Self::new_at(env::temp_dir().join(format!("kobo-dev-{}-{unique}", std::process::id())))
+        Self::new_at(dev_session_root(
+            &env::temp_dir(),
+            &format!("kobo-dev-{}-{unique}", std::process::id()),
+        ))
     }
 
     fn new_at(root: PathBuf) -> Result<Self, String> {
@@ -2852,9 +3248,17 @@ struct AppChild {
 
 impl AppChild {
     fn spawn(executable: &Path, socket: &Path) -> Result<Self, String> {
-        let child = Command::new(executable)
+        let mut command = Command::new(executable);
+        command
             .env("KOBO_SOCKET", socket)
-            .env("KOBO_SIM_CALLBACKS", "1")
+            .env("KOBO_SIM_CALLBACKS", "1");
+        if let Some(minutes) = kobo_sim::reader_offset_for_app() {
+            command.env(
+                kobo_policy::clock::READER_OFFSET_VARIABLE,
+                minutes.to_string(),
+            );
+        }
+        let child = command
             .spawn()
             .map_err(|error| format!("launch {}: {error}", executable.display()))?;
         Ok(Self { child: Some(child) })
@@ -2907,13 +3311,25 @@ fn wait_for_app(
 
 fn serve_app(
     server: &kobo_sim::AppServer,
-    session: &kobo_sim::AppSession,
+    session: kobo_sim::AppSession,
     app: &mut AppChild,
+    executable: &Path,
+    socket: &Path,
 ) -> Result<(), String> {
+    let mut session = session;
     loop {
         server
-            .try_serve_one(session)
+            .try_serve_one(&session)
             .map_err(|error| format!("serve browser request: {error}"))?;
+        if session.take_restart_request() {
+            // The old process is stopped before the new one starts, so the
+            // app reads back only what it saved, as after a reader restarts.
+            drop(std::mem::replace(app, AppChild { child: None }));
+            *app = AppChild::spawn(executable, socket)?;
+            session = wait_for_app(server, app)?;
+            println!("Application restarted.");
+            continue;
+        }
         if let Some(status) = app.try_wait()? {
             return if status.success() {
                 Ok(())
@@ -4490,7 +4906,15 @@ fn run_remote_shell(
     script: &str,
     timeout: Duration,
 ) -> Result<RemoteShellOutput, String> {
-    let mut command = remote_shell_command(remote);
+    run_shell_session(remote_shell_command(remote), script, timeout)
+}
+
+/// [`run_remote_shell`] over an `ssh` command the caller has already shaped.
+fn run_shell_session(
+    mut command: Command,
+    script: &str,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -4871,6 +5295,13 @@ struct SetupOptions {
     non_interactive: bool,
     wait_for_reader: bool,
     wait: bool,
+    /// Whether the firmware's SSH server is turned on, with this computer's
+    /// key as the only way in.
+    ///
+    /// Default on. Every app set up from a computer needs it, and an install
+    /// that left it off sent owners back to the cable for a second run with
+    /// `--enable-ssh` before any of them worked. `--no-ssh` is for a reader
+    /// that will only ever be used on its own.
     enable_ssh: bool,
     /// Whether this machine's key is installed alongside the SSH server.
     ///
@@ -4890,8 +5321,12 @@ const SETUP_HELP: &str = "usage: kobo setup [options]
 Prepares a reader connected over USB. Run it with no options and it finds the
 reader, says what it will change, and asks before changing anything.
 
-  --enable-ssh       Also turn on SSH, which the companion commands use
-  --no-key           Do not install this computer's SSH key
+It also turns on the reader's SSH server with this computer's key as the only
+way in, waits for the reader to restart onto Wi-Fi, and saves it. After that,
+commands like kobo frame push need no address and no pairing step.
+
+  --no-ssh           Leave SSH off; computer commands will not reach the reader
+  --no-key           Turn SSH on but do not install this computer's key
   --volume PATH      The mounted reader, when more than one is connected
   --undo             Remove what setup installed
   --dry-run          Say what would change and change nothing
@@ -4899,12 +5334,18 @@ reader, says what it will change, and asks before changing anything.
   --non-interactive  Never ask; fail where a question would be needed
   --wait-for-reader  Wait for a reader to be plugged in
   --no-eject         Leave the reader mounted afterwards
-  --no-wait          Do not wait for the reader to come back
+  --no-wait          Do not wait for the reader to come back on Wi-Fi
   --menu, --no-menu  Add or skip the launcher's menu entry
   --no-sample        Skip the welcome note
   --release-dir PATH | --source  Install a verified release, or a source build
 
-Next: kobo pair, so the companion commands find this reader on Wi-Fi.";
+kobo pair saves a reader again later, under a new name or from another computer.";
+
+/// What an option `kobo setup` does not know is answered with.
+const SETUP_OPTIONS: &str = "kobo setup [--volume PATH] [--undo] [--no-ssh] [--no-key] \
+     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
+     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source] \
+     [--no-sample]";
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
@@ -4919,7 +5360,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         non_interactive: false,
         wait_for_reader: false,
         wait: true,
-        enable_ssh: false,
+        enable_ssh: true,
         authorize_key: true,
         sample: true,
     };
@@ -4949,18 +5390,17 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
             "--menu" => options.menu = MenuEntry::Force,
+            // The old opt-in, still accepted so the instructions and scripts
+            // that spell it keep working. It asks for what is now the default.
             "--enable-ssh" => options.enable_ssh = true,
+            "--no-ssh" => options.enable_ssh = false,
             "--no-key" => options.authorize_key = false,
             "--no-sample" => options.sample = false,
             "--dry-run" => options.dry_run = true,
             other => {
-                return Err(format!(
-                    "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
-                     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
-                     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source] \
-                     [--no-sample]"
-                ));
+                return Err(crate::console::usage(format!(
+                    "{SETUP_OPTIONS}\nunknown option '{other}'"
+                )));
             }
         }
         index += 1;
@@ -5307,9 +5747,12 @@ fn choose_reader_list(mut found: Vec<setup::Mounted>) -> Result<setup::Mounted, 
 /// SSH server, and the setting that keeps the radio up. Everything after this
 /// happens over Wi-Fi, so everything before it has to happen here.
 fn setup_device(arguments: &[String]) -> Result<(), String> {
-    // Only a first argument of --help, because a bare setup is the guided
-    // run and must not print usage instead of starting.
-    if matches!(arguments.first().map(String::as_str), Some("--help" | "-h")) {
+    // A bare setup is the guided run and must not print usage instead of
+    // starting, but --help anywhere on the line is a question, not an option.
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
         return print_command_help(SETUP_HELP);
     }
     setup_device_with_confirmation(arguments, confirmed_setup)
@@ -5432,7 +5875,17 @@ fn setup_device_with_confirmation(
     }
     if waiting {
         let subnet = subnet.unwrap_or_default();
-        await_reader(&subnet);
+        // Hardening rides the wait because the wait ends in the first
+        // key-authenticated connection. `--no-key` skips it: an owner who
+        // manages keys themselves has not shown this computer's key works,
+        // and closing password login on their behalf could close the only
+        // door they have.
+        await_reader(&subnet, &reader, options.authorize_key);
+    } else if options.enable_ssh {
+        println!(
+            "\nOnce the reader has restarted and is on Wi-Fi, save it so the computer \
+             commands find it:\n  kobo pair"
+        );
     }
     Ok(())
 }
@@ -5487,25 +5940,36 @@ fn add_menu_entry(volume: &Path, force: bool) -> Result<menu::Menu, String> {
     outcome
 }
 
-/// Watches `subnet` until an address that was not answering starts to.
+/// Watches `subnet` until the reader that was just set up answers on it, then
+/// saves it the way `kobo pair` would and closes password login for root.
 ///
 /// Prints rather than returns, and never fails: everything this command was
 /// asked to do is already on the reader by the time it is called, so a wait
 /// that finds nothing is a wait that found nothing, not a setup that failed.
-fn await_reader(subnet: &str) {
+///
+/// The reader is recognised by the serial the USB volume gave, so another
+/// Kobo waking on the same network is passed over rather than saved in its
+/// place. This used to find the reader, identify it, and then throw that away
+/// and print `kobo deploy --device IP`, which left every owner to run
+/// `kobo pair` as a second step before any app's computer commands worked.
+fn await_reader(subnet: &str, reader: &setup::Mounted, harden: bool) {
     println!(
         "\nWaiting up to {} minutes for the reader to come back on {subnet}.0/24. Ctrl-C to stop.",
         setup::WAIT_LIMIT.as_secs() / 60
     );
     let deadline = Instant::now() + setup::WAIT_LIMIT;
+    let mut identities = std::collections::BTreeMap::new();
     let arrival = setup::wait_for_reader(
         || connect::sweep(subnet, connect::PROBE_TIMEOUT),
         |address| match identify_device(&address.to_string()) {
-            Some(identity) if identity.is_kobo() => setup::Verdict::Reader,
+            Some(identity) => {
+                let verdict = setup::verdict_for(&identity, &reader.serial);
+                identities.insert(address, identity);
+                verdict
+            }
             // Told apart deliberately. A machine that answered and is not a
             // reader is settled; one that could not be reached at all may
             // simply still be booting, and is asked again next round.
-            Some(_) => setup::Verdict::Other,
             None => setup::Verdict::Unknown,
         },
         || {
@@ -5520,10 +5984,24 @@ fn await_reader(subnet: &str) {
     );
     println!();
     match arrival {
-        setup::Arrival::Found(address) => println!(
-            "The reader is at {address}.\n\n  kobo deploy --device {address}\n\n\
-             That installs over Wi-Fi from here on, with no cable and no restart."
-        ),
+        setup::Arrival::Found(address) => {
+            let address = address.to_string();
+            println!("The reader is back on Wi-Fi at {address}.");
+            let summary = identities
+                .values()
+                .find(|identity| identity.serial == reader.serial)
+                .map_or_else(|| reader.summary(), connect::Identity::summary);
+            match save_set_up_reader(&reader.serial, &address) {
+                Ok(name) => println!("{}", saved_reader_line(&summary, &name, &address)),
+                Err(error) => println!(
+                    "It could not be saved on this computer ({}). Save it with:\n  kobo pair",
+                    console::display(&error)
+                ),
+            }
+            if harden {
+                harden_root_ssh(&address);
+            }
+        }
         setup::Arrival::Several(addresses) => {
             let listed = addresses
                 .iter()
@@ -5531,15 +6009,15 @@ fn await_reader(subnet: &str) {
                 .collect::<Vec<_>>()
                 .join(", ");
             println!(
-                "More than one reader joined while waiting ({listed}), so this will not\n\
-                 guess which is yours. 'kobo devices' asks each one what it is."
+                "The reader answered at more than one address ({listed}), so this will not\n\
+                 guess which to save. Once it has settled, save it with: kobo pair"
             );
         }
         setup::Arrival::TimedOut(passed_over) => {
             println!(
-                "The reader did not appear. It is set up either way, the files are on it\n\
-                 and its SSH server starts at the next boot. 'kobo devices' finds it once\n\
-                 it is awake and on Wi-Fi."
+                "The reader did not come back on Wi-Fi in time, so it is not saved yet. It is\n\
+                 set up either way. {} Then save it with:\n  kobo pair",
+                targets::wake_step(None)
             );
             if !passed_over.is_empty() {
                 let listed = passed_over
@@ -5549,11 +6027,133 @@ fn await_reader(subnet: &str) {
                     .join(", ");
                 println!(
                     "\nSomething else joined the network while waiting ({listed}) and was\n\
-                     passed over: each was asked what it was, and none of them is a reader."
+                     passed over: each was asked what it was, and none of them is this reader."
                 );
             }
         }
     }
+}
+
+/// Saves the reader setup just found, returning the name it is saved under.
+///
+/// The same store and the same record `kobo pair` writes, so every later
+/// command finds it by serial. A reader this computer already knows keeps the
+/// name the owner gave it: running setup again to update Cobalt must not
+/// rename `study` back to `kobo`. A new one is saved as `kobo`, or as the
+/// first free `kobo-N` when another reader already has that name.
+fn save_set_up_reader(serial: &str, address: &str) -> Result<String, String> {
+    let path = readers::store_path();
+    let mut store = readers::Store::load(&path)?;
+    let name = setup_reader_name(&store, serial);
+    store.name(serial, address, &name)?;
+    store.save(&path)?;
+    Ok(name)
+}
+
+/// The name [`save_set_up_reader`] uses, decided from the store alone.
+fn setup_reader_name(store: &readers::Store, serial: &str) -> String {
+    if let Some(known) = store.readers.iter().find(|reader| reader.serial == serial) {
+        return known.nickname.clone();
+    }
+    let taken = |name: &str| store.find(name).is_some();
+    if !taken(DEFAULT_READER_NAME) {
+        return DEFAULT_READER_NAME.to_owned();
+    }
+    (2..=999)
+        .map(|number| format!("{DEFAULT_READER_NAME}-{number}"))
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| DEFAULT_READER_NAME.to_owned())
+}
+
+/// Closes password login for root, over connections that prove the key works.
+///
+/// Prints rather than returns, like the wait it runs inside: the setup itself
+/// succeeded before this began, and every ending here is an ending the reader
+/// survives. The order of the two connections is the safety argument. The
+/// first may authenticate by key and nothing else, and appends the block,
+/// gated on `sshd -t` and armed with a timed revert; the second is a fresh key
+/// login against the hardened server, and its success is what commits the
+/// change. A second login that never arrives means the reader restores
+/// password login on its own (see [`harden`]).
+fn harden_root_ssh(host: &str) {
+    let minutes = harden::REVERT_DELAY.as_secs() / 60;
+    let remote = format!("root@{host}");
+    let applied = match run_remote_shell_by_key(&remote, &harden::apply_script()) {
+        Ok(output) => output,
+        Err(error) => {
+            println!(
+                "SSH: the reader stopped answering before password login could be turned\n\
+                 off ({error}). It is as the firmware left it; running kobo setup again\n\
+                 retries."
+            );
+            return;
+        }
+    };
+    if !applied.status.success() {
+        println!(
+            "SSH: the reader declined to turn off password login and left its settings\n\
+             as they were: {}\nRunning kobo setup again retries.",
+            String::from_utf8_lossy(&applied.stderr).trim()
+        );
+        return;
+    }
+    match harden::Outcome::parse(&String::from_utf8_lossy(&applied.stdout)) {
+        Some(harden::Outcome::Already) => {
+            println!("SSH: only this computer's key gets in. Password login was already off.");
+            return;
+        }
+        Some(harden::Outcome::Applied) => {}
+        _ => {
+            println!(
+                "SSH: the reader answered something unexpected, so nothing further was\n\
+                 done: {}",
+                String::from_utf8_lossy(&applied.stdout).trim()
+            );
+            return;
+        }
+    }
+    // A fresh connection, deliberately: proving the still-open session works
+    // would prove nothing about the server as it now stands.
+    let confirmed = run_remote_shell_by_key(&remote, &harden::commit_script())
+        .ok()
+        .and_then(|output| harden::Outcome::parse(&String::from_utf8_lossy(&output.stdout)));
+    match confirmed {
+        Some(harden::Outcome::Committed | harden::Outcome::Already) => println!(
+            "SSH: only this computer's key gets in. Password login for root is off, and a\n\
+             fresh key login confirmed the key still works."
+        ),
+        Some(harden::Outcome::Missing) => println!(
+            "SSH: the reader put password login back before the key could confirm the\n\
+             change, so it is as the firmware left it. Running kobo setup again retries."
+        ),
+        _ => println!(
+            "SSH: password login is off for now, but the confirming key login did not get\n\
+             through, so the reader turns it back on by itself in {minutes} minutes. Keys keep\n\
+             working throughout; running kobo setup again retries."
+        ),
+    }
+}
+
+/// A session that may authenticate with this computer's key and nothing else,
+/// over a connection of its own.
+///
+/// Both halves matter for [`harden_root_ssh`]. The reader's stock server lets
+/// root in with an empty password, so a connection that fell back to that
+/// would "prove" a key that was never accepted. And an owner whose own SSH
+/// configuration multiplexes connections would otherwise have the confirming
+/// login ride the first one's master, which proves nothing about the
+/// reloaded server.
+fn run_remote_shell_by_key(remote: &str, script: &str) -> Result<RemoteShellOutput, String> {
+    let mut command = remote_shell_command(remote);
+    command.args([
+        "-o",
+        "PreferredAuthentications=publickey",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+    ]);
+    run_shell_session(command, script, SHELL_TIMEOUT)
 }
 
 /// What a run would do, without doing any of it.
@@ -5611,12 +6211,11 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         setup::INSTALL_FOLDER,
         if options.enable_ssh {
             format!(
-                "would create or reuse ~/.ssh/{DEVICE_KEY_NAME}, stage only its public half for Cobalt to install on first launch, and enable the firmware's root SSH server by renaming {}",
+                "would enable the firmware's root SSH server by renaming {}",
                 setup::SSH_DISABLED
             )
         } else {
-            "would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)"
-                .to_owned()
+            "would leave the firmware's SSH server disabled, because --no-ssh was given".to_owned()
         },
         if options.menu == MenuEntry::Skip {
             "would add no menu entry, because --no-menu was given".to_owned()
@@ -5650,21 +6249,32 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         },
         describe_key_plan(options, would_stage),
         describe_sample_plan(options),
-        if options.enable_ssh && options.wait {
-            "wait for the restarted reader to appear on the network"
-        } else if !options.enable_ssh {
-            "stop after ejecting, because SSH was not enabled"
-        } else {
-            "stop, because --no-wait was given"
-        },
+        describe_wait_plan(options),
         match (would_stage, options.enable_ssh && options.authorize_key,) {
             (true, true) =>
-                ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
+                ", and nothing extracted as root but NickelMenu's own two files, one authorized_keys and the firmware's first-login marker",
             (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
-            (false, true) => ", and nothing extracted as root but one authorized_keys",
+            (false, true) => ", and nothing extracted as root but one authorized_keys and the firmware's first-login marker",
             (false, false) => ", nothing extracted as root",
         }
     )
+}
+
+/// The one line of the dry run that covers what happens after the eject.
+fn describe_wait_plan(options: &SetupOptions) -> &'static str {
+    if !options.enable_ssh {
+        "stop after ejecting, because SSH was not enabled"
+    } else if !options.wait {
+        "stop, because --no-wait was given"
+    } else if options.authorize_key {
+        "wait for the restarted reader to come back on Wi-Fi, save it the way\n\
+         \x20 kobo pair does, and close password login for root over its first key\n\
+         \x20 login: a marked block in sshd_config, gated on sshd -t, which the reader\n\
+         \x20 reverts by itself unless a second, fresh key login confirms keys still work"
+    } else {
+        "wait for the restarted reader to come back on Wi-Fi and save it, leaving\n\
+         \x20 password login as the firmware has it, because --no-key was given"
+    }
 }
 
 /// The one line of the dry run that covers the welcome note.
@@ -5713,7 +6323,9 @@ fn describe_key_plan(options: &SetupOptions, would_stage: bool) -> String {
         "would put this machine's public key {slot}, creating\n\
          \x20 ~/.ssh/{} first if it does not exist, so that 'kobo devices' and every\n\
          \x20 other device command can reach the reader without a password. This replaces\n\
-         \x20 any keys the reader already accepts, because USB cannot read that file back",
+         \x20 any keys the reader already accepts, because USB cannot read that file back.\n\
+         \x20 The firmware's empty first-login marker goes with it, so its forced password\n\
+         \x20 change does not swallow the first command a computer sends",
         authorize::KEY_NAME,
     )
 }
@@ -5795,7 +6407,13 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
          reader has already extracted stays in authorized_keys under root's home\n\
          directory (/.ssh on the i.MX6 readers, /root/.ssh elsewhere), which is\n\
          on the root filesystem, and USB does not reach it. To remove that one, edit\n\
-         the file over SSH and delete the line ending in 'kobo-cobalt'."
+         the file over SSH and delete the line ending in 'kobo-cobalt'.\n\n\
+         The same goes for the block setup added to /etc/ssh/sshd_config to keep\n\
+         password login off. With the server switched off it does nothing. If you\n\
+         turn SSH back on by hand and want password login back, delete the lines\n\
+         from '{}' to '{}'.",
+        harden::SENTINEL_BEGIN,
+        harden::SENTINEL_END,
     );
     Ok(())
 }
@@ -7257,13 +7875,31 @@ enum SecretAction {
 enum SecretTarget {
     Device(String),
     Volume(PathBuf),
+    /// The simulator's credential store, so an app under `kobo dev` is given
+    /// a key exactly the way an owner gives one to a reader.
+    Sim,
 }
 
-const SECRET_USAGE: &str =
-    "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
-                            \x20      kobo secret set <name> --app APP --server HTTPS_URL (--from PATH | --stdin) --device IP\n\
-                            \x20      kobo secret list (--device IP | --volume PATH)\n\
-                            \x20      kobo secret remove <name> (--device IP | --volume PATH)";
+impl SecretTarget {
+    /// The secrets folder on this computer, for a mounted reader or the
+    /// simulator; `None` for a reader reached over SSH.
+    fn local_secrets(&self) -> Option<PathBuf> {
+        match self {
+            Self::Device(_) => None,
+            Self::Volume(volume) => Some(volume.join(".adds").join("cobalt").join("secrets")),
+            Self::Sim => Some(kobo_sim::simulated_secrets_root()),
+        }
+    }
+}
+
+const SECRET_USAGE: &str = concat!(
+    "usage: kobo secret set <name> [--from PATH] [--device IP | --reader NAME | --volume PATH | --sim]\n\
+     \x20      kobo secret set <name> --app APP --server HTTPS_URL (--from PATH | --stdin) \
+     [--device IP | --reader NAME | --sim]\n\
+     \x20      kobo secret list [--device IP | --reader NAME | --volume PATH | --sim]\n\
+     \x20      kobo secret remove <name> [--device IP | --reader NAME | --volume PATH | --sim]\n",
+    targets::saved_reader_note!(),
+);
 
 /// Accepts the names the runtime will actually resolve.
 ///
@@ -7429,6 +8065,10 @@ fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), St
             "--volume" => {
                 select_secret_target(&mut target, SecretTarget::Volume(PathBuf::from(value()?)))?;
                 index += 2;
+            }
+            "--sim" => {
+                select_secret_target(&mut target, SecretTarget::Sim)?;
+                index += 1;
             }
             "--from" => {
                 if verb != "set" || source.is_some() {
@@ -7602,8 +8242,8 @@ fn remove_secret(name: &str, target: &SecretTarget) -> Result<(), String> {
                 println!("Removed the value typed on the reader.");
             }
         }
-        SecretTarget::Volume(volume) => {
-            let directory = volume.join(".adds").join("cobalt").join("secrets");
+        SecretTarget::Volume(_) | SecretTarget::Sim => {
+            let directory = target.local_secrets().unwrap_or_default();
             let path = directory.join(name);
             let typed = forget_typed_copies(&directory, name)?;
             match std::fs::remove_file(&path) {
@@ -7655,11 +8295,14 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                         println!("It replaces the value typed on the reader.");
                     }
                 }
-                SecretTarget::Volume(volume) => {
-                    let directory = volume.join(".adds").join("cobalt").join("secrets");
+                SecretTarget::Volume(_) | SecretTarget::Sim => {
+                    let directory = target.local_secrets().unwrap_or_default();
                     std::fs::create_dir_all(&directory)
                         .map_err(|error| format!("create {}: {error}", directory.display()))?;
                     let path = directory.join(name);
+                    // A staging file left by an interrupted run would make
+                    // the next one refuse to start.
+                    let _ = std::fs::remove_file(directory.join(format!(".{name}.writing")));
                     publish_secret(&path, &value)?;
                     println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
                     if forget_typed_copies(&directory, name)? > 0 {
@@ -7688,11 +8331,13 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             report_secret_names(String::from_utf8_lossy(&output.stdout).lines());
             Ok(())
         }
-        (SecretAction::List, SecretTarget::Volume(volume)) => {
-            let directory = volume.join(".adds").join("cobalt").join("secrets");
+        (SecretAction::List, SecretTarget::Volume(_) | SecretTarget::Sim) => {
+            let directory = target.local_secrets().unwrap_or_default();
             let mut names = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&directory) {
-                for entry in entries.flatten() {
+                // Files only: the folder also holds each app's own copies
+                // under `apps/`, which is not a credential's name.
+                for entry in entries.flatten().filter(|entry| entry.path().is_file()) {
                     names.push(entry.file_name().to_string_lossy().into_owned());
                 }
             }
@@ -7721,10 +8366,12 @@ fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
 /// Where the runtime reads owner-installed TLS trust roots, from `kobod`.
 const DEVICE_TRUST_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/trust";
 
-const TRUST_USAGE: &str =
-    "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
-                           \x20      kobo trust list (--device IP | --volume PATH)\n\
-                           \x20      kobo trust remove <name> (--device IP | --volume PATH)";
+const TRUST_USAGE: &str = concat!(
+    "usage: kobo trust set <name> --from PATH [--device IP | --reader NAME | --volume PATH]\n\
+     \x20      kobo trust list [--device IP | --reader NAME | --volume PATH]\n\
+     \x20      kobo trust remove <name> [--device IP | --reader NAME | --volume PATH]\n",
+    targets::saved_reader_note!(),
+);
 
 /// Installs, lists or removes owner TLS trust roots on a reader.
 ///
@@ -7746,6 +8393,12 @@ fn trust_command(arguments: &[String]) -> Result<(), String> {
 }
 
 /// Reads, checks and installs one PEM certificate as an owner trust root.
+/// `kobo trust` reads its targets with the same parser as `kobo secret`
+/// but never accepts `--sim`; the simulator trusts the roots in
+/// `KOBO_SIM_TRUST_DIR` instead.
+const TRUST_SIM: &str =
+    "The simulator trusts the roots in KOBO_SIM_TRUST_DIR; copy the .pem there.";
+
 fn trust_set(name: &str, source: &Path, target: &SecretTarget) -> Result<(), String> {
     let text = std::fs::read_to_string(source)
         .map_err(|error| format!("read {}: {error}", source.display()))?;
@@ -7778,6 +8431,7 @@ fn trust_set(name: &str, source: &Path, target: &SecretTarget) -> Result<(), Str
             }
             println!("Installed trust root '{name}' ({found} certificate(s)) on {host}.");
         }
+        SecretTarget::Sim => return Err(TRUST_SIM.to_owned()),
         SecretTarget::Volume(volume) => {
             let directory = volume.join(".adds").join("cobalt").join("trust");
             std::fs::create_dir_all(&directory)
@@ -7809,6 +8463,7 @@ fn trust_remove(name: &str, target: &SecretTarget) -> Result<(), String> {
             }
             println!("Removed trust root '{name}' from {host}.");
         }
+        SecretTarget::Sim => return Err(TRUST_SIM.to_owned()),
         SecretTarget::Volume(volume) => {
             let path = volume
                 .join(".adds")
@@ -7841,6 +8496,7 @@ fn trust_list(target: &SecretTarget) -> Result<(), String> {
             }
             report_trust_names(String::from_utf8_lossy(&output.stdout).lines());
         }
+        SecretTarget::Sim => return Err(TRUST_SIM.to_owned()),
         SecretTarget::Volume(volume) => {
             let directory = volume.join(".adds").join("cobalt").join("trust");
             let mut names = Vec::new();
@@ -7965,81 +8621,218 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
     }
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "the flat command reference stays grep-friendly and one line per command"
-)]
 fn print_help() {
     let console = console::Console::detect();
-    println!(
-        "{}",
-        console.wrap(
-            "Kobo: set up your reader, send things to its apps, and build new ones\n\n\
-         Usage: kobo <command>\n\n\
-         Getting started:\n\
-           setup [--enable-ssh]   Prepare a reader over USB (run with no options to be asked)\n\
-           pair [NAME]            Save the reader on this network so the commands below find it\n\
-           apps [search WORD | setup APP]  Find apps and read their setup steps\n\
-           update [--channel stable|beta]  Update this kobo command\n\n\
-         Send things to your apps (these use your paired reader; add --reader NAME,\n\
-         --device IP or --sim to send somewhere else):\n\
-           send FILE [--app APP]  Send a file to whichever app opens it\n\
-           frame init | push PHOTOS [--fit crop|pad] | ls | rm ID   Photos for Frame\n\
-           musicstand init | push SCORE.pdf | ls | rm ID          Scores for Music Stand\n\
-           vault init | push NOTES_DIR | ingest DIR | ls | rm ID  Markdown notes for Vault\n\
-           flashcards --help      Import Anki decks and stage them for Flashcards\n\
-           fieldbook --help       Field packs in, eBird checklists out\n\
-           panels push COMIC.cbz  A comic for Panels\n\
-           needles push PATTERN.pdf  A knitting pattern you own, for Needles\n\
-           nonograms push IMAGE --name NAME --size 5|7|9  A photo puzzle for Nonograms\n\
-           parser push STORY [--replace]  An interactive story for Parser\n\
-           feeds check|push FILE.opml  Subscriptions for Feeds\n\
-           deck set PAD ... | ls | show | push  Lay out Deck's pads, then send them\n\
-           birds listen --source URL | status | stop  Mirror BirdNET-Go to Birds\n\
-           post login --gateway URL --token-file PATH  Sign Post in to a Hermes gateway\n\
-           readlater login --server URL ...  Sign Read Later in to Wallabag\n\
-           sync setup DIR --folder NAME | run | status | stop  Keep a folder in sync\n\
-           export --app APP --out DIR  Receive a copy an app prepared for you\n\
-           sidekick init | setup | run | status | stop | sample | test  The Sidekick helper\n\
-           stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal\n\n\
-         Credentials an app asks for by name:\n\
-           secret set NAME [--from PATH] | list | remove NAME   Tokens and passwords\n\
-           trust set NAME --from PATH | list | remove NAME      A private HTTPS root\n\n\
-         Build apps:\n\
-           new <name>             Create a Rust application\n\
-           dev [address]          Run this app in the browser simulator\n\
-           dev --runtime [address] [--apps IDs]  Run the launcher and selected local apps\n\
-           drive --script PATH [--record DIR]  Tap through the simulator and save screenshots\n\
-           build [--device]       Build the host workspace or the device binaries\n\
-           deploy --device IP [--package PATH]  Install over Wi-Fi, no reboot\n\
-           package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           run --sim [--app NAME] Run SDK, IPC, daemon and one app on this computer\n\
-           inspect <package>      List a package and prove it writes nothing to the rootfs\n\
-           verify <arm-binary>    Verify static ARM hard-float format\n\n\
-         Look at a reader (your paired reader too, unless shown with a target):\n\
-           devices [--subnet A.B.C] [--json]  Find every reader on the local network\n\
-           doctor --reader NAME [--json]  Read-only diagnostics\n\
-           shot [--reader NAME]   Save a PNG of a reader's panel, or the simulator's\n\
-           record [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
-           logs [--follow] [--lines N]  Read the runtime trace\n\
-           session [--hold MINUTES]  Keep a reader awake and on Wi-Fi while developing\n\
-           wait                   Block until a reader answers again\n\
-           app-link status|unpair Inspect or revoke browser pairing\n\
-           touch-probe [--seconds N]  Watch touch, read-only, to check the transform\n\
-           guard-test --device IP --confirm ...  Prove the guardian restores the screen\n\
-           shell [command ...]    Advanced: run a command on the reader, unchecked. Exits\n\
-           \x20                      with whatever the reader exited with\n\n\
-         Publish to the Store:\n\
-           app-key --seed PATH    Print the Ed25519 public key for a release seed\n\
-           app-bundle --manifest PATH --binary PATH --seed PATH --out PATH\n\
-           app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
-           app-list | app-check | app-release --registry PATH ...  Store packages\n\
-           host-release-sign | host-release-verify --manifest PATH ...\n\n\
-           version                Print version"
-        )
-    );
+    println!("{}", console.wrap(COMMAND_REFERENCE));
     print_output_contract();
     print_other_names();
+}
+
+/// Every command, one line each, in the order an owner meets them.
+///
+/// A constant rather than text inside [`print_help`] because it is also where
+/// `kobo COMMAND --help` finds its answer for the commands that have no help
+/// of their own (see [`reference_usage`]). Lines that start a command are
+/// indented two spaces, and a line indented further continues the one above,
+/// which is the whole grammar the lookup reads. Written with real line
+/// breaks, because a backslash continuation strips the indentation that makes
+/// the list readable.
+const COMMAND_REFERENCE: &str = "\
+Kobo: set up your reader, send things to its apps, and build new ones
+
+Usage: kobo <command>
+
+Getting started:
+  setup                  Prepare a reader over USB, turn on SSH with this
+                         computer's key, and save the reader for the commands
+                         below (run with no options to be asked)
+  pair [NAME]            Save or rename a reader that is already on Wi-Fi
+  apps [search WORD | setup APP]  Find apps and read their setup steps
+  update [--channel stable|beta]  Update this kobo command
+
+Send things to your apps. These go to the reader kobo setup saved; add
+--reader NAME, --device IP or --sim to send somewhere else:
+  send FILE [--to APP] [--replace]  Send a file to the app that opens it
+  frame init | push PHOTOS [--fit crop|pad] | plan | restore | ls | rm ID   Photos for Frame
+  musicstand init | push SCORE.pdf | plan | ls | rm ID  Scores for Music Stand
+  vault init | push NOTES_DIR | plan | ingest DIR | ls | rm ID  Markdown notes for Vault
+  flashcards --help      Import Anki decks and stage them for Flashcards
+  fieldbook --help       Field packs in, eBird checklists out
+  panels push COMIC.cbz  A comic for Panels
+  needles push PATTERN.pdf  A knitting pattern you own, for Needles
+  nonograms push IMAGE --name NAME --size 5|7|9  A photo puzzle for Nonograms
+  parser push STORY [--replace]  An interactive story for Parser
+  feeds check|push FILE.opml  Subscriptions for Feeds
+  deck set PAD ... | ls | show | push  Lay out Deck's pads, then send them
+  birds listen --source URL | status | stop  Mirror BirdNET-Go to Birds
+  post login --gateway URL --token-file PATH  Sign Post in to a Hermes gateway
+  readlater login --server URL ...  Sign Read Later in to Wallabag
+  sync setup DIR --folder NAME | run | status | stop  Keep a folder in sync
+  export --app APP --out DIR  Receive a copy an app prepared for you
+  sidekick init | setup | run | status | stop | sample | test  The Sidekick helper
+  stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal
+
+Credentials an app asks for by name:
+  connect APP            Connect an account app: asks for the server and
+                         token, checks them, and sets the app up on the reader
+  secret set NAME [--from PATH] | list | remove NAME   Tokens and passwords
+  trust set NAME --from PATH | list | remove NAME      A private HTTPS root
+  report [--out FILE] [--include-paths]  A diagnostic snapshot to share with a helper
+
+Build apps:
+  new <name>             Create a Rust application
+  dev [address]          Run this app in the browser simulator
+  dev --runtime [address] [--apps IDs]  Run the launcher and selected local apps
+  drive --script PATH [--record DIR]  Tap through the simulator and save screenshots
+  build [--device]       Build the host workspace or the device binaries
+  deploy --device IP [--package PATH]  Install over Wi-Fi, no reboot
+  package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies
+  run --sim [--app NAME]  Run SDK, IPC, daemon and one app on this computer
+  inspect <package>      List a package and prove it writes nothing to the rootfs
+  verify <arm-binary>    Verify static ARM hard-float format
+
+Look at a reader (the saved reader too, unless shown with a target):
+  devices [--subnet A.B.C] [--json]  Find every reader on the local network
+  doctor [--reader NAME | --device IP] [--json]  Read-only diagnostics
+  shot [--reader NAME]   Save a PNG of a reader's panel, or the simulator's
+  record [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only
+  logs [--follow] [--lines N]  Read the runtime trace
+  session [--hold MINUTES]  Keep a reader awake and on Wi-Fi while developing
+  wait [--timeout SECONDS]  Block until a reader answers again
+  app-link status|unpair  Inspect or revoke browser pairing
+  touch-probe [--seconds N]  Watch touch, read-only, to check the transform
+  wifi-trace summarize PATH | retrieve --out PATH  Read the radio's hand-off trace
+  guard-test --device IP --confirm ...  Prove the guardian restores the screen
+  shell [command ...]    Advanced: run a command on the reader, unchecked. Exits
+                         with whatever the reader exited with
+
+Publish to the Store:
+  app-key --seed PATH    Print the Ed25519 public key for a release seed
+  app-bundle --manifest PATH --binary PATH --seed PATH --out PATH  Sign one app
+  app-verify --package PATH --public-key PATH --manifest PATH --binary PATH  Check one
+  app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...  Sign a catalog
+  app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH  Check one
+  app-list --registry PATH  List the Store packages in a registry
+  app-check --registry PATH [--package PACKAGE] [--out PATH]  Check them
+  app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL  Build signed releases
+  beta-store-smoke --app ID --fixture DIR --out DIR  Rehearse a Store release
+  host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH  Sign a host release
+  host-release-verify --manifest PATH --signature PATH  Check a host release
+
+  help                   Print this list
+  version [--full]       Print this command's version, or the full compatibility report";
+
+/// Commands whose own handler answers `--help`.
+///
+/// Everything else is answered from [`COMMAND_REFERENCE`] before it runs.
+/// Some of them used to take `--help` as an argument and act on it: `build`
+/// started a build, `inspect` tried to open a file named `--help`, and two
+/// dozen others printed their usage as an error and exited 2, so a script
+/// could not even tell asking for help from getting the command wrong.
+const ANSWERS_ITS_OWN_HELP: &[&str] = &[
+    "apps",
+    "birds",
+    "deck",
+    "export",
+    "feeds",
+    "fieldbook",
+    "flashcards",
+    "frame",
+    "help",
+    "musicstand",
+    "needles",
+    "nonograms",
+    "pair",
+    "panels",
+    "parser",
+    "post",
+    "readlater",
+    "report",
+    "secret",
+    "send",
+    "setup",
+    "stream",
+    "sync",
+    "trust",
+    "vault",
+];
+
+/// The help to print instead of running the command, when the line asks for
+/// help and the command does not answer it itself.
+///
+/// Only words before a `--` count, because what follows one belongs to the
+/// command the reader or a terminal will run.
+fn unanswered_help(arguments: &[String]) -> Option<String> {
+    let (command, rest) = arguments.split_first()?;
+    let command = canonical(command);
+    if ANSWERS_ITS_OWN_HELP.contains(&command) || !is_command(command) {
+        return None;
+    }
+    rest.iter()
+        .take_while(|word| *word != "--")
+        .any(|word| word == "--help" || word == "-h")
+        .then(|| reference_usage(command))
+}
+
+/// Whether `run` dispatches this word. Kept beside the reference so a new
+/// command cannot be added to one and forgotten in the other; a test holds
+/// the two together.
+fn is_command(word: &str) -> bool {
+    COMMAND_REFERENCE.lines().any(|line| {
+        line.strip_prefix("  ")
+            .filter(|text| !text.starts_with(' '))
+            .and_then(|text| text.split_whitespace().next())
+            .is_some_and(|first| first == word)
+    }) || matches!(word, "shell" | "stop" | "present" | "tap" | "smoke-display")
+}
+
+/// One command's lines from the reference, as a usage.
+///
+/// The commands with a usage constant of their own keep it, since theirs is
+/// the longer and more exact answer. The rest get the reference line, with
+/// the purpose written below the form and any continuation joined to it.
+fn reference_usage(command: &str) -> String {
+    match command {
+        "drive" => return DRIVE_USAGE.to_owned(),
+        "record" => return RECORD_USAGE.to_owned(),
+        "shot" => return SHOT_USAGE.to_owned(),
+        _ => {}
+    }
+    let mut forms = Vec::new();
+    let mut purposes = Vec::new();
+    let mut lines = COMMAND_REFERENCE.lines().peekable();
+    while let Some(line) = lines.next() {
+        let Some(text) = line
+            .strip_prefix("  ")
+            .filter(|text| !text.starts_with(' '))
+        else {
+            continue;
+        };
+        if text.split_whitespace().next() != Some(command) {
+            continue;
+        }
+        let (form, purpose) = text.split_once("  ").map_or((text, ""), |(form, purpose)| {
+            (form.trim_end(), purpose.trim())
+        });
+        forms.push(format!("kobo {form}"));
+        let mut purpose = purpose.to_owned();
+        while let Some(more) = lines.peek().and_then(|next| next.strip_prefix("   ")) {
+            purpose.push(' ');
+            purpose.push_str(more.trim());
+            lines.next();
+        }
+        if !purpose.is_empty() {
+            purposes.push(purpose);
+        }
+    }
+    if forms.is_empty() {
+        return "Every command, with what it does: kobo --help".to_owned();
+    }
+    format!(
+        "usage: {}\n\n{}\n\nEvery command: kobo --help",
+        forms.join("\n       "),
+        purposes.join("\n")
+    )
 }
 
 /// Which stream carries what, what `--json` prints, and how an exit status

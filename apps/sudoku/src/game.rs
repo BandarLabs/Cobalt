@@ -24,20 +24,33 @@ impl Level {
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|level| level.key() == name)
     }
+    pub const fn index(self) -> usize {
+        self as usize
+    }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Puzzle {
     pub level: Level,
+    /// Where this puzzle falls within its own difficulty, counting from one.
+    ///
+    /// The pack lists the original twelve of each difficulty before the
+    /// larger set that followed, so a puzzle's line number says nothing a
+    /// player can use; "Easy 13" does.
+    pub number: usize,
     pub clues: [u8; CELLS],
     pub solution: [u8; CELLS],
 }
 pub fn pack() -> Vec<Puzzle> {
+    let mut seen = [0; Level::ALL.len()];
     include_str!("../assets/puzzles.txt")
         .lines()
         .map(|line| {
             let parts: Vec<_> = line.split('|').collect();
+            let level = Level::parse(parts[0]).expect("validated bundled level");
+            seen[level.index()] += 1;
             Puzzle {
-                level: Level::parse(parts[0]).expect("validated bundled level"),
+                level,
+                number: seen[level.index()],
                 clues: digits(parts[1]).expect("validated clues"),
                 solution: digits(parts[2]).expect("validated solution"),
             }
@@ -73,6 +86,12 @@ pub struct Game {
     pub pencil: bool,
     pub checking: bool,
     pub landscape: bool,
+    /// The last puzzle started at each difficulty, in [`Level::ALL`] order.
+    ///
+    /// New game carries on from here rather than from the puzzle on the
+    /// board, so a player who drops into Hard for one game comes back to
+    /// the next Easy they have not had instead of skipping ahead past it.
+    pub recent: [Option<usize>; 3],
 }
 impl Game {
     pub fn new(puzzle: usize, puzzles: &[Puzzle]) -> Self {
@@ -88,7 +107,18 @@ impl Game {
             pencil: false,
             checking: false,
             landscape: false,
+            recent: Self::recent_before(puzzle, puzzles),
         }
+    }
+    /// What a game that never recorded [`Self::recent`] has most likely had.
+    ///
+    /// Games saved before the pack grew only knew their own puzzle, and New
+    /// game then took the next puzzle of the chosen difficulty after it in
+    /// the pack. Taking the last one at or before it as the starting point
+    /// keeps that first choice exactly as it was, and a fresh game on the
+    /// first puzzle comes out the same as one that recorded everything.
+    pub fn recent_before(puzzle: usize, puzzles: &[Puzzle]) -> [Option<usize>; 3] {
+        Level::ALL.map(|level| (0..=puzzle).rev().find(|&i| puzzles[i].level == level))
     }
     pub fn solved(&self, puzzles: &[Puzzle]) -> bool {
         self.position.board == puzzles[self.puzzle].solution
@@ -168,9 +198,25 @@ impl Game {
         self.position = Self::new(self.puzzle, puzzles).position;
     }
     pub fn next(&self, level: Level, puzzles: &[Puzzle]) -> usize {
-        (1..=puzzles.len())
-            .map(|step| (self.puzzle + step) % puzzles.len())
+        let start = self.recent[level.index()].map_or(0, |last| last + 1);
+        (0..puzzles.len())
+            .map(|step| (start + step) % puzzles.len())
             .find(|&i| puzzles[i].level == level)
             .expect("pack has every level")
+    }
+    /// The next puzzle at `level`, keeping the player's settings.
+    ///
+    /// Orientation and whether mistakes are shown are the player's choices
+    /// rather than part of a puzzle, so they carry over to the new board.
+    pub fn start(&self, level: Level, puzzles: &[Puzzle]) -> Self {
+        let puzzle = self.next(level, puzzles);
+        let mut recent = self.recent;
+        recent[level.index()] = Some(puzzle);
+        Self {
+            checking: self.checking,
+            landscape: self.landscape,
+            recent,
+            ..Self::new(puzzle, puzzles)
+        }
     }
 }

@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::io::{Cursor, Read};
 use zip::{CompressionMethod, ZipArchive};
 
+pub mod inbox;
 mod metadata;
 pub use metadata::Metadata;
 pub mod reader;

@@ -1,14 +1,14 @@
 # Parlor
 
-Four classic board games for two players on one Kobo, or against the reader.
+Four classic board games against the computer, or for two players passing one Kobo.
 
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/table.png" alt="The game table"><br>The game table</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/reversi-rotated.png" alt="Reversi, with the board turned for White"><br>Reversi, with the board turned for White</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reversi.png" alt="Reversi against the computer, its last move marked"><br>Reversi against the computer, its last move marked</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="A draughts opening"><br>A draughts opening</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="Draughts, with the computer's reply marked"><br>Draughts, with the computer's reply marked</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/morris.png" alt="Nine Men's Morris"><br>Nine Men's Morris</td>
 </tr>
 </table>
@@ -24,13 +24,18 @@ Four classic board games for two players on one Kobo, or against the reader.
 
 ## Features
 
-- Pass-and-play turns the board 180° for the player to move. A fixed
-  orientation is available for side-by-side play.
-- Solo play against three computer levels: Casual, Club and Strong. The same
-  position and level always produce the same move.
+- Play the computer at three levels: Casual, Club and Strong. It replies as
+  soon as you move, and its move stays marked on the board, and named in a
+  line above it, until you move again. The same position and level always
+  produce the same move.
+- Undo takes back your move and the computer's reply together.
+- Pass-and-play is the other choice on the setup screen. The board turns
+  180° for the player to move, or stays still for side-by-side play, and
+  undo needs the other player to agree.
+- Rules and the menu (New game, Change game) sit in the top bar, and Undo at
+  the foot, where every Cobalt game keeps them.
 - Legal destinations are marked with hollow rings.
 - Every move is saved, and reopening offers to resume the exact position.
-- In pass-and-play, undo needs the other player's confirmation.
 
 ## Rules references
 
@@ -39,9 +44,9 @@ Four classic board games for two players on one Kobo, or against the reader.
 - Nine Men's Morris: [Board Game Arena](https://en.boardgamearena.com/doc/GamehelpnineMensMorris)
 - Kalah: [Mancala World](https://mancala.fandom.com/wiki/Kalah)
 
-International 10×10 draughts is implemented in the engine
-([FMJD rules](https://www.fmjd.org/docs/Annex_1.pdf)) but stays disabled until
-the reader's board size limit of 81 cells is raised.
+The engine also knows International 10×10 draughts
+([FMJD rules](https://www.fmjd.org/docs/Annex_1.pdf)), but the reader draws at
+most 81 cells, so Parlor offers only the 8×8 game.
 
 ## Permissions
 

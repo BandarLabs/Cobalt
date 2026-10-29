@@ -25,6 +25,16 @@ const SETLISTS: &str = "setlists";
 const ABOUT: &str = "about";
 const ZOOM: &str = "zoom";
 const MARK: &str = "mark";
+const CHECK: &str = "check";
+const NEW_LIST: &str = "new-list";
+const ADD_SCORES: &str = "add-scores";
+const DONE_ADDING: &str = "done-adding";
+const DELETE_LIST: &str = "delete-list";
+const CONFIRM_DELETE: &str = "confirm-delete";
+const KEEP_LIST: &str = "keep-list";
+const MOVE_UP: &str = "move-up";
+const MOVE_DOWN: &str = "move-down";
+const REMOVE_ENTRY: &str = "remove-entry";
 
 /// How far the bottom half reaches back into the top half, so the line being
 /// read is still in sight after a half-page turn.
@@ -52,6 +62,8 @@ enum View {
     Stand,
     Setlists,
     Setlist,
+    /// The library, offered for adding to the open setlist.
+    Picker,
     About,
 }
 
@@ -75,6 +87,10 @@ struct Stand {
     library_page: usize,
     setlists_page: usize,
     setlist_page: usize,
+    picker_page: usize,
+    /// The setlist entry whose menu is open, by position.
+    entry_menu: Option<usize>,
+    confirming_delete: bool,
     manifest_load: Option<ShelfDownload>,
     page_load: Option<ShelfDownload>,
     page_load_key: Option<String>,
@@ -348,9 +364,8 @@ impl Stand {
                         "Send a score from a computer. PDFs are set page by page.",
                     )
                     .section("On your computer")
-                    .command("kobo pair")
-                    .command("kobo musicstand init")
                     .command("kobo musicstand push score.pdf")
+                    .button(CHECK, "Check for scores")
                     .build(),
                 1,
             );
@@ -361,9 +376,9 @@ impl Stand {
             .map(|score| {
                 let state = self.state_of(&score.id);
                 let detail = if state.marked {
-                    format!("{} pages · page {} marked", score.pages, state.page + 1)
+                    format!("{} · page {} marked", pages(score.pages), state.page + 1)
                 } else {
-                    format!("{} pages", score.pages)
+                    pages(score.pages)
                 };
                 (
                     format!("{OPEN}-{}", score.id),
@@ -458,7 +473,7 @@ impl Stand {
         let screen = ScreenBuilder::new("music-setlists")
             .top_bar("Music Stand")
             .heading("Setlists")
-            .secondary("New setlist copies every score in library order.");
+            .secondary("A setlist plays its scores in order and turns from the last page of one to the next.");
         let rows = self
             .setlists
             .iter()
@@ -467,15 +482,37 @@ impl Stand {
                 (
                     format!("list-{index}"),
                     context.clamped_row(&list.name, 2, true),
-                    format!("{} scores", list.entries.len()),
+                    format!(
+                        "{} score{}",
+                        list.entries.len(),
+                        if list.entries.len() == 1 { "" } else { "s" }
+                    ),
                 )
             })
             .collect::<Vec<_>>();
         let (screen, pages) = Self::paged_rows(context, screen, &rows, self.setlists_page);
-        (
-            screen.bottom_action("new-list", "New setlist").build(),
-            pages,
-        )
+        (screen.bottom_action(NEW_LIST, "New setlist").build(), pages)
+    }
+
+    /// The scores of one setlist, each with a menu to move it or take it off.
+    fn setlist_rows(&self, list: &Setlist, context: &Context) -> Vec<(String, String, String)> {
+        list.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(position, id)| {
+                let score = self.scores.iter().find(|score| &score.id == id)?;
+                let state = self.state_of(id);
+                Some((
+                    format!("entry-{position}"),
+                    context.clamped_row_with_menu(
+                        &format!("{}. {}", position + 1, score.title),
+                        2,
+                        true,
+                    ),
+                    format!("Resumes at page {}", state.page + 1),
+                ))
+            })
+            .collect()
     }
 
     fn setlist(&self, index: usize, context: &Context) -> (Screen, usize) {
@@ -484,35 +521,137 @@ impl Stand {
         };
         let mut screen = ScreenBuilder::new("music-setlist")
             .top_bar("Setlist")
+            .top_bar_action(DELETE_LIST, "Delete")
             .heading(list.name.clone());
-        if list.entries.is_empty() {
+        let rows = self.setlist_rows(list, context);
+        if rows.is_empty() {
             screen = screen.splash(
                 Some(Glyph::Note),
                 "No scores on this setlist yet",
-                "On Setlists, choose New setlist to copy every score on the shelf.",
+                "Choose Add scores to pick them from your library.",
             );
         }
-        let rows = list
-            .entries
+        let labels = rows
+            .iter()
+            .map(|(_, title, detail)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_with_menu_under(
+            &labels,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = self.setlist_page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        screen = screen.rows_with_menu(visible.iter().map(|&row| {
+            let (action, title, detail) = &rows[row];
+            (
+                action.clone(),
+                title.clone(),
+                detail.clone(),
+                Glyph::Note,
+                format!("{action}-menu"),
+            )
+        }));
+        if let Some(open) = self.entry_menu {
+            let shown = visible
+                .iter()
+                .any(|&row| rows[row].0 == format!("entry-{open}"));
+            let mut items = Vec::new();
+            if open > 0 {
+                items.push((MOVE_UP, "Move up", Glyph::Previous));
+            }
+            if open + 1 < list.entries.len() {
+                items.push((MOVE_DOWN, "Move down", Glyph::Next));
+            }
+            items.push((REMOVE_ENTRY, "Remove from setlist", Glyph::Trash));
+            screen = screen.row_overflow(format!("entry-{open}-menu"), shown, items);
+        }
+        if count > 1 {
+            screen = screen
+                .page_turns("list-previous", "list-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
+        }
+        screen = screen.bottom_action(ADD_SCORES, "Add scores");
+        if self.confirming_delete {
+            screen = screen.confirm(
+                "Delete this setlist?",
+                format!("{} goes, and its scores stay in your library.", list.name),
+                (CONFIRM_DELETE, "Delete"),
+                (KEEP_LIST, "Keep"),
+            );
+        }
+        (screen.build(), count)
+    }
+
+    /// The whole library, each score saying whether it is already on the
+    /// setlist being built, so a piece is never added twice by mistake.
+    fn picker(&self, index: usize, context: &Context) -> (Screen, usize) {
+        let Some(list) = self.setlists.get(index) else {
+            return self.setlists(context);
+        };
+        let screen = ScreenBuilder::new("music-picker")
+            .top_bar("Add scores")
+            .heading(list.name.clone())
+            .secondary("Tap a score to add it to the end of the setlist.");
+        if self.scores.is_empty() {
+            return (
+                screen
+                    .splash(
+                        Some(Glyph::Note),
+                        "Your library is empty",
+                        "Send scores from your computer with kobo musicstand push.",
+                    )
+                    .bottom_action(DONE_ADDING, "Done")
+                    .build(),
+                1,
+            );
+        }
+        let rows = self
+            .scores
             .iter()
             .enumerate()
-            .filter_map(|(position, id)| {
-                let score = self.scores.iter().find(|score| &score.id == id)?;
-                let state = self.state_of(id);
-                Some((
-                    format!("entry-{position}"),
-                    context.clamped_row(&format!("{}. {}", position + 1, score.title), 2, true),
-                    format!("resume at page {}", state.page + 1),
-                ))
+            .map(|(position, score)| {
+                let detail = match list.entries.iter().position(|id| id == &score.id) {
+                    Some(at) => format!("On this setlist as number {}", at + 1),
+                    None => pages(score.pages),
+                };
+                (
+                    format!("pick-{position}"),
+                    context.clamped_row(&score.title, 2, true),
+                    detail,
+                )
             })
             .collect::<Vec<_>>();
-        let (screen, pages) = Self::paged_rows(context, screen, &rows, self.setlist_page);
-        let screen = if list.entries.is_empty() {
-            screen.bottom_action(SETLISTS, "All setlists")
-        } else {
-            screen.bottom_action("remove-last", "Remove last score")
+        let (screen, pages) = Self::paged_rows(context, screen, &rows, self.picker_page);
+        (screen.bottom_action(DONE_ADDING, "Done").build(), pages)
+    }
+
+    /// Moves or removes the entry whose menu is open.
+    fn edit_entry(&mut self, context: &mut Context, action: ActionId) {
+        let (Some(index), Some(position)) = (self.open_setlist, self.entry_menu.take()) else {
+            return;
         };
-        (screen.build(), pages)
+        let Some(list) = self.setlists.get_mut(index) else {
+            return;
+        };
+        if position >= list.entries.len() {
+            return;
+        }
+        if action == action_id(MOVE_UP) && position > 0 {
+            list.entries.swap(position, position - 1);
+        } else if action == action_id(MOVE_DOWN) && position + 1 < list.entries.len() {
+            list.entries.swap(position, position + 1);
+        } else if action == action_id(REMOVE_ENTRY) {
+            list.entries.remove(position);
+        } else {
+            return;
+        }
+        self.save(context);
     }
 
     fn turn_list(&mut self, context: &Context, forward: bool) {
@@ -522,12 +661,16 @@ impl Stand {
             View::Setlist => self
                 .open_setlist
                 .map_or(1, |index| self.setlist(index, context).1),
+            View::Picker => self
+                .open_setlist
+                .map_or(1, |index| self.picker(index, context).1),
             _ => return,
         };
         let page = match self.view {
             View::Library => &mut self.library_page,
             View::Setlists => &mut self.setlists_page,
             View::Setlist => &mut self.setlist_page,
+            View::Picker => &mut self.picker_page,
             _ => return,
         };
         let last = count.saturating_sub(1);
@@ -541,9 +684,10 @@ impl Stand {
     fn about() -> Screen {
         ScreenBuilder::new("music-about")
             .top_bar("Music Stand")
-            .heading("Transfer")
-            .text("Add scores from your computer with kobo musicstand push. PDF scores are rendered page by page; folders of images transfer as they are. Pages are prepared for clear E Ink reading before they leave the computer.")
-            .text("Only transfer scores you have the right to use.")
+            .heading("Adding scores")
+            .text("Send scores from your computer with kobo musicstand push. Name several files or a folder to send them all at once. Each push adds to your library.")
+            .text("PDF scores need Poppler on the computer. Folders of page images are sent as they are.")
+            .text("New scores appear here the next time you come back to Music Stand. Only send scores you have the right to use.")
             .button(LIBRARY, "Library")
             .build()
     }
@@ -557,15 +701,35 @@ impl Stand {
                 || self.setlists(context).0,
                 |index| self.setlist(index, context).0,
             ),
+            View::Picker => self.open_setlist.map_or_else(
+                || self.setlists(context).0,
+                |index| self.picker(index, context).0,
+            ),
             View::About => Self::about(),
         };
         context.set_screen(screen.with_own_back(self.view != View::Library));
+    }
+
+    /// Reads the shelf manifest again.
+    ///
+    /// Music Stand used to read it once, when it opened, so a score pushed
+    /// while the stand sat open in the background never reached the library
+    /// until the app was closed and opened again. Coming back to the app is
+    /// the moment somebody looks for what they just sent.
+    fn reload_shelf(&mut self, context: &mut Context) {
+        if !self.startup.manifest_loaded || self.manifest_load.is_some() {
+            return;
+        }
+        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
+        manifest.start(context);
+        self.manifest_load = Some(manifest);
     }
 
     fn advance_manifest(&mut self, context: &mut Context, result: &StoreResult) -> bool {
         let Some(load) = &mut self.manifest_load else {
             return false;
         };
+        let reloading = self.startup.manifest_loaded;
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.manifest_load.take().expect("active manifest").take();
@@ -579,9 +743,15 @@ impl Stand {
                         self.scores = manifest.scores;
                         self.notice = None;
                     }
+                    // A shelf already on screen is kept when the manifest
+                    // read again cannot be decoded: a push half way through
+                    // is the likely cause, and the next look finds it whole.
+                    Err(_) if reloading => {}
                     Err(error) => {
                         self.scores.clear();
-                        self.notice = Some(format!("Music shelf needs re-pushing: {error}"));
+                        self.notice = Some(format!(
+                            "The list of scores could not be read ({error}). Push your scores again from your computer."
+                        ));
                     }
                 }
                 self.startup.manifest_loaded = true;
@@ -590,13 +760,19 @@ impl Stand {
             }
             ShelfProgress::Failed(kobo_sdk::StoreError::Missing) => {
                 self.manifest_load = None;
+                if reloading {
+                    self.scores.clear();
+                    self.failures.clear();
+                }
                 self.startup.manifest_loaded = true;
                 true
             }
             ShelfProgress::Failed(_) => {
                 self.manifest_load = None;
+                if !reloading {
+                    self.notice = Some("The list of scores could not be opened.".to_owned());
+                }
                 self.startup.manifest_loaded = true;
-                self.notice = Some("Music shelf could not be opened.".to_owned());
                 true
             }
             ShelfProgress::Moving { .. } => true,
@@ -684,11 +860,35 @@ impl KoboApp for Stand {
             self.startup.state_loaded = true;
             self.start_when_ready(context);
             self.show(context);
-            return;
         }
-        if self.advance_manifest(context, &result) || self.advance_page(context, &result) {
+    }
+
+    /// Shelf answers go to the read that asked for them, by name. A refusal
+    /// carries no name of its own, and once the manifest is read again while
+    /// a page is on its way, the name the runtime answers for is the only way
+    /// to tell a missing page from a missing manifest.
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        let named = |load: &Option<ShelfDownload>| load.as_ref().is_some_and(|l| l.name() == name);
+        let handled = if named(&self.manifest_load) {
+            self.advance_manifest(context, &result)
+        } else if named(&self.page_load) {
+            self.advance_page(context, &result)
+        } else {
+            false
+        };
+        if handled {
             self.show(context);
         }
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.reload_shelf(context);
+        self.show(context);
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.reload_shelf(context);
+        self.show(context);
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
@@ -710,46 +910,20 @@ impl KoboApp for Stand {
                 View::Stand if self.menu_open => self.menu_open = false,
                 View::Stand => self.leave_stand(context),
                 View::Library => context.exit(),
+                View::Setlist if self.entry_menu.is_some() => self.entry_menu = None,
+                View::Setlist if self.confirming_delete => self.confirming_delete = false,
                 View::Setlist => self.view = View::Setlists,
+                View::Picker => self.view = View::Setlist,
                 _ => self.view = View::Library,
             }
             self.show(context);
             return;
         }
-        let mut handled = false;
-        for score in self.scores.clone() {
-            if action == action_id(&format!("{OPEN}-{}", score.id)) {
-                self.open_score(context, &score.id, None);
-                handled = true;
-                break;
-            }
+        if self.handle_collection_tap(context, action) {
+            self.show(context);
+            return;
         }
-        if !handled {
-            for index in 0..self.setlists.len() {
-                if action == action_id(&format!("list-{index}")) {
-                    self.open_setlist = Some(index);
-                    self.setlist_page = 0;
-                    self.view = View::Setlist;
-                    handled = true;
-                    break;
-                }
-            }
-        }
-        if !handled {
-            if let Some(list) = self.open_setlist.and_then(|index| self.setlists.get(index)) {
-                for (position, id) in list.entries.clone().into_iter().enumerate() {
-                    if action == action_id(&format!("entry-{position}")) {
-                        if self.scores.iter().any(|score| score.id == id) {
-                            self.open_score(context, &id, Some(position));
-                        }
-                        handled = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if handled {
-        } else if action == action_id("list-next") {
+        if action == action_id("list-next") {
             self.turn_list(context, true);
         } else if action == action_id("list-previous") {
             self.turn_list(context, false);
@@ -778,22 +952,49 @@ impl KoboApp for Stand {
             self.view = View::Setlists;
         } else if action == action_id(ABOUT) {
             self.view = View::About;
-        } else if action == action_id("new-list") {
-            let number = self.setlists.len() + 1;
+        } else if action == action_id(CHECK) {
+            self.reload_shelf(context);
+        } else if action == action_id(NEW_LIST) {
+            // One more number than there are setlists always holds a name
+            // nobody has taken.
+            let name = (1..=self.setlists.len() + 1)
+                .map(|number| format!("Setlist {number}"))
+                .find(|name| !self.setlists.iter().any(|list| &list.name == name))
+                .unwrap_or_else(|| format!("Setlist {}", self.setlists.len() + 1));
             self.setlists.push(Setlist {
-                name: format!("Setlist {number}"),
-                entries: self.scores.iter().map(|score| score.id.clone()).collect(),
+                name,
+                entries: Vec::new(),
             });
-            self.setlists_page = self.setlists(context).1.saturating_sub(1);
+            self.open_setlist = Some(self.setlists.len() - 1);
+            self.setlist_page = 0;
+            self.picker_page = 0;
+            self.view = View::Picker;
             self.save(context);
-        } else if action == action_id("remove-last") {
-            if let Some(list) = self
-                .open_setlist
-                .and_then(|index| self.setlists.get_mut(index))
-            {
-                list.entries.pop();
+        } else if action == action_id(ADD_SCORES) {
+            self.picker_page = 0;
+            self.view = View::Picker;
+        } else if action == action_id(DONE_ADDING) {
+            self.view = View::Setlist;
+        } else if action == action_id(DELETE_LIST) {
+            self.entry_menu = None;
+            self.confirming_delete = true;
+        } else if action == action_id(KEEP_LIST) {
+            self.confirming_delete = false;
+        } else if action == action_id(CONFIRM_DELETE) {
+            self.confirming_delete = false;
+            if let Some(index) = self.open_setlist.take() {
+                if index < self.setlists.len() {
+                    self.setlists.remove(index);
+                }
             }
+            self.setlists_page = 0;
+            self.view = View::Setlists;
             self.save(context);
+        } else if [MOVE_UP, MOVE_DOWN, REMOVE_ENTRY]
+            .iter()
+            .any(|name| action == action_id(name))
+        {
+            self.edit_entry(context, action);
         } else if action == action_id(NEXT) {
             self.advance(context);
         } else if action == action_id(PREVIOUS) {
@@ -804,10 +1005,74 @@ impl KoboApp for Stand {
 }
 
 impl Stand {
+    /// A tap on one row of a collection: a score, a setlist, a setlist entry
+    /// or its menu, or a score offered for the setlist being built.
+    fn handle_collection_tap(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if let Some(score) = self
+            .scores
+            .iter()
+            .find(|score| action == action_id(&format!("{OPEN}-{}", score.id)))
+            .map(|score| score.id.clone())
+        {
+            self.open_score(context, &score, None);
+            return true;
+        }
+        if let Some(index) =
+            (0..self.setlists.len()).find(|index| action == action_id(&format!("list-{index}")))
+        {
+            self.open_setlist = Some(index);
+            self.setlist_page = 0;
+            self.entry_menu = None;
+            self.confirming_delete = false;
+            self.view = View::Setlist;
+            return true;
+        }
+        let Some(index) = self.open_setlist else {
+            return false;
+        };
+        let Some(entries) = self.setlists.get(index).map(|list| list.entries.clone()) else {
+            return false;
+        };
+        for (position, id) in entries.iter().enumerate() {
+            if action == action_id(&format!("entry-{position}")) {
+                if self.scores.iter().any(|score| &score.id == id) {
+                    self.open_score(context, id, Some(position));
+                }
+                return true;
+            }
+            if action == action_id(&format!("entry-{position}-menu")) {
+                self.entry_menu = Some(position);
+                return true;
+            }
+        }
+        if let Some(position) =
+            (0..self.scores.len()).find(|position| action == action_id(&format!("pick-{position}")))
+        {
+            let id = self.scores[position].id.clone();
+            if let Some(list) = self.setlists.get_mut(index) {
+                list.entries.push(id);
+            }
+            self.save(context);
+            return true;
+        }
+        false
+    }
+}
+
+impl Stand {
     fn page_reload(&mut self, context: &mut Context) {
         self.page_load = None;
         self.page_load_key = None;
         self.start_page_load(context);
+    }
+}
+
+/// "1 page", "6 pages".
+fn pages(count: u32) -> String {
+    if count == 1 {
+        "1 page".to_owned()
+    } else {
+        format!("{count} pages")
     }
 }
 

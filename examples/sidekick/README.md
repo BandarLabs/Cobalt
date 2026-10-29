@@ -41,29 +41,55 @@ your computer catches it through the agent's own hooks.
 
 ## Setup
 
-On the computer:
+Sidekick needs your computer. On it:
 
-```sh
-kobo-sidekickd init                  # certificate, pairing code and address
-kobo trust set sidekick --device IP  # lets the reader verify the daemon
-kobo-sidekickd setup                 # adds hooks to the agents it finds
-kobo-sidekickd run
-```
+1. Set up the reader once over USB, if you have not already:
 
-`setup` registers every agent it finds, or only the one you name. `--dry-run`
-shows what it would change, `--print` prints the JSON to add by hand, and
-`agents` lists what it found. It keeps a `.bak` of each file, leaves other
-settings and hooks in place, and will not rewrite a file it cannot parse.
+   ```sh
+   kobo setup
+   ```
 
-On the Kobo, open Sidekick and enter the address and six-character pairing
-code that `init` printed. They are remembered.
+2. Pair this computer with the reader. This writes the pairing for Sidekick,
+   [Deck](../../apps/deck/) and [Paperterm](../../apps/paperterm/) onto the
+   reader over Wi-Fi, so there is nothing to type there. The first time, close
+   Cobalt on the reader and open it again afterwards so it trusts the computer.
+
+   ```sh
+   kobo sidekick init
+   ```
+
+3. Let your agent ask through Sidekick. Use `codex` instead of `claude` for
+   Codex.
+
+   ```sh
+   kobo sidekick setup claude
+   ```
+
+4. Start the helper and leave it running, then open Sidekick on the reader.
+
+   ```sh
+   kobo sidekick run
+   ```
+
+`kobo sidekick test` sends the reader a harmless question and waits for your
+answer. `kobo sidekick status` says whether the helper is running and whether
+a reader is watching.
+
+If `init` cannot reach the reader, it prints an address and a six-character
+code. Enter them in Sidekick; they are remembered. **Change pairing** on the
+watching screen starts again.
+
+The top of the screen says **Watching** only while the computer answers. When
+it does not, Sidekick says **Not connected** and why, and your agents ask at
+their terminals as usual. A question asked while no reader has been in touch
+for a minute goes straight back to the terminal instead of waiting.
 
 ## Security
 
-The connection uses TLS with the certificate you installed, and every request
-carries the pairing code, so no one else on the network can see or answer
-questions. If the daemon is unreachable, the agents' own terminal prompts work
-as usual.
+The connection uses TLS with the certificate `init` installed on the reader,
+and every request carries the pairing code, so no one else on the network can
+see or answer questions. If the helper is unreachable, the agents' own
+terminal prompts work as usual.
 
 ## Permissions
 

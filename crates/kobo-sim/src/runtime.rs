@@ -98,10 +98,17 @@ fn start(
     program: &Program,
     id: u64,
 ) -> io::Result<Hosted> {
-    let mut child = Command::new(&program.executable)
+    let mut command = Command::new(&program.executable);
+    command
         .env("KOBO_SOCKET", socket)
-        .env("KOBO_SIM_CALLBACKS", "1")
-        .spawn()?;
+        .env("KOBO_SIM_CALLBACKS", "1");
+    if let Some(minutes) = crate::reader_offset_for_app() {
+        command.env(
+            kobo_policy::clock::READER_OFFSET_VARIABLE,
+            minutes.to_string(),
+        );
+    }
+    let mut child = command.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(10);
     let accepted = (|| loop {
         if let Some(session) = server.try_accept_app()? {

@@ -1321,11 +1321,14 @@ impl Report {
                 "  · safely eject it from the host before disconnecting the USB cable"
             );
         }
-        text.push_str(&next_steps_for(
-            self.waiting,
-            self.staged_an_archive(),
-            firmware,
-        ));
+        let finding = if self.waiting {
+            Finding::Waiting
+        } else if self.ssh.is_some() {
+            Finding::Pair
+        } else {
+            Finding::NoSsh
+        };
+        text.push_str(&next_steps_for(finding, self.staged_an_archive(), firmware));
         text
     }
 
@@ -1367,7 +1370,7 @@ fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) ->
         crate::authorize::Staged::SlotTaken => format!(
             "{origin} was not installed: another archive is already waiting in \
              .kobo/KoboRoot.tgz. Restart the reader to let it be taken, then run \
-             'kobo setup --enable-ssh --no-menu' again."
+             'kobo setup --no-menu' again."
         ),
     }
 }
@@ -1380,15 +1383,39 @@ fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) ->
 #[must_use]
 #[cfg(test)]
 pub fn next_steps(waiting: bool, staged: Staged) -> String {
-    next_steps_for(waiting, staged, None)
+    let finding = if waiting {
+        Finding::Waiting
+    } else {
+        Finding::Pair
+    };
+    next_steps_for(finding, staged, None)
 }
 
-fn next_steps_for(waiting: bool, staged: Staged, firmware: Option<&str>) -> String {
-    let finding = if waiting {
-        "  4. This command is waiting for it, and will print its address when it\n\
-         \x20    appears. Ctrl-C stops the wait; nothing on the reader depends on it."
-    } else {
-        "  4. Find it with 'kobo devices', then 'kobo deploy' works from here on."
+/// How the reader is found once it is back on Wi-Fi, which decides step 4.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Finding {
+    /// This command waits for it and saves it.
+    Waiting,
+    /// SSH is on but nothing is waiting, so the owner saves it with pair.
+    Pair,
+    /// SSH was left off, so no computer command can reach it.
+    NoSsh,
+}
+
+fn next_steps_for(finding: Finding, staged: Staged, firmware: Option<&str>) -> String {
+    let finding = match finding {
+        Finding::Waiting => {
+            "  4. This command is waiting for it, and saves it when it comes back on\n\
+             \x20    Wi-Fi. Ctrl-C stops the wait; nothing on the reader depends on it."
+        }
+        Finding::Pair => {
+            "  4. Once it is back on Wi-Fi, save it with 'kobo pair' so the computer\n\
+             \x20    commands find it without an address."
+        }
+        Finding::NoSsh => {
+            "  4. Computer commands cannot reach it, because SSH was left off. Run\n\
+             \x20    'kobo setup' again without --no-ssh when an app needs them."
+        }
     };
     let menu = firmware.map_or_else(
         || "Open the Kobo menu and choose Cobalt.".to_owned(),
@@ -1477,24 +1504,30 @@ boot. To undo all of it: 'kobo setup --undo'.
 /// What was written, when the reader already had the plugin.
 const KEY_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart:
-this machine's public key, and nothing else. It becomes root's authorized_keys
-(written to both /root/.ssh and /.ssh, so it is found whether the reader keeps
-root's home at /root or at /), which is the file the reader's SSH server reads
-to decide who may log in. Everything else was written to the book partition. To
-undo all of it: 'kobo setup --undo'.
+this machine's public key, and the firmware's own first-login marker. The key
+becomes root's authorized_keys (written to both /root/.ssh and /.ssh, so it is
+found whether the reader keeps root's home at /root or at /), which is the file
+the reader's SSH server reads to decide who may log in. The marker,
+/.login_pass_set, is an empty file whose absence makes some firmware demand an
+interactive password change on the first login, which a computer command
+cannot answer. Everything else was written to the book partition. To undo all
+of it: 'kobo setup --undo'.
 ";
 
 /// What was written, on a reader receiving both. The usual first-time case.
 const PLUGIN_AND_KEY_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart,
-holding two things, because the firmware extracts one archive and both had to
-travel in it: NickelMenu, checked first to contain nothing but its own plugin
-and its own documentation, and this machine's public key, which becomes root's
-authorized_keys (written to both /root/.ssh and /.ssh, so it is found whether
-root's home is /root or /) and is the file the reader's SSH server reads to
-decide who may log in. Everything else was written to the book partition.
-NickelMenu removes itself if it fails to start, so it cannot leave the reader
-unable to boot. To undo all of it: 'kobo setup --undo'.
+holding three things, because the firmware extracts one archive and all of them
+had to travel in it: NickelMenu, checked first to contain nothing but its own
+plugin and its own documentation; this machine's public key, which becomes
+root's authorized_keys (written to both /root/.ssh and /.ssh, so it is found
+whether root's home is /root or /) and is the file the reader's SSH server
+reads to decide who may log in; and the firmware's own first-login marker,
+/.login_pass_set, an empty file whose absence makes some firmware demand an
+interactive password change on the first login, which a computer command cannot
+answer. Everything else was written to the book partition. NickelMenu removes
+itself if it fails to start, so it cannot leave the reader unable to boot. To
+undo all of it: 'kobo setup --undo'.
 ";
 
 /// Everything above the step that differs.
@@ -1566,6 +1599,20 @@ pub enum Verdict {
     /// It could not be asked yet. A reader accepts connections while it is
     /// still booting, well before it will hold a conversation.
     Unknown,
+}
+
+/// What an answer at a new address says about the reader being waited for.
+///
+/// Only the serial the USB volume gave counts as the reader. Another Kobo on
+/// the same network is a reader, but not this one, and saving it in this
+/// one's place would send every later command to somebody else's device.
+#[must_use]
+pub fn verdict_for(identity: &crate::connect::Identity, serial: &str) -> Verdict {
+    if identity.is_kobo() && identity.serial == serial {
+        Verdict::Reader
+    } else {
+        Verdict::Other
+    }
 }
 
 /// What came back from waiting for a restarted reader.
@@ -1654,8 +1701,8 @@ mod tests {
     use super::{candidates, drive_letter_roots};
     use super::{
         carry_trust_from, clear_setting, install_profile, is_kobo_serial, next_steps,
-        next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Mounted, Report, Ssh,
-        Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
+        next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Finding, Mounted,
+        Report, Ssh, Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
     };
     use std::net::Ipv4Addr;
     use std::path::{Path, PathBuf};
@@ -1895,12 +1942,18 @@ mod tests {
 
     #[test]
     fn menu_instructions_follow_the_firmware_generation() {
-        assert!(next_steps_for(false, Staged::Nothing, Some("4.45.23697"))
-            .contains("bottom-right Kobo menu"));
-        assert!(next_steps_for(false, Staged::Nothing, Some("4.22.15190"))
-            .contains("top-left Kobo menu"));
-        assert!(next_steps_for(false, Staged::Nothing, Some("4.45.23697"))
-            .contains("leave the home screen alone for one minute"));
+        assert!(
+            next_steps_for(Finding::Pair, Staged::Nothing, Some("4.45.23697"))
+                .contains("bottom-right Kobo menu")
+        );
+        assert!(
+            next_steps_for(Finding::Pair, Staged::Nothing, Some("4.22.15190"))
+                .contains("top-left Kobo menu")
+        );
+        assert!(
+            next_steps_for(Finding::Pair, Staged::Nothing, Some("4.45.23697"))
+                .contains("leave the home screen alone for one minute")
+        );
     }
 
     #[test]
@@ -1967,8 +2020,13 @@ mod tests {
     #[test]
     fn the_reader_is_not_told_to_go_looking_for_it_while_this_is_looking_for_it() {
         assert!(next_steps(true, Staged::Nothing).contains("waiting for it"));
-        assert!(!next_steps(true, Staged::Nothing).contains("Find it with"));
-        assert!(next_steps(false, Staged::Nothing).contains("Find it with 'kobo devices'"));
+        assert!(next_steps(true, Staged::Nothing).contains("saves it"));
+        assert!(!next_steps(true, Staged::Nothing).contains("kobo pair"));
+        assert!(next_steps(false, Staged::Nothing).contains("save it with 'kobo pair'"));
+        assert!(
+            next_steps_for(Finding::NoSsh, Staged::Nothing, None).contains("without --no-ssh"),
+            "a reader left without SSH is not sent to pair, which cannot reach it"
+        );
         for waiting in [true, false] {
             let text = next_steps(waiting, Staged::Nothing);
             assert!(text.contains("kobo setup --undo"), "undo is always offered");
@@ -2389,7 +2447,7 @@ mod tests {
             text.contains("another archive is already waiting"),
             "{text}"
         );
-        assert!(text.contains("--enable-ssh --no-menu"), "{text}");
+        assert!(text.contains("'kobo setup --no-menu'"), "{text}");
         // Nothing of ours was staged, so the claim is still true.
         assert!(text.contains("nothing was extracted as\nroot"), "{text}");
     }

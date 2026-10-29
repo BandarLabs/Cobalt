@@ -21,27 +21,40 @@ Log bird sightings offline and keep a life list on your Kobo.
 
 - Look up species by common name, scientific name or banding code from a field
   pack.
-- Log a sighting with one tap during an outing. Species not in a pack can be
-  typed by name.
+- Log a sighting with one tap during an outing, for every species in your
+  packs, page by page. Species not in a pack can be typed by name.
+- An outing stays open when the app closes or the reader restarts.
 - Review an outing's log, remove entries and undo a removal.
 - A life list of every species logged on the reader.
 - Export finished outings as a CSV in eBird's Checklist Format.
 
 ## Setup
 
-Field packs are regional species lists prepared on a computer and sent to the
-reader:
+Set up the reader once over USB with `kobo setup`, if you have not already.
+
+Field packs are regional species lists made on a computer and sent to the
+reader. Make one from a CSV list of birds with Common Name and Scientific Name
+columns:
+
+- your own sightings: on ebird.org, My eBird, Download My Data;
+- a region's species list saved as CSV, or a sheet you type yourself;
+- the eBird/Clements taxonomy CSV, which keeps its own species codes.
+
+Birds without a code get a four-letter one made from the name.
 
 ```sh
-kobo fieldbook inspect PACK.json                     # check a pack
-kobo fieldbook photos PACK.json --out PACK_DIR       # add licensed species photos
-kobo fieldbook push PACK.json --device IP            # send a pack to the reader
-kobo fieldbook ls --device IP                        # list packs on the reader
-kobo fieldbook export --device IP --out FILE.csv     # fetch the checklist CSV
+kobo fieldbook new MyEBirdData.csv --title "Local birds" --out pack.json
+kobo fieldbook inspect pack.json                     # check a pack
+kobo fieldbook photos pack.json --out PACK_DIR       # add licensed species photos
+kobo fieldbook push pack.json                        # send it to the reader
+kobo fieldbook ls                                    # list packs on the reader
+kobo fieldbook export --out FILE.csv                 # fetch the checklist CSV
 ```
 
-Use `--sim` instead of `--device IP` to work with the simulator. Pack files
-are limited to 512 KiB.
+Each push adds its packs to the ones on the reader and prints what is there; a
+pack with the same id replaces the old one. `--replace` leaves only the packs
+you send. Fieldbook shows them the next time it opens or the reader wakes. Use
+`--sim` to work with the simulator. Pack files are limited to 512 KiB.
 
 Packs are stored on the reader, so logging works without a connection. A pack
 that fails to import is listed with the reason.
@@ -50,7 +63,8 @@ that fails to import is listed with the reason.
 
 1. **Start an outing** and enter a place name. The date and start time come
    from the reader's clock.
-2. Tap a species to add it to the tally.
+2. Tap a species to add it to the tally. Turn the page for more species, or
+   tap **Type a species** to search.
 3. **Review sightings** lists the log. Tap an entry to remove it, or
    **Undo delete** to restore it.
 4. **Finish outing** files it under Today.

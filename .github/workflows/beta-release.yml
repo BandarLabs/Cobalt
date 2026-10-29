@@ -430,7 +430,11 @@ jobs:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
         run: |
-          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          # The Sidekick helper ships beside kobo: `kobo sidekick init` and
+          # `run` look for it there, and without it Sidekick and Deck cannot
+          # be set up at all.
+          cargo build --locked --release -p kobo-cli -p kobo-sidekickd \
+            --target "${{ matrix.target }}"
           # The importer intentionally owns a separate Rust 1.88 workspace and
           # lockfile so Anki's host-only graph never enters the reader/CLI graph.
           # It is unix-only for now, so the Windows leg ships the CLI alone.
@@ -448,6 +452,8 @@ jobs:
           mkdir -p host
           cp "target/${{ matrix.target }}/release/kobo${{ matrix.exe }}" \
             "host/kobo${{ matrix.exe }}"
+          cp "target/${{ matrix.target }}/release/kobo-sidekickd${{ matrix.exe }}" \
+            "host/kobo-sidekickd${{ matrix.exe }}"
           if [ "${{ matrix.importer }}" = "yes" ]; then
             cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
               host/flashcards-import
@@ -458,9 +464,10 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" != Windows ]; then
-            file "host/kobo${{ matrix.exe }}"
+            file "host/kobo${{ matrix.exe }}" "host/kobo-sidekickd${{ matrix.exe }}"
           fi
           "host/kobo${{ matrix.exe }}" --version
+          "host/kobo-sidekickd${{ matrix.exe }}" --version
           if [ "${{ matrix.importer }}" = "yes" ]; then
             file host/flashcards-import
             host/flashcards-import --version
@@ -494,17 +501,23 @@ jobs:
         run: |
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "dist/host-binaries/host-${platform}/kobo"
+            test -f "dist/host-binaries/host-${platform}/kobo-sidekickd"
             test -f "dist/host-binaries/host-${platform}/flashcards-import"
             mkdir -p "dist/host-binaries/${platform}"
             mv "dist/host-binaries/host-${platform}/kobo" \
               "dist/host-binaries/${platform}/kobo"
+            mv "dist/host-binaries/host-${platform}/kobo-sidekickd" \
+              "dist/host-binaries/${platform}/kobo-sidekickd"
             mv "dist/host-binaries/host-${platform}/flashcards-import" \
               "dist/host-binaries/${platform}/flashcards-import"
           done
           test -f "dist/host-binaries/host-windows-x86_64/kobo.exe"
+          test -f "dist/host-binaries/host-windows-x86_64/kobo-sidekickd.exe"
           mkdir -p "dist/host-binaries/windows-x86_64"
           mv "dist/host-binaries/host-windows-x86_64/kobo.exe" \
             "dist/host-binaries/windows-x86_64/kobo.exe"
+          mv "dist/host-binaries/host-windows-x86_64/kobo-sidekickd.exe" \
+            "dist/host-binaries/windows-x86_64/kobo-sidekickd.exe"
       - name: Build deterministic host release assets
         env:
           VERSION: ${{ needs.prepare.outputs.version }}

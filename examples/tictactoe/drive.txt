@@ -6,7 +6,8 @@
 # a test of the layout arithmetic rather than of the game.
 wait-for O to play
 expect No games finished yet
-tap How to play
+expect-missing How to play
+tap Rules
 wait-for Make three in a row
 wait 250
 clean
@@ -28,9 +29,11 @@ expect O 1
 wait 600
 clean
 shot tictactoe-won
-tap-id reset
+tap Next game
 wait-for O to play
 expect O 1
+tap-id game-more
+wait-for New game
 tap Against the Kobo
 wait-for Your turn
 tap-id cell-0
@@ -38,6 +41,7 @@ wait-for Your turn
 wait 600
 clean
 shot tictactoe-solo
+tap-id game-more
 tap Clear score
 wait-for No games finished yet
 wait 900

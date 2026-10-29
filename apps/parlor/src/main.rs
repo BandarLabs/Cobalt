@@ -1,4 +1,5 @@
-//! Pass-and-play classics with original rule engines and bounded house AI.
+//! Classic board games against the computer, or between two people passing
+//! one reader, with original rule engines and a bounded computer opponent.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::needless_pass_by_value,
@@ -12,7 +13,8 @@ mod games;
 use engine::{choose_move, Game, Strength};
 #[cfg(test)]
 use games::QUIET_LIMIT;
-use games::{Draughts, Kalah, Morris, MorrisMove, Reversi, ReversiMove, Rules};
+use games::{Draughts, DraughtsMove, Kalah, Morris, MorrisMove, Reversi, ReversiMove, Rules};
+use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
     action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, Tile,
     TileShape,
@@ -25,6 +27,24 @@ const SAVE: &str = "parlor-autosave-v1";
 const SAVE_FAILED: &str =
     "Progress is not saved. Keep the app open while you make room on your reader; the next move tries again.";
 const GAMES: [Title; 4] = [Title::Reversi, Title::Draughts, Title::Morris, Title::Kalah];
+
+/// The two halves of the opponent choice on the setup screen.
+const PLAY_COMPUTER: &str = "opponent-computer";
+const PLAY_PEOPLE: &str = "opponent-people";
+/// More menu entry that goes back to the shelf of games.
+const CHANGE_GAME: &str = "change-game";
+/// Foot verb that plays the next round of a match.
+const NEXT_ROUND: &str = "next-round";
+/// The setup screen's other choices, one action per value.
+const SIDE_FIRST: &str = "side-first";
+const SIDE_SECOND: &str = "side-second";
+const ROTATE_ON: &str = "rotation-on";
+const ROTATE_OFF: &str = "rotation-off";
+const STRENGTHS: [(&str, Strength); 3] = [
+    ("strength-casual", Strength::Casual),
+    ("strength-club", Strength::Club),
+    ("strength-strong", Strength::Strong),
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Title {
@@ -82,9 +102,60 @@ impl Title {
     const fn detail(self) -> &'static str {
         match self {
             Self::Reversi => "Bracket discs in eight directions.",
-            Self::Draughts => "Mandatory captures and complete capture chains.",
+            Self::Draughts => "Eight by eight. Captures are mandatory and chains are completed.",
             Self::Morris => "Place, form mills, move, fly, and remove.",
             Self::Kalah => "Sow four stones from each of six pits.",
+        }
+    }
+
+    /// What two people sharing the reader call each side.
+    ///
+    /// Named for what is on the board, so that nobody has to be told which
+    /// one they are: the colour of the pieces, or for Kalah, whose stones
+    /// have no colour, the order of play. These used to be compass points,
+    /// "Black / South", which is how the rules are written down and not how
+    /// anybody sitting at a board talks.
+    const fn side_name(self, side: i8) -> &'static str {
+        match (self, side) {
+            (Self::Kalah, 1) => "Player 1",
+            (Self::Kalah, _) => "Player 2",
+            (_, 1) => "Black",
+            _ => "White",
+        }
+    }
+
+    /// The "Your side" choice against the computer.
+    const fn side_choice(self, side: i8) -> &'static str {
+        match (self, side) {
+            (Self::Kalah, 1) => "Moves first",
+            (Self::Kalah, _) => "Moves second",
+            (_, 1) => "Black, moves first",
+            _ => "White, moves second",
+        }
+    }
+
+    const fn rules(self) -> [&'static str; 3] {
+        match self {
+            Self::Reversi => [
+                "Place a disc so it brackets one or more opposing discs.",
+                "Bracketed discs flip to your side in every direction.",
+                "When no moves remain, the player with more discs wins.",
+            ],
+            Self::Draughts => [
+                "Move diagonally into an empty square; captures are mandatory.",
+                "Jump over an opposing piece to capture it, continuing when another jump is open.",
+                "Reach the far side to crown a king. Take every opposing piece to win.",
+            ],
+            Self::Morris => [
+                "Place pieces on open points. Three in a line makes a mill.",
+                "After placing, slide along a line; with three pieces you may fly anywhere.",
+                "A mill lets you remove one opposing piece. Reduce them to two to win.",
+            ],
+            Self::Kalah => [
+                "Your six pits are the row nearest you, and your store is at its right end. Choose a pit to sow its stones counter-clockwise, one per pit.",
+                "End in your store to play again. End in an empty pit of your own to capture the stones opposite.",
+                "When one side is empty, most stones in the stores wins.",
+            ],
         }
     }
 }
@@ -99,7 +170,9 @@ enum Mode {
 enum View {
     Menu,
     Setup(Title),
-    HowTo(Title),
+    /// A game's rules. `true` when they were opened from its setup screen,
+    /// which is then where Back returns; otherwise Back returns to play.
+    Rules(Title, bool),
     Board,
     Record,
 }
@@ -136,6 +209,25 @@ impl Position {
             Self::Morris(g) => g.terminal_score(1),
             Self::Kalah(g) => g.terminal_score(1),
         }
+    }
+
+    /// Whether this position is partway through one move: a capture chain
+    /// that must jump again, or a mill waiting for its removal.
+    ///
+    /// Undo goes back past these, because a player who takes back a double
+    /// capture means the whole capture, not its second half.
+    fn mid_move(&self) -> bool {
+        match self {
+            Self::Draughts(game) => game.forced.is_some(),
+            Self::Morris(game) => game.removing,
+            Self::Reversi(_) | Self::Kalah(_) => false,
+        }
+    }
+
+    /// Whether the side to move has nothing to play and has to pass.
+    fn forced_pass(&self) -> bool {
+        matches!(self, Self::Reversi(game)
+            if game.placements().is_empty() && game.terminal_score(1).is_none())
     }
 
     fn is_valid(&self) -> bool {
@@ -201,11 +293,67 @@ impl Position {
     }
 }
 
+/// One move, with the position it was played from.
+#[derive(Clone, Debug)]
+enum Step {
+    Reversi(Reversi, ReversiMove),
+    Draughts(Draughts, DraughtsMove),
+    Morris(Morris, MorrisMove),
+    Kalah(Kalah, usize),
+}
+
+impl Step {
+    fn side(&self) -> i8 {
+        match self {
+            Self::Reversi(game, _) => game.turn,
+            Self::Draughts(game, _) => game.turn,
+            Self::Morris(game, _) => game.turn,
+            Self::Kalah(game, _) => game.turn,
+        }
+    }
+
+    /// The move that turned `before` into `after`.
+    ///
+    /// Read back from the two positions rather than kept alongside them, so
+    /// that a game saved before moves were marked, or picked up again after
+    /// the cover was shut, is marked the same as one that never stopped. The
+    /// engines are deterministic, so exactly one legal move fits.
+    fn between(before: &Position, after: &Position) -> Option<Self> {
+        match (before, after) {
+            (Position::Reversi(game), Position::Reversi(next)) => game
+                .legal_moves()
+                .into_iter()
+                .find(|mv| {
+                    // A move that left the other side with nothing to play
+                    // is kept together with that side's pass.
+                    let played = game.apply(mv);
+                    played == *next || played.apply(&ReversiMove::Pass) == *next
+                })
+                .map(|mv| Self::Reversi(game.clone(), mv)),
+            (Position::Draughts(game), Position::Draughts(next)) => {
+                played(game, next).map(|mv| Self::Draughts(game.clone(), mv))
+            }
+            (Position::Morris(game), Position::Morris(next)) => {
+                played(game, next).map(|mv| Self::Morris(game.clone(), mv))
+            }
+            (Position::Kalah(game), Position::Kalah(next)) => {
+                played(game, next).map(|pit| Self::Kalah(game.clone(), pit))
+            }
+            _ => None,
+        }
+    }
+}
+
+fn played<G: Game + PartialEq>(game: &G, next: &G) -> Option<G::Move> {
+    game.legal_moves()
+        .into_iter()
+        .find(|mv| game.apply(mv) == *next)
+}
+
 struct Parlor {
     view: View,
     position: Option<Position>,
     mode: Mode,
-    rules: Rules,
     strength: Strength,
     human_side: i8,
     rotate: bool,
@@ -219,6 +367,10 @@ struct Parlor {
     match_score: [u8; 2],
     scored: bool,
     loaded: bool,
+    menu: Menu,
+    /// Whether the setup screen was opened from a game in progress, by New
+    /// game, so that Back returns to that game rather than to the shelf.
+    setup_from_board: bool,
 }
 
 impl Default for Parlor {
@@ -226,13 +378,15 @@ impl Default for Parlor {
         Self {
             view: View::Menu,
             position: None,
-            mode: Mode::PassAndPlay,
-            rules: Rules::AngloAmerican,
+            // Against the computer, because one person holding a reader is
+            // who opens a game on it. Pass-and-play is the other half of the
+            // same control on the setup screen.
+            mode: Mode::Solo,
             strength: Strength::Club,
             human_side: 1,
             rotate: true,
             selected: None,
-            notice: "Choose a table game. Pass-and-play is ready.".into(),
+            notice: String::new(),
             save_failed: false,
             history: Vec::new(),
             record: Vec::new(),
@@ -241,15 +395,9 @@ impl Default for Parlor {
             match_score: [0, 0],
             scored: false,
             loaded: false,
+            menu: Menu::default(),
+            setup_from_board: false,
         }
-    }
-}
-
-fn player(side: i8) -> &'static str {
-    if side == 1 {
-        "Black / South"
-    } else {
-        "White / North"
     }
 }
 
@@ -259,6 +407,15 @@ const fn valid_side(side: i8) -> bool {
 
 fn cell_name(at: usize) -> String {
     format!("cell-{at}")
+}
+
+/// "The computer" in the middle of a sentence.
+fn mid_sentence(name: &str) -> String {
+    if name == "The computer" {
+        "the computer".to_owned()
+    } else {
+        name.to_owned()
+    }
 }
 
 impl Parlor {
@@ -271,11 +428,77 @@ impl Parlor {
         let screen = match self.view {
             View::Menu => self.menu_screen(),
             View::Setup(title) => self.setup_screen(title),
-            View::HowTo(title) => self.how_to_screen(title),
+            View::Rules(title, _) => Self::rules_screen(title),
             View::Board => self.board_screen(),
             View::Record => self.record_screen(context),
         };
         screen.with_own_back(self.view != View::Menu)
+    }
+
+    /// What a side is called at the start of a sentence about it.
+    fn name(&self, title: Title, side: i8) -> &'static str {
+        match self.mode {
+            Mode::Solo if side == self.human_side => "You",
+            Mode::Solo => "The computer",
+            Mode::PassAndPlay => title.side_name(side),
+        }
+    }
+
+    /// What a side is called at the start of a line in the record.
+    fn record_name(&self, title: Title, side: i8) -> &'static str {
+        match self.mode {
+            Mode::Solo if side == self.human_side => "You",
+            Mode::Solo => "Computer",
+            Mode::PassAndPlay => title.side_name(side),
+        }
+    }
+
+    /// Some of one side's pieces, as the sentence about losing them says it.
+    fn pieces_of(&self, title: Title, owner: i8, count: usize, one: &str, many: &str) -> String {
+        let noun = if count == 1 { one } else { many };
+        let number = if count == 1 {
+            "one".to_owned()
+        } else {
+            count.to_string()
+        };
+        match self.mode {
+            Mode::Solo if owner == self.human_side => format!("{number} of your {many}"),
+            Mode::Solo => format!("{number} of the computer's {many}"),
+            Mode::PassAndPlay if title == Title::Kalah => {
+                format!("{number} of {}'s {many}", title.side_name(owner))
+            }
+            Mode::PassAndPlay => {
+                format!("{number} {} {noun}", title.side_name(owner).to_lowercase())
+            }
+        }
+    }
+
+    /// The note after a move that hands the turn over.
+    ///
+    /// Between two people it says whose hands the reader goes to. Against
+    /// the computer there is nothing to say: the reply is already on the
+    /// board by the time the panel has repainted.
+    fn handed_over(&self, title: Title, next: i8) -> String {
+        match self.mode {
+            Mode::PassAndPlay => format!("Pass the reader to {}.", title.side_name(next)),
+            Mode::Solo => String::new(),
+        }
+    }
+
+    /// Whether the board is drawn turned round.
+    fn rotated(&self, position: &Position) -> bool {
+        match self.mode {
+            // Your own pieces nearest you, whichever side you chose, the way
+            // anybody sits down at a board.
+            Mode::Solo => self.human_side == -1,
+            Mode::PassAndPlay => self.rotate && position.turn() == -1,
+        }
+    }
+
+    /// The way the record names places on the board: as the player who
+    /// moves first sees it, or against the computer, as you always see it.
+    fn record_rotated(&self) -> bool {
+        self.mode == Mode::Solo && self.human_side == -1
     }
 
     fn menu_screen(&self) -> Screen {
@@ -303,8 +526,8 @@ impl Parlor {
     fn menu_prefix(&self) -> ScreenBuilder {
         let screen = ScreenBuilder::new("parlor-menu")
             .top_bar("Parlor")
-            .heading("Pass-and-play classics")
-            .secondary("Set the reader between two players, choose a game, and begin.");
+            .heading("Classic board games")
+            .secondary("Play the computer, or pass the reader between two players.");
         if self.position.is_some() {
             // The game already in progress is the first thing a reader who put
             // the panel down wants, so it sits above the shelf rather than
@@ -315,193 +538,196 @@ impl Parlor {
         }
     }
 
+    /// What starting a game here would throw away, said before it happens.
+    ///
+    /// The setup screen is where a new game is confirmed: nothing is lost
+    /// until Start game, so the line above it is the warning rather than a
+    /// dialog in front of the screen that already asks.
+    fn replacing(&self, title: Title) -> Option<String> {
+        let position = self.position.as_ref()?;
+        if position.terminal().is_some() || self.history.is_empty() {
+            return None;
+        }
+        Some(if position.title() == title {
+            "Starting replaces the game in progress.".to_owned()
+        } else {
+            format!(
+                "Starting replaces your {} game in progress.",
+                position.title().name()
+            )
+        })
+    }
+
     fn setup_screen(&self, title: Title) -> Screen {
-        let mode = match self.mode {
-            Mode::PassAndPlay => "Pass-and-play",
-            Mode::Solo => "Solo against the house",
-        };
-        let mut screen = ScreenBuilder::new("parlor-setup")
+        // Both opponents side by side with the current one filled, rather
+        // than a row that changes when tapped: a reader who has only ever
+        // seen "Computer" there had no way of knowing there was anything else.
+        let screen = ScreenBuilder::new("parlor-setup")
             .top_bar(title.name())
-            .heading("Set the table")
+            .top_bar_action(chrome::RULES, chrome::RULES_LABEL)
             .secondary(title.detail())
-            .rows([
-                ("mode", "Mode", mode, Glyph::Person),
-                (
-                    "rotation",
-                    "Board rotation",
-                    if self.rotate {
-                        "Faces the active player"
-                    } else {
-                        "Fixed for side-by-side play"
-                    },
-                    Glyph::Refresh,
+            .section("Opponent")
+            .segmented(
+                usize::from(self.mode == Mode::PassAndPlay),
+                [(PLAY_COMPUTER, "Computer"), (PLAY_PEOPLE, "Pass-and-play")],
+            );
+        // The same for every other choice here. These were rows that cycled
+        // on a tap, which showed one value and gave no sign that tapping it
+        // would change it, let alone to what.
+        let screen = match self.mode {
+            Mode::Solo => screen
+                .section("Your side")
+                .segmented(
+                    usize::from(self.human_side == -1),
+                    [
+                        (SIDE_FIRST, title.side_choice(1)),
+                        (SIDE_SECOND, title.side_choice(-1)),
+                    ],
+                )
+                .section("Computer strength")
+                .segmented(
+                    STRENGTHS
+                        .iter()
+                        .position(|&(_, strength)| strength == self.strength)
+                        .unwrap_or(1),
+                    STRENGTHS.map(|(name, strength)| (name, strength.name())),
                 ),
-            ]);
-        if title == Title::Draughts {
-            // The ruleset says up front whether it can be played here. It
-            // used to read as a plain choice, and the reason the 10×10 board
-            // is refused only appeared once it had been chosen.
-            let rules = if self.rules == Rules::International {
-                format!("{} · not playable on this panel", self.rules.name())
-            } else {
-                self.rules.name().to_owned()
-            };
-            screen = screen.rows([("rules", "Rules", rules, Glyph::Grid)]);
-        }
-        if self.mode == Mode::Solo {
-            screen = screen.rows([
-                (
-                    "side",
-                    "Your side",
-                    if self.human_side == 1 {
-                        "Black / South (first)"
-                    } else {
-                        "White / North (second)"
-                    },
-                    Glyph::Person,
-                ),
-                (
-                    "strength",
-                    "House strength",
-                    self.strength.name(),
-                    Glyph::Chart,
-                ),
-            ]);
-        }
-        if title == Title::Draughts && self.rules == Rules::International {
-            // A ruleset this panel cannot draw is a choice that is not on
-            // offer, not a fault. It used to raise the full error panel, with
-            // its cross and its "Something went wrong", which read as though
-            // the app had broken and which was itself drawn through the bottom
-            // edge at the larger text settings. The row says it plainly, the
-            // line under it says why, and the game simply cannot be started.
-            return screen
-                .secondary("10×10 needs 100 touch cells and this panel holds 81.")
-                .buttons([("how-to-play", "How to play")])
-                .build();
-        }
-        screen
-            .primary_button("start", "Start game")
-            .buttons([("how-to-play", "How to play")])
+            Mode::PassAndPlay => screen.section("Board").segmented(
+                usize::from(!self.rotate),
+                [
+                    (ROTATE_ON, "Turns for each player"),
+                    (ROTATE_OFF, "Stays still"),
+                ],
+            ),
+        };
+        let screen = match self.replacing(title) {
+            Some(warning) => screen.secondary(warning),
+            None => screen,
+        };
+        screen.primary_button("start", "Start game").build()
+    }
+
+    fn rules_screen(title: Title) -> Screen {
+        let [first, second, third] = title.rules();
+        ScreenBuilder::new("parlor-rules")
+            .top_bar(chrome::RULES_LABEL)
+            .heading(title.name())
+            .text(first)
+            .text(second)
+            .text(third)
             .build()
     }
 
-    fn how_to_screen(&self, title: Title) -> Screen {
-        let rules = match title {
-            Title::Reversi => [
-                "Place a disc so it brackets one or more opposing discs.",
-                "Bracketed discs flip to your side in every direction.",
-                "When no moves remain, the player with more discs wins.",
-            ],
-            Title::Draughts => [
-                "Move diagonally into an empty square; captures are mandatory.",
-                "Jump over an opposing piece to capture it, continuing when another jump is open.",
-                "Reach the far side to crown a king. Take every opposing piece to win.",
-            ],
-            Title::Morris => [
-                "Place pieces on open points. Three in a line makes a mill.",
-                "After placing, slide along a line; with three pieces you may fly anywhere.",
-                "A mill lets you remove one opposing piece. Reduce them to two to win.",
-            ],
-            Title::Kalah => [
-                "Choose one of your six pits and sow its stones counter-clockwise.",
-                "End in your store to play again. End in an empty pit to capture opposite stones.",
-                "When one side is empty, most stones in the stores wins.",
-            ],
-        };
-        ScreenBuilder::new("parlor-help")
-            .top_bar("How to play")
-            .heading(title.name())
-            .text(rules[0])
-            .text(rules[1])
-            .text(rules[2])
-            .bottom_action("close-help", "Set up game")
-            .build()
+    fn status(&self, position: &Position, rotated: bool) -> String {
+        let title = position.title();
+        if let Some(score) = position.terminal() {
+            let winner = match score.cmp(&0) {
+                Ordering::Greater => 1,
+                Ordering::Less => -1,
+                Ordering::Equal => return "Draw".to_owned(),
+            };
+            return match self.mode {
+                Mode::Solo if winner == self.human_side => "You win".to_owned(),
+                Mode::Solo => "The computer wins".to_owned(),
+                Mode::PassAndPlay => format!("{} wins", title.side_name(winner)),
+            };
+        }
+        match self.mode {
+            Mode::Solo if position.turn() == self.human_side => "Your move".to_owned(),
+            Mode::Solo => "The computer's move".to_owned(),
+            Mode::PassAndPlay if rotated => {
+                format!(
+                    "{} to move · board turned",
+                    title.side_name(position.turn())
+                )
+            }
+            Mode::PassAndPlay => format!("{} to move", title.side_name(position.turn())),
+        }
+    }
+
+    /// Rounds won in the match, each against the side that won them. It
+    /// was "0–1" on its own, with nothing to say which number was whose.
+    fn score(&self, title: Title) -> String {
+        let [first, second] = self.match_score;
+        match self.mode {
+            Mode::Solo => {
+                let (yours, computer) = if self.human_side == 1 {
+                    (first, second)
+                } else {
+                    (second, first)
+                };
+                format!("You {yours} · Computer {computer}")
+            }
+            Mode::PassAndPlay => format!(
+                "{} {first} · {} {second}",
+                title.side_name(1),
+                title.side_name(-1)
+            ),
+        }
     }
 
     fn board_screen(&self) -> Screen {
         let Some(position) = &self.position else {
             return self.menu_screen();
         };
-        if matches!(
-            position,
-            Position::Draughts(Draughts {
-                rules: Rules::International,
-                ..
-            })
-        ) {
-            return self.setup_screen(Title::Draughts);
-        }
         let title = position.title();
-        let rotated = self.mode == Mode::PassAndPlay && self.rotate && position.turn() == -1;
-        let status = if let Some(score) = position.terminal() {
-            match score.cmp(&0) {
-                std::cmp::Ordering::Greater => "Black / South wins".to_owned(),
-                std::cmp::Ordering::Less => "White / North wins".to_owned(),
-                std::cmp::Ordering::Equal => "Draw".to_owned(),
-            }
-        } else if rotated {
-            format!("{} · rotated", player(position.turn()))
-        } else {
-            format!("{} to move", player(position.turn()))
-        };
+        let rotated = self.rotated(position);
+        let mover = -position.turn();
+        let steps = self.last_turn();
+        let marks = marked_cells(&steps, mover);
         // The bar carries the game and nothing else. Whose move it is went in
         // there too, and on a six inch panel at the larger text settings the
         // bar cut it off mid-word: the one thing two people passing a reader
         // between them have to read was the first thing to go.
         let base = ScreenBuilder::new("parlor-board")
-            .top_bar(title.name())
-            .section_with_value(
-                status,
-                format!("{}–{}", self.match_score[0], self.match_score[1]),
-            )
-            .secondary(if self.save_failed {
-                SAVE_FAILED.to_owned()
+            .game_top_bar(title.name(), self.menu, [(CHANGE_GAME, "Change game")])
+            .section_with_value(self.status(position, rotated), self.score(title));
+        // What the other side just did, in words, beside the same move marked
+        // on the board. Nobody can see the computer's tap, and a board of
+        // identical discs does not say which one moved.
+        //
+        // A refused save takes the place of both lines rather than joining
+        // them: at the largest text sizes three paragraphs above a board that
+        // cannot shrink below a fingertip push Undo off the panel, and the
+        // mark on the board still shows the move.
+        let base = if self.save_failed {
+            base.secondary(SAVE_FAILED)
+        } else {
+            let base = if self.notice.is_empty() {
+                base
             } else {
-                self.notice.clone()
-            });
-        // What just happened, in the same words the record uses. Two people
-        // passing one reader between them cannot see each other's tap, and a
-        // board of identical discs does not say which one moved.
-        let base = match self.record.last() {
-            Some(last) => base.secondary(format!("Last: {last}")),
-            None => base,
+                base.secondary(self.notice.as_str())
+            };
+            match self.last_line(title, mover, &steps, rotated) {
+                Some(line) => base.secondary(line),
+                None => base,
+            }
         };
         let base = match position {
-            Position::Reversi(game) => self.reversi_board(base, game, rotated),
-            Position::Draughts(game) => self.draughts_board(base, game, rotated),
-            Position::Morris(game) => self.morris_board(base, game, rotated),
-            Position::Kalah(game) => self.kalah_board(base, game, rotated),
+            Position::Reversi(game) => self.reversi_board(base, game, rotated, &marks),
+            Position::Draughts(game) => self.draughts_board(base, game, rotated, &marks),
+            Position::Morris(game) => self.morris_board(base, game, rotated, &marks),
+            Position::Kalah(game) => self.kalah_board(base, game, rotated, &marks),
         };
-        // Three controls and no fourth: leaving the game is the chevron in the
-        // bar, the same as everywhere else on the reader. A "Games" button
-        // beside these wrapped onto a second row at the larger text settings
-        // and was drawn off the bottom of the panel.
-        base.action_bar([
-            (
-                "undo",
-                if self.undo_pending {
-                    "Agree undo"
-                } else {
-                    "Undo"
-                },
-            ),
-            ("record", "Moves"),
-            (
-                "new",
-                if position.terminal().is_some() {
-                    "Next round"
-                } else {
-                    "New game"
-                },
-            ),
-        ])
-        .build()
+        // Undo and the record, and nothing that leaves the game: that is the
+        // chevron in the bar, the same as everywhere else on the reader. A
+        // "Games" button beside these wrapped onto a second row at the larger
+        // text settings and was drawn off the bottom of the panel.
+        let next_round = position.terminal().is_some() && !self.match_score.contains(&2);
+        let verbs = std::iter::once(("record", "Moves"))
+            .chain(next_round.then_some((NEXT_ROUND, "Next round")));
+        base.game_actions(true, verbs).build()
     }
 
-    fn reversi_board(&self, base: ScreenBuilder, game: &Reversi, rotated: bool) -> ScreenBuilder {
+    fn reversi_board(
+        &self,
+        base: ScreenBuilder,
+        game: &Reversi,
+        rotated: bool,
+        marks: &[usize],
+    ) -> ScreenBuilder {
         let legal = game.placements();
-        base.board(
+        base.board_with_selection(
             8,
             ordered(64, rotated).map(|at| {
                 // A drawn ring rather than the dotted circle character. A
@@ -515,12 +741,18 @@ impl Parlor {
                     _ if legal.contains(&at) => ("Legal square", Some(Glyph::LegalPoint)),
                     _ => (" ", None),
                 };
-                (cell_name(at), label, glyph)
+                (cell_name(at), label, glyph, marks.contains(&at))
             }),
         )
     }
 
-    fn draughts_board(&self, base: ScreenBuilder, game: &Draughts, rotated: bool) -> ScreenBuilder {
+    fn draughts_board(
+        &self,
+        base: ScreenBuilder,
+        game: &Draughts,
+        rotated: bool,
+        marks: &[usize],
+    ) -> ScreenBuilder {
         let moves = game.moves();
         // The square in hand is a state the renderer draws, not a character
         // written into the square. It used to be a white square drawn as the
@@ -543,12 +775,23 @@ impl Parlor {
                         _ => (" ", None),
                     }
                 };
-                (cell_name(at), label, glyph, self.selected == Some(at))
+                (
+                    cell_name(at),
+                    label,
+                    glyph,
+                    self.selected == Some(at) || marks.contains(&at),
+                )
             }),
         )
     }
 
-    fn morris_board(&self, base: ScreenBuilder, game: &Morris, rotated: bool) -> ScreenBuilder {
+    fn morris_board(
+        &self,
+        base: ScreenBuilder,
+        game: &Morris,
+        rotated: bool,
+        marks: &[usize],
+    ) -> ScreenBuilder {
         let moves = game.moves();
         let chosen = self.selected;
         base.board_with_selection(
@@ -574,32 +817,216 @@ impl Parlor {
                     cell_name(grid),
                     label,
                     glyph,
-                    point.is_some_and(|at| chosen == Some(at)),
+                    point.is_some_and(|at| chosen == Some(at)) || marks.contains(&grid),
                 )
             }),
         )
     }
 
-    fn kalah_board(&self, base: ScreenBuilder, game: &Kalah, rotated: bool) -> ScreenBuilder {
-        base.secondary(format!(
-            "Stores: South {} · North {}",
-            game.pits[6], game.pits[13]
-        ))
-        .grid(
+    fn kalah_board(
+        &self,
+        base: ScreenBuilder,
+        game: &Kalah,
+        rotated: bool,
+        marks: &[usize],
+    ) -> ScreenBuilder {
+        // Each store says whose it is in its own square, so the line that
+        // used to repeat both counts above the board is gone: it was one more
+        // paragraph pushing the pits down, and the only place the owners were
+        // named, as compass points.
+        base.grid_with_selection(
             7,
             false,
             ordered(14, rotated).map(|display| {
                 let pit = KALAH_DISPLAY[display];
-                let label = if pit == 6 {
-                    format!("S {}", game.pits[pit])
-                } else if pit == 13 {
-                    format!("N {}", game.pits[pit])
-                } else {
-                    game.pits[pit].to_string()
+                let label = match pit {
+                    6 => format!("{}: {}", self.store_tag(1), game.pits[pit]),
+                    13 => format!("{}: {}", self.store_tag(-1), game.pits[pit]),
+                    _ => game.pits[pit].to_string(),
                 };
-                (cell_name(pit), label)
+                (cell_name(pit), label, marks.contains(&pit))
             }),
         )
+    }
+
+    /// The word in front of a store's count, saying whose it is.
+    ///
+    /// Whole words, the same ones the rest of the screen uses. The cell sets
+    /// its label smaller when a word is too wide for it, which is a better
+    /// trade than a letter that has to be decoded: the "S" and "N" these
+    /// replaced stood for compass points nobody playing could see.
+    fn store_tag(&self, side: i8) -> &'static str {
+        match self.mode {
+            Mode::Solo if side == self.human_side => "You",
+            Mode::Solo => "Computer",
+            Mode::PassAndPlay => Title::Kalah.side_name(side),
+        }
+    }
+
+    /// The moves the other side has just made, oldest first.
+    ///
+    /// Everything since the player to move last moved: one move, or several
+    /// when the other side earned an extra turn, jumped a chain, removed a
+    /// piece for a mill, or played on because this side had to pass. Empty
+    /// once the player to move has moved, which is what takes the mark away.
+    fn last_turn(&self) -> Vec<Step> {
+        let Some(position) = &self.position else {
+            return Vec::new();
+        };
+        let mover = -position.turn();
+        // Against the computer only its moves are marked. A game that ends
+        // on the player's own move has nothing of the computer's to show.
+        if self.mode == Mode::Solo && mover == self.human_side {
+            return Vec::new();
+        }
+        let start = self
+            .history
+            .iter()
+            .rposition(|entry| entry.turn() != mover && !entry.forced_pass())
+            .map_or(0, |at| at + 1);
+        if !self.history[start..]
+            .iter()
+            .any(|entry| entry.turn() == mover)
+        {
+            return Vec::new();
+        }
+        let after = self.history[start + 1..]
+            .iter()
+            .chain(std::iter::once(position));
+        self.history[start..]
+            .iter()
+            .zip(after)
+            .filter_map(|(before, after)| Step::between(before, after))
+            .collect()
+    }
+
+    /// The other side's last turn in plain words, naming what the marks on
+    /// the board show.
+    fn last_line(&self, title: Title, mover: i8, steps: &[Step], rotated: bool) -> Option<String> {
+        let who = self.name(title, mover);
+        let other = -mover;
+        let mine = steps.iter().filter(|step| step.side() == mover);
+        Some(match steps.first()? {
+            Step::Reversi(..) => {
+                let mut placed = 0;
+                let mut turned = 0;
+                for step in mine {
+                    if let Step::Reversi(game, ReversiMove::Place(at)) = step {
+                        placed += 1;
+                        turned += game.flips(*at).len();
+                    }
+                }
+                let turned = self.pieces_of(title, other, turned, "disc", "discs");
+                match placed {
+                    0 => format!("{who} had no legal move, so the turn passed."),
+                    1 => format!("{who} placed the marked disc and turned {turned}."),
+                    _ => format!(
+                        "{} had no legal move, so {} placed the {placed} marked discs and turned {turned}.",
+                        self.name(title, other),
+                        mid_sentence(who)
+                    ),
+                }
+            }
+            Step::Draughts(..) => {
+                let jumps: Vec<_> = mine
+                    .filter_map(|step| match step {
+                        Step::Draughts(game, mv) => Some((game, mv)),
+                        _ => None,
+                    })
+                    .collect();
+                let (first_game, first) = jumps.first()?;
+                let (last_game, last) = jumps.last()?;
+                let taken = jumps.iter().filter(|(_, mv)| mv.captured.is_some()).count();
+                let mut line = if taken == 0 {
+                    format!("{who} moved a piece along the marked squares.")
+                } else {
+                    format!(
+                        "{who} jumped along the marked squares and took {}.",
+                        self.pieces_of(title, other, taken, "piece", "pieces")
+                    )
+                };
+                if first_game.board[first.from].abs() == 1
+                    && last_game.apply_move(last).board[last.to].abs() == 2
+                {
+                    line.push_str(" The piece is now a king.");
+                }
+                line
+            }
+            Step::Morris(..) => self.morris_line(title, mover, steps, rotated)?,
+            Step::Kalah(..) => self.kalah_line(title, mover, steps)?,
+        })
+    }
+
+    fn morris_line(
+        &self,
+        title: Title,
+        mover: i8,
+        steps: &[Step],
+        rotated: bool,
+    ) -> Option<String> {
+        let who = self.name(title, mover);
+        let mut line = String::new();
+        for step in steps.iter().filter(|step| step.side() == mover) {
+            let Step::Morris(_, mv) = step else {
+                continue;
+            };
+            match *mv {
+                MorrisMove::Place(to) => {
+                    line = format!("{who} placed a piece on {}", morris_point(to, rotated));
+                }
+                MorrisMove::Slide(from, to) => {
+                    line = format!(
+                        "{who} moved a piece from {} to {}",
+                        morris_point(from, rotated),
+                        morris_point(to, rotated)
+                    );
+                }
+                MorrisMove::Remove(at) => {
+                    let removed = format!(
+                        "removed {} from {}",
+                        self.pieces_of(title, -mover, 1, "piece", "pieces"),
+                        morris_point(at, rotated)
+                    );
+                    line = if line.is_empty() {
+                        format!("{who} {removed}")
+                    } else {
+                        format!("{line}, and {removed}")
+                    };
+                }
+            }
+        }
+        if line.is_empty() {
+            return None;
+        }
+        line.push('.');
+        Some(line)
+    }
+
+    fn kalah_line(&self, title: Title, mover: i8, steps: &[Step]) -> Option<String> {
+        let who = self.name(title, mover);
+        let mut sown = 0;
+        let mut captured = 0;
+        for step in steps.iter().filter(|step| step.side() == mover) {
+            if let Step::Kalah(game, pit) = step {
+                sown += 1;
+                captured += usize::from(game.sow(*pit).1);
+            }
+        }
+        let mut line = match sown {
+            0 => return None,
+            1 => format!("{who} sowed from the marked pit"),
+            2 => format!("{who} sowed twice, from the marked pits"),
+            n => format!("{who} sowed {n} times, from the marked pits"),
+        };
+        if captured > 0 {
+            if sown > 1 {
+                line.push(',');
+            }
+            line.push_str(" and captured ");
+            line.push_str(&self.pieces_of(title, -mover, captured, "stone", "stones"));
+        }
+        line.push('.');
+        Some(line)
     }
 
     fn record_text(&self) -> String {
@@ -622,7 +1049,7 @@ impl Parlor {
     fn record_screen(&self, context: &Context) -> Screen {
         let pages = self.record_pages(context);
         let page = self.record_page.min(pages.len().saturating_sub(1));
-        let mut builder = ScreenBuilder::new("parlor-record").top_bar("Game record");
+        let mut builder = ScreenBuilder::new("parlor-record").top_bar("Moves");
         for paragraph in &pages[page] {
             builder = builder.text(paragraph);
         }
@@ -648,11 +1075,6 @@ impl Parlor {
     }
 
     fn start(&mut self, title: Title) {
-        if title == Title::Draughts && self.rules == Rules::International {
-            self.view = View::Setup(title);
-            self.notice = "International 10×10 is unavailable on this reader.".into();
-            return;
-        }
         self.match_score = [0, 0];
         self.start_round(title);
     }
@@ -660,11 +1082,12 @@ impl Parlor {
     fn start_round(&mut self, title: Title) {
         self.position = Some(match title {
             Title::Reversi => Position::Reversi(Reversi::default()),
-            Title::Draughts => Position::Draughts(Draughts::new(self.rules)),
+            Title::Draughts => Position::Draughts(Draughts::new(Rules::AngloAmerican)),
             Title::Morris => Position::Morris(Morris::default()),
             Title::Kalah => Position::Kalah(Kalah::default()),
         });
         self.view = View::Board;
+        self.setup_from_board = false;
         self.selected = None;
         self.history.clear();
         self.record.clear();
@@ -672,10 +1095,9 @@ impl Parlor {
         self.scored = false;
         self.notice = match title {
             Title::Reversi => "Tap a hollow destination.".into(),
-            Title::Draughts => format!(
-                "{}. Tap a piece, then a hollow destination. Captures are mandatory.",
-                self.rules.name()
-            ),
+            Title::Draughts => {
+                "Tap a piece, then a hollow destination. Captures are mandatory.".into()
+            }
             Title::Morris => {
                 "Placement: tap a hollow point. Completing a mill earns one removal.".into()
             }
@@ -698,11 +1120,16 @@ impl Parlor {
             return;
         };
         if position.terminal().is_some() {
-            self.notice = "The game is over. Review the moves or start a new game.".into();
+            self.notice = if self.match_score.contains(&2) {
+                "The match is over. New game, in the menu at the top, starts another."
+            } else {
+                "The round is over. Next round plays another."
+            }
+            .into();
             return;
         }
         if self.mode == Mode::Solo && position.turn() != self.human_side {
-            self.notice = "The house is choosing a move.".into();
+            self.notice = "The computer is choosing a move.".into();
             return;
         }
         match position {
@@ -734,12 +1161,14 @@ impl Parlor {
             Ordering::Equal => {}
         }
         self.scored = true;
-        if self.match_score.contains(&2) {
-            self.notice = format!(
-                "Match won, {}–{}. Start a new game to reset the card.",
+        self.notice = if self.match_score.contains(&2) {
+            format!(
+                "Match over, {}–{}. New game, in the menu at the top, starts another.",
                 self.match_score[0], self.match_score[1]
-            );
-        }
+            )
+        } else {
+            "The match is the best of three rounds. Next round plays on.".into()
+        };
     }
 
     fn tap_reversi(&mut self, game: Reversi, at: usize) {
@@ -749,16 +1178,20 @@ impl Parlor {
                 "That square brackets no opposing discs. Tap a hollow destination.".into();
             return;
         }
-        self.push_history(format!("{} to {}", player(game.turn), square_name(at, 8)));
+        self.push_history(reversi_entry(
+            self.record_name(Title::Reversi, game.turn),
+            &mv,
+        ));
         let mut next = game.apply(&mv);
-        if matches!(next.legal_moves().as_slice(), [ReversiMove::Pass])
-            && next.terminal_score(1).is_none()
-        {
+        if next.legal_moves() == [ReversiMove::Pass] && next.terminal_score(1).is_none() {
             let passed = next.turn;
             next = next.apply(&ReversiMove::Pass);
-            self.notice = format!("{} has no legal move; the turn passes.", player(passed));
+            self.notice = format!(
+                "{} had no legal move, so the turn passed.",
+                self.name(Title::Reversi, passed)
+            );
         } else {
-            self.notice = format!("Pass the reader to {}.", player(next.turn));
+            self.notice = self.handed_over(Title::Reversi, next.turn);
         }
         self.position = Some(Position::Reversi(next));
     }
@@ -767,23 +1200,17 @@ impl Parlor {
         let moves = game.moves();
         if let Some(from) = self.selected {
             if let Some(mv) = moves.iter().find(|mv| mv.from == from && mv.to == at) {
-                self.push_history(format!(
-                    "{} {}–{}{}",
-                    player(game.turn),
-                    square_name(from, game.side()),
-                    square_name(at, game.side()),
-                    if mv.captured.is_some() {
-                        " capture"
-                    } else {
-                        ""
-                    }
+                self.push_history(draughts_entry(
+                    self.record_name(Title::Draughts, game.turn),
+                    &game,
+                    mv,
                 ));
                 let next = game.apply_move(mv);
                 self.selected = next.forced;
                 self.notice = if next.forced.is_some() {
                     "Capture chain: the same piece must capture again.".into()
                 } else {
-                    format!("Pass the reader to {}.", player(next.turn))
+                    self.handed_over(Title::Draughts, next.turn)
                 };
                 self.position = Some(Position::Draughts(next));
                 return;
@@ -799,16 +1226,35 @@ impl Parlor {
         }
     }
 
+    /// The note asking for a removal after a mill.
+    fn remove_prompt(&self, side: i8) -> String {
+        match self.mode {
+            Mode::Solo => "Mill formed. Tap one of the computer's pieces to remove it.".into(),
+            Mode::PassAndPlay => format!(
+                "Mill formed. Tap a {} piece to remove it.",
+                Title::Morris.side_name(-side).to_lowercase()
+            ),
+        }
+    }
+
     fn tap_morris(&mut self, game: Morris, at: usize) {
         let moves = game.moves();
+        let who = self.record_name(Title::Morris, game.turn);
+        let frame = self.record_rotated();
         if game.removing {
             let mv = MorrisMove::Remove(at);
             if moves.contains(&mv) {
-                self.push_history(format!("{} removes point {}", player(game.turn), at + 1));
+                self.push_history(morris_entry(who, &mv, frame));
                 let next = game.apply_move(&mv);
                 self.position = Some(Position::Morris(next.clone()));
                 self.selected = None;
-                self.notice = format!("Piece removed. Pass the reader to {}.", player(next.turn));
+                self.notice = match self.mode {
+                    Mode::PassAndPlay => format!(
+                        "Piece removed. {}",
+                        self.handed_over(Title::Morris, next.turn)
+                    ),
+                    Mode::Solo => String::new(),
+                };
             } else {
                 self.notice =
                     "Remove an opposing piece outside a mill, unless every piece is in a mill."
@@ -819,12 +1265,12 @@ impl Parlor {
         if game.placed[usize::from(game.turn != 1)] < 9 {
             let mv = MorrisMove::Place(at);
             if moves.contains(&mv) {
-                self.push_history(format!("{} places at point {}", player(game.turn), at + 1));
+                self.push_history(morris_entry(who, &mv, frame));
                 let next = game.apply_move(&mv);
                 self.notice = if next.removing {
-                    "Mill formed. Remove one eligible opposing piece.".into()
+                    self.remove_prompt(game.turn)
                 } else {
-                    format!("Pass the reader to {}.", player(next.turn))
+                    self.handed_over(Title::Morris, next.turn)
                 };
                 self.position = Some(Position::Morris(next));
             } else {
@@ -835,17 +1281,12 @@ impl Parlor {
         if let Some(from) = self.selected {
             let mv = MorrisMove::Slide(from, at);
             if moves.contains(&mv) {
-                self.push_history(format!(
-                    "{} moves point {}–{}",
-                    player(game.turn),
-                    from + 1,
-                    at + 1
-                ));
+                self.push_history(morris_entry(who, &mv, frame));
                 let next = game.apply_move(&mv);
                 self.notice = if next.removing {
-                    "Mill formed. Remove one eligible opposing piece.".into()
+                    self.remove_prompt(game.turn)
                 } else {
-                    format!("Pass the reader to {}.", player(next.turn))
+                    self.handed_over(Title::Morris, next.turn)
                 };
                 self.position = Some(Position::Morris(next));
                 self.selected = None;
@@ -873,80 +1314,123 @@ impl Parlor {
             self.notice = "Choose a non-empty pit on your side. Stores cannot be selected.".into();
             return;
         }
-        self.push_history(format!("{} sows pit {}", player(game.turn), at + 1));
+        self.push_history(kalah_entry(self.record_name(Title::Kalah, game.turn), at));
         let next = game.apply_move(at);
         self.notice = if next.turn == game.turn && next.terminal_score(1).is_none() {
             "Last stone in your store: take the extra turn.".into()
         } else if next.terminal_score(1).is_some() {
             "One side is empty. Remaining stones moved to the stores.".into()
         } else {
-            format!("Pass the reader to {}.", player(next.turn))
+            self.handed_over(Title::Kalah, next.turn)
         };
         self.position = Some(Position::Kalah(next));
     }
 
+    /// Plays every move that is not the player's to make: a pass that is the
+    /// only legal move, and against the computer, the computer's whole turn.
+    ///
+    /// Runs inside the tap that ended the player's move, so the reply is on
+    /// the board when the panel next repaints: one repaint per move rather
+    /// than a frame for each half of it, which on E Ink is a flash each.
     fn run_ai_if_needed(&mut self) {
-        for _ in 0..32 {
-            let Some(mut position) = self.position.clone() else {
+        for _ in 0..64 {
+            let Some(position) = self.position.clone() else {
                 return;
             };
-            let forced_pass = match &position {
-                Position::Reversi(game)
-                    if matches!(game.legal_moves().as_slice(), [ReversiMove::Pass])
-                        && game.terminal_score(1).is_none() =>
-                {
-                    Some((game.turn, game.apply(&ReversiMove::Pass)))
+            if position.terminal().is_some() {
+                return;
+            }
+            let title = position.title();
+            if let Position::Reversi(game) = &position {
+                if position.forced_pass() {
+                    self.history.push(position.clone());
+                    self.record.push(reversi_entry(
+                        self.record_name(title, game.turn),
+                        &ReversiMove::Pass,
+                    ));
+                    self.position = Some(Position::Reversi(game.apply(&ReversiMove::Pass)));
+                    // Against the computer the line about its reply says this
+                    // already, and saying it twice took three lines of panel.
+                    self.notice = match self.mode {
+                        Mode::PassAndPlay => format!(
+                            "{} had no legal move, so the turn passed.",
+                            self.name(title, game.turn)
+                        ),
+                        Mode::Solo => String::new(),
+                    };
+                    continue;
                 }
-                _ => None,
-            };
-            if let Some((passed, next)) = forced_pass {
-                self.history.push(position.clone());
-                self.record.push(format!("{} passes", player(passed)));
-                position = Position::Reversi(next);
-                self.position = Some(position.clone());
-                self.notice = format!("{} had no legal move; turn passes.", player(passed));
             }
-            if self.mode != Mode::Solo
-                || position.turn() == self.human_side
-                || position.terminal().is_some()
-            {
+            if self.mode != Mode::Solo || position.turn() == self.human_side {
                 return;
             }
-            self.history.push(position.clone());
-            let description = format!("House ({}) moves", self.strength.name());
-            let next =
-                match position {
-                    Position::Reversi(game) => choose_move(&game, self.strength)
-                        .map(|mv| Position::Reversi(game.apply(&mv))),
-                    Position::Draughts(game) => choose_move(&game, self.strength)
-                        .map(|mv| Position::Draughts(game.apply(&mv))),
-                    Position::Morris(game) => choose_move(&game, self.strength)
-                        .map(|mv| Position::Morris(game.apply(&mv))),
-                    Position::Kalah(game) => {
-                        choose_move(&game, self.strength).map(|mv| Position::Kalah(game.apply(&mv)))
-                    }
-                };
-            let Some(next) = next else {
+            let Some((next, entry)) = self.computer_move(&position) else {
                 return;
             };
-            self.record.push(description);
-            self.position = Some(next.clone());
-            self.selected = match &next {
-                Position::Draughts(g) => g.forced,
-                _ => None,
-            };
-            self.notice = if next.turn() == self.human_side {
-                format!("The house moved. {} to move.", player(self.human_side))
-            } else {
-                format!("The house continues ({})…", self.strength.name())
-            };
+            self.history.push(position);
+            self.record.push(entry);
+            self.position = Some(next);
+            self.selected = None;
+            self.undo_pending = false;
+            self.notice.clear();
         }
     }
 
+    /// The computer's choice in this position, and its line in the record.
+    fn computer_move(&self, position: &Position) -> Option<(Position, String)> {
+        let who = self.record_name(position.title(), position.turn());
+        Some(match position {
+            Position::Reversi(game) => {
+                let mv = choose_move(game, self.strength)?;
+                (Position::Reversi(game.apply(&mv)), reversi_entry(who, &mv))
+            }
+            Position::Draughts(game) => {
+                let mv = choose_move(game, self.strength)?;
+                let entry = draughts_entry(who, game, &mv);
+                (Position::Draughts(game.apply(&mv)), entry)
+            }
+            Position::Morris(game) => {
+                let mv = choose_move(game, self.strength)?;
+                let entry = morris_entry(who, &mv, self.record_rotated());
+                (Position::Morris(game.apply(&mv)), entry)
+            }
+            Position::Kalah(game) => {
+                let pit = choose_move(game, self.strength)?;
+                (Position::Kalah(game.apply(&pit)), kalah_entry(who, pit))
+            }
+        })
+    }
+
+    /// The position Undo goes back to, as an index into the history.
+    ///
+    /// The start of the last whole move: never the middle of a capture chain
+    /// or a mill, and never a pass, which was the only thing on offer. Against
+    /// the computer it is the start of the player's own last move, so that
+    /// one Undo takes back that move and the computer's reply together; going
+    /// back to the computer's turn would only have it play the same reply
+    /// again.
+    fn undo_target(&self) -> Option<usize> {
+        self.history.iter().rposition(|entry| {
+            !entry.mid_move()
+                && !entry.forced_pass()
+                && (self.mode == Mode::PassAndPlay || entry.turn() == self.human_side)
+        })
+    }
+
     fn undo(&mut self) {
+        let Some(target) = self.undo_target() else {
+            self.undo_pending = false;
+            self.notice = chrome::NOTHING_TO_UNDO.into();
+            return;
+        };
+        // Between two people a move is taken back only when the other one
+        // agrees, so the first Undo asks and the second one does it. Undo
+        // keeps its name and its place: the request is in the note above
+        // the board, and playing on instead declines it.
         if self.mode == Mode::PassAndPlay && !self.undo_pending {
             self.undo_pending = true;
-            self.notice = "Undo requested. Opponent: tap Agree undo to confirm.".into();
+            self.notice =
+                "Undo asked for. The other player taps Undo to agree, or plays on.".into();
             return;
         }
         if self.scored {
@@ -963,28 +1447,15 @@ impl Parlor {
             }
             self.scored = false;
         }
-        if let Some(previous) = self.history.pop() {
-            self.position = Some(previous);
-            self.record.pop();
-            if self.mode == Mode::Solo {
-                while self
-                    .position
-                    .as_ref()
-                    .is_some_and(|position| position.turn() != self.human_side)
-                {
-                    let Some(previous) = self.history.pop() else {
-                        break;
-                    };
-                    self.position = Some(previous);
-                    self.record.pop();
-                }
-            }
-            self.selected = None;
-            self.notice = "Move undone.".into();
-        } else {
-            self.notice = "There is no move to undo.".into();
-        }
+        self.position = Some(self.history[target].clone());
+        self.history.truncate(target);
+        self.record.truncate(target);
+        self.selected = None;
         self.undo_pending = false;
+        self.notice = match self.mode {
+            Mode::Solo => "Your last move and the computer's reply are taken back.".into(),
+            Mode::PassAndPlay => "The last move is taken back.".into(),
+        };
     }
 
     fn save(&self, context: &mut Context) {
@@ -995,81 +1466,87 @@ impl Parlor {
         }
     }
 
+    /// The game a screen is about, for Rules and New game.
+    fn current_title(&self) -> Option<Title> {
+        match self.view {
+            View::Setup(title) | View::Rules(title, _) => Some(title),
+            View::Board | View::Record => self.position.as_ref().map(Position::title),
+            View::Menu => None,
+        }
+    }
+
     fn handle_action(&mut self, action: ActionId) {
-        if action == action_id("resume") {
-            if matches!(
-                self.position,
-                Some(Position::Draughts(Draughts {
-                    rules: Rules::International,
-                    ..
-                }))
-            ) {
-                self.view = View::Setup(Title::Draughts);
-                self.notice = "International 10×10 is unavailable on this reader.".into();
-            } else {
-                self.view = View::Board;
-                self.notice = "Game resumed.".into();
+        match self.menu.read(action) {
+            Some(Tap::Menu) => return,
+            Some(Tap::Undo) => {
+                self.undo();
+                return;
             }
+            Some(Tap::Rules) => {
+                if let Some(title) = self.current_title() {
+                    self.view = View::Rules(title, matches!(self.view, View::Setup(_)));
+                }
+                return;
+            }
+            Some(Tap::NewGame) => {
+                if let Some(title) = self.current_title() {
+                    self.view = View::Setup(title);
+                    self.setup_from_board = true;
+                }
+                return;
+            }
+            None => {}
+        }
+        if action == action_id("resume") {
+            self.view = View::Board;
+            self.notice = "Game resumed.".into();
+            self.run_ai_if_needed();
+            self.update_outcome();
         } else if let Some(title) = GAMES
             .iter()
             .find(|title| action == action_id(title.key()))
             .copied()
         {
             self.view = View::Setup(title);
-        } else if action == action_id("mode") {
-            self.mode = if self.mode == Mode::PassAndPlay {
-                Mode::Solo
+            self.setup_from_board = false;
+        } else if action == action_id(PLAY_COMPUTER) {
+            self.mode = Mode::Solo;
+        } else if action == action_id(PLAY_PEOPLE) {
+            self.mode = Mode::PassAndPlay;
+        } else if action == action_id(ROTATE_ON) || action == action_id(ROTATE_OFF) {
+            self.rotate = action == action_id(ROTATE_ON);
+        } else if action == action_id(SIDE_FIRST) || action == action_id(SIDE_SECOND) {
+            self.human_side = if action == action_id(SIDE_FIRST) {
+                1
             } else {
-                Mode::PassAndPlay
+                -1
             };
-        } else if action == action_id("rotation") {
-            self.rotate = !self.rotate;
-        } else if action == action_id("rules") {
-            self.rules = if self.rules == Rules::AngloAmerican {
-                Rules::International
-            } else {
-                Rules::AngloAmerican
-            };
-        } else if action == action_id("side") {
-            self.human_side = -self.human_side;
-        } else if action == action_id("strength") {
-            self.strength = match self.strength {
-                Strength::Casual => Strength::Club,
-                Strength::Club => Strength::Strong,
-                Strength::Strong => Strength::Casual,
-            };
+        } else if let Some(&(_, strength)) =
+            STRENGTHS.iter().find(|(name, _)| action == action_id(name))
+        {
+            self.strength = strength;
         } else if action == action_id("start") {
             if let View::Setup(title) = self.view {
                 self.start(title);
             }
-        } else if action == action_id("how-to-play") {
-            if let View::Setup(title) = self.view {
-                self.view = View::HowTo(title);
-            }
-        } else if action == action_id("close-help") {
-            if let View::HowTo(title) = self.view {
-                self.view = View::Setup(title);
-            }
-        } else if action == action_id("undo") {
-            self.undo();
         } else if action == action_id("record") {
             self.record_page = 0;
             self.view = View::Record;
         } else if action == action_id("board") {
             self.view = View::Board;
-        } else if action == action_id("new") {
+        } else if action == action_id(NEXT_ROUND) {
             if let Some(position) = &self.position {
-                let title = position.title();
                 if position.terminal().is_some() && !self.match_score.contains(&2) {
-                    self.start_round(title);
-                } else {
-                    self.view = View::Setup(title);
+                    self.start_round(position.title());
                 }
             }
+        } else if action == action_id(CHANGE_GAME) {
+            self.view = View::Menu;
         } else if action == action_id("back") || action == ActionId::BACK {
             self.view = match self.view {
-                View::HowTo(title) => View::Setup(title),
-                View::Record => View::Board,
+                View::Rules(title, true) => View::Setup(title),
+                View::Rules(_, false) | View::Record => View::Board,
+                View::Setup(_) if self.setup_from_board && self.position.is_some() => View::Board,
                 _ => View::Menu,
             };
         } else if let Some(at) = (0..100).find(|at| action == action_id(&cell_name(*at))) {
@@ -1133,6 +1610,109 @@ impl KoboApp for Parlor {
     }
 }
 
+/// The cells the other side's last turn touched, in the board's own
+/// numbering, so that each board can mark them with the state it already
+/// draws for a chosen square.
+fn marked_cells(steps: &[Step], mover: i8) -> Vec<usize> {
+    let mut cells = Vec::new();
+    for step in steps.iter().filter(|step| step.side() == mover) {
+        match step {
+            Step::Reversi(_, ReversiMove::Place(at)) | Step::Kalah(_, at) => cells.push(*at),
+            Step::Reversi(_, ReversiMove::Pass) => {}
+            Step::Draughts(_, mv) => {
+                cells.push(mv.from);
+                cells.extend(mv.captured);
+                cells.push(mv.to);
+            }
+            Step::Morris(_, MorrisMove::Place(at) | MorrisMove::Remove(at)) => {
+                cells.push(MORRIS_GRID[*at]);
+            }
+            Step::Morris(_, MorrisMove::Slide(from, to)) => {
+                cells.push(MORRIS_GRID[*from]);
+                cells.push(MORRIS_GRID[*to]);
+            }
+        }
+    }
+    cells
+}
+
+fn reversi_entry(who: &str, mv: &ReversiMove) -> String {
+    match *mv {
+        ReversiMove::Place(at) => format!("{who}: {}", square_name(at, 8)),
+        ReversiMove::Pass => format!("{who}: no legal move, passed"),
+    }
+}
+
+fn draughts_entry(who: &str, game: &Draughts, mv: &DraughtsMove) -> String {
+    format!(
+        "{who}: {}–{}{}",
+        square_name(mv.from, game.side()),
+        square_name(mv.to, game.side()),
+        if mv.captured.is_some() {
+            ", capturing"
+        } else {
+            ""
+        }
+    )
+}
+
+fn morris_entry(who: &str, mv: &MorrisMove, rotated: bool) -> String {
+    match *mv {
+        MorrisMove::Place(to) => format!("{who}: placed on {}", morris_point(to, rotated)),
+        MorrisMove::Slide(from, to) => format!(
+            "{who}: moved from {} to {}",
+            morris_point(from, rotated),
+            morris_point(to, rotated)
+        ),
+        MorrisMove::Remove(at) => format!("{who}: removed from {}", morris_point(at, rotated)),
+    }
+}
+
+/// Pits are counted one to six from the left of the player who sows them,
+/// which is how each player sees their own row.
+fn kalah_entry(who: &str, pit: usize) -> String {
+    format!("{who}: sowed pit {}", pit % 7 + 1)
+}
+
+/// Where a Morris point is, in words a player can find on the board.
+///
+/// The board carries no numbers, so "point 5" sent the reader counting.
+/// Every point is a corner of one of the three squares or the middle of one
+/// of its sides, and that is something anybody can see.
+fn morris_point(point: usize, rotated: bool) -> String {
+    let grid = MORRIS_GRID[point];
+    let (mut row, mut column) = (grid / 7, grid % 7);
+    if rotated {
+        row = 6 - row;
+        column = 6 - column;
+    }
+    let ring = row.min(column).min(6 - row).min(6 - column);
+    let square = ["outer", "middle", "inner"][ring.min(2)];
+    let vertical = if row == ring {
+        Some("top")
+    } else if row == 6 - ring {
+        Some("bottom")
+    } else {
+        None
+    };
+    let horizontal = if column == ring {
+        Some("left")
+    } else if column == 6 - ring {
+        Some("right")
+    } else {
+        None
+    };
+    match (vertical, horizontal) {
+        (Some(vertical), Some(horizontal)) => {
+            format!("the {square} square's {vertical} {horizontal} corner")
+        }
+        (Some(side), None) | (None, Some(side)) => {
+            format!("the middle of the {square} square's {side} side")
+        }
+        (None, None) => format!("the {square} square"),
+    }
+}
+
 fn ordered(length: usize, reverse: bool) -> impl Iterator<Item = usize> {
     let values: Vec<_> = if reverse {
         (0..length).rev().collect()
@@ -1153,14 +1733,16 @@ const KALAH_DISPLAY: [usize; 14] = [13, 12, 11, 10, 9, 8, 7, 0, 1, 2, 3, 4, 5, 6
 
 fn encode(app: &Parlor, position: &Position) -> String {
     let mode = u8::from(app.mode == Mode::Solo);
-    let rules = u8::from(app.rules == Rules::International);
     let strength = match app.strength {
         Strength::Casual => 0,
         Strength::Club => 1,
         Strength::Strong => 2,
     };
+    // The second field was the draughts ruleset while the ten by ten board
+    // was offered. Only eight by eight is played now, and an older Parlor
+    // reading this save still expects the field, so it stays, always 0.
     let header = format!(
-        "{mode},{rules},{strength},{},{},{},{},{},{},{}",
+        "{mode},0,{strength},{},{},{},{},{},{},{}",
         app.human_side,
         u8::from(app.rotate),
         position.turn(),
@@ -1220,7 +1802,6 @@ fn encode(app: &Parlor, position: &Position) -> String {
 
 struct SavedSettings {
     mode: Mode,
-    rules: Rules,
     strength: Strength,
     human_side: i8,
     rotate: bool,
@@ -1239,11 +1820,11 @@ fn decode_settings(fields: &[&str]) -> Option<SavedSettings> {
         "1" => Mode::Solo,
         _ => return None,
     };
-    let rules = match *fields.get(1)? {
-        "0" => Rules::AngloAmerican,
-        "1" => Rules::International,
-        _ => return None,
-    };
+    // The old draughts ruleset choice. Read and set aside: the board itself
+    // says which rules a saved game was played under.
+    if !matches!(*fields.get(1)?, "0" | "1") {
+        return None;
+    }
     let strength = match *fields.get(2)? {
         "0" => Strength::Casual,
         "1" => Strength::Club,
@@ -1265,7 +1846,6 @@ fn decode_settings(fields: &[&str]) -> Option<SavedSettings> {
     };
     Some(SavedSettings {
         mode,
-        rules,
         strength,
         human_side,
         rotate,
@@ -1276,19 +1856,37 @@ fn decode_settings(fields: &[&str]) -> Option<SavedSettings> {
     })
 }
 
-fn decode_position(kind: &[&str], board: &str, rules: Rules, turn: i8) -> Option<Position> {
+/// The draughts rules a saved board was played under, from its size.
+///
+/// Taken from the board rather than from the ruleset choice saved beside it,
+/// because that choice was the setup screen's and could change after the
+/// game began: choosing ten by ten and then not starting it wrote a save
+/// that said ten by ten about an eight by eight game, and the game was
+/// refused when the reader next opened it.
+fn draughts_rules(board: &[i8]) -> Rules {
+    if board.len() == 100 {
+        Rules::International
+    } else {
+        Rules::AngloAmerican
+    }
+}
+
+fn decode_position(kind: &[&str], board: &str, turn: i8) -> Option<Position> {
     Some(match *kind.first()? {
         "R" if kind.len() == 1 => Position::Reversi(Reversi {
             board: parse_array(board)?,
             turn,
         }),
-        "D" if kind.len() == 3 => Position::Draughts(Draughts {
-            rules,
-            board: parse_vec(board)?,
-            turn,
-            forced: parse_optional_usize(kind.get(1)?).ok()?,
-            captured: parse_usizes(kind.get(2)?)?,
-        }),
+        "D" if kind.len() == 3 => {
+            let board: Vec<i8> = parse_vec(board)?;
+            Position::Draughts(Draughts {
+                rules: draughts_rules(&board),
+                board,
+                turn,
+                forced: parse_optional_usize(kind.get(1)?).ok()?,
+                captured: parse_usizes(kind.get(2)?)?,
+            })
+        }
         // Four fields is a game written down before the fifty move rule
         // existed; it reads back as a game with nothing counted yet, which is
         // the truth about it.
@@ -1318,7 +1916,7 @@ fn decode(text: &str) -> Option<Parlor> {
     let mut parts = text.split(';');
     let settings = decode_settings(&parts.next()?.split(',').collect::<Vec<_>>())?;
     let kind = parts.next()?.split(',').collect::<Vec<_>>();
-    let position = decode_position(&kind, parts.next()?, settings.rules, settings.turn)?;
+    let position = decode_position(&kind, parts.next()?, settings.turn)?;
     let record = match parts.next()? {
         "" => Vec::new(),
         moves => moves.split('|').map(str::to_owned).collect(),
@@ -1330,7 +1928,18 @@ fn decode(text: &str) -> Option<Parlor> {
             .map(decode_snapshot)
             .collect::<Option<Vec<_>>>()?,
     };
+    // Ten by ten draughts was never playable here: the panel draws at most
+    // eighty-one cells and starting one was refused. A save holding one is
+    // not a game anybody could have been playing.
+    let unplayable = matches!(
+        &position,
+        Position::Draughts(Draughts {
+            rules: Rules::International,
+            ..
+        })
+    );
     if parts.next().is_some()
+        || unplayable
         || !valid_side(settings.human_side)
         || settings.match_score.iter().any(|&score| score > 2)
         || !position.is_valid()
@@ -1346,7 +1955,6 @@ fn decode(text: &str) -> Option<Parlor> {
         view: View::Menu,
         position: Some(position),
         mode: settings.mode,
-        rules: settings.rules,
         strength: settings.strength,
         human_side: settings.human_side,
         rotate: settings.rotate,
@@ -1360,6 +1968,8 @@ fn decode(text: &str) -> Option<Parlor> {
         match_score: settings.match_score,
         scored: settings.scored,
         loaded: true,
+        menu: Menu::default(),
+        setup_from_board: false,
     })
 }
 
@@ -1454,17 +2064,18 @@ fn decode_snapshot(snapshot: &str) -> Option<Position> {
             turn: fields.get(1)?.parse().ok()?,
             board: parse_array(fields.get(2)?)?,
         })),
-        "D" => Some(Position::Draughts(Draughts {
-            rules: if fields.get(1)? == &"1" {
-                Rules::International
-            } else {
-                Rules::AngloAmerican
-            },
-            turn: fields.get(2)?.parse().ok()?,
-            forced: fields.get(3).and_then(|at| at.parse().ok()),
-            captured: parse_usizes(fields.get(4)?)?,
-            board: parse_vec(fields.get(5)?)?,
-        })),
+        "D" => {
+            // The ruleset flag in the second field is read from the board
+            // instead, for the reason `draughts_rules` gives.
+            let board: Vec<i8> = parse_vec(fields.get(5)?)?;
+            Some(Position::Draughts(Draughts {
+                rules: draughts_rules(&board),
+                turn: fields.get(2)?.parse().ok()?,
+                forced: fields.get(3).and_then(|at| at.parse().ok()),
+                captured: parse_usizes(fields.get(4)?)?,
+                board,
+            }))
+        }
         // Six fields is a snapshot written before the fifty move rule
         // existed: the board is where the counter now sits, and the game it
         // describes has nothing counted yet.
@@ -1698,7 +2309,10 @@ mod tests {
 
     #[test]
     fn autosave_restores_history_needed_for_confirmed_undo() {
-        let mut app = Parlor::default();
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
+            ..Parlor::default()
+        };
         app.start(Title::Reversi);
         let opening = app.position.clone();
         app.tap_reversi(Reversi::default(), 19);
@@ -1715,32 +2329,43 @@ mod tests {
     }
 
     #[test]
-    fn autosave_preserves_an_international_capture_in_progress() {
-        let mut game = Draughts::new(Rules::International);
-        game.board.fill(0);
-        game.board[77] = 2;
-        game.board[66] = -1;
-        game.board[46] = -1;
-        let game = game.apply_move(&DraughtsMove {
-            from: 77,
-            to: 55,
-            captured: Some(66),
-        });
-        let app = Parlor {
-            position: Some(Position::Draughts(game.clone())),
-            selected: game.forced,
-            rules: Rules::International,
+    fn a_draughts_game_saved_while_ten_by_ten_was_chosen_in_setup_still_opens() {
+        // Choosing the ten by ten rules and then backing out of setup wrote
+        // a save that called an eight by eight game ten by ten, and the game
+        // was refused the next time the reader opened it.
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
             ..Parlor::default()
         };
-        let saved = encode(&app, app.position.as_ref().unwrap());
-        let restored = decode(&saved).unwrap();
+        app.start(Title::Draughts);
+        assert!(play_one_move(&mut app));
+        let saved = encode(&app, app.position.as_ref().expect("a position"));
+        let (header, rest) = saved.split_once(';').expect("a header");
+        let mut fields: Vec<_> = header.split(',').collect();
+        fields[1] = "1";
+        let old = format!("{};{rest}", fields.join(","));
+        let restored = decode(&old).expect("the game opens");
         assert_eq!(restored.position, app.position);
-        assert_eq!(restored.selected, Some(55));
+        assert_eq!(restored.history, app.history);
+    }
+
+    #[test]
+    fn a_ten_by_ten_save_is_refused_rather_than_drawn_on_a_panel_too_small_for_it() {
+        let game = Draughts::new(Rules::International);
+        let app = Parlor {
+            position: Some(Position::Draughts(game)),
+            ..Parlor::default()
+        };
+        let saved = encode(&app, app.position.as_ref().expect("a position"));
+        assert!(decode(&saved).is_none());
     }
 
     #[test]
     fn malformed_autosaves_are_refused_before_they_can_reach_the_board() {
-        let mut app = Parlor::default();
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
+            ..Parlor::default()
+        };
         app.start(Title::Reversi);
         let saved = encode(&app, app.position.as_ref().expect("position"));
         assert!(decode(&saved).is_some());
@@ -1823,7 +2448,7 @@ mod tests {
     }
 
     #[test]
-    fn house_ai_is_deterministic_at_each_named_strength() {
+    fn the_computer_plays_the_same_move_every_time_at_each_named_strength() {
         let game = Reversi::default();
         for strength in [Strength::Casual, Strength::Club, Strength::Strong] {
             assert_eq!(
@@ -1847,10 +2472,10 @@ mod tests {
         if position.terminal().is_some() {
             return false;
         }
-        // The house's own choice rather than the first legal move: a game
+        // The computer's own choice rather than the first legal move: a game
         // where both sides always take the first move on the list wanders,
         // and Nine Men's Morris in particular never ends. This is the same
-        // engine the solo mode plays with.
+        // engine the computer opponent plays with.
         let mut context = Context::default();
         match position {
             Position::Reversi(game) => {
@@ -1894,8 +2519,14 @@ mod tests {
         // Through the application's own taps rather than the engine, because
         // the engine being right about the rules says nothing about whether
         // the panel lets anybody reach them.
-        for title in GAMES {
-            let mut app = Parlor::default();
+        for (title, mode) in GAMES
+            .into_iter()
+            .flat_map(|title| [(title, Mode::Solo), (title, Mode::PassAndPlay)])
+        {
+            let mut app = Parlor {
+                mode,
+                ..Parlor::default()
+            };
             app.start(title);
             let mut moves = 0;
             while play_one_move(&mut app) && moves < 400 {
@@ -1918,7 +2549,7 @@ mod tests {
             assert!(
                 words
                     .iter()
-                    .any(|line| line.contains("wins") || line.contains("Draw")),
+                    .any(|line| line.contains("win") || line.contains("Draw")),
                 "{} never said how it ended: {words:?}",
                 title.name()
             );
@@ -1972,7 +2603,10 @@ mod tests {
         // the cover in the middle of a double capture lost the game. The ten
         // by ten case has its own test above; this is the one that can
         // actually be played here.
-        let mut app = Parlor::default();
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
+            ..Parlor::default()
+        };
         app.start(Title::Draughts);
         let mut chained = false;
         for _ in 0..200 {
@@ -1995,17 +2629,413 @@ mod tests {
         assert!(chained, "no capture chain came up in two hundred moves");
     }
 
+    /// The cells a screen's board draws in its chosen state.
+    fn marked_on(screen: &Screen) -> Vec<usize> {
+        let mut marked = Vec::new();
+        for node in &screen.nodes {
+            if let kobo_ui::Node::Grid { cells, .. } = node {
+                for cell in cells.iter().filter(|cell| cell.selected) {
+                    if let Some(at) = (0..100).find(|at| cell.action == action_id(&cell_name(*at)))
+                    {
+                        marked.push(at);
+                    }
+                }
+            }
+        }
+        marked.sort_unstable();
+        marked
+    }
+
     #[test]
-    fn the_board_says_what_just_happened() {
-        // Two people passing one reader cannot see each other's tap, and a
-        // board of identical discs does not say which one moved.
+    fn the_computer_answers_every_move_without_being_asked_in_every_game() {
+        // Backgammon made the reader tap "Computer move" every turn. Here the
+        // reply is part of the tap that ended the player's move.
+        for title in GAMES {
+            let mut app = Parlor::default();
+            assert_eq!(app.mode, Mode::Solo);
+            app.start(title);
+            for _ in 0..12 {
+                if !play_one_move(&mut app) {
+                    break;
+                }
+                let position = app.position.as_ref().expect("a position");
+                assert!(
+                    position.terminal().is_some()
+                        || position.turn() == app.human_side
+                        || position.mid_move(),
+                    "{}: still the computer's turn after the player moved",
+                    title.name()
+                );
+            }
+            assert!(
+                app.record.iter().any(|line| line.starts_with("Computer:")),
+                "{}: the computer never moved: {:?}",
+                title.name(),
+                app.record
+            );
+        }
+    }
+
+    #[test]
+    fn the_computer_moves_first_at_once_when_the_player_takes_the_second_side() {
+        for title in GAMES {
+            let mut app = Parlor {
+                human_side: -1,
+                ..Parlor::default()
+            };
+            app.start(title);
+            let position = app.position.as_ref().expect("a position");
+            assert_eq!(position.turn(), -1, "{}", title.name());
+            assert!(!app.history.is_empty(), "{}", title.name());
+            assert!(!marked_on(&app.screen()).is_empty(), "{}", title.name());
+        }
+    }
+
+    #[test]
+    fn the_computers_last_move_stays_marked_until_the_player_moves_again() {
         let mut app = Parlor::default();
         app.start(Title::Reversi);
+        assert!(marked_on(&app.screen()).is_empty(), "nothing has moved yet");
         assert!(play_one_move(&mut app));
+        let steps = app.last_turn();
+        let Some(Step::Reversi(before, ReversiMove::Place(placed))) = steps.first() else {
+            panic!("the computer's reply was not found: {steps:?}");
+        };
+        assert_eq!(before.turn, -1);
+        let screen = app.screen();
+        assert_eq!(marked_on(&screen), [*placed]);
+        let words = shown(&screen).join(" ");
+        assert!(
+            words.contains("The computer placed the marked disc and turned one of your discs."),
+            "{words}"
+        );
+        assert!(app
+            .record
+            .last()
+            .expect("a reply")
+            .starts_with("Computer: "));
+
+        // A wrong tap is not a move, so the mark stays.
+        let filled = (0..64)
+            .find(
+                |&at| matches!(&app.position, Some(Position::Reversi(game)) if game.board[at] != 0),
+            )
+            .expect("a disc");
+        app.handle_action(action_id(&cell_name(filled)));
+        assert_eq!(marked_on(&app.screen()), [*placed]);
+
+        // The player's next move is answered, and the mark moves with it.
+        assert!(play_one_move(&mut app));
+        let Some(Step::Reversi(_, ReversiMove::Place(next))) = app.last_turn().first().cloned()
+        else {
+            panic!("no second reply");
+        };
+        assert_eq!(marked_on(&app.screen()), [next]);
+    }
+
+    #[test]
+    fn each_game_marks_what_the_computer_moved_in_its_own_terms() {
+        // Draughts: where the piece came from and where it went, and what it
+        // jumped. Kalah: the pit it sowed. Morris draws no chosen state, so
+        // the line under the status names the points in words.
+        let mut draughts = Parlor::default();
+        draughts.start(Title::Draughts);
+        assert!(play_one_move(&mut draughts));
+        let steps = draughts.last_turn();
+        let Some(Step::Draughts(_, mv)) = steps.first() else {
+            panic!("no draughts reply: {steps:?}");
+        };
+        let mut expected = vec![mv.from, mv.to];
+        expected.extend(mv.captured);
+        expected.sort_unstable();
+        assert_eq!(marked_on(&draughts.screen()), expected);
+        let words = shown(&draughts.screen()).join(" ");
+        assert!(
+            words.contains("The computer moved a piece along the marked squares."),
+            "{words}"
+        );
+
+        let mut kalah = Parlor::default();
+        kalah.start(Title::Kalah);
+        // Pit 3 has four stones, and the fourth lands across the board, so
+        // the turn passes to the computer.
+        kalah.handle_action(action_id(&cell_name(3)));
+        let marked = marked_on(&kalah.screen());
+        assert!(!marked.is_empty());
+        assert!(marked.iter().all(|pit| (7..13).contains(pit)), "{marked:?}");
+        let words = shown(&kalah.screen()).join(" ");
+        assert!(words.contains("The computer sowed"), "{words}");
+        assert!(words.contains("You: "), "{words}");
+        assert!(words.contains("Computer: "), "{words}");
+
+        let mut morris = Parlor::default();
+        morris.start(Title::Morris);
+        morris.handle_action(action_id(&cell_name(MORRIS_GRID[0])));
+        let words = shown(&morris.screen()).join(" ");
+        assert!(
+            words.contains("The computer placed a piece on the "),
+            "{words}"
+        );
+        assert!(words.contains(" square's "), "{words}");
+    }
+
+    #[test]
+    fn morris_points_are_named_for_what_can_be_seen_on_the_board() {
+        assert_eq!(morris_point(0, false), "the outer square's top left corner");
+        assert_eq!(
+            morris_point(0, true),
+            "the outer square's bottom right corner"
+        );
+        assert_eq!(
+            morris_point(4, false),
+            "the middle of the middle square's top side"
+        );
+        assert_eq!(
+            morris_point(11, false),
+            "the middle of the inner square's left side"
+        );
+        assert_eq!(
+            morris_point(23, false),
+            "the outer square's bottom right corner"
+        );
+        let mut names: Vec<_> = (0..24).map(|point| morris_point(point, false)).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 24, "two points share a name");
+    }
+
+    #[test]
+    fn between_two_players_the_other_players_move_is_marked_too() {
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
+            ..Parlor::default()
+        };
+        app.start(Title::Reversi);
+        app.handle_action(action_id(&cell_name(19)));
+        assert_eq!(marked_on(&app.screen()), [19]);
+        let words = shown(&app.screen()).join(" ");
+        assert!(
+            words.contains("Black placed the marked disc and turned one white disc."),
+            "{words}"
+        );
+        assert!(words.contains("Pass the reader to White."), "{words}");
+    }
+
+    #[test]
+    fn a_new_install_plays_the_computer_and_pass_and_play_is_one_tap_away() {
+        let app = Parlor::default();
+        assert_eq!(app.mode, Mode::Solo);
+        let mut setup = Parlor {
+            view: View::Setup(Title::Reversi),
+            ..Parlor::default()
+        };
+        let words = shown(&setup.screen()).join(" | ");
+        assert!(words.contains("Computer strength"), "{words}");
+        setup.handle_action(action_id(PLAY_PEOPLE));
+        assert_eq!(setup.mode, Mode::PassAndPlay);
+        setup.handle_action(action_id("start"));
+        let words = shown(&setup.screen()).join(" | ");
+        assert!(words.contains("Black to move"), "{words}");
+
+        // A game saved between two people opens as one.
+        let saved = encode(&setup, setup.position.as_ref().expect("a position"));
+        assert_eq!(decode(&saved).expect("opens").mode, Mode::PassAndPlay);
+    }
+
+    #[test]
+    fn no_screen_speaks_of_the_house_or_of_compass_points() {
+        let mut screens = Vec::new();
+        for title in GAMES {
+            for mode in [Mode::Solo, Mode::PassAndPlay] {
+                let mut app = Parlor {
+                    mode,
+                    ..Parlor::default()
+                };
+                app.view = View::Setup(title);
+                screens.push(app.screen());
+                app.human_side = -1;
+                screens.push(app.screen());
+                app.start(title);
+                for _ in 0..6 {
+                    play_one_move(&mut app);
+                    screens.push(app.screen());
+                }
+                app.view = View::Record;
+                screens.push(app.screen());
+                app.view = View::Rules(title, false);
+                screens.push(app.screen());
+            }
+        }
+        screens.push(Parlor::default().screen());
+        for screen in &screens {
+            let words = shown(screen).join(" ");
+            for jargon in ["house", "House", "South", "North", "International", "Solo"] {
+                assert!(!words.contains(jargon), "{jargon}: {words}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_play_screen_keeps_undo_rules_and_new_game_where_every_game_keeps_them() {
+        let mut app = Parlor::default();
+        app.start(Title::Reversi);
+        let screen = app.screen();
+        let bar = screen.top_bar.as_ref().expect("a top bar");
+        let labels: Vec<_> = bar
+            .actions
+            .iter()
+            .map(|action| action.label.as_str())
+            .collect();
+        assert!(labels.contains(&chrome::RULES_LABEL), "{labels:?}");
+        let foot = screen.nav_bar.as_ref().expect("a bar at the foot");
+        let foot: Vec<_> = foot
+            .destinations
+            .iter()
+            .map(|action| action.label.as_str())
+            .collect();
+        assert_eq!(foot, [chrome::UNDO_LABEL, "Moves"]);
+        let words = shown(&screen).join(" | ");
+        assert!(!words.contains("How to play"), "{words}");
+
+        app.handle_action(action_id(chrome::MORE));
+        let open = app.screen();
+        let entries: Vec<_> = open
+            .overlay
+            .as_ref()
+            .expect("the menu")
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Button { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(entries, [chrome::NEW_GAME_LABEL, "Change game"]);
+
+        // A tap beside the menu closes it and leaves the game where it was.
+        app.handle_action(ActionId::BACK);
+        assert_eq!(app.view, View::Board);
+        assert!(!app.menu.is_open());
+
+        // Rules is one tap, and Back comes straight back to the game.
+        app.handle_action(action_id(chrome::RULES));
+        assert_eq!(app.view, View::Rules(Title::Reversi, false));
+        app.handle_action(ActionId::BACK);
+        assert_eq!(app.view, View::Board);
+
+        // New game goes through setup, which says what it would replace, and
+        // Back from there is the game again rather than the shelf.
+        play_one_move(&mut app);
+        app.handle_action(action_id(chrome::MORE));
+        app.handle_action(action_id(chrome::NEW_GAME));
+        assert_eq!(app.view, View::Setup(Title::Reversi));
         let words = shown(&app.screen()).join(" | ");
-        assert!(words.contains("Last:"), "{words}");
-        let last = app.record.last().expect("a move was recorded");
-        assert!(words.contains(last.as_str()), "{words}");
+        assert!(
+            words.contains("Starting replaces the game in progress."),
+            "{words}"
+        );
+        app.handle_action(ActionId::BACK);
+        assert_eq!(app.view, View::Board);
+
+        app.handle_action(action_id(chrome::MORE));
+        app.handle_action(action_id(CHANGE_GAME));
+        assert_eq!(app.view, View::Menu);
+    }
+
+    #[test]
+    fn undo_against_the_computer_takes_back_the_move_and_the_reply_together() {
+        for title in GAMES {
+            let mut app = Parlor::default();
+            app.start(title);
+            assert!(play_one_move(&mut app));
+            let before_second = (app.position.clone(), app.history.len(), app.record.clone());
+            assert!(play_one_move(&mut app));
+            app.handle_action(action_id(chrome::UNDO));
+            assert_eq!(
+                (app.position.clone(), app.history.len(), app.record.clone()),
+                before_second,
+                "{}",
+                title.name()
+            );
+            // Back where the first reply had just been played, so that reply
+            // is marked again. A first Kalah sowing that ends in the store
+            // has no reply yet.
+            let replied = before_second
+                .2
+                .iter()
+                .any(|line| line.starts_with("Computer:"));
+            assert_eq!(!app.last_turn().is_empty(), replied, "{}", title.name());
+            app.handle_action(action_id(chrome::UNDO));
+            assert!(app.history.is_empty(), "{}", title.name());
+            app.handle_action(action_id(chrome::UNDO));
+            assert_eq!(app.notice, chrome::NOTHING_TO_UNDO);
+        }
+    }
+
+    #[test]
+    fn undo_against_the_computer_cannot_take_back_its_opening_move_alone() {
+        // Going back to the computer's turn would only have it play the same
+        // move again, so there is nothing to take back yet.
+        let mut app = Parlor {
+            human_side: -1,
+            ..Parlor::default()
+        };
+        app.start(Title::Reversi);
+        let opened = app.position.clone();
+        app.handle_action(action_id(chrome::UNDO));
+        assert_eq!(app.position, opened);
+        assert_eq!(app.notice, chrome::NOTHING_TO_UNDO);
+    }
+
+    #[test]
+    fn undo_between_two_players_waits_for_the_other_one_to_agree() {
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
+            ..Parlor::default()
+        };
+        app.start(Title::Reversi);
+        app.handle_action(action_id(chrome::UNDO));
+        assert_eq!(app.notice, chrome::NOTHING_TO_UNDO);
+        assert!(!app.undo_pending);
+
+        app.handle_action(action_id(&cell_name(19)));
+        let moved = app.position.clone();
+        app.handle_action(action_id(chrome::UNDO));
+        assert!(app.undo_pending);
+        assert_eq!(app.position, moved, "asking is not taking back");
+        let words = shown(&app.screen()).join(" ");
+        assert!(
+            words.contains("The other player taps Undo to agree"),
+            "{words}"
+        );
+        app.handle_action(action_id(chrome::UNDO));
+        assert_eq!(app.position, Some(Position::Reversi(Reversi::default())));
+        assert!(app.history.is_empty());
+    }
+
+    #[test]
+    fn undo_takes_back_a_whole_capture_chain() {
+        let mut game = Draughts::new(Rules::AngloAmerican);
+        game.board.fill(0);
+        game.board[42] = 1;
+        game.board[33] = -1;
+        game.board[17] = -1;
+        game.board[7] = -1;
+        let start = game.clone();
+        let mut app = Parlor {
+            mode: Mode::PassAndPlay,
+            position: Some(Position::Draughts(game)),
+            view: View::Board,
+            ..Parlor::default()
+        };
+        app.handle_action(action_id(&cell_name(42)));
+        app.handle_action(action_id(&cell_name(24)));
+        app.handle_action(action_id(&cell_name(10)));
+        assert!(matches!(&app.position, Some(Position::Draughts(g)) if g.turn == -1));
+        assert_eq!(app.history.len(), 2);
+        app.handle_action(action_id(chrome::UNDO));
+        app.handle_action(action_id(chrome::UNDO));
+        assert_eq!(app.position, Some(Position::Draughts(start)));
     }
 
     #[test]
@@ -2038,30 +3068,22 @@ mod tests {
     }
 
     #[test]
-    fn a_board_this_panel_cannot_hold_says_so_before_it_is_chosen() {
-        // Ten by ten is a hundred cells and the panel draws eighty-one. The
-        // reader is told on the row that offers it, not after starting it.
+    fn draughts_offers_the_board_this_panel_can_draw_and_no_other() {
+        // The ten by ten rules were a row on the setup screen that could
+        // never be started, because the panel draws at most eighty-one cells.
         let setup = Parlor {
             view: View::Setup(Title::Draughts),
-            rules: Rules::International,
             ..Parlor::default()
         };
         let words = shown(&setup.screen()).join(" | ");
-        assert!(words.contains("not playable on this panel"), "{words}");
-        assert!(words.contains("10×10"), "{words}");
-        // And it is said as a plain fact about the panel rather than as a
-        // fault, with no button offering to start what cannot be drawn.
-        assert!(!words.contains("Something went wrong"), "{words}");
-        assert!(!words.contains("Start game"), "{words}");
-
-        // And starting it anyway never reaches a board.
-        let mut app = Parlor {
-            rules: Rules::International,
-            ..Parlor::default()
-        };
+        assert!(!words.contains("10×10"), "{words}");
+        assert!(words.contains("Start game"), "{words}");
+        let mut app = Parlor::default();
         app.start(Title::Draughts);
-        assert!(matches!(app.view, View::Setup(Title::Draughts)));
-        assert!(app.position.is_none());
+        assert!(matches!(
+            &app.position,
+            Some(Position::Draughts(game)) if game.rules == Rules::AngloAmerican
+        ));
     }
 
     /// Every line of words a screen draws.
@@ -2087,6 +3109,12 @@ mod tests {
                 text_scale: scale,
                 ..CLARA_BW_METRICS
             };
+            // Every screen is built through a runner at the size it is checked
+            // at, the way the runtime builds it. Built first, the runner also
+            // installs the real face before anything is measured, so the
+            // smallest size is not measured in the fallback type when this test
+            // runs on its own.
+            let context = kobo_sdk::AppRunner::with_metrics(Parlor::default(), metrics).context();
             // The shelf itself, which is the screen every reader sees first,
             // in both of its states: bare, and carrying the offer to pick up a
             // game that is already under way.
@@ -2096,7 +3124,7 @@ mod tests {
             resumable.view = View::Menu;
             for (name, table) in [("table", Parlor::default()), ("table resuming", resumable)] {
                 let issues = table
-                    .screen()
+                    .screen_for(&context)
                     .diagnostics(&metrics, &chrome)
                     .issues
                     .into_iter()
@@ -2106,41 +3134,45 @@ mod tests {
                     failures.push(format!("{scale:?} {name}: {issues:?}"));
                 }
             }
-            for title in GAMES {
-                let mut app = Parlor::default();
-                app.start(title);
-                play_one_move(&mut app);
-                let setup = Parlor {
-                    view: View::Setup(title),
+            for (title, mode) in GAMES
+                .into_iter()
+                .flat_map(|title| [(title, Mode::Solo), (title, Mode::PassAndPlay)])
+            {
+                let mut app = Parlor {
+                    mode,
                     ..Parlor::default()
                 };
-                // The one ruleset this panel cannot draw is set up like any
-                // other, and its explanation has to fit like any other.
-                if title == Title::Draughts {
-                    let refused = Parlor {
-                        view: View::Setup(title),
-                        rules: Rules::International,
-                        ..Parlor::default()
-                    };
-                    let issues = refused
-                        .screen()
-                        .diagnostics(&metrics, &chrome)
-                        .issues
-                        .into_iter()
-                        .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
-                        .collect::<Vec<_>>();
-                    if !issues.is_empty() {
-                        failures.push(format!("{scale:?} international setup: {issues:?}"));
-                    }
+                app.start(title);
+                // Several moves in, so the line naming the other side's last
+                // turn is as long as it gets: a Morris placement with a
+                // removal names two points.
+                for _ in 0..8 {
+                    play_one_move(&mut app);
                 }
-                let board = app.screen();
+                let board = app.screen_for(&context);
+                app.handle_action(action_id(chrome::MORE));
+                let menu = app.screen_for(&context);
+                app.handle_action(ActionId::BACK);
+                // The record is paged for the size it is read at, the way the
+                // runtime pages it, so it is built against that size.
                 app.view = View::Record;
-                let record = app.screen();
+                let record = app.screen_for(&context);
+                app.view = View::Rules(title, false);
+                let rules = app.screen_for(&context);
+                // Setup over a game in progress carries the line saying what
+                // starting would replace.
+                app.view = View::Setup(title);
+                let setup = app.screen_for(&context);
                 app.view = View::Board;
+                app.save_failed = true;
+                let save_failed = app.screen_for(&context);
                 for (name, screen) in [
-                    ("setup", setup.screen()),
+                    ("setup", setup),
                     ("board", board),
+                    ("menu", menu),
                     ("record", record),
+                    ("rules", rules),
+                    ("save failed", save_failed),
                 ] {
                     let issues = screen
                         .diagnostics(&metrics, &chrome)
@@ -2150,7 +3182,10 @@ mod tests {
                         .map(|issue| format!("{:?}", issue.kind))
                         .collect::<Vec<_>>();
                     if !issues.is_empty() {
-                        failures.push(format!("{scale:?} {} {name}: {issues:?}", title.name()));
+                        failures.push(format!(
+                            "{scale:?} {} {mode:?} {name}: {issues:?}",
+                            title.name()
+                        ));
                     }
                 }
             }
@@ -2188,30 +3223,9 @@ mod tests {
             );
             assert!(screen
                 .layout_with(&CLARA_BW_METRICS, &chrome)
-                .rect_of_action(action_id("undo"))
+                .rect_of_action(action_id(chrome::UNDO))
                 .is_some());
         }
-        let solo_setup = Parlor {
-            view: View::Setup(Title::Draughts),
-            mode: Mode::Solo,
-            rules: Rules::International,
-            ..Parlor::default()
-        };
-        let issues = solo_setup
-            .screen()
-            .diagnostics(&CLARA_BW_METRICS, &chrome)
-            .issues;
-        assert!(issues.is_empty(), "solo setup: {issues:?}");
-        let mut international = Parlor {
-            rules: Rules::International,
-            ..Parlor::default()
-        };
-        international.start(Title::Draughts);
-        let issues = international
-            .screen()
-            .diagnostics(&CLARA_BW_METRICS, &chrome)
-            .issues;
-        assert!(issues.is_empty(), "international board: {issues:?}");
     }
 }
 
@@ -2256,7 +3270,7 @@ mod large_text_tests {
             let screen = runner.app().screen_for(&runner.context());
             fits(&screen, metrics);
             let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
-            for name in ["undo", "record", "new"] {
+            for name in [chrome::UNDO, "record", chrome::MORE, chrome::RULES] {
                 let action = action_id(name);
                 let rect = layout.rect_of_action(action).expect("board action");
                 assert_eq!(

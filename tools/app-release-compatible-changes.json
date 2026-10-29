@@ -363,7 +363,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
+     "compatible_blob": "d4207b1c6e5af412cf281ab801f409bf38a8015d"
     }
    ]
   },
@@ -428,7 +428,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
-     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
+     "compatible_blob": "d4207b1c6e5af412cf281ab801f409bf38a8015d"
     }
    ]
   },
@@ -450,7 +450,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
-     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
+     "compatible_blob": "d4207b1c6e5af412cf281ab801f409bf38a8015d"
     }
    ]
   },
@@ -461,18 +461,29 @@
     {
      "path": "Cargo.lock",
      "base_blob": "f394649a66bc235232478bb20240de9596390eff",
-     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
+     "compatible_blob": "d4207b1c6e5af412cf281ab801f409bf38a8015d"
     }
    ]
   },
   {
    "protocol_version": 15,
-   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from e4317882. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged, so published Store apps keep working against the runtime they already have.",
+   "reason": "Promoting 0.3.30 checks the lock against the stable catalog's source, 95bb2d7a, instead of beta's. Every change since was reviewed on beta against beta's base: rustls 0.23.46, rustls-webpki 0.103.16 and webpki-roots 1.0.11 for published advisories, the kobo-frame-plan and kobo-readeck path crates, and workspace version lines. Those entries name beta's lock blobs, so none of them match stable's. Without this, the four managed built-ins Daily Brief, Hacker News, Magnet and Tic-tac-toe would need new versions, and they ship in the platform package too. Both catalogs already publish the same binaries for them.",
    "files": [
     {
      "path": "Cargo.lock",
-     "base_blob": "be5bd4c2d87af837f123ff602123d9e2fa5ab200",
-     "compatible_blob": "2c94fbfebb426c4dad57b16fd7b7cbf3cf88ae3f"
+     "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
+     "compatible_blob": "d4207b1c6e5af412cf281ab801f409bf38a8015d"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Windows host support for the CLI and simulator, reviewed against the beta catalog published from 02347fd5. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix. OS entropy moves behind kobo-abi, whose Unix arm reads /dev/urandom as the SDK did, and kobo-abi gains a home-directory lookup that is HOME and nothing else on Unix. Directory and file flushes share kobo_protocol::durability, which opens and fsyncs on Unix exactly as the call sites did. Every platform difference is a Windows arm, and the policy and network test changes only gate Unix fixtures. The lock gains workspace-internal kobo-abi edges for the CLI, the SDK, the sidekick helper and wifi-trace, and a Windows-only flate2 edge for the CLI; no third-party version moves and nothing resolves differently for the reader. The wire protocol and its version are unchanged, so published Store apps keep working against the runtime they already have.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09",
+     "compatible_blob": "d4207b1c6e5af412cf281ab801f409bf38a8015d"
     },
     {
      "path": "crates/kobo-abi/src/entropy.rs",
@@ -486,8 +497,8 @@
     },
     {
      "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
-     "base_blob": "d3a38bababc85d720ac33d9208db7037ed6c1120",
-     "compatible_blob": "ea9d096f89417240268e2bc509b211bd68ed8f55"
+     "base_blob": "186d1fd5c6bc9f61c2ed72c5ffcfbbe745318889",
+     "compatible_blob": "188e335a493094e670c1be750f9f91adcb06d2d8"
     },
     {
      "path": "crates/kobo-policy/src/credential_servers.rs",
@@ -496,8 +507,8 @@
     },
     {
      "path": "crates/kobo-policy/src/credentials.rs",
-     "base_blob": "ef09d749527fa3df5e06f27f5b7ed8f4e67e834b",
-     "compatible_blob": "f83d81dc43b95d2f487d081924781f81dd5ee903"
+     "base_blob": "8fe14ad961bdf06f68066e010b80dbcb56ec7460",
+     "compatible_blob": "f6720b4ae8bc570223f606c4380c6f0e157f9e6f"
     },
     {
      "path": "crates/kobo-policy/src/persistence.rs",
@@ -506,8 +517,8 @@
     },
     {
      "path": "crates/kobo-policy/src/tasks.rs",
-     "base_blob": "011425614aeb9f85ac435db1bce8da6aa37f369b",
-     "compatible_blob": "fea7ca16fe3a0016735b1dfca80d8b62e82c2a54"
+     "base_blob": "f400f89122d19db0e54543e415197b596fc92bff",
+     "compatible_blob": "adf9728b2c136544608d083b1cb70546d9319ba5"
     },
     {
      "path": "crates/kobo-protocol/src/channel.rs",
@@ -536,8 +547,8 @@
     },
     {
      "path": "crates/kobo-sdk/src/lib.rs",
-     "base_blob": "de60b1208a05cba3427096aa6490265ac19b5ba4",
-     "compatible_blob": "1a56e23947475605f68e64e2ab9bfeda0be7b573"
+     "base_blob": "e6493ae21ae8b9b8eb824d77a879fb1c4110a19d",
+     "compatible_blob": "e8b602a5f07177634a5c9b68456aeb5de6e48913"
     }
    ]
   }

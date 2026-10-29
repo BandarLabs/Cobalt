@@ -1,0 +1,22 @@
+# About says how a computer finds this reader. An update check with no
+# network says so in words and offers Join Wi-Fi, which opens the Wi-Fi page.
+wait-for Settings
+expect Model, versions and Wi-Fi address
+tap About
+wait-for From your computer
+expect kobo setup
+shot settings-about
+tap-id 4294967295
+wait-for Software update
+tap Software update
+wait-for Check for updates
+expect change back here at any time
+expect-missing state, and secrets
+scenario offline
+tap Check for updates
+wait-for This reader is not on Wi-Fi.
+expect-missing this reader is not on a network
+shot settings-update-offline
+tap Join Wi-Fi
+wait-for Turn Wi-Fi
+shot settings-wifi

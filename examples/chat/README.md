@@ -17,7 +17,8 @@ Kobo.
 ## Features
 
 - Choose OpenAI, Anthropic or Google Gemini.
-- Long answers are paged for reading.
+- Long answers are paged for reading. An answer that reaches its length
+  limit offers **Continue the answer**.
 - When a question has a set of possible answers, they appear as buttons, so
   most turns need no typing.
 - Remembers the conversation across restarts and can save a copy for a paired
@@ -25,14 +26,32 @@ Kobo.
 
 ## Setup
 
-Install a key for the service you want to use:
+AI Command Center uses your own API key, so it needs an account with one of
+the three services.
 
-```sh
-kobo secret set openai --from ~/.openai --device <ip>
-```
+1. Set up the reader once over USB, if you have not already:
 
-The runtime attaches the key to requests itself. The app never sees it, and a
-test checks that no request body contains anything that looks like a key.
+   ```sh
+   kobo setup
+   ```
+
+2. Create an API key with OpenAI, Anthropic or Google Gemini. Save it in a
+   private file named for the service: `~/.openai`, `~/.anthropic` or
+   `~/.gemini`.
+3. Install the key on the reader under the same name, `openai`, `anthropic`
+   or `gemini`:
+
+   ```sh
+   kobo secret set openai
+   ```
+
+4. Open AI Command Center. If the key is not for OpenAI, tap **Service** and
+   choose its service, then tap **Type** and ask.
+
+The first screen names the key the chosen service needs before you type
+anything. The runtime attaches the key to requests itself. The app never sees
+it, and a test checks that no request body contains anything that looks like
+a key.
 
 ## Permissions
 

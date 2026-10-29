@@ -56,6 +56,8 @@ def main():
     process = None
     requests = []
     pressed = {}
+    # How the fixture should fail, when it should.
+    trouble = {}
     with tempfile.TemporaryDirectory(prefix='cobalt-deck-', dir='/tmp') as temporary:
         private = Path(temporary)
         env = dict(os.environ, TMPDIR=str(private), CARGO_TARGET_DIR=str(target),
@@ -64,7 +66,7 @@ def main():
                    KOBO_SIM_FIXTURE='a-paired-command-deck', KOBO_SIM_SEED='0')
         config = private/'config'
         env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config/'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
+        subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'], cwd=ROOT,
                        env=env, check=True, capture_output=True, timeout=60)
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -83,6 +85,14 @@ def main():
             def do_GET(self):
                 requests.append(self.path)
                 path = self.path.split('?')[0]
+                if trouble.get('status'):
+                    # A helper that refuses the code (403) or has no
+                    # deck.toml (404), as the real one answers.
+                    self.send_response(trouble['status'])
+                    self.send_header('Content-Length', '2')
+                    self.end_headers()
+                    self.wfile.write(b'{}')
+                    return
                 if path == '/deck':
                     deck = json.loads(json.dumps(DECK))
                     for page in deck['pages']:
@@ -204,8 +214,10 @@ def main():
                 panel = start()
                 drive('wait-for Pair with your computer')
                 pairing = capture('01-pairing')
-                assert 'Sidekick' in words(pairing), words(pairing)
-                checks.append('an unpaired deck says what to do about it before asking for it')
+                said = words(pairing)
+                assert 'kobo sidekick init' in said and 'kobo sidekick run' in said, said
+                assert 'kobo trust set' not in said, said
+                checks.append('an unpaired deck names the one command that pairs it')
 
                 drive('tap Enter the address', 'wait-idle')
                 type_text(address)
@@ -233,7 +245,8 @@ def main():
                 drive('tap Test', 'wait-idle')
                 said = capture('06-what-it-said')
                 assert 'finished on the computer' in words(said), words(said)
-                checks.append('a key that has run opens what it said, not only when it failed')
+                assert 'Run again' in words(said), words(said)
+                checks.append('a key that has run opens what it said, with Run again under it')
 
                 drive('tap back', 'wait-idle')
                 back = capture('07-back-with-the-last-result')
@@ -248,12 +261,34 @@ def main():
                 assert any('/deck/press' in path for path in requests), requests
                 checks.append('a key that asks first only runs after it is answered')
 
+                # One message per cause: a refused code names the code, and a
+                # computer with no deck.toml names the command that makes one.
+                trouble['status'] = 403
+                drive('tap Refresh', 'wait-for refused this pairing', 'wait-idle')
+                refused = words(capture('10-code-refused'))
+                assert 'pairing code' in refused, refused
+                assert 'Wi-Fi' not in refused and 'Check that Sidekick is open' not in refused
+                trouble['status'] = 404
+                drive('tap Refresh', 'wait-for has no deck yet', 'wait-idle')
+                missing = words(capture('11-no-deck'))
+                assert 'kobo deck init --preset build' in missing, missing
+                trouble.clear()
+                drive('tap Refresh', 'wait-for Paired with', 'wait-idle')
+                checks.append('a refused code and a missing deck each say their own cause and fix')
+
+                # Pairing in the top bar is the way out of a bad pairing, and
+                # Back from it returns to the deck that still works.
+                drive('tap Pairing', 'wait-for Pair with your computer', 'wait-idle')
+                capture('12-change-pairing')
+                drive('tap back', 'wait-for Paired with', 'wait-idle')
+                checks.append('Pairing can be changed from the deck, and Back keeps the old one')
+
                 # Closed and reopened: the deck the computer sent is on the
                 # device, so the panel is not blank while the radio wakes up.
                 stop()
                 panel = start()
                 drive('wait-for Build')
-                kept = capture('10-reopened')
+                kept = capture('13-reopened')
                 assert 'Test' in words(kept), words(kept)
                 checks.append('the deck is on the device, so reopening it draws it at once')
 

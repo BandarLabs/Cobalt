@@ -45,7 +45,9 @@ tap Service
 expect OpenAI
 expect gpt-4o-mini
 expect Anthropic
-expect claude-3-5-haiku-latest
+# The retired model answered every question with a 404.
+expect claude-haiku-5-5
+expect-missing claude-3-5-haiku-latest
 expect Google Gemini
 expect gemini-3.6-flash
 clean
@@ -57,5 +59,27 @@ type hello there
 tap Send
 wait 1500
 wait-for Try again
+# A missing key names the command that installs it, and never blames a
+# spent key.
+expect kobo secret set openai
+expect-missing The key may be wrong or spent
 clean
 shot no-key
+# A conversation with nothing in it says which key it needs before anything
+# is typed, for whichever service is chosen.
+tap more
+tap New conversation
+tap Start over
+wait-for Nothing said yet
+expect This uses your own OpenAI key
+expect kobo secret set openai
+clean
+shot first-run-key
+tap Service
+tap Anthropic
+wait-for Nothing said yet
+expect This uses your own Anthropic key
+expect kobo secret set anthropic
+expect-missing kobo secret set openai
+clean
+shot first-run-key-anthropic

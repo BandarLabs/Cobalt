@@ -25,8 +25,11 @@ enum View {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Setting {
     Server,
-    Credential,
 }
+
+/// The fix for every account problem, said where the owner reads it.
+const ACCOUNT_FIX: &str =
+    "Run kobo connect rss-miniflux on your computer to tie the key to your server.";
 
 /// Which articles the shelf is showing.
 ///
@@ -140,9 +143,20 @@ struct Reader {
     notice: Option<String>,
     keyboard: Keyboard,
     editing: Option<Setting>,
+    /// A Check again is waiting for the saved address to come back.
+    checking: bool,
 }
 
 impl Reader {
+    fn service(&self) -> kobo_sdk::failure::Service<'_> {
+        let service = kobo_sdk::failure::Service::new("Miniflux").fixed_by(ACCOUNT_FIX);
+        if self.server.is_empty() {
+            service
+        } else {
+            service.at(&self.server)
+        }
+    }
+
     fn configured(&self) -> bool {
         self.server.starts_with("https://") && !self.credential.is_empty()
     }
@@ -421,11 +435,9 @@ impl Reader {
         ScreenBuilder::new("rss-miniflux")
             .top_bar("Digest settings")
             .field("server", &self.server, "https://miniflux.example")
-            .field("credential", &self.credential, "miniflux")
             .secondary(
-                "Install the API token on your computer with \
-                 `kobo secret set miniflux`. The token stays in the runtime; \
-                 this Kobo only knows its name.",
+                "To change the account, run kobo connect rss-miniflux on your computer. \
+                 It checks the token, ties it to your server and fills in the address here.",
             )
             .button("directory", "Suggested feeds")
             .build()
@@ -473,7 +485,6 @@ impl Reader {
         if let Some(setting) = self.editing {
             let prompt = match setting {
                 Setting::Server => "Miniflux HTTPS server",
-                Setting::Credential => "Credential name",
             };
             context.set_screen(
                 ScreenBuilder::new("rss-miniflux")
@@ -486,19 +497,22 @@ impl Reader {
             return;
         }
         let screen = match view {
-            View::Shelf if !self.configured() => ScreenBuilder::new("rss-miniflux")
-                .top_bar("Digest")
-                .splash(
+            View::Shelf if !self.configured() => {
+                let mut screen = ScreenBuilder::new("rss-miniflux").top_bar("Digest");
+                if let Some(notice) = &self.notice {
+                    screen = screen.banner(BannerLevel::Attention, notice.clone());
+                }
+                screen.splash(
                     Some(Glyph::Rss),
                     "Connect Miniflux",
-                    "Install your Miniflux API token from a computer, then add the address here.",
+                    "Run this on your computer. It asks for your server and API token, checks them, and sets Digest up.",
                 )
-                .section("On your computer")
-                .command("kobo pair")
-                .command("kobo secret set miniflux")
-                .primary_button("settings", "Add address")
+                .command("kobo connect rss-miniflux")
+                .primary_button("check-again", "Check again")
+                .button("settings", "Type the address here")
                 .button("directory", "Suggested feeds")
-                .build(),
+                .build()
+            }
             View::Shelf => self.shelf(context),
             View::Reading => self.reading(),
             View::Settings => self.settings(),
@@ -669,6 +683,14 @@ impl Reader {
 }
 
 impl KoboApp for Reader {
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         self.credential = "miniflux".into();
         context.store().load(CONFIG);
@@ -748,6 +770,7 @@ impl KoboApp for Reader {
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == CONFIG {
+                let before = (self.server.clone(), self.credential.clone());
                 if let Some(value) = &value {
                     let saved = String::from_utf8_lossy(value);
                     let mut values = saved.lines();
@@ -755,12 +778,29 @@ impl KoboApp for Reader {
                         .next()
                         .unwrap_or_default()
                         .clone_into(&mut self.server);
+                    // A name typed under the old Settings field is still
+                    // honoured; new setups always use "miniflux".
                     values
                         .next()
+                        .filter(|name| !name.trim().is_empty())
                         .unwrap_or("miniflux")
                         .clone_into(&mut self.credential);
                 }
-                self.open_snapshot(context);
+                let changed = before != (self.server.clone(), self.credential.clone());
+                if self.snapshot.is_none() || changed {
+                    if changed {
+                        self.articles.clear();
+                        self.open = None;
+                    }
+                    self.snapshot = None;
+                    self.open_snapshot(context);
+                }
+                if std::mem::take(&mut self.checking) && !self.configured() {
+                    self.notice = Some(
+                        "No account has arrived from the computer yet. Run the command, then check again."
+                            .into(),
+                    );
+                }
             }
             self.show(context);
         }
@@ -801,9 +841,10 @@ impl KoboApp for Reader {
                 &self.server
             });
             self.editing = Some(Setting::Server);
-        } else if action == action_id("credential") {
-            self.keyboard = Keyboard::with_text(&self.credential);
-            self.editing = Some(Setting::Credential);
+        } else if action == action_id("check-again") {
+            self.notice = None;
+            self.checking = true;
+            context.store().load(CONFIG);
         } else if action == action_id("directory") {
             if self.view != Some(View::Directory) {
                 self.directory_return = Some((self.view.unwrap_or(View::Shelf), self.page));
@@ -885,6 +926,15 @@ impl KoboApp for Reader {
 }
 
 impl Reader {
+    /// `kobo connect rss-miniflux` writes the address while the app is away;
+    /// reading it again on return picks it up without a restart. Only while
+    /// nothing is waiting to be sent, which is when the account may change.
+    fn returned(&mut self, context: &mut Context) {
+        if self.editing.is_none() && self.settings_are_safe_to_change() {
+            context.store().load(CONFIG);
+        }
+    }
+
     fn edit(&mut self, context: &mut Context, setting: Setting, action: ActionId) {
         match self.keyboard.press(action) {
             Some(Pressed::Submitted) => {
@@ -902,7 +952,6 @@ impl Reader {
                 if !value.is_empty() {
                     match setting {
                         Setting::Server => self.server = value,
-                        Setting::Credential => self.credential = value,
                     }
                     self.articles.clear();
                     self.open = None;
@@ -1011,18 +1060,44 @@ impl Reader {
                     self.notice = Some(error.message().into());
                 }
             },
-            TaskOutcome::Failed(_) => {
-                self.arriving.clear();
-                self.notice = Some(
-                    "Could not sync. Your saved articles are still here; connect to Wi-Fi and retry."
-                        .into(),
-                );
+            TaskOutcome::Failed(error) => {
+                let problem = self.service().explain(error);
+                if at > 0 && !self.arriving.is_empty() {
+                    // Unread arrived and a later list was refused. The fresh
+                    // unread list is worth more than a perfect batch, so it
+                    // is kept, and what was saved for the other tabs stays.
+                    self.keep_partial_batch(context);
+                    self.notice = Some(format!(
+                        "Unread is up to date. Starred and History were not: {}",
+                        problem.message
+                    ));
+                } else {
+                    self.arriving.clear();
+                    // The saved articles are on screen under the banner, so
+                    // only the cause and the fix are said.
+                    self.notice = Some(format!("Could not sync. {}", problem.message));
+                }
             }
             TaskOutcome::Cancelled => {
                 self.arriving.clear();
                 self.notice = Some("Sync cancelled.".into());
             }
         }
+    }
+
+    /// Publishes the lists that did arrive over the saved batch, keeping the
+    /// saved copy of every article the missing lists would have carried.
+    fn keep_partial_batch(&mut self, context: &mut Context) {
+        let mut arrived = std::mem::take(&mut self.arriving);
+        for article in &self.articles {
+            if article.status != Status::Unread && !arrived.iter().any(|held| held.id == article.id)
+            {
+                arrived.push(article.clone());
+            }
+        }
+        self.articles = arrived;
+        self.page = 0;
+        self.keep_articles(context);
     }
 
     /// Publishes the merged batch once all three lists have arrived.
@@ -1067,8 +1142,13 @@ impl Reader {
 
     fn fetched(&mut self, context: &mut Context, id: u64, outcome: &TaskOutcome) {
         let TaskOutcome::Completed(bytes) = outcome else {
-            self.notice =
-                Some("The full article could not be fetched. The summary is kept.".into());
+            self.notice = Some(match outcome {
+                TaskOutcome::Failed(error) => format!(
+                    "The full article could not be fetched. The summary is kept. {}",
+                    self.service().explain(*error).message
+                ),
+                _ => "The full article could not be fetched. The summary is kept.".into(),
+            });
             return;
         };
         match miniflux::parse_content(bytes) {
@@ -1093,7 +1173,10 @@ impl Reader {
 
     fn categorised(&mut self, context: &mut Context, index: usize, outcome: &TaskOutcome) {
         let TaskOutcome::Completed(bytes) = outcome else {
-            self.notice = Some("Could not reach Miniflux to add this feed.".into());
+            self.notice = Some(match outcome {
+                TaskOutcome::Failed(error) => self.service().explain(*error).message,
+                _ => "Could not reach Miniflux to add this feed.".into(),
+            });
             return;
         };
         match miniflux::parse_categories(bytes) {
@@ -1495,6 +1578,70 @@ mod tests {
             "half a sync was written over a whole one"
         );
         assert_eq!(runner.app().articles, previous);
+    }
+
+    #[test]
+    fn a_refused_list_keeps_the_fresh_unread_and_names_the_fix_instead_of_wifi() {
+        let mut runner = connected();
+        opened(&mut runner);
+        runner.action(action_id("sync"));
+        answer(&mut runner, SAVED_ARTICLE);
+        let (task, _) = runner.app().task.unwrap();
+        let after = runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Denied));
+        assert!(written(&after).is_some(), "the unread list is kept");
+        assert!(!runner.app().articles.is_empty());
+        let notice = runner.app().notice().unwrap();
+        assert!(notice.contains("Unread is up to date"), "{notice}");
+        assert!(notice.contains("kobo connect rss-miniflux"), "{notice}");
+        assert!(!notice.contains("Wi-Fi"), "{notice}");
+    }
+
+    #[test]
+    fn a_rejected_token_blames_the_account_and_never_the_wifi() {
+        let mut runner = connected();
+        opened(&mut runner);
+        runner.action(action_id("sync"));
+        let (task, _) = runner.app().task.unwrap();
+        runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized));
+        let notice = runner.app().notice().unwrap();
+        assert!(notice.contains("did not accept your account"), "{notice}");
+        assert!(!notice.contains("Wi-Fi"), "{notice}");
+    }
+
+    #[test]
+    fn settings_ask_only_for_the_address_and_name_the_command_in_plain_words() {
+        let mut runner = connected();
+        let commands = runner.action(action_id("settings"));
+        let drawn = format!("{commands:?}");
+        assert!(!drawn.contains("Credential name"), "{drawn}");
+        assert!(!drawn.contains('`'), "{drawn}");
+        assert!(drawn.contains("kobo connect rss-miniflux"), "{drawn}");
+    }
+
+    #[test]
+    fn an_account_set_up_from_the_computer_is_found_by_check_again_and_on_return() {
+        let mut runner = AppRunner::new(Reader::default());
+        runner.start();
+        for key in [CONFIG, pending::KEY, READING] {
+            runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value: None,
+            });
+        }
+        let commands = runner.action(action_id("check-again"));
+        assert!(format!("{commands:?}").contains("Load { key: \"config\" }"));
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: CONFIG.into(),
+            value: None,
+        });
+        assert!(format!("{commands:?}").contains("No account has arrived"));
+        runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+        runner.store_result(StoreResult::Loaded {
+            key: CONFIG.into(),
+            value: Some(b"https://flux.example\nminiflux".to_vec()),
+        });
+        assert!(runner.app().configured());
+        assert!(runner.app().snapshot.is_some());
     }
 
     #[test]

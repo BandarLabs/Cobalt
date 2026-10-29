@@ -1,5 +1,5 @@
 use super::*;
-use kobo_sdk::{AppRunner, Command};
+use kobo_sdk::{AppRunner, Chrome, Command, DisplayMetrics};
 use kobo_ui::{TextScale, CLARA_BW_METRICS};
 use std::collections::BTreeSet;
 
@@ -209,7 +209,13 @@ fn distinct_manual_species_remain_visible_and_countable() {
     assert_eq!(runner.app().sightings[1].common, "Crow");
     assert_eq!(runner.app().sightings[1].count, 1);
     assert_eq!(runner.app().outing_totals(23), (2, 3));
-    assert_eq!(runner.app().outing_species().len(), 2);
+    // Birds logged by name follow the packs' species, in the order logged.
+    let tally = runner.app().outing_species();
+    let named = tally[tally.len() - 2..]
+        .iter()
+        .map(|bird| bird.common.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(named, ["Robin", "Crow"]);
     assert_eq!(runner.app().life_totals().len(), 2);
     let export = runner.app().checklist_csv();
     assert!(export.contains("Robin,"));
@@ -255,4 +261,75 @@ fn existing_and_previously_merged_records_are_preserved_without_guessing() {
     assert_eq!(app.sightings[0].count, 7);
     assert_eq!(app.sightings[2].common, "Crow");
     assert_eq!(app.sightings[2].count, 1);
+}
+
+#[test]
+fn the_tally_reaches_every_species_in_a_large_pack_at_every_text_size() {
+    for text_scale in TextScale::STEPS {
+        let mut runner = populated(DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        });
+        let birds = (0..40)
+            .map(|index| Species {
+                code: format!("B{index:03}"),
+                common: format!("Marsh bird number {}", index + 1),
+                scientific: format!("Avis palustris {}", index + 1),
+                photo: None,
+            })
+            .collect::<Vec<_>>();
+        runner.app_mut().packs[0].species = birds;
+        runner.app_mut().pack_pick = Some(0);
+        runner.app_mut().view = View::Outing;
+        verify_list(&mut runner, "tally-", 40);
+        tap(&mut runner, "tally-39");
+        assert!(runner
+            .app()
+            .sightings
+            .iter()
+            .any(|sighting| sighting.outing == 23 && sighting.code == "B039"));
+    }
+}
+
+#[test]
+fn an_open_outing_and_its_pack_come_back_after_a_restart() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    runner.app_mut().pack_pick = Some(3);
+    runner.app_mut().packs[3].id = "marsh".into();
+    let saved = runner
+        .action(action_id("type-species"))
+        .into_iter()
+        .chain({
+            runner.app_mut().query = "Heron".into();
+            runner.action(action_id("log-manual"))
+        })
+        .find_map(|command| match command {
+            Command::Store(kobo_sdk::StoreRequest::Save { key, value }) if key == OPEN_OUTING => {
+                Some(value)
+            }
+            _ => None,
+        })
+        .expect("the open outing is saved");
+    assert_eq!(saved, b"23|marsh");
+
+    let packs = runner.app().packs.clone();
+    let outings = runner.app().outings.clone();
+    let mut restarted = AppRunner::new(Fieldbook::default());
+    restarted.start();
+    restarted.app_mut().packs = packs;
+    restarted.app_mut().loads.manifest = true;
+    restarted.app_mut().outings = outings;
+    restarted.store_result(StoreResult::Loaded {
+        key: SIGHTINGS.into(),
+        value: Some(Vec::new()),
+    });
+    restarted.store_result(StoreResult::Loaded {
+        key: OPEN_OUTING.into(),
+        value: Some(saved),
+    });
+    assert_eq!(restarted.app().open_outing, Some(23));
+    assert_eq!(restarted.app().pack_pick, Some(3));
+    let drawn = screen(&restarted);
+    let layout = drawn.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+    assert!(layout.rect_of_action(action_id("resume")).is_some());
 }

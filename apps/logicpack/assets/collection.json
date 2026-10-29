@@ -1,1665 +1,422 @@
 [
-  {
-    "id": "slither-four-twos",
-    "kind": "slither",
-    "title": "Four twos",
-    "difficulty": "Starter",
-    "guide": "A 2 × 2 board with every clue shown.",
-    "side": 2,
-    "clues": [
-      2,
-      2,
-      2,
-      2
-    ],
-    "solution": [
-      1,
-      1,
-      0,
-      0,
-      1,
-      1,
-      1,
-      0,
-      1,
-      1,
-      0,
-      1
-    ]
-  },
-  {
-    "id": "hashi-cross",
-    "kind": "hashi",
-    "title": "Five islands",
-    "difficulty": "Starter",
-    "guide": "One central island connects four neighbours.",
-    "width": 5,
-    "height": 5,
-    "islands": [
-      [
-        2,
-        0,
-        1
-      ],
-      [
-        0,
-        2,
-        1
-      ],
-      [
-        2,
-        2,
-        4
-      ],
-      [
-        4,
-        2,
-        1
-      ],
-      [
-        2,
-        4,
-        1
-      ]
-    ],
-    "routes": [
-      [
-        0,
-        2
-      ],
-      [
-        1,
-        2
-      ],
-      [
-        3,
-        2
-      ],
-      [
-        4,
-        2
-      ]
-    ],
-    "solution": [
-      1,
-      1,
-      1,
-      1
-    ]
-  },
-  {
-    "id": "kakuro-three-cells",
-    "kind": "kakuro",
-    "title": "Three blanks",
-    "difficulty": "Starter",
-    "guide": "Three blanks and one printed digit.",
-    "mask": [
-      "###",
-      "#..",
-      "#.."
-    ],
-    "runs": [
-      {
-        "cells": [
-          0,
-          1
-        ],
-        "clue": [
-          0,
-          1
-        ],
-        "down": false,
-        "sum": 4
-      },
-      {
-        "cells": [
-          0,
-          2
-        ],
-        "clue": [
-          1,
-          0
-        ],
-        "down": true,
-        "sum": 3
-      },
-      {
-        "cells": [
-          1,
-          3
-        ],
-        "clue": [
-          2,
-          0
-        ],
-        "down": true,
-        "sum": 7
-      },
-      {
-        "cells": [
-          2,
-          3
-        ],
-        "clue": [
-          0,
-          2
-        ],
-        "down": false,
-        "sum": 6
-      }
-    ],
-    "givens": [
-      1,
-      0,
-      0,
-      0
-    ],
-    "solution": [
-      1,
-      3,
-      2,
-      4
-    ]
-  },
-  {
-    "id": "mines-four-square",
-    "kind": "mines",
-    "title": "Small field",
-    "difficulty": "Starter",
-    "guide": "A 4 × 4 field with three mines; the first reveal is safe.",
-    "side": 4,
-    "mines": [
-      5,
-      10,
-      15
-    ]
-  },
-  {
-    "id": "slither-01",
-    "kind": "slither",
-    "title": "First bend",
-    "difficulty": "Easy",
-    "guide": "3 × 3 cells; all clues shown.",
-    "side": 3,
-    "clues": [
-      2,
-      2,
-      1,
-      2,
-      1,
-      1,
-      2,
-      3,
-      1
-    ],
-    "solution": [
-      1,
-      1,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-      0,
-      0,
-      1,
-      0,
-      1,
-      0,
-      1,
-      0,
-      1,
-      0,
-      1,
-      0,
-      0,
-      1,
-      1,
-      0
-    ]
-  },
-  {
-    "id": "slither-02",
-    "kind": "slither",
-    "title": "Around the corner",
-    "difficulty": "Easy",
-    "guide": "3 × 3 cells; all clues shown.",
-    "side": 3,
-    "clues": [
-      2,
-      2,
-      2,
-      2,
-      1,
-      2,
-      3,
-      2,
-      1
-    ],
-    "solution": [
-      0,
-      1,
-      1,
-      1,
-      0,
-      0,
-      0,
-      1,
-      1,
-      1,
-      0,
-      0,
-      0,
-      1,
-      0,
-      1,
-      1,
-      0,
-      0,
-      1,
-      1,
-      1,
-      0,
-      0
-    ]
-  },
-  {
-    "id": "slither-03",
-    "kind": "slither",
-    "title": "Narrow passage",
-    "difficulty": "Medium",
-    "guide": "4 × 4 cells; some clues omitted; use loop continuity.",
-    "side": 4,
-    "clues": [
-      2,
-      2,
-      2,
-      null,
-      2,
-      0,
-      2,
-      1,
-      2,
-      null,
-      null,
-      1,
-      1,
-      null,
-      2,
-      0
-    ],
-    "solution": [
-      1,
-      1,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-      1,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      1,
-      0,
-      0,
-      1,
-      1,
-      0,
-      0
-    ]
-  },
-  {
-    "id": "slither-04",
-    "kind": "slither",
-    "title": "Long way round",
-    "difficulty": "Medium",
-    "guide": "4 × 4 cells; some clues omitted; use loop continuity.",
-    "side": 4,
-    "clues": [
-      2,
-      null,
-      1,
-      2,
-      2,
-      0,
-      1,
-      2,
-      1,
-      1,
-      null,
-      1,
-      2,
-      1,
-      null,
-      null
-    ],
-    "solution": [
-      0,
-      1,
-      1,
-      1,
-      1,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      1,
-      0,
-      0,
-      1,
-      0,
-      1,
-      1,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      1,
-      0,
-      0,
-      0,
-      1,
-      1,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0
-    ]
-  },
-  {
-    "id": "hashi-01",
-    "kind": "hashi",
-    "title": "Six islands",
-    "difficulty": "Easy",
-    "guide": "6 islands. Double bridges and a connected network are required.",
-    "width": 5,
-    "height": 3,
-    "islands": [
-      [
-        0,
-        0,
-        3
-      ],
-      [
-        2,
-        0,
-        3
-      ],
-      [
-        4,
-        0,
-        4
-      ],
-      [
-        0,
-        2,
-        2
-      ],
-      [
-        2,
-        2,
-        2
-      ],
-      [
-        4,
-        2,
-        4
-      ]
-    ],
-    "routes": [
-      [
-        0,
-        1
-      ],
-      [
-        0,
-        3
-      ],
-      [
-        1,
-        2
-      ],
-      [
-        1,
-        4
-      ],
-      [
-        2,
-        5
-      ],
-      [
-        3,
-        4
-      ],
-      [
-        4,
-        5
-      ]
-    ],
-    "solution": [
-      1,
-      2,
-      2,
-      0,
-      2,
-      0,
-      2
-    ]
-  },
-  {
-    "id": "hashi-02",
-    "kind": "hashi",
-    "title": "Nine islands",
-    "difficulty": "Easy",
-    "guide": "9 islands. Double bridges and a connected network are required.",
-    "width": 5,
-    "height": 5,
-    "islands": [
-      [
-        0,
-        0,
-        2
-      ],
-      [
-        2,
-        0,
-        2
-      ],
-      [
-        4,
-        0,
-        1
-      ],
-      [
-        0,
-        2,
-        3
-      ],
-      [
-        2,
-        2,
-        4
-      ],
-      [
-        4,
-        2,
-        5
-      ],
-      [
-        0,
-        4,
-        4
-      ],
-      [
-        2,
-        4,
-        5
-      ],
-      [
-        4,
-        4,
-        4
-      ]
-    ],
-    "routes": [
-      [
-        0,
-        1
-      ],
-      [
-        0,
-        3
-      ],
-      [
-        1,
-        2
-      ],
-      [
-        1,
-        4
-      ],
-      [
-        2,
-        5
-      ],
-      [
-        3,
-        4
-      ],
-      [
-        3,
-        6
-      ],
-      [
-        4,
-        5
-      ],
-      [
-        4,
-        7
-      ],
-      [
-        5,
-        8
-      ],
-      [
-        6,
-        7
-      ],
-      [
-        7,
-        8
-      ]
-    ],
-    "solution": [
-      1,
-      1,
-      0,
-      1,
-      1,
-      0,
-      2,
-      2,
-      1,
-      2,
-      2,
-      2
-    ]
-  },
-  {
-    "id": "hashi-03",
-    "kind": "hashi",
-    "title": "Across the bay",
-    "difficulty": "Medium",
-    "guide": "12 islands. Double bridges and a connected network are required.",
-    "width": 7,
-    "height": 5,
-    "islands": [
-      [
-        0,
-        0,
-        3
-      ],
-      [
-        2,
-        0,
-        4
-      ],
-      [
-        4,
-        0,
-        4
-      ],
-      [
-        6,
-        0,
-        1
-      ],
-      [
-        0,
-        2,
-        5
-      ],
-      [
-        2,
-        2,
-        8
-      ],
-      [
-        4,
-        2,
-        7
-      ],
-      [
-        6,
-        2,
-        3
-      ],
-      [
-        0,
-        4,
-        2
-      ],
-      [
-        2,
-        4,
-        4
-      ],
-      [
-        4,
-        4,
-        2
-      ],
-      [
-        6,
-        4,
-        1
-      ]
-    ],
-    "routes": [
-      [
-        0,
-        1
-      ],
-      [
-        0,
-        4
-      ],
-      [
-        1,
-        2
-      ],
-      [
-        1,
-        5
-      ],
-      [
-        2,
-        3
-      ],
-      [
-        2,
-        6
-      ],
-      [
-        3,
-        7
-      ],
-      [
-        4,
-        5
-      ],
-      [
-        4,
-        8
-      ],
-      [
-        5,
-        6
-      ],
-      [
-        5,
-        9
-      ],
-      [
-        6,
-        7
-      ],
-      [
-        6,
-        10
-      ],
-      [
-        7,
-        11
-      ],
-      [
-        8,
-        9
-      ],
-      [
-        9,
-        10
-      ],
-      [
-        10,
-        11
-      ]
-    ],
-    "solution": [
-      1,
-      2,
-      1,
-      2,
-      1,
-      2,
-      0,
-      2,
-      1,
-      2,
-      2,
-      2,
-      1,
-      1,
-      1,
-      1,
-      0
-    ]
-  },
-  {
-    "id": "hashi-04",
-    "kind": "hashi",
-    "title": "Island chain",
-    "difficulty": "Medium",
-    "guide": "16 islands. Double bridges and a connected network are required.",
-    "width": 7,
-    "height": 7,
-    "islands": [
-      [
-        0,
-        0,
-        4
-      ],
-      [
-        2,
-        0,
-        4
-      ],
-      [
-        4,
-        0,
-        6
-      ],
-      [
-        6,
-        0,
-        4
-      ],
-      [
-        0,
-        2,
-        5
-      ],
-      [
-        2,
-        2,
-        5
-      ],
-      [
-        4,
-        2,
-        7
-      ],
-      [
-        6,
-        2,
-        4
-      ],
-      [
-        0,
-        4,
-        6
-      ],
-      [
-        2,
-        4,
-        8
-      ],
-      [
-        4,
-        4,
-        8
-      ],
-      [
-        6,
-        4,
-        5
-      ],
-      [
-        0,
-        6,
-        2
-      ],
-      [
-        2,
-        6,
-        4
-      ],
-      [
-        4,
-        6,
-        4
-      ],
-      [
-        6,
-        6,
-        2
-      ]
-    ],
-    "routes": [
-      [
-        0,
-        1
-      ],
-      [
-        0,
-        4
-      ],
-      [
-        1,
-        2
-      ],
-      [
-        1,
-        5
-      ],
-      [
-        2,
-        3
-      ],
-      [
-        2,
-        6
-      ],
-      [
-        3,
-        7
-      ],
-      [
-        4,
-        5
-      ],
-      [
-        4,
-        8
-      ],
-      [
-        5,
-        6
-      ],
-      [
-        5,
-        9
-      ],
-      [
-        6,
-        7
-      ],
-      [
-        6,
-        10
-      ],
-      [
-        7,
-        11
-      ],
-      [
-        8,
-        9
-      ],
-      [
-        8,
-        12
-      ],
-      [
-        9,
-        10
-      ],
-      [
-        9,
-        13
-      ],
-      [
-        10,
-        11
-      ],
-      [
-        10,
-        14
-      ],
-      [
-        11,
-        15
-      ],
-      [
-        12,
-        13
-      ],
-      [
-        13,
-        14
-      ],
-      [
-        14,
-        15
-      ]
-    ],
-    "solution": [
-      2,
-      2,
-      2,
-      0,
-      2,
-      2,
-      2,
-      1,
-      2,
-      2,
-      2,
-      1,
-      2,
-      1,
-      2,
-      2,
-      2,
-      2,
-      2,
-      2,
-      2,
-      0,
-      2,
-      0
-    ]
-  },
-  {
-    "id": "kakuro-01",
-    "kind": "kakuro",
-    "title": "Small sums",
-    "difficulty": "Easy",
-    "guide": "9 white cells, 2 printed digits; run lengths up to 3.",
-    "mask": [
-      "####",
-      "#...",
-      "#...",
-      "#..."
-    ],
-    "runs": [
-      {
-        "cells": [
-          0,
-          1,
-          2
-        ],
-        "clue": [
-          0,
-          1
-        ],
-        "down": false,
-        "sum": 20
-      },
-      {
-        "cells": [
-          0,
-          3,
-          6
-        ],
-        "clue": [
-          1,
-          0
-        ],
-        "down": true,
-        "sum": 19
-      },
-      {
-        "cells": [
-          1,
-          4,
-          7
-        ],
-        "clue": [
-          2,
-          0
-        ],
-        "down": true,
-        "sum": 21
-      },
-      {
-        "cells": [
-          2,
-          5,
-          8
-        ],
-        "clue": [
-          3,
-          0
-        ],
-        "down": true,
-        "sum": 15
-      },
-      {
-        "cells": [
-          3,
-          4,
-          5
-        ],
-        "clue": [
-          0,
-          2
-        ],
-        "down": false,
-        "sum": 17
-      },
-      {
-        "cells": [
-          6,
-          7,
-          8
-        ],
-        "clue": [
-          0,
-          3
-        ],
-        "down": false,
-        "sum": 18
-      }
-    ],
-    "givens": [
-      0,
-      0,
-      0,
-      0,
-      7,
-      0,
-      5,
-      0,
-      0
-    ],
-    "solution": [
-      6,
-      5,
-      9,
-      8,
-      7,
-      2,
-      5,
-      9,
-      4
-    ]
-  },
-  {
-    "id": "kakuro-02",
-    "kind": "kakuro",
-    "title": "Corner clues",
-    "difficulty": "Easy",
-    "guide": "14 white cells, 4 printed digits; run lengths up to 4.",
-    "mask": [
-      "#####",
-      "##...",
-      "#....",
-      "#....",
-      "#...#"
-    ],
-    "runs": [
-      {
-        "cells": [
-          0,
-          1,
-          2
-        ],
-        "clue": [
-          1,
-          1
-        ],
-        "down": false,
-        "sum": 15
-      },
-      {
-        "cells": [
-          0,
-          4,
-          8,
-          12
-        ],
-        "clue": [
-          2,
-          0
-        ],
-        "down": true,
-        "sum": 19
-      },
-      {
-        "cells": [
-          1,
-          5,
-          9,
-          13
-        ],
-        "clue": [
-          3,
-          0
-        ],
-        "down": true,
-        "sum": 18
-      },
-      {
-        "cells": [
-          2,
-          6,
-          10
-        ],
-        "clue": [
-          4,
-          0
-        ],
-        "down": true,
-        "sum": 15
-      },
-      {
-        "cells": [
-          3,
-          4,
-          5,
-          6
-        ],
-        "clue": [
-          0,
-          2
-        ],
-        "down": false,
-        "sum": 18
-      },
-      {
-        "cells": [
-          3,
-          7,
-          11
-        ],
-        "clue": [
-          1,
-          1
-        ],
-        "down": true,
-        "sum": 15
-      },
-      {
-        "cells": [
-          7,
-          8,
-          9,
-          10
-        ],
-        "clue": [
-          0,
-          3
-        ],
-        "down": false,
-        "sum": 24
-      },
-      {
-        "cells": [
-          11,
-          12,
-          13
-        ],
-        "clue": [
-          0,
-          4
-        ],
-        "down": false,
-        "sum": 10
-      }
-    ],
-    "givens": [
-      0,
-      0,
-      0,
-      0,
-      1,
-      7,
-      0,
-      0,
-      5,
-      0,
-      0,
-      0,
-      0,
-      2
-    ],
-    "solution": [
-      6,
-      5,
-      4,
-      8,
-      1,
-      7,
-      2,
-      6,
-      5,
-      4,
-      9,
-      1,
-      7,
-      2
-    ]
-  },
-  {
-    "id": "kakuro-03",
-    "kind": "kakuro",
-    "title": "Four by four",
-    "difficulty": "Medium",
-    "guide": "16 white cells, 5 printed digits; run lengths up to 4.",
-    "mask": [
-      "#####",
-      "#....",
-      "#....",
-      "#....",
-      "#...."
-    ],
-    "runs": [
-      {
-        "cells": [
-          0,
-          1,
-          2,
-          3
-        ],
-        "clue": [
-          0,
-          1
-        ],
-        "down": false,
-        "sum": 23
-      },
-      {
-        "cells": [
-          0,
-          4,
-          8,
-          12
-        ],
-        "clue": [
-          1,
-          0
-        ],
-        "down": true,
-        "sum": 24
-      },
-      {
-        "cells": [
-          1,
-          5,
-          9,
-          13
-        ],
-        "clue": [
-          2,
-          0
-        ],
-        "down": true,
-        "sum": 28
-      },
-      {
-        "cells": [
-          2,
-          6,
-          10,
-          14
-        ],
-        "clue": [
-          3,
-          0
-        ],
-        "down": true,
-        "sum": 18
-      },
-      {
-        "cells": [
-          3,
-          7,
-          11,
-          15
-        ],
-        "clue": [
-          4,
-          0
-        ],
-        "down": true,
-        "sum": 12
-      },
-      {
-        "cells": [
-          4,
-          5,
-          6,
-          7
-        ],
-        "clue": [
-          0,
-          2
-        ],
-        "down": false,
-        "sum": 19
-      },
-      {
-        "cells": [
-          8,
-          9,
-          10,
-          11
-        ],
-        "clue": [
-          0,
-          3
-        ],
-        "down": false,
-        "sum": 20
-      },
-      {
-        "cells": [
-          12,
-          13,
-          14,
-          15
-        ],
-        "clue": [
-          0,
-          4
-        ],
-        "down": false,
-        "sum": 20
-      }
-    ],
-    "givens": [
-      6,
-      0,
-      0,
-      1,
-      0,
-      4,
-      0,
-      2,
-      0,
-      0,
-      0,
-      0,
-      4,
-      0,
-      0,
-      0
-    ],
-    "solution": [
-      6,
-      9,
-      7,
-      1,
-      5,
-      4,
-      8,
-      2,
-      9,
-      7,
-      1,
-      3,
-      4,
-      8,
-      2,
-      6
-    ]
-  },
-  {
-    "id": "kakuro-04",
-    "kind": "kakuro",
-    "title": "Long runs",
-    "difficulty": "Medium",
-    "guide": "18 white cells, 5 printed digits; run lengths up to 5.",
-    "mask": [
-      "######",
-      "##....",
-      "#.....",
-      "#.....",
-      "#....#",
-      "######"
-    ],
-    "runs": [
-      {
-        "cells": [
-          0,
-          1,
-          2,
-          3
-        ],
-        "clue": [
-          1,
-          1
-        ],
-        "down": false,
-        "sum": 16
-      },
-      {
-        "cells": [
-          0,
-          5,
-          10,
-          15
-        ],
-        "clue": [
-          2,
-          0
-        ],
-        "down": true,
-        "sum": 19
-      },
-      {
-        "cells": [
-          1,
-          6,
-          11,
-          16
-        ],
-        "clue": [
-          3,
-          0
-        ],
-        "down": true,
-        "sum": 19
-      },
-      {
-        "cells": [
-          2,
-          7,
-          12,
-          17
-        ],
-        "clue": [
-          4,
-          0
-        ],
-        "down": true,
-        "sum": 21
-      },
-      {
-        "cells": [
-          3,
-          8,
-          13
-        ],
-        "clue": [
-          5,
-          0
-        ],
-        "down": true,
-        "sum": 21
-      },
-      {
-        "cells": [
-          4,
-          5,
-          6,
-          7,
-          8
-        ],
-        "clue": [
-          0,
-          2
-        ],
-        "down": false,
-        "sum": 29
-      },
-      {
-        "cells": [
-          4,
-          9,
-          14
-        ],
-        "clue": [
-          1,
-          1
-        ],
-        "down": true,
-        "sum": 10
-      },
-      {
-        "cells": [
-          9,
-          10,
-          11,
-          12,
-          13
-        ],
-        "clue": [
-          0,
-          3
-        ],
-        "down": false,
-        "sum": 21
-      },
-      {
-        "cells": [
-          14,
-          15,
-          16,
-          17
-        ],
-        "clue": [
-          0,
-          4
-        ],
-        "down": false,
-        "sum": 24
-      }
-    ],
-    "givens": [
-      0,
-      0,
-      0,
-      7,
-      0,
-      0,
-      0,
-      3,
-      9,
-      0,
-      6,
-      0,
-      0,
-      0,
-      4,
-      0,
-      0,
-      0
-    ],
-    "solution": [
-      1,
-      6,
-      2,
-      7,
-      5,
-      4,
-      8,
-      3,
-      9,
-      1,
-      6,
-      2,
-      7,
-      5,
-      4,
-      8,
-      3,
-      9
-    ]
-  },
-  {
-    "id": "mines-01",
-    "kind": "mines",
-    "title": "Room to explore",
-    "difficulty": "Easy",
-    "guide": "5 × 5 cells with 4 mines. The first reveal is safe; some positions may require a guess.",
-    "side": 5,
-    "mines": [
-      2,
-      5,
-      7,
-      23
-    ]
-  },
-  {
-    "id": "mines-02",
-    "kind": "mines",
-    "title": "Closer neighbours",
-    "difficulty": "Easy",
-    "guide": "5 × 5 cells with 6 mines. The first reveal is safe; some positions may require a guess.",
-    "side": 5,
-    "mines": [
-      2,
-      6,
-      9,
-      11,
-      21,
-      23
-    ]
-  },
-  {
-    "id": "mines-03",
-    "kind": "mines",
-    "title": "Wide field",
-    "difficulty": "Medium",
-    "guide": "6 × 6 cells with 8 mines. The first reveal is safe; some positions may require a guess.",
-    "side": 6,
-    "mines": [
-      0,
-      5,
-      9,
-      13,
-      16,
-      24,
-      28,
-      29
-    ]
-  },
-  {
-    "id": "mines-04",
-    "kind": "mines",
-    "title": "Far corners",
-    "difficulty": "Medium",
-    "guide": "7 × 7 cells with 11 mines. The first reveal is safe; some positions may require a guess.",
-    "side": 7,
-    "mines": [
-      0,
-      4,
-      8,
-      9,
-      13,
-      14,
-      19,
-      27,
-      32,
-      41,
-      46
-    ]
-  }
+{"id":"slither-four-twos","kind":"slither","title":"Four twos","difficulty":"Starter","guide":"A 2 × 2 board with every clue shown.","side":2,"clues":[2,2,2,2],"solution":[1,1,0,0,1,1,1,0,1,1,0,1]},
+{"id":"hashi-cross","kind":"hashi","title":"Five islands","difficulty":"Starter","guide":"One central island connects four neighbours.","width":5,"height":5,"islands":[[2,0,1],[0,2,1],[2,2,4],[4,2,1],[2,4,1]],"routes":[[0,2],[1,2],[3,2],[4,2]],"solution":[1,1,1,1]},
+{"id":"kakuro-three-cells","kind":"kakuro","title":"Three blanks","difficulty":"Starter","guide":"Three blanks and one printed digit.","mask":["###","#..","#.."],"runs":[{"cells":[0,1],"clue":[0,1],"down":false,"sum":4},{"cells":[0,2],"clue":[1,0],"down":true,"sum":3},{"cells":[1,3],"clue":[2,0],"down":true,"sum":7},{"cells":[2,3],"clue":[0,2],"down":false,"sum":6}],"givens":[1,0,0,0],"solution":[1,3,2,4]},
+{"id":"mines-four-square","kind":"mines","title":"Small field","difficulty":"Starter","guide":"A 4 × 4 field with three mines; the first reveal is safe.","side":4,"mines":[5,10,15]},
+{"id":"slither-01","kind":"slither","title":"First bend","difficulty":"Easy","guide":"3 × 3 cells; all clues shown.","side":3,"clues":[2,2,1,2,1,1,2,3,1],"solution":[1,1,0,0,0,0,1,0,0,0,1,0,1,0,1,0,1,0,1,0,0,1,1,0]},
+{"id":"slither-02","kind":"slither","title":"Around the corner","difficulty":"Easy","guide":"3 × 3 cells; all clues shown.","side":3,"clues":[2,2,2,2,1,2,3,2,1],"solution":[0,1,1,1,0,0,0,1,1,1,0,0,0,1,0,1,1,0,0,1,1,1,0,0]},
+{"id":"slither-03","kind":"slither","title":"Narrow passage","difficulty":"Medium","guide":"4 × 4 cells; some clues omitted; use loop continuity.","side":4,"clues":[2,2,2,null,2,0,2,1,2,null,null,1,1,null,2,0],"solution":[1,1,0,0,0,0,1,0,1,0,0,0,0,0,1,0,0,1,0,0,1,0,1,0,0,1,0,0,1,0,0,1,0,1,0,0,1,1,0,0]},
+{"id":"slither-04","kind":"slither","title":"Long way round","difficulty":"Medium","guide":"4 × 4 cells; some clues omitted; use loop continuity.","side":4,"clues":[2,null,1,2,2,0,1,2,1,1,null,1,2,1,null,null],"solution":[0,1,1,1,1,0,0,0,0,0,1,1,0,0,1,0,1,1,1,0,0,1,0,0,1,1,0,0,0,1,1,0,1,0,0,1,0,0,1,0]},
+{"id":"hashi-01","kind":"hashi","title":"Six islands","difficulty":"Easy","guide":"6 islands. Double bridges and a connected network are required.","width":5,"height":3,"islands":[[0,0,3],[2,0,3],[4,0,4],[0,2,2],[2,2,2],[4,2,4]],"routes":[[0,1],[0,3],[1,2],[1,4],[2,5],[3,4],[4,5]],"solution":[1,2,2,0,2,0,2]},
+{"id":"hashi-02","kind":"hashi","title":"Nine islands","difficulty":"Easy","guide":"9 islands. Double bridges and a connected network are required.","width":5,"height":5,"islands":[[0,0,2],[2,0,2],[4,0,1],[0,2,3],[2,2,4],[4,2,5],[0,4,4],[2,4,5],[4,4,4]],"routes":[[0,1],[0,3],[1,2],[1,4],[2,5],[3,4],[3,6],[4,5],[4,7],[5,8],[6,7],[7,8]],"solution":[1,1,0,1,1,0,2,2,1,2,2,2]},
+{"id":"hashi-03","kind":"hashi","title":"Across the bay","difficulty":"Medium","guide":"12 islands. Double bridges and a connected network are required.","width":7,"height":5,"islands":[[0,0,3],[2,0,4],[4,0,4],[6,0,1],[0,2,5],[2,2,8],[4,2,7],[6,2,3],[0,4,2],[2,4,4],[4,4,2],[6,4,1]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,3],[2,6],[3,7],[4,5],[4,8],[5,6],[5,9],[6,7],[6,10],[7,11],[8,9],[9,10],[10,11]],"solution":[1,2,1,2,1,2,0,2,1,2,2,2,1,1,1,1,0]},
+{"id":"hashi-04","kind":"hashi","title":"Island chain","difficulty":"Medium","guide":"16 islands. Double bridges and a connected network are required.","width":7,"height":7,"islands":[[0,0,4],[2,0,4],[4,0,6],[6,0,4],[0,2,5],[2,2,5],[4,2,7],[6,2,4],[0,4,6],[2,4,8],[4,4,8],[6,4,5],[0,6,2],[2,6,4],[4,6,4],[6,6,2]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,3],[2,6],[3,7],[4,5],[4,8],[5,6],[5,9],[6,7],[6,10],[7,11],[8,9],[8,12],[9,10],[9,13],[10,11],[10,14],[11,15],[12,13],[13,14],[14,15]],"solution":[2,2,2,0,2,2,2,1,2,2,2,1,2,1,2,2,2,2,2,2,2,0,2,0]},
+{"id":"kakuro-01","kind":"kakuro","title":"Small sums","difficulty":"Easy","guide":"9 white cells, 2 printed digits; run lengths up to 3.","mask":["####","#...","#...","#..."],"runs":[{"cells":[0,1,2],"clue":[0,1],"down":false,"sum":20},{"cells":[0,3,6],"clue":[1,0],"down":true,"sum":19},{"cells":[1,4,7],"clue":[2,0],"down":true,"sum":21},{"cells":[2,5,8],"clue":[3,0],"down":true,"sum":15},{"cells":[3,4,5],"clue":[0,2],"down":false,"sum":17},{"cells":[6,7,8],"clue":[0,3],"down":false,"sum":18}],"givens":[0,0,0,0,7,0,5,0,0],"solution":[6,5,9,8,7,2,5,9,4]},
+{"id":"kakuro-02","kind":"kakuro","title":"Corner clues","difficulty":"Easy","guide":"14 white cells, 4 printed digits; run lengths up to 4.","mask":["#####","##...","#....","#....","#...#"],"runs":[{"cells":[0,1,2],"clue":[1,1],"down":false,"sum":15},{"cells":[0,4,8,12],"clue":[2,0],"down":true,"sum":19},{"cells":[1,5,9,13],"clue":[3,0],"down":true,"sum":18},{"cells":[2,6,10],"clue":[4,0],"down":true,"sum":15},{"cells":[3,4,5,6],"clue":[0,2],"down":false,"sum":18},{"cells":[3,7,11],"clue":[1,1],"down":true,"sum":15},{"cells":[7,8,9,10],"clue":[0,3],"down":false,"sum":24},{"cells":[11,12,13],"clue":[0,4],"down":false,"sum":10}],"givens":[0,0,0,0,1,7,0,0,5,0,0,0,0,2],"solution":[6,5,4,8,1,7,2,6,5,4,9,1,7,2]},
+{"id":"kakuro-03","kind":"kakuro","title":"Four by four","difficulty":"Medium","guide":"16 white cells, 5 printed digits; run lengths up to 4.","mask":["#####","#....","#....","#....","#...."],"runs":[{"cells":[0,1,2,3],"clue":[0,1],"down":false,"sum":23},{"cells":[0,4,8,12],"clue":[1,0],"down":true,"sum":24},{"cells":[1,5,9,13],"clue":[2,0],"down":true,"sum":28},{"cells":[2,6,10,14],"clue":[3,0],"down":true,"sum":18},{"cells":[3,7,11,15],"clue":[4,0],"down":true,"sum":12},{"cells":[4,5,6,7],"clue":[0,2],"down":false,"sum":19},{"cells":[8,9,10,11],"clue":[0,3],"down":false,"sum":20},{"cells":[12,13,14,15],"clue":[0,4],"down":false,"sum":20}],"givens":[6,0,0,1,0,4,0,2,0,0,0,0,4,0,0,0],"solution":[6,9,7,1,5,4,8,2,9,7,1,3,4,8,2,6]},
+{"id":"kakuro-04","kind":"kakuro","title":"Long runs","difficulty":"Medium","guide":"18 white cells, 5 printed digits; run lengths up to 5.","mask":["######","##....","#.....","#.....","#....#","######"],"runs":[{"cells":[0,1,2,3],"clue":[1,1],"down":false,"sum":16},{"cells":[0,5,10,15],"clue":[2,0],"down":true,"sum":19},{"cells":[1,6,11,16],"clue":[3,0],"down":true,"sum":19},{"cells":[2,7,12,17],"clue":[4,0],"down":true,"sum":21},{"cells":[3,8,13],"clue":[5,0],"down":true,"sum":21},{"cells":[4,5,6,7,8],"clue":[0,2],"down":false,"sum":29},{"cells":[4,9,14],"clue":[1,1],"down":true,"sum":10},{"cells":[9,10,11,12,13],"clue":[0,3],"down":false,"sum":21},{"cells":[14,15,16,17],"clue":[0,4],"down":false,"sum":24}],"givens":[0,0,0,7,0,0,0,3,9,0,6,0,0,0,4,0,0,0],"solution":[1,6,2,7,5,4,8,3,9,1,6,2,7,5,4,8,3,9]},
+{"id":"mines-01","kind":"mines","title":"Room to explore","difficulty":"Easy","guide":"5 × 5 cells with 4 mines. The first reveal is safe; some positions may require a guess.","side":5,"mines":[2,5,7,23]},
+{"id":"mines-02","kind":"mines","title":"Closer neighbours","difficulty":"Easy","guide":"5 × 5 cells with 6 mines. The first reveal is safe; some positions may require a guess.","side":5,"mines":[2,6,9,11,21,23]},
+{"id":"mines-03","kind":"mines","title":"Wide field","difficulty":"Medium","guide":"6 × 6 cells with 8 mines. The first reveal is safe; some positions may require a guess.","side":6,"mines":[0,5,9,13,16,24,28,29]},
+{"id":"mines-04","kind":"mines","title":"Far corners","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. The first reveal is safe; some positions may require a guess.","side":7,"mines":[0,4,8,9,13,14,19,27,32,41,46]},
+{"id":"slither-05","kind":"slither","title":"Puzzle 6","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[2,2,1,1,2,1,3,2,0],"solution":[1,1,0,0,0,0,0,1,0,1,0,0,1,0,1,0,1,0,1,0,1,1,0,0]},
+{"id":"slither-06","kind":"slither","title":"Puzzle 7","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[1,2,3,2,1,1,2,1,2],"solution":[0,0,1,1,1,0,0,0,0,1,1,1,0,0,1,1,1,0,0,1,1,0,0,1]},
+{"id":"slither-07","kind":"slither","title":"Puzzle 8","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[1,2,2,1,2,2,0,1,1],"solution":[0,1,1,0,0,0,0,1,1,0,0,0,0,1,0,1,0,1,0,1,0,0,0,0]},
+{"id":"slither-08","kind":"slither","title":"Puzzle 9","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[2,3,2,2,0,2,2,1,2],"solution":[0,1,0,1,0,1,0,0,0,1,1,1,0,1,1,0,1,0,0,1,1,0,0,1]},
+{"id":"slither-09","kind":"slither","title":"Puzzle 10","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[2,3,2,3,0,2,2,2,2],"solution":[0,1,0,1,0,1,1,0,0,0,1,1,0,1,1,0,1,0,0,1,0,1,0,1]},
+{"id":"slither-10","kind":"slither","title":"Puzzle 11","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[1,3,2,2,1,2,3,1,2],"solution":[0,1,0,0,0,1,1,0,0,1,1,1,0,1,1,0,0,1,0,1,1,0,0,1]},
+{"id":"slither-11","kind":"slither","title":"Puzzle 12","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[2,2,3,3,2,1,1,0,0],"solution":[1,1,1,0,1,1,1,0,0,0,0,0,1,0,0,1,1,1,0,0,0,0,0,0]},
+{"id":"slither-12","kind":"slither","title":"Puzzle 13","difficulty":"Starter","guide":"3 × 3 cells, 9 clues. Every clue is shown.","side":3,"clues":[3,1,0,3,1,0,1,0,0],"solution":[1,0,0,0,0,0,1,0,0,0,0,0,1,1,0,0,1,1,0,0,0,0,0,0]},
+{"id":"slither-13","kind":"slither","title":"Puzzle 14","difficulty":"Easy","guide":"3 × 3 cells, 4 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,null,1,3,null,1,null,null,0],"solution":[0,1,0,1,0,0,1,1,0,0,0,0,0,1,1,0,1,0,1,0,0,0,0,0]},
+{"id":"slither-14","kind":"slither","title":"Puzzle 15","difficulty":"Easy","guide":"3 × 3 cells, 4 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,null,null,null,3,2,null,1,1],"solution":[0,0,1,0,1,0,0,1,1,0,0,0,0,0,1,1,0,1,0,1,0,0,0,0]},
+{"id":"slither-15","kind":"slither","title":"Puzzle 16","difficulty":"Easy","guide":"3 × 3 cells, 4 clues. Each line follows from one clue and its corners.","side":3,"clues":[2,null,null,null,null,null,1,0,1],"solution":[1,1,1,0,1,0,1,0,1,0,0,0,1,0,0,1,1,1,1,1,0,0,0,0]},
+{"id":"slither-16","kind":"slither","title":"Puzzle 17","difficulty":"Easy","guide":"3 × 3 cells, 4 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,3,null,0,null,null,0,null,1],"solution":[0,1,1,0,1,0,0,0,1,0,0,0,0,1,0,1,0,0,1,1,0,0,0,0]},
+{"id":"slither-17","kind":"slither","title":"Puzzle 18","difficulty":"Easy","guide":"3 × 3 cells, 4 clues. Each line follows from one clue and its corners.","side":3,"clues":[0,null,1,null,3,null,null,1,null],"solution":[0,0,0,0,1,1,0,1,1,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0]},
+{"id":"slither-18","kind":"slither","title":"Puzzle 19","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,1,1,null,null,3,1,null,1],"solution":[0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0]},
+{"id":"slither-19","kind":"slither","title":"Puzzle 20","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,3,3,2,null,1,2,null,null],"solution":[1,0,1,0,1,0,1,0,0,0,1,1,1,1,1,1,1,0,0,1,0,1,0,1]},
+{"id":"slither-20","kind":"slither","title":"Puzzle 21","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,2,null,3,1,null,null,1,1],"solution":[0,1,1,1,0,0,1,1,1,0,0,0,0,1,0,1,1,0,0,1,0,0,0,0]},
+{"id":"slither-21","kind":"slither","title":"Puzzle 22","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[0,null,null,null,null,2,0,1,3],"solution":[0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,1,0,0,1,1,0,0,1,1]},
+{"id":"slither-22","kind":"slither","title":"Puzzle 23","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[2,null,null,null,2,1,3,1,null],"solution":[1,1,1,0,1,1,0,0,0,1,0,0,1,0,0,1,1,1,0,0,1,1,0,0]},
+{"id":"slither-23","kind":"slither","title":"Puzzle 24","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[null,2,null,null,2,1,null,3,3],"solution":[0,0,1,1,1,0,0,1,0,1,0,1,0,0,1,1,1,0,0,1,1,1,1,1]},
+{"id":"slither-24","kind":"slither","title":"Puzzle 25","difficulty":"Easy","guide":"3 × 3 cells, 5 clues. Each line follows from one clue and its corners.","side":3,"clues":[1,2,null,1,null,1,null,null,2],"solution":[0,1,1,0,0,0,0,0,0,0,1,1,0,1,0,1,0,1,0,1,0,1,0,1]},
+{"id":"slither-25","kind":"slither","title":"Puzzle 26","difficulty":"Easy","guide":"4 × 4 cells, 6 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,3,2,null,1,null,null,null,null,null,3,null,0,null,0,null],"solution":[0,1,0,0,0,0,1,1,0,0,1,0,0,1,0,1,0,0,0,0,0,1,1,0,0,0,1,0,0,1,0,1,1,1,1,0,0,0,0,0]},
+{"id":"slither-26","kind":"slither","title":"Puzzle 27","difficulty":"Easy","guide":"4 × 4 cells, 6 clues. Each line follows from one clue and its corners.","side":4,"clues":[0,null,0,null,null,null,1,null,3,null,null,0,1,null,null,null],"solution":[0,0,0,0,0,1,0,0,1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1,0,1,0,0,0,0,0,0,0]},
+{"id":"slither-27","kind":"slither","title":"Puzzle 28","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,null,null,0,0,1,null,null,null,null,1,null,3,1,1,null],"solution":[0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,0,0,0,1]},
+{"id":"slither-28","kind":"slither","title":"Puzzle 29","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[1,null,1,null,2,null,null,2,null,null,2,0,null,1,null,null],"solution":[0,1,1,1,0,0,0,1,1,0,1,0,1,1,0,0,0,0,0,0,0,1,0,0,1,0,1,0,1,0,1,0,1,0,0,0,0,0,0,0]},
+{"id":"slither-29","kind":"slither","title":"Puzzle 30","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[0,2,null,null,null,null,null,1,null,1,null,null,null,1,1,1],"solution":[0,0,1,1,0,1,0,0,1,0,0,0,1,1,1,1,0,0,0,0,0,0,1,0,1,0,1,0,0,1,1,0,0,0,1,0,0,0,0,0]},
+{"id":"slither-30","kind":"slither","title":"Puzzle 31","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,3,null,null,null,1,null,null,1,null,2,0,null,3,null,0],"solution":[0,1,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,1,0,0,0,1,1,0,0,0,1,0,1,0,0,1,1,0,0,0,1,1,0,0]},
+{"id":"slither-31","kind":"slither","title":"Puzzle 32","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,1,1,null,null,null,null,3,2,0,null,null,null,3,null,0],"solution":[0,0,0,0,1,1,1,1,0,0,0,1,1,0,1,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,1,0,0,1,0,0,1,1,0,0]},
+{"id":"slither-32","kind":"slither","title":"Puzzle 33","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[0,null,null,null,null,null,3,null,1,null,1,1,null,null,2,1],"solution":[0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,0]},
+{"id":"slither-33","kind":"slither","title":"Puzzle 34","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,0,null,0,null,0,null,null,1,null,1,1,null,null,2,null],"solution":[0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1]},
+{"id":"slither-34","kind":"slither","title":"Puzzle 35","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[1,1,0,null,null,null,1,null,null,null,3,null,2,1,null,null],"solution":[0,0,0,0,1,1,0,0,0,0,0,1,0,0,1,0,1,1,1,1,0,0,0,0,0,1,0,1,0,0,1,0,1,1,1,1,0,0,0,1]},
+{"id":"slither-35","kind":"slither","title":"Puzzle 36","difficulty":"Easy","guide":"4 × 4 cells, 7 clues. Each line follows from one clue and its corners.","side":4,"clues":[3,1,2,null,null,null,null,1,null,null,3,null,null,0,null,0],"solution":[1,1,1,0,1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,1,0,1,0,0,0,1,1,0,0,0,0,0,0]},
+{"id":"slither-36","kind":"slither","title":"Puzzle 37","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[1,null,1,1,null,null,1,2,2,0,null,null,null,null,1,null],"solution":[0,0,0,0,1,1,1,1,0,0,0,0,1,0,0,0,0,1,1,1,0,0,0,0,0,1,0,0,0,1,1,0,0,0,1,0,1,0,0,1]},
+{"id":"slither-37","kind":"slither","title":"Puzzle 38","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[1,null,3,1,2,null,null,2,1,null,null,null,2,null,1,null],"solution":[0,0,1,0,1,1,0,0,0,0,0,1,0,0,0,0,1,1,1,1,0,0,1,1,0,1,0,0,1,0,1,0,0,0,1,1,0,0,0,1]},
+{"id":"slither-38","kind":"slither","title":"Puzzle 39","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[2,null,null,3,1,null,1,3,null,null,null,null,1,1,1,null],"solution":[1,1,1,1,0,0,0,1,0,0,0,1,1,1,1,1,0,0,0,0,1,0,0,0,1,1,0,0,1,0,1,0,0,0,1,0,0,0,0,0]},
+{"id":"slither-39","kind":"slither","title":"Puzzle 40","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[1,null,null,null,1,3,1,2,null,null,null,1,null,1,null,2],"solution":[0,1,1,0,0,1,0,1,1,1,0,0,0,0,0,0,1,1,1,1,0,1,0,1,0,0,0,1,0,1,1,0,0,0,1,1,0,0,0,1]},
+{"id":"slither-40","kind":"slither","title":"Puzzle 41","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[0,1,2,null,null,null,null,null,0,2,null,1,null,3,1,null],"solution":[0,0,1,1,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,1,0,0,1,0,1,0,0,1,0,1,0,0,1,0,1,0,1,0,0,1]},
+{"id":"slither-41","kind":"slither","title":"Puzzle 42","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,null,2,null,2,1,0,3,null,0,null,null,null,1,null,3],"solution":[0,1,1,0,0,0,0,1,1,0,0,1,0,0,0,1,1,1,1,1,0,1,0,1,0,0,1,0,0,1,1,0,0,1,0,1,0,0,0,1]},
+{"id":"slither-42","kind":"slither","title":"Puzzle 43","difficulty":"Easy","guide":"4 × 4 cells, 8 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,null,null,null,1,0,2,1,null,null,1,null,1,null,2,3],"solution":[1,1,0,0,0,0,1,0,0,0,0,0,1,1,0,1,0,0,1,1,1,0,1,0,0,1,0,0,1,0,1,0,0,1,0,0,0,1,0,1]},
+{"id":"slither-43","kind":"slither","title":"Puzzle 44","difficulty":"Easy","guide":"4 × 4 cells, 9 clues. Each line follows from one clue and its corners.","side":4,"clues":[1,null,1,null,1,3,null,null,3,null,1,2,null,1,1,null],"solution":[0,1,1,1,0,1,0,0,1,1,0,0,1,1,1,1,0,0,0,0,0,1,0,0,1,0,0,1,0,1,1,0,0,0,1,0,0,0,0,0]},
+{"id":"slither-44","kind":"slither","title":"Puzzle 45","difficulty":"Easy","guide":"4 × 4 cells, 9 clues. Each line follows from one clue and its corners.","side":4,"clues":[2,2,null,null,1,null,null,null,null,null,2,1,2,2,2,0],"solution":[1,1,0,0,0,0,1,0,0,0,0,0,0,0,1,0,1,1,0,0,1,0,1,0,0,1,0,0,1,0,1,0,0,1,0,1,0,1,0,0]},
+{"id":"slither-45","kind":"slither","title":"Puzzle 46","difficulty":"Easy","guide":"4 × 4 cells, 9 clues. Each line follows from one clue and its corners.","side":4,"clues":[3,3,null,null,2,2,null,1,null,null,null,null,0,1,2,2],"solution":[1,0,1,1,0,1,0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,0,0,0,1,0,0,1,0,1,0,0,1,0,1]},
+{"id":"slither-46","kind":"slither","title":"Puzzle 47","difficulty":"Easy","guide":"4 × 4 cells, 9 clues. Each line follows from one clue and its corners.","side":4,"clues":[null,null,1,null,1,1,1,3,null,null,2,3,1,null,null,1],"solution":[1,1,1,1,0,0,0,1,0,1,0,1,1,0,1,1,0,0,0,0,1,0,0,0,1,1,0,0,1,0,1,1,1,0,1,0,0,0,0,0]},
+{"id":"slither-47","kind":"slither","title":"Puzzle 48","difficulty":"Medium","guide":"4 × 4 cells, 4 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,0,null,null,null,null,1,null,3,null,null,null,null,null,3],"solution":[0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,1]},
+{"id":"slither-48","kind":"slither","title":"Puzzle 49","difficulty":"Medium","guide":"4 × 4 cells, 4 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,3,null,null,null,0,3,null,null,null,null,null,0,null,null,null],"solution":[0,1,0,0,1,0,1,0,1,0,1,0,0,1,0,0,0,0,0,0,0,1,1,0,0,1,0,0,1,0,0,1,1,0,0,0,0,0,0,0]},
+{"id":"slither-49","kind":"slither","title":"Puzzle 50","difficulty":"Medium","guide":"4 × 4 cells, 4 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,0,2,null,null,null,null,null,null,null,2,null,null,null,0,null],"solution":[0,0,0,1,0,0,1,0,0,0,1,0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,0,1,0,1,0,0,0,1,1,0,0,0,0,0]},
+{"id":"slither-50","kind":"slither","title":"Puzzle 51","difficulty":"Medium","guide":"4 × 4 cells, 5 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,0,null,null,null,1,null,null,null,1,null,null,1,null,0,null],"solution":[0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1,1,0,0,0,0,0,0,0,0]},
+{"id":"slither-51","kind":"slither","title":"Puzzle 52","difficulty":"Medium","guide":"4 × 4 cells, 5 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,2,null,null,null,3,null,0,1,null,null,null,3,null,null],"solution":[0,0,0,1,0,0,1,0,0,0,1,0,0,1,1,0,0,1,1,1,0,0,0,1,1,0,0,1,0,1,0,0,0,1,1,0,1,0,0,1]},
+{"id":"slither-52","kind":"slither","title":"Puzzle 53","difficulty":"Medium","guide":"4 × 4 cells, 5 clues. Some lines follow only from keeping one loop.","side":4,"clues":[0,null,null,null,null,null,0,null,3,null,2,1,null,null,null,null],"solution":[0,0,0,0,0,0,0,0,1,1,0,0,1,0,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1]},
+{"id":"slither-53","kind":"slither","title":"Puzzle 54","difficulty":"Medium","guide":"4 × 4 cells, 5 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,2,null,null,null,1,null,3,1,null,null,null,0,null,null],"solution":[1,1,1,1,0,1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,1,1,0,0,0,1,1,0,0,0,0,0,0,0,0]},
+{"id":"slither-54","kind":"slither","title":"Puzzle 55","difficulty":"Medium","guide":"4 × 4 cells, 6 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,0,null,null,3,null,1,null,null,null,null,1,3,null,1],"solution":[0,0,0,0,0,1,0,0,0,0,1,1,0,0,1,1,0,1,0,0,0,0,0,0,0,0,1,1,0,0,0,1,0,0,1,0,1,1,0,0]},
+{"id":"slither-55","kind":"slither","title":"Puzzle 56","difficulty":"Medium","guide":"4 × 4 cells, 6 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,null,null,null,1,2,1,null,0,3,null,null,null,null,2],"solution":[0,0,1,1,0,0,0,0,0,0,1,0,0,0,1,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,0,0,0,1,1,0,0,1,0,1]},
+{"id":"slither-56","kind":"slither","title":"Puzzle 57","difficulty":"Medium","guide":"4 × 4 cells, 6 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,0,1,3,null,null,2,null,null,null,3,2,null,null,null,null],"solution":[0,0,0,1,0,0,0,0,0,0,1,0,0,0,1,1,0,0,0,0,0,0,0,1,1,0,0,0,1,1,0,0,1,0,1,0,0,0,0,0]},
+{"id":"slither-57","kind":"slither","title":"Puzzle 58","difficulty":"Medium","guide":"4 × 4 cells, 6 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,1,1,0,null,null,null,null,null,null,null,null,2,3,1],"solution":[0,0,0,0,0,0,1,1,0,1,0,1,0,1,0,0,0,0,1,0,0,0,0,0,0,0,0,1,0,1,0,1,0,1,0,0,0,1,1,0]},
+{"id":"slither-58","kind":"slither","title":"Puzzle 59","difficulty":"Medium","guide":"4 × 4 cells, 6 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,1,null,0,1,null,null,1,null,null,null,0,null,0,null,null],"solution":[0,0,0,0,0,1,1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0]},
+{"id":"slither-59","kind":"slither","title":"Puzzle 60","difficulty":"Medium","guide":"4 × 4 cells, 6 clues. Some lines follow only from keeping one loop.","side":4,"clues":[0,null,null,null,2,3,null,0,null,null,1,null,null,3,null,null],"solution":[0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0,1,0,0,0,0,0,0,0,0,1,1,0,0,1,0,1,0,0,0,1,1,0,0]},
+{"id":"slither-60","kind":"slither","title":"Puzzle 61","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,1,null,2,null,null,1,1,null,null,null,null,0,1,3],"solution":[1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,1,1,0,0,0,1,1,0,0,0,1,0,0,0,1,1,0,0,0,1,1]},
+{"id":"slither-61","kind":"slither","title":"Puzzle 62","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,3,1,null,null,null,1,null,1,null,null,null,1,null,1,0],"solution":[0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,0]},
+{"id":"slither-62","kind":"slither","title":"Puzzle 63","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[1,1,1,null,3,null,null,1,null,3,null,null,null,1,null,null],"solution":[0,0,0,0,1,1,1,0,1,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,1,0,0,0,0,0,0,0]},
+{"id":"slither-63","kind":"slither","title":"Puzzle 64","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[3,null,3,null,null,null,null,null,null,null,1,0,0,1,null,0],"solution":[1,1,1,0,1,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,1,0,0,1,1,0,0,0,1,1,0,0,0,0,0,0,0]},
+{"id":"slither-64","kind":"slither","title":"Puzzle 65","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[2,null,1,null,null,3,2,null,3,null,1,null,null,0,null,null],"solution":[1,1,1,1,0,1,0,0,0,0,1,1,1,0,0,0,0,0,0,0,1,0,0,0,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0]},
+{"id":"slither-65","kind":"slither","title":"Puzzle 66","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,2,1,null,1,null,null,0,2,2,0,null,null,null,null,null],"solution":[1,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,1,0,1,0,0,1,0,1,0,0,1,1,0,0,0,1,1,0,0,0]},
+{"id":"slither-66","kind":"slither","title":"Puzzle 67","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[3,3,3,null,2,null,null,1,null,null,null,null,null,1,0,null],"solution":[1,0,1,0,0,1,0,0,1,0,1,0,0,1,0,0,0,0,0,0,1,1,1,1,0,1,0,0,1,0,0,1,1,0,0,0,0,0,0,0]},
+{"id":"slither-67","kind":"slither","title":"Puzzle 68","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[2,3,null,null,null,null,null,0,null,1,null,1,null,1,null,3],"solution":[0,1,0,0,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,1,1,0,0,1,0,1,0,0,1,0,1,0,0,1,0,0,0,1]},
+{"id":"slither-68","kind":"slither","title":"Puzzle 69","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[1,null,1,null,1,null,null,2,1,null,null,1,null,null,0,null],"solution":[0,1,1,1,0,0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,0,1,0,0,1,0,1,0,0,1,0,1,1,0,0,0,0,0,0,0]},
+{"id":"slither-69","kind":"slither","title":"Puzzle 70","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,1,null,1,1,null,1,null,null,null,null,1,null,0,1],"solution":[1,1,1,1,0,0,0,0,0,1,1,0,1,0,0,1,0,0,0,0,1,0,0,0,1,1,0,0,0,1,1,1,0,1,1,0,0,0,0,0]},
+{"id":"slither-70","kind":"slither","title":"Puzzle 71","difficulty":"Medium","guide":"4 × 4 cells, 7 clues. Some lines follow only from keeping one loop.","side":4,"clues":[0,null,1,null,1,1,null,null,2,null,null,null,2,null,null,3],"solution":[0,0,0,1,0,0,0,0,1,1,1,0,0,0,1,0,1,1,0,1,0,0,0,1,1,0,0,0,1,1,1,0,0,0,1,1,0,1,1,1]},
+{"id":"slither-71","kind":"slither","title":"Puzzle 72","difficulty":"Medium","guide":"4 × 4 cells, 8 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,1,null,null,null,3,null,3,2,null,null,1,2,2,2],"solution":[0,0,0,0,0,0,1,0,1,1,0,1,1,1,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1,0,1,0,0,0,1,0,0,1,0,1]},
+{"id":"slither-72","kind":"slither","title":"Puzzle 73","difficulty":"Medium","guide":"4 × 4 cells, 8 clues. Some lines follow only from keeping one loop.","side":4,"clues":[null,null,2,null,null,1,1,1,0,null,null,null,null,1,2,2],"solution":[0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,0,0,1,0,1,0,0,1,0,1]},
+{"id":"slither-73","kind":"slither","title":"Puzzle 74","difficulty":"Medium","guide":"4 × 4 cells, 8 clues. Some lines follow only from keeping one loop.","side":4,"clues":[0,null,null,0,null,null,1,1,null,null,null,2,3,null,2,2],"solution":[0,0,0,0,0,0,0,0,1,1,1,1,0,1,0,0,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,1,1,0,1]},
+{"id":"slither-74","kind":"slither","title":"Puzzle 75","difficulty":"Medium","guide":"4 × 4 cells, 8 clues. Some lines follow only from keeping one loop.","side":4,"clues":[0,null,null,1,null,null,null,1,null,2,1,null,1,null,2,1],"solution":[0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,0]},
+{"id":"slither-75","kind":"slither","title":"Puzzle 76","difficulty":"Medium","guide":"4 × 4 cells, 9 clues. Some lines follow only from keeping one loop.","side":4,"clues":[2,2,2,1,2,null,null,3,1,2,null,null,null,null,null,1],"solution":[1,1,0,0,0,0,1,1,1,1,0,1,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0,0,0,1,0,0,1,1,0,0,0,1,1,0]},
+{"id":"slither-76","kind":"slither","title":"Puzzle 77","difficulty":"Medium","guide":"4 × 4 cells, 9 clues. Some lines follow only from keeping one loop.","side":4,"clues":[3,1,null,null,null,2,1,null,2,1,null,null,null,2,2,2],"solution":[1,0,0,0,0,0,0,0,0,1,1,1,1,0,0,1,0,1,1,0,1,1,0,0,0,1,1,0,0,0,1,0,0,0,1,0,1,0,1,0]},
+{"id":"slither-77","kind":"slither","title":"Puzzle 78","difficulty":"Hard","guide":"4 × 4 cells, 5 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,null,null,0,null,null,null,2,null,2,1,null,null,null,1],"solution":[0,0,0,0,0,0,0,0,0,1,1,0,1,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0]},
+{"id":"slither-78","kind":"slither","title":"Puzzle 79","difficulty":"Hard","guide":"4 × 4 cells, 5 clues. Some lines need you to try one and follow it through.","side":4,"clues":[2,null,1,null,1,null,2,null,3,null,null,null,null,null,null,null],"solution":[1,1,1,1,0,0,0,1,0,1,1,0,1,0,0,0,0,0,0,0,1,0,0,0,1,1,0,0,1,0,1,1,0,0,0,0,0,0,0,0]},
+{"id":"slither-79","kind":"slither","title":"Puzzle 80","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,null,null,0,null,1,null,null,null,2,1,null,2,2,null],"solution":[0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,1,0]},
+{"id":"slither-80","kind":"slither","title":"Puzzle 81","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,null,2,1,3,null,1,null,1,3,null,null,null,null,null],"solution":[0,0,1,1,0,1,0,0,0,1,1,0,0,0,1,0,0,0,1,1,0,0,1,0,1,0,1,0,0,1,0,0,0,1,1,0,0,1,0,1]},
+{"id":"slither-81","kind":"slither","title":"Puzzle 82","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,1,null,1,null,null,null,null,1,0,0,1,null,null,null,null],"solution":[0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,1,0,0,0,1,1,0,0,0,1,1,0,0,0,1]},
+{"id":"slither-82","kind":"slither","title":"Puzzle 83","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,null,1,null,null,null,0,null,1,null,2,null,0,null,null,null],"solution":[0,1,1,1,0,0,0,0,0,0,0,1,0,1,1,0,0,0,0,0,0,1,0,0,1,0,1,0,0,1,0,1,0,1,0,0,0,0,0,0]},
+{"id":"slither-83","kind":"slither","title":"Puzzle 84","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,null,2,null,2,null,3,null,null,null,null,0,3,null,null,null],"solution":[0,1,0,0,0,0,1,0,1,0,1,0,0,1,0,0,1,0,0,0,0,1,1,0,0,0,1,0,1,0,1,0,1,0,0,1,1,0,0,0]},
+{"id":"slither-84","kind":"slither","title":"Puzzle 85","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,1,null,2,null,0,null,1,0,null,3,null,null,null,null],"solution":[0,1,1,1,1,0,0,0,0,0,0,1,0,0,0,1,1,1,1,1,0,1,0,0,1,1,0,0,0,1,1,0,0,1,0,1,0,0,0,1]},
+{"id":"slither-85","kind":"slither","title":"Puzzle 86","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,1,null,null,null,null,1,2,0,null,null,null,1,null,3],"solution":[0,0,0,0,0,1,1,0,1,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0,1,0,0,0,1]},
+{"id":"slither-86","kind":"slither","title":"Puzzle 87","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,2,0,2,null,null,null,null,null,1,0,1,null,null,null],"solution":[0,1,0,0,1,0,1,0,0,1,1,0,1,0,0,0,0,0,0,0,0,1,1,0,0,1,0,0,1,0,1,1,0,0,0,0,0,0,0,0]},
+{"id":"slither-87","kind":"slither","title":"Puzzle 88","difficulty":"Hard","guide":"4 × 4 cells, 6 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,1,2,null,null,3,null,1,null,null,null,2,null,null,null,3],"solution":[0,0,0,1,0,1,1,0,0,1,1,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,1,0,0,1,0,0,0,1,1,0,0,0,1,1]},
+{"id":"slither-88","kind":"slither","title":"Puzzle 89","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,2,2,2,0,null,null,null,2,null,null,0,null,null,0],"solution":[1,1,1,0,0,0,0,1,1,0,0,1,0,1,1,0,0,0,0,0,1,0,0,1,0,1,0,0,0,1,0,1,0,1,0,0,0,0,0,0]},
+{"id":"slither-89","kind":"slither","title":"Puzzle 90","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,1,1,null,null,1,null,1,null,null,null,1,1,0,null,null],"solution":[1,1,1,1,0,0,0,0,0,1,0,0,1,0,1,0,0,0,0,1,1,0,0,0,1,1,0,0,0,1,1,1,1,0,1,0,0,0,1,1]},
+{"id":"slither-90","kind":"slither","title":"Puzzle 91","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,2,1,null,null,null,null,null,2,null,0,1,2,null,null,null],"solution":[0,1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,1,1,1,1,0,1,0,0,1,0,1,0,0,1,1,0,0,0,1,1,0,0,0,1]},
+{"id":"slither-91","kind":"slither","title":"Puzzle 92","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[2,2,null,null,null,null,0,1,2,null,null,null,2,null,1,null],"solution":[0,1,1,1,1,0,0,0,0,0,0,0,1,0,0,0,0,1,1,1,0,1,0,0,1,1,0,0,0,1,1,0,0,0,1,0,1,0,0,1]},
+{"id":"slither-92","kind":"slither","title":"Puzzle 93","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,null,2,1,0,null,2,2,null,null,1,null,null,0,null],"solution":[1,1,1,1,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,1,0,0,0,1,1,0,0,0,1,1,0,1,0,0,0,0,0,0,0]},
+{"id":"slither-93","kind":"slither","title":"Puzzle 94","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,1,null,null,2,0,0,1,null,null,null,null,null,3,null,3],"solution":[1,1,1,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,1,1,0,0,0,1,1,0,0,0,1,0,1,0,0,1,0,1,1,1,1]},
+{"id":"slither-94","kind":"slither","title":"Puzzle 95","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,3,null,null,null,2,2,null,null,null,1,2,2,1,null,null],"solution":[0,1,0,0,0,0,0,0,1,0,1,1,0,0,0,0,1,1,1,1,0,1,1,0,0,0,1,1,0,0,1,0,0,0,1,1,0,0,0,1]},
+{"id":"slither-95","kind":"slither","title":"Puzzle 96","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,null,null,1,0,2,1,1,null,null,null,null,null,2,1],"solution":[1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,1,1,0,1,0,1,0,0,1,0,0,1,0,1,0,0,1,0,1,0,0,1,0]},
+{"id":"slither-96","kind":"slither","title":"Puzzle 97","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,3,null,2,null,null,null,1,1,null,null,2,null,null,3,null],"solution":[0,1,1,1,0,1,0,0,0,1,0,0,0,1,0,1,0,0,1,0,0,1,0,0,1,0,0,1,0,1,0,1,0,0,1,0,0,1,1,0]},
+{"id":"slither-97","kind":"slither","title":"Puzzle 98","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,2,3,null,null,null,null,null,null,1,null,2,null,1,null,0],"solution":[0,0,1,0,1,1,0,1,0,0,0,1,1,1,1,0,0,0,0,0,0,0,1,1,0,1,0,0,0,1,1,0,0,1,0,0,0,0,0,0]},
+{"id":"slither-98","kind":"slither","title":"Puzzle 99","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,null,1,null,2,null,1,null,1,1,null,0,null,2,null,null],"solution":[0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1,1,0,0,1,0,1,0,0,1,0,1,0,0,1,0,1,0,0]},
+{"id":"slither-99","kind":"slither","title":"Puzzle 100","difficulty":"Hard","guide":"4 × 4 cells, 7 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,1,null,0,3,null,null,1,null,null,null,null,3,null,1,2],"solution":[0,0,0,0,1,1,0,0,1,0,1,1,1,0,0,0,1,1,1,1,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1,1,0,0,0,1]},
+{"id":"slither-100","kind":"slither","title":"Puzzle 101","difficulty":"Hard","guide":"4 × 4 cells, 8 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,null,2,2,null,null,null,1,null,1,null,null,2,1,1,null],"solution":[0,0,1,1,1,0,0,0,0,1,0,0,0,0,0,0,1,1,1,1,0,0,1,0,1,1,1,1,0,1,1,0,0,0,1,1,0,0,0,1]},
+{"id":"slither-101","kind":"slither","title":"Puzzle 102","difficulty":"Hard","guide":"4 × 4 cells, 8 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,2,1,null,1,null,null,null,null,1,null,1,null,2,3,3],"solution":[0,1,1,1,0,0,0,0,0,0,0,0,1,0,1,0,1,1,0,1,0,1,0,0,1,0,1,0,0,1,0,1,0,0,1,1,0,1,1,1]},
+{"id":"slither-102","kind":"slither","title":"Puzzle 103","difficulty":"Hard","guide":"4 × 4 cells, 8 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,1,null,1,null,0,null,2,null,1,null,2,null,2,1,null],"solution":[1,1,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,1,1,1,0,0,1,0,1,0,0,1,0,0,1,0,0,1,0,1,0,0,1]},
+{"id":"slither-103","kind":"slither","title":"Puzzle 104","difficulty":"Hard","guide":"4 × 4 cells, 8 clues. Some lines need you to try one and follow it through.","side":4,"clues":[null,2,null,null,null,0,0,1,null,1,null,null,null,2,1,2],"solution":[0,1,1,1,1,0,0,0,1,0,0,0,0,0,0,0,0,1,1,1,0,1,0,0,1,1,0,0,0,1,0,1,0,0,1,0,1,0,0,1]},
+{"id":"slither-104","kind":"slither","title":"Puzzle 105","difficulty":"Hard","guide":"4 × 4 cells, 9 clues. Some lines need you to try one and follow it through.","side":4,"clues":[1,2,2,3,null,null,1,null,null,null,null,2,2,1,null,2],"solution":[0,0,1,1,1,1,0,1,0,0,0,1,0,0,0,0,1,1,1,1,0,0,1,0,1,1,0,0,1,0,1,0,0,0,1,1,0,0,0,1]},
+{"id":"hashi-05","kind":"hashi","title":"Puzzle 6","difficulty":"Starter","guide":"4 islands. Each bridge follows from one island's number.","width":3,"height":4,"islands":[[0,0,1],[2,1,1],[0,3,3],[2,3,3]],"routes":[[0,2],[1,3],[2,3]],"solution":[1,1,2]},
+{"id":"hashi-06","kind":"hashi","title":"Puzzle 7","difficulty":"Starter","guide":"5 islands. Each bridge follows from one island's number.","width":5,"height":4,"islands":[[4,0,2],[0,1,2],[2,1,3],[2,3,3],[4,3,4]],"routes":[[0,4],[1,2],[2,3],[3,4]],"solution":[2,2,1,2]},
+{"id":"hashi-07","kind":"hashi","title":"Puzzle 8","difficulty":"Starter","guide":"5 islands. Each bridge follows from one island's number.","width":4,"height":4,"islands":[[0,0,3],[3,0,2],[0,2,3],[2,2,1],[3,3,1]],"routes":[[0,1],[0,2],[1,4],[2,3]],"solution":[1,2,1,1]},
+{"id":"hashi-08","kind":"hashi","title":"Puzzle 9","difficulty":"Starter","guide":"5 islands. Each bridge follows from one island's number.","width":4,"height":5,"islands":[[0,0,3],[3,0,3],[1,3,2],[3,3,3],[0,4,1]],"routes":[[0,1],[0,4],[1,3],[2,3]],"solution":[2,1,1,2]},
+{"id":"hashi-09","kind":"hashi","title":"Puzzle 10","difficulty":"Starter","guide":"5 islands. Each bridge follows from one island's number.","width":5,"height":5,"islands":[[0,0,2],[2,0,2],[4,0,1],[0,4,2],[4,4,1]],"routes":[[0,1],[0,3],[1,2],[2,4],[3,4]],"solution":[1,1,1,0,1]},
+{"id":"hashi-10","kind":"hashi","title":"Puzzle 11","difficulty":"Starter","guide":"6 islands. Each bridge follows from one island's number.","width":5,"height":5,"islands":[[4,0,2],[0,1,4],[2,1,3],[2,3,1],[0,4,3],[4,4,3]],"routes":[[0,5],[1,2],[1,4],[2,3],[4,5]],"solution":[2,2,2,1,1]},
+{"id":"hashi-11","kind":"hashi","title":"Puzzle 12","difficulty":"Starter","guide":"6 islands. Each bridge follows from one island's number.","width":5,"height":5,"islands":[[0,0,3],[2,0,3],[2,2,4],[4,2,1],[0,3,1],[2,4,2]],"routes":[[0,1],[0,4],[1,2],[2,3],[2,5]],"solution":[2,1,1,1,2]},
+{"id":"hashi-12","kind":"hashi","title":"Puzzle 13","difficulty":"Starter","guide":"6 islands. Each bridge follows from one island's number.","width":4,"height":5,"islands":[[0,0,3],[3,0,3],[1,2,1],[3,2,2],[0,4,2],[2,4,1]],"routes":[[0,1],[0,4],[1,3],[2,3],[4,5]],"solution":[2,1,1,1,1]},
+{"id":"hashi-13","kind":"hashi","title":"Puzzle 14","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":4,"height":6,"islands":[[1,0,1],[3,0,2],[0,1,2],[2,1,2],[2,4,1],[0,5,2],[3,5,2]],"routes":[[0,1],[1,6],[2,3],[2,5],[3,4],[5,6]],"solution":[1,1,1,1,1,1]},
+{"id":"hashi-14","kind":"hashi","title":"Puzzle 15","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":6,"height":6,"islands":[[0,0,3],[5,0,2],[1,1,2],[4,1,3],[0,3,3],[4,3,2],[5,5,1]],"routes":[[0,1],[0,4],[1,6],[2,3],[3,5],[4,5]],"solution":[1,2,1,2,1,1]},
+{"id":"hashi-15","kind":"hashi","title":"Puzzle 16","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[0,0,1],[4,0,2],[1,2,3],[4,2,4],[6,2,1],[1,5,3],[5,5,2]],"routes":[[0,1],[1,3],[2,3],[2,5],[3,4],[5,6]],"solution":[1,1,2,1,1,2]},
+{"id":"hashi-16","kind":"hashi","title":"Puzzle 17","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":7,"height":7,"islands":[[0,0,2],[4,0,1],[6,2,2],[0,4,5],[6,4,4],[0,6,3],[5,6,1]],"routes":[[0,1],[0,3],[2,4],[3,4],[3,5],[5,6]],"solution":[1,1,2,2,2,1]},
+{"id":"hashi-17","kind":"hashi","title":"Puzzle 18","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":4,"height":6,"islands":[[0,0,3],[2,0,1],[1,2,2],[3,2,2],[1,4,1],[0,5,3],[3,5,2]],"routes":[[0,1],[0,5],[2,3],[2,4],[3,6],[5,6]],"solution":[1,2,1,1,1,1]},
+{"id":"hashi-18","kind":"hashi","title":"Puzzle 19","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":5,"height":7,"islands":[[0,0,1],[2,0,4],[4,0,2],[4,2,1],[2,4,4],[2,6,4],[4,6,2]],"routes":[[0,1],[1,2],[1,4],[2,3],[3,6],[4,5],[5,6]],"solution":[1,1,2,1,0,2,2]},
+{"id":"hashi-19","kind":"hashi","title":"Puzzle 20","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":6,"height":5,"islands":[[0,0,3],[2,0,3],[5,1,1],[2,2,2],[0,4,3],[2,4,4],[5,4,2]],"routes":[[0,1],[0,4],[1,3],[2,6],[3,5],[4,5],[5,6]],"solution":[2,1,1,1,1,2,1]},
+{"id":"hashi-20","kind":"hashi","title":"Puzzle 21","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":5,"height":7,"islands":[[0,0,3],[2,0,4],[4,0,4],[2,3,2],[4,5,2],[0,6,3],[2,6,2]],"routes":[[0,1],[0,5],[1,2],[1,3],[2,4],[3,6],[5,6]],"solution":[1,2,2,1,2,1,1]},
+{"id":"hashi-21","kind":"hashi","title":"Puzzle 22","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":6,"height":6,"islands":[[0,0,4],[3,0,4],[5,0,1],[1,4,2],[3,4,4],[0,5,3],[5,5,2]],"routes":[[0,1],[0,5],[1,2],[1,4],[2,6],[3,4],[5,6]],"solution":[2,2,0,2,1,2,1]},
+{"id":"hashi-22","kind":"hashi","title":"Puzzle 23","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[0,0,2],[2,0,3],[6,0,1],[2,4,4],[5,4,2],[0,5,2],[6,5,2]],"routes":[[0,1],[0,5],[1,2],[1,3],[2,6],[3,4],[5,6]],"solution":[1,1,0,2,1,2,1]},
+{"id":"hashi-23","kind":"hashi","title":"Puzzle 24","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":5,"height":5,"islands":[[0,0,4],[2,0,2],[4,0,2],[0,2,4],[3,2,1],[0,4,2],[4,4,3]],"routes":[[0,1],[0,3],[1,2],[2,6],[3,4],[3,5],[5,6]],"solution":[2,2,0,2,1,1,1]},
+{"id":"hashi-24","kind":"hashi","title":"Puzzle 25","difficulty":"Easy","guide":"7 islands. Each bridge follows from one island's number.","width":7,"height":5,"islands":[[0,0,2],[3,0,2],[6,0,2],[0,2,3],[6,2,1],[0,4,3],[3,4,3]],"routes":[[0,1],[0,3],[1,2],[1,6],[2,4],[3,4],[3,5],[5,6]],"solution":[0,2,1,1,1,0,1,2]},
+{"id":"hashi-25","kind":"hashi","title":"Puzzle 26","difficulty":"Easy","guide":"8 islands. Each bridge follows from one island's number.","width":6,"height":6,"islands":[[0,0,2],[2,0,3],[3,1,2],[3,3,5],[5,3,2],[2,4,2],[0,5,3],[3,5,3]],"routes":[[0,1],[0,6],[1,5],[2,3],[3,4],[3,7],[6,7]],"solution":[1,1,2,2,2,1,2]},
+{"id":"hashi-26","kind":"hashi","title":"Puzzle 27","difficulty":"Easy","guide":"8 islands. Each bridge follows from one island's number.","width":6,"height":7,"islands":[[0,0,3],[5,0,3],[0,2,3],[3,2,3],[0,5,2],[2,5,1],[5,5,1],[3,6,2]],"routes":[[0,1],[0,2],[1,6],[2,3],[2,4],[3,7],[4,5],[5,6]],"solution":[2,1,1,1,1,2,1,0]},
+{"id":"hashi-27","kind":"hashi","title":"Puzzle 28","difficulty":"Easy","guide":"9 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[1,0,1],[3,0,2],[6,0,3],[0,1,2],[5,1,3],[2,3,2],[5,3,4],[0,5,3],[6,5,4]],"routes":[[0,1],[1,2],[2,8],[3,4],[3,7],[4,6],[5,6],[7,8]],"solution":[1,1,2,1,1,2,2,2]},
+{"id":"hashi-28","kind":"hashi","title":"Puzzle 29","difficulty":"Easy","guide":"9 islands. Each bridge follows from one island's number.","width":6,"height":7,"islands":[[0,0,2],[1,1,1],[5,1,2],[0,2,4],[2,2,1],[3,4,1],[5,4,4],[0,6,3],[5,6,4]],"routes":[[0,3],[1,2],[2,6],[3,4],[3,7],[5,6],[6,8],[7,8]],"solution":[2,1,1,1,1,1,2,2]},
+{"id":"hashi-29","kind":"hashi","title":"Puzzle 30","difficulty":"Easy","guide":"9 islands. Each bridge follows from one island's number.","width":7,"height":7,"islands":[[1,0,1],[6,0,3],[0,1,3],[4,1,2],[0,4,3],[6,4,4],[0,6,3],[2,6,3],[6,6,2]],"routes":[[0,1],[1,5],[2,3],[2,4],[4,5],[4,6],[5,8],[6,7],[7,8]],"solution":[1,2,2,1,1,1,1,2,1]},
+{"id":"hashi-30","kind":"hashi","title":"Puzzle 31","difficulty":"Easy","guide":"9 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[2,0,4],[6,0,4],[3,2,2],[6,2,5],[2,3,4],[5,3,1],[0,5,1],[2,5,4],[6,5,3]],"routes":[[0,1],[0,4],[1,3],[2,3],[3,8],[4,5],[4,7],[6,7],[7,8]],"solution":[2,2,2,2,1,1,1,1,2]},
+{"id":"hashi-31","kind":"hashi","title":"Puzzle 32","difficulty":"Easy","guide":"9 islands. Each bridge follows from one island's number.","width":6,"height":6,"islands":[[1,0,1],[5,0,2],[0,2,2],[5,2,4],[0,4,3],[2,4,3],[4,4,1],[1,5,1],[5,5,3]],"routes":[[0,1],[0,7],[1,3],[2,3],[2,4],[3,8],[4,5],[5,6],[7,8]],"solution":[1,0,1,1,1,2,2,1,1]},
+{"id":"hashi-32","kind":"hashi","title":"Puzzle 33","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":7,"height":7,"islands":[[2,0,1],[5,0,2],[0,1,1],[1,2,1],[3,2,4],[5,2,2],[0,4,4],[3,4,4],[6,4,1],[0,6,2]],"routes":[[0,1],[1,5],[2,6],[3,4],[4,5],[4,7],[6,7],[6,9],[7,8]],"solution":[1,1,1,1,1,2,1,2,1]},
+{"id":"hashi-33","kind":"hashi","title":"Puzzle 34","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":7,"height":5,"islands":[[0,0,1],[4,0,3],[6,0,3],[1,1,3],[3,1,3],[4,2,1],[3,3,3],[6,3,4],[1,4,2],[4,4,1]],"routes":[[0,1],[1,2],[1,5],[2,7],[3,4],[3,8],[4,6],[5,9],[6,7],[8,9]],"solution":[1,1,1,2,2,1,1,0,2,1]},
+{"id":"hashi-34","kind":"hashi","title":"Puzzle 35","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":6,"height":7,"islands":[[0,0,2],[5,0,3],[3,1,1],[5,2,4],[0,3,3],[2,3,3],[2,5,1],[0,6,1],[3,6,3],[5,6,3]],"routes":[[0,1],[0,4],[1,3],[2,8],[3,9],[4,5],[4,7],[5,6],[7,8],[8,9]],"solution":[1,1,2,1,2,2,0,1,1,1]},
+{"id":"hashi-35","kind":"hashi","title":"Puzzle 36","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":7,"height":7,"islands":[[1,0,4],[3,0,3],[6,0,2],[1,2,4],[4,2,2],[6,3,1],[1,5,1],[0,6,2],[4,6,5],[6,6,2]],"routes":[[0,1],[0,3],[1,2],[2,5],[3,4],[3,6],[4,8],[5,9],[7,8],[8,9]],"solution":[2,2,1,1,1,1,1,0,2,2]},
+{"id":"hashi-36","kind":"hashi","title":"Puzzle 37","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[0,0,4],[4,0,5],[6,0,2],[0,2,4],[3,2,3],[1,4,1],[3,4,2],[6,4,1],[0,5,1],[4,5,3]],"routes":[[0,1],[0,3],[1,2],[1,9],[2,7],[3,4],[3,8],[4,6],[5,6],[6,7],[8,9]],"solution":[2,2,1,2,1,2,0,1,1,0,1]},
+{"id":"hashi-37","kind":"hashi","title":"Puzzle 38","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":7,"height":7,"islands":[[0,0,3],[6,0,4],[2,1,1],[5,1,2],[6,3,2],[0,4,2],[2,4,6],[5,4,6],[2,6,2],[5,6,2]],"routes":[[0,1],[0,5],[1,4],[2,3],[2,6],[3,7],[5,6],[6,7],[6,8],[7,9],[8,9]],"solution":[2,1,2,0,1,2,1,2,2,2,0]},
+{"id":"hashi-38","kind":"hashi","title":"Puzzle 39","difficulty":"Easy","guide":"10 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[0,0,3],[4,0,3],[6,0,2],[0,2,5],[3,2,1],[2,3,2],[4,3,1],[0,5,3],[2,5,5],[6,5,3]],"routes":[[0,1],[0,3],[1,2],[1,6],[2,9],[3,4],[3,7],[5,6],[5,8],[7,8],[8,9]],"solution":[1,2,1,1,1,1,2,0,2,1,2]},
+{"id":"hashi-39","kind":"hashi","title":"Puzzle 40","difficulty":"Easy","guide":"11 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[1,0,3],[5,0,3],[6,1,2],[1,2,5],[4,2,3],[6,3,4],[1,4,2],[5,4,2],[0,5,2],[4,5,5],[6,5,3]],"routes":[[0,1],[0,3],[1,7],[2,5],[3,4],[3,6],[4,9],[5,10],[6,7],[8,9],[9,10]],"solution":[1,2,2,2,1,2,2,2,0,2,1]},
+{"id":"hashi-40","kind":"hashi","title":"Puzzle 41","difficulty":"Easy","guide":"11 islands. Each bridge follows from one island's number.","width":7,"height":7,"islands":[[6,0,1],[0,1,2],[2,1,2],[4,1,1],[6,2,2],[0,4,2],[2,5,3],[4,5,4],[6,5,2],[0,6,3],[5,6,2]],"routes":[[0,4],[1,2],[1,5],[2,3],[2,6],[3,7],[4,8],[5,9],[6,7],[7,8],[9,10]],"solution":[1,1,1,0,1,1,1,1,2,1,2]},
+{"id":"hashi-41","kind":"hashi","title":"Puzzle 42","difficulty":"Easy","guide":"11 islands. Each bridge follows from one island's number.","width":6,"height":6,"islands":[[0,0,2],[4,0,3],[5,1,2],[0,2,2],[2,2,1],[4,2,4],[1,4,1],[4,4,2],[0,5,2],[2,5,2],[5,5,3]],"routes":[[0,1],[0,3],[1,5],[2,10],[3,4],[3,8],[4,5],[4,9],[5,7],[6,7],[8,9],[9,10]],"solution":[1,1,2,2,0,1,1,0,1,1,1,1]},
+{"id":"hashi-42","kind":"hashi","title":"Puzzle 43","difficulty":"Easy","guide":"11 islands. Each bridge follows from one island's number.","width":7,"height":6,"islands":[[1,0,2],[3,0,4],[5,0,2],[0,1,1],[6,1,2],[3,2,1],[1,3,2],[6,3,4],[0,5,2],[3,5,2],[6,5,2]],"routes":[[0,1],[0,6],[1,2],[1,5],[3,4],[3,8],[4,7],[5,9],[6,7],[7,10],[8,9],[9,10]],"solution":[1,1,2,1,0,1,2,0,1,1,1,1]},
+{"id":"hashi-43","kind":"hashi","title":"Puzzle 44","difficulty":"Medium","guide":"9 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[2,0,1],[3,1,1],[6,1,2],[0,2,2],[2,2,2],[0,4,3],[6,4,3],[0,6,1],[6,6,1]],"routes":[[0,4],[1,2],[2,6],[3,4],[3,5],[5,6],[5,7],[6,8],[7,8]],"solution":[1,1,1,1,1,1,1,1,0]},
+{"id":"hashi-44","kind":"hashi","title":"Puzzle 45","difficulty":"Medium","guide":"9 islands. Some bridges follow only from keeping every island connected.","width":6,"height":6,"islands":[[0,0,2],[5,0,2],[3,1,2],[0,2,2],[1,3,1],[3,3,4],[0,5,2],[3,5,3],[5,5,2]],"routes":[[0,1],[0,3],[1,8],[2,5],[3,6],[4,5],[5,7],[6,7],[7,8]],"solution":[1,1,1,2,1,1,1,1,1]},
+{"id":"hashi-45","kind":"hashi","title":"Puzzle 46","difficulty":"Medium","guide":"9 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,2],[6,0,2],[4,2,2],[6,2,3],[0,4,4],[3,4,1],[6,4,1],[0,6,3],[4,6,2]],"routes":[[0,1],[0,4],[1,3],[2,3],[2,8],[3,6],[4,5],[4,7],[5,6],[7,8]],"solution":[1,1,1,1,1,1,1,2,0,1]},
+{"id":"hashi-46","kind":"hashi","title":"Puzzle 47","difficulty":"Medium","guide":"9 islands. Some bridges follow only from keeping every island connected.","width":6,"height":7,"islands":[[0,0,1],[2,0,1],[0,2,3],[2,2,5],[5,2,3],[5,4,3],[2,5,2],[0,6,2],[5,6,2]],"routes":[[0,1],[0,2],[1,3],[2,3],[2,7],[3,4],[3,6],[4,5],[5,8],[7,8]],"solution":[0,1,1,1,1,1,2,2,1,1]},
+{"id":"hashi-47","kind":"hashi","title":"Puzzle 48","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":6,"height":7,"islands":[[0,0,2],[5,0,2],[1,2,1],[4,2,2],[2,4,1],[4,4,2],[5,5,1],[0,6,2],[2,6,3],[4,6,2]],"routes":[[0,1],[0,7],[1,6],[2,3],[3,5],[4,5],[4,8],[5,9],[7,8],[8,9]],"solution":[1,1,1,1,1,0,1,1,1,1]},
+{"id":"hashi-48","kind":"hashi","title":"Puzzle 49","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,2],[6,0,2],[3,1,2],[4,3,1],[6,3,3],[0,4,3],[3,4,4],[5,4,1],[0,6,1],[6,6,1]],"routes":[[0,1],[0,5],[1,4],[2,6],[3,4],[4,9],[5,6],[5,8],[6,7],[8,9]],"solution":[1,1,1,2,1,1,1,1,1,0]},
+{"id":"hashi-49","kind":"hashi","title":"Puzzle 50","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":7,"height":6,"islands":[[1,0,1],[6,0,2],[1,2,2],[6,2,4],[0,3,2],[1,4,2],[4,4,1],[0,5,3],[3,5,2],[6,5,3]],"routes":[[0,1],[0,2],[1,3],[2,3],[2,5],[3,9],[4,7],[5,6],[7,8],[8,9]],"solution":[1,0,1,1,1,2,2,1,1,1]},
+{"id":"hashi-50","kind":"hashi","title":"Puzzle 51","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,2],[3,0,2],[6,0,2],[0,2,4],[2,2,3],[6,2,4],[6,4,2],[0,5,2],[2,6,2],[4,6,1]],"routes":[[0,1],[0,3],[1,2],[2,5],[3,4],[3,7],[4,5],[4,8],[5,6],[8,9]],"solution":[1,1,1,1,1,2,1,1,2,1]},
+{"id":"hashi-51","kind":"hashi","title":"Puzzle 52","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[6,0,1],[1,1,1],[4,1,2],[0,4,1],[2,4,2],[4,4,4],[6,4,3],[0,6,1],[2,6,3],[4,6,2]],"routes":[[0,6],[1,2],[2,5],[3,4],[3,7],[4,5],[4,8],[5,6],[5,9],[7,8],[8,9]],"solution":[1,1,1,1,0,0,1,2,1,1,1]},
+{"id":"hashi-52","kind":"hashi","title":"Puzzle 53","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":6,"height":7,"islands":[[0,0,3],[4,0,3],[0,2,4],[3,2,2],[5,2,2],[0,4,4],[3,4,2],[4,5,2],[0,6,3],[5,6,3]],"routes":[[0,1],[0,2],[1,7],[2,3],[2,5],[3,4],[3,6],[4,9],[5,6],[5,8],[8,9]],"solution":[1,2,2,1,1,0,1,2,1,2,1]},
+{"id":"hashi-53","kind":"hashi","title":"Puzzle 54","difficulty":"Medium","guide":"10 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,4],[4,0,3],[6,0,1],[3,1,2],[4,3,1],[0,4,3],[3,4,5],[6,4,3],[3,6,1],[6,6,1]],"routes":[[0,1],[0,5],[1,2],[1,4],[2,7],[3,6],[5,6],[6,7],[6,8],[7,9],[8,9]],"solution":[2,2,0,1,1,2,1,1,1,1,0]},
+{"id":"hashi-54","kind":"hashi","title":"Puzzle 55","difficulty":"Medium","guide":"11 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,3],[3,0,5],[6,0,3],[5,1,1],[0,3,1],[3,3,2],[5,3,2],[2,4,1],[6,4,3],[2,6,1],[6,6,2]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,8],[3,6],[4,5],[5,6],[7,8],[7,9],[8,10],[9,10]],"solution":[2,1,2,1,1,1,0,1,1,0,1,1]},
+{"id":"hashi-55","kind":"hashi","title":"Puzzle 56","difficulty":"Medium","guide":"11 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[6,0,1],[0,1,3],[2,1,3],[5,1,1],[2,3,3],[5,3,2],[5,5,1],[0,6,4],[2,6,5],[4,6,4],[6,6,3]],"routes":[[0,10],[1,2],[1,7],[2,3],[2,4],[3,5],[4,5],[4,8],[5,6],[7,8],[8,9],[9,10]],"solution":[1,1,2,1,1,0,1,1,1,2,2,2]},
+{"id":"hashi-56","kind":"hashi","title":"Puzzle 57","difficulty":"Medium","guide":"11 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,4],[6,0,3],[4,1,1],[0,3,5],[4,3,5],[6,3,3],[1,4,1],[0,5,1],[1,6,2],[4,6,2],[6,6,1]],"routes":[[0,1],[0,3],[1,5],[2,4],[3,4],[3,7],[4,5],[4,9],[5,10],[6,8],[8,9],[9,10]],"solution":[2,2,1,1,2,1,1,1,1,1,1,0]},
+{"id":"hashi-57","kind":"hashi","title":"Puzzle 58","difficulty":"Medium","guide":"11 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,1],[2,0,3],[4,0,4],[6,1,1],[2,3,4],[4,3,6],[6,3,3],[0,4,1],[0,6,2],[2,6,5],[6,6,2]],"routes":[[0,1],[0,7],[1,2],[1,4],[2,5],[3,6],[4,5],[4,9],[5,6],[6,10],[7,8],[8,9],[9,10]],"solution":[1,0,2,0,2,1,2,2,2,0,1,1,2]},
+{"id":"hashi-58","kind":"hashi","title":"Puzzle 59","difficulty":"Medium","guide":"12 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,3],[4,0,2],[8,0,3],[0,2,4],[5,2,4],[7,2,2],[8,3,2],[7,5,1],[1,6,2],[5,6,4],[0,8,2],[7,8,1]],"routes":[[0,1],[0,3],[1,2],[2,6],[3,4],[3,10],[4,5],[4,9],[5,7],[7,11],[8,9],[10,11]],"solution":[1,2,1,2,1,1,1,2,1,0,2,1]},
+{"id":"hashi-59","kind":"hashi","title":"Puzzle 60","difficulty":"Medium","guide":"13 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,1],[4,0,2],[7,0,1],[2,3,1],[4,3,3],[8,3,2],[0,4,2],[5,4,3],[1,6,2],[3,6,4],[5,6,5],[8,6,4],[8,8,2]],"routes":[[0,1],[0,6],[1,2],[1,4],[3,4],[4,5],[5,11],[6,7],[7,10],[8,9],[9,10],[10,11],[11,12]],"solution":[0,1,1,1,1,1,1,1,2,2,2,1,2]},
+{"id":"hashi-60","kind":"hashi","title":"Puzzle 61","difficulty":"Medium","guide":"13 islands. Some bridges follow only from keeping every island connected.","width":8,"height":9,"islands":[[0,0,4],[7,0,2],[1,1,1],[3,1,5],[6,1,3],[0,2,3],[7,3,1],[0,6,3],[3,6,5],[6,6,2],[0,8,1],[3,8,3],[7,8,3]],"routes":[[0,1],[0,5],[1,6],[2,3],[3,4],[3,8],[4,9],[5,7],[6,12],[7,8],[7,10],[8,9],[8,11],[10,11],[11,12]],"solution":[2,2,0,1,2,2,1,1,1,1,1,1,1,0,2]},
+{"id":"hashi-61","kind":"hashi","title":"Puzzle 62","difficulty":"Medium","guide":"13 islands. Some bridges follow only from keeping every island connected.","width":8,"height":8,"islands":[[1,0,2],[3,0,4],[7,0,2],[0,1,1],[6,1,2],[3,2,3],[1,4,2],[3,4,3],[6,4,3],[0,5,3],[7,5,2],[0,7,2],[6,7,1]],"routes":[[0,1],[0,6],[1,2],[1,5],[2,10],[3,4],[3,9],[4,8],[5,7],[6,7],[7,8],[8,12],[9,10],[9,11],[11,12]],"solution":[1,1,1,2,1,0,1,2,1,1,1,0,1,1,1]},
+{"id":"hashi-62","kind":"hashi","title":"Puzzle 63","difficulty":"Medium","guide":"14 islands. Some bridges follow only from keeping every island connected.","width":7,"height":7,"islands":[[0,0,2],[3,0,2],[6,0,1],[2,1,1],[0,2,3],[3,2,2],[6,2,3],[2,4,3],[4,4,1],[3,5,1],[6,5,2],[0,6,3],[2,6,4],[5,6,2]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,6],[3,7],[4,5],[4,11],[5,6],[5,9],[6,10],[7,8],[7,12],[9,10],[11,12],[12,13]],"solution":[1,1,0,1,1,1,0,2,1,0,1,1,1,1,1,2]},
+{"id":"hashi-63","kind":"hashi","title":"Puzzle 64","difficulty":"Medium","guide":"15 islands. Some bridges follow only from keeping every island connected.","width":9,"height":8,"islands":[[1,0,2],[3,0,4],[7,0,3],[8,1,2],[4,2,1],[7,2,2],[6,3,2],[8,3,6],[4,5,1],[6,5,2],[1,6,1],[0,7,1],[3,7,3],[6,7,3],[8,7,3]],"routes":[[0,1],[0,10],[1,2],[1,12],[2,5],[3,7],[4,5],[4,8],[6,7],[6,9],[7,14],[8,9],[9,13],[11,12],[12,13],[13,14]],"solution":[1,1,2,1,1,2,1,0,2,0,2,1,1,1,1,1]},
+{"id":"hashi-64","kind":"hashi","title":"Puzzle 65","difficulty":"Medium","guide":"15 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,2],[6,0,3],[8,1,1],[1,2,2],[3,2,2],[1,4,3],[3,5,4],[5,5,2],[1,7,2],[3,7,2],[6,7,4],[8,7,2],[0,8,2],[5,8,3],[7,8,2]],"routes":[[0,1],[0,12],[1,10],[2,11],[3,4],[3,5],[4,6],[5,8],[6,7],[6,9],[7,13],[8,9],[9,10],[10,11],[12,13],[13,14]],"solution":[1,1,2,1,1,1,1,2,2,1,0,0,1,1,1,2]},
+{"id":"hashi-65","kind":"hashi","title":"Puzzle 66","difficulty":"Medium","guide":"15 islands. Some bridges follow only from keeping every island connected.","width":8,"height":8,"islands":[[0,0,3],[2,0,2],[5,0,3],[7,0,4],[1,1,3],[6,1,3],[2,2,2],[5,2,4],[6,3,1],[1,4,3],[5,4,4],[7,4,4],[0,6,2],[1,7,2],[7,7,2]],"routes":[[0,1],[0,12],[1,2],[1,6],[2,3],[2,7],[3,11],[4,5],[4,9],[5,8],[6,7],[7,10],[9,10],[9,13],[10,11],[11,14],[13,14]],"solution":[1,2,1,0,2,0,2,2,1,1,2,2,1,1,1,1,1]},
+{"id":"hashi-66","kind":"hashi","title":"Puzzle 67","difficulty":"Medium","guide":"15 islands. Some bridges follow only from keeping every island connected.","width":8,"height":9,"islands":[[2,0,1],[4,0,2],[7,0,2],[0,1,2],[0,3,3],[4,3,3],[6,3,2],[2,4,4],[7,4,3],[6,5,2],[2,7,4],[4,7,3],[6,7,3],[0,8,2],[7,8,2]],"routes":[[0,1],[0,7],[1,2],[1,5],[2,8],[3,4],[4,5],[4,13],[5,6],[5,11],[6,9],[7,8],[7,10],[8,14],[9,12],[10,11],[11,12],[13,14]],"solution":[0,1,1,1,1,2,0,1,2,0,0,1,2,1,2,2,1,1]},
+{"id":"hashi-67","kind":"hashi","title":"Puzzle 68","difficulty":"Medium","guide":"16 islands. Some bridges follow only from keeping every island connected.","width":8,"height":9,"islands":[[0,0,2],[5,0,3],[7,0,2],[1,1,1],[4,1,2],[7,2,3],[0,3,4],[4,3,3],[1,4,3],[5,4,3],[2,5,3],[7,5,4],[1,6,1],[2,7,2],[0,8,2],[7,8,2]],"routes":[[0,1],[0,6],[1,2],[1,9],[2,5],[3,4],[3,8],[4,7],[5,11],[6,7],[6,14],[8,9],[8,12],[10,11],[10,13],[11,15],[14,15]],"solution":[1,1,1,1,1,1,0,1,2,2,1,2,1,1,2,1,1]},
+{"id":"hashi-68","kind":"hashi","title":"Puzzle 69","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,2],[7,0,2],[1,1,1],[6,1,2],[8,1,2],[0,3,4],[6,3,2],[8,3,3],[1,4,2],[7,4,2],[2,6,1],[5,6,2],[8,6,3],[0,7,2],[1,8,2],[5,8,2],[8,8,2]],"routes":[[0,1],[0,5],[1,9],[2,3],[2,8],[3,4],[3,6],[4,7],[5,6],[5,13],[6,7],[7,12],[8,9],[8,14],[10,11],[11,12],[11,15],[12,16],[14,15],[15,16]],"solution":[1,1,1,1,0,0,1,2,1,2,0,1,1,1,1,1,0,1,1,1]},
+{"id":"hashi-69","kind":"hashi","title":"Puzzle 70","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[2,0,2],[4,0,3],[6,0,1],[0,1,1],[8,1,2],[6,2,2],[4,3,2],[2,4,3],[5,4,1],[0,6,2],[2,6,3],[6,6,4],[8,6,4],[0,8,2],[3,8,4],[6,8,4],[8,8,2]],"routes":[[0,1],[0,7],[1,2],[1,6],[2,5],[3,4],[3,9],[4,12],[5,11],[7,8],[7,10],[9,10],[9,13],[10,11],[11,12],[11,15],[12,16],[13,14],[14,15],[15,16]],"solution":[1,1,0,2,1,0,1,2,1,1,1,1,0,1,1,1,1,2,2,1]},
+{"id":"hashi-70","kind":"hashi","title":"Puzzle 71","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,2],[4,0,2],[6,0,3],[8,0,4],[3,2,3],[8,2,6],[5,3,1],[7,3,1],[0,5,3],[3,5,4],[5,5,2],[8,5,2],[3,7,3],[6,7,2],[0,8,3],[5,8,3],[7,8,2]],"routes":[[0,1],[0,8],[1,2],[2,3],[2,13],[3,5],[4,5],[4,9],[5,11],[6,7],[6,10],[7,16],[8,9],[8,14],[9,10],[9,12],[10,11],[10,15],[12,13],[14,15],[15,16]],"solution":[1,1,1,2,0,2,2,1,2,0,1,1,1,1,1,1,0,0,2,2,1]},
+{"id":"hashi-71","kind":"hashi","title":"Puzzle 72","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,2],[6,0,3],[8,0,1],[4,1,1],[0,2,1],[1,3,1],[4,3,3],[8,3,1],[0,5,1],[2,5,4],[4,5,5],[6,5,4],[8,5,2],[2,7,1],[6,7,1],[4,8,2],[8,8,1]],"routes":[[0,1],[0,4],[1,2],[1,11],[2,7],[3,6],[4,8],[5,6],[6,7],[6,10],[7,12],[8,9],[9,10],[9,13],[10,11],[10,15],[11,12],[11,14],[12,16],[13,14],[15,16]],"solution":[1,1,1,1,0,1,0,1,0,1,1,1,2,1,1,1,1,1,0,0,1]},
+{"id":"hashi-72","kind":"hashi","title":"Puzzle 73","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[1,0,1],[3,0,3],[8,0,3],[1,2,1],[4,2,2],[8,2,4],[1,4,3],[3,4,1],[5,4,1],[7,4,2],[8,5,4],[1,7,2],[4,7,4],[7,7,3],[0,8,1],[3,8,3],[8,8,4]],"routes":[[0,1],[0,3],[1,2],[1,7],[2,5],[3,4],[3,6],[4,5],[4,12],[5,10],[6,7],[6,11],[7,8],[7,15],[8,9],[9,13],[10,16],[11,12],[12,13],[14,15],[15,16]],"solution":[1,0,2,0,1,0,1,1,1,2,1,1,0,0,1,1,2,1,2,1,2]},
+{"id":"hashi-73","kind":"hashi","title":"Puzzle 74","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,1],[3,0,3],[6,0,5],[8,0,3],[1,2,1],[4,2,1],[8,2,1],[4,5,4],[6,5,5],[8,5,2],[1,6,3],[3,6,3],[6,7,2],[8,7,2],[0,8,2],[4,8,4],[7,8,2]],"routes":[[0,1],[0,14],[1,2],[1,11],[2,3],[2,8],[3,6],[4,5],[4,10],[5,6],[5,7],[6,9],[7,8],[7,15],[8,9],[8,12],[9,13],[10,11],[12,13],[14,15],[15,16]],"solution":[0,1,2,1,2,1,1,0,1,0,1,0,2,1,1,1,1,2,1,1,2]},
+{"id":"hashi-74","kind":"hashi","title":"Puzzle 75","difficulty":"Medium","guide":"17 islands. Some bridges follow only from keeping every island connected.","width":9,"height":9,"islands":[[0,0,1],[6,0,2],[8,0,1],[1,2,3],[3,2,4],[6,2,5],[8,2,3],[4,3,1],[6,4,4],[1,6,4],[4,6,2],[6,6,5],[8,6,4],[1,8,2],[3,8,3],[6,8,1],[8,8,1]],"routes":[[0,1],[1,2],[1,5],[2,6],[3,4],[3,9],[4,5],[4,14],[5,6],[5,8],[6,12],[7,10],[8,11],[9,10],[9,13],[10,11],[11,12],[11,15],[12,16],[13,14],[14,15],[15,16]],"solution":[1,0,1,1,1,2,1,2,1,2,1,1,2,0,2,1,2,0,1,0,1,0]},
+{"id":"hashi-75","kind":"hashi","title":"Puzzle 76","difficulty":"Hard","guide":"14 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[1,0,1],[3,0,3],[6,0,3],[8,0,1],[0,1,2],[2,1,3],[4,2,1],[6,2,3],[8,2,2],[2,5,2],[6,5,1],[0,7,2],[3,7,3],[8,7,3]],"routes":[[0,1],[1,2],[1,12],[2,3],[2,7],[3,8],[4,5],[4,11],[5,9],[6,7],[7,8],[7,10],[8,13],[9,10],[11,12],[12,13]],"solution":[1,1,1,1,1,0,1,1,2,1,0,1,2,0,1,1]},
+{"id":"hashi-76","kind":"hashi","title":"Puzzle 77","difficulty":"Hard","guide":"14 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[0,0,2],[3,0,4],[6,0,2],[8,0,1],[0,2,3],[3,2,3],[8,2,4],[2,5,1],[6,5,3],[8,5,6],[0,6,2],[7,6,1],[5,7,1],[8,7,3]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,3],[2,8],[3,6],[4,5],[4,10],[5,6],[6,9],[7,8],[8,9],[9,13],[10,11],[12,13]],"solution":[1,1,2,1,0,0,1,1,1,1,2,1,2,2,1,1]},
+{"id":"hashi-77","kind":"hashi","title":"Puzzle 78","difficulty":"Hard","guide":"14 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[2,0,3],[8,0,2],[0,1,1],[3,1,2],[5,1,4],[7,1,3],[5,3,1],[8,4,1],[0,6,4],[2,6,4],[7,6,4],[0,8,2],[3,8,1],[7,8,2]],"routes":[[0,1],[0,9],[1,7],[2,3],[2,8],[3,4],[3,12],[4,5],[4,6],[5,10],[8,9],[8,11],[9,10],[10,13],[11,12],[12,13]],"solution":[1,2,1,0,1,2,0,1,1,2,1,2,1,1,0,1]},
+{"id":"hashi-78","kind":"hashi","title":"Puzzle 79","difficulty":"Hard","guide":"14 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,1],[8,0,3],[1,2,3],[3,2,3],[6,2,1],[8,3,3],[3,4,3],[1,6,4],[3,6,3],[6,6,4],[8,6,2],[1,8,1],[4,8,2],[6,8,3]],"routes":[[0,1],[1,5],[2,3],[2,7],[3,4],[3,6],[4,9],[5,10],[6,8],[7,8],[7,11],[8,9],[9,10],[9,13],[11,12],[12,13]],"solution":[1,2,1,2,0,2,1,1,1,1,1,1,1,1,0,2]},
+{"id":"hashi-79","kind":"hashi","title":"Puzzle 80","difficulty":"Hard","guide":"14 islands. Some bridges need you to try one and follow it through.","width":7,"height":8,"islands":[[0,0,2],[3,0,3],[6,0,1],[1,2,2],[3,2,4],[6,2,1],[1,4,3],[4,4,1],[6,4,2],[1,6,3],[3,6,4],[5,6,2],[0,7,2],[6,7,2]],"routes":[[0,1],[0,12],[1,2],[1,4],[2,5],[3,4],[3,6],[4,5],[4,10],[5,8],[6,7],[6,9],[7,8],[8,13],[9,10],[10,11],[12,13]],"solution":[1,1,1,1,0,1,1,1,1,0,0,2,1,1,1,2,1]},
+{"id":"hashi-80","kind":"hashi","title":"Puzzle 81","difficulty":"Hard","guide":"15 islands. Some bridges need you to try one and follow it through.","width":8,"height":9,"islands":[[2,0,2],[4,0,4],[7,0,1],[0,2,3],[4,2,5],[7,2,2],[1,3,3],[3,3,3],[1,5,4],[4,6,2],[1,7,2],[0,8,3],[3,8,5],[5,8,2],[7,8,1]],"routes":[[0,1],[1,2],[1,4],[2,5],[3,4],[3,11],[4,5],[4,9],[5,14],[6,7],[6,8],[7,12],[8,10],[11,12],[12,13],[13,14]],"solution":[2,1,1,0,1,2,1,2,1,1,2,2,2,1,2,0]},
+{"id":"hashi-81","kind":"hashi","title":"Puzzle 82","difficulty":"Hard","guide":"15 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[0,0,2],[3,0,3],[6,0,4],[8,0,2],[4,2,1],[6,2,3],[1,3,1],[3,3,4],[8,3,3],[2,4,1],[3,6,3],[6,6,2],[0,7,2],[2,7,3],[8,7,2]],"routes":[[0,1],[0,12],[1,2],[1,7],[2,3],[2,5],[3,8],[4,5],[5,11],[6,7],[7,8],[7,10],[8,14],[9,13],[10,11],[12,13],[13,14]],"solution":[1,1,1,1,1,2,1,1,0,1,1,1,1,1,2,1,1]},
+{"id":"hashi-82","kind":"hashi","title":"Puzzle 83","difficulty":"Hard","guide":"15 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,1],[1,1,4],[4,1,3],[6,1,2],[8,1,3],[1,3,3],[3,3,1],[8,3,2],[0,4,2],[1,5,1],[4,5,5],[6,5,3],[0,7,2],[4,7,3],[6,8,1]],"routes":[[0,8],[1,2],[1,5],[2,3],[2,10],[3,4],[3,11],[4,7],[5,6],[5,9],[6,7],[8,12],[9,10],[10,11],[10,13],[11,14],[12,13]],"solution":[1,2,2,0,1,1,1,2,1,0,0,1,1,1,2,1,1]},
+{"id":"hashi-83","kind":"hashi","title":"Puzzle 84","difficulty":"Hard","guide":"15 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[0,0,2],[8,0,3],[1,1,2],[3,1,2],[5,1,1],[7,1,1],[3,3,3],[5,3,3],[7,3,3],[1,5,3],[3,5,5],[8,5,3],[1,7,1],[3,7,4],[6,7,2]],"routes":[[0,1],[1,11],[2,3],[2,9],[3,4],[3,6],[4,5],[4,7],[5,8],[6,7],[6,10],[7,8],[9,10],[9,12],[10,11],[10,13],[12,13],[13,14]],"solution":[2,1,0,2,1,1,0,0,1,1,1,2,1,0,2,1,1,2]},
+{"id":"hashi-84","kind":"hashi","title":"Puzzle 85","difficulty":"Hard","guide":"15 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[0,0,2],[6,0,4],[8,0,2],[4,1,1],[8,2,3],[0,4,4],[4,4,4],[6,4,4],[8,4,4],[5,6,1],[8,6,2],[0,7,2],[2,7,1],[4,7,4],[6,7,2]],"routes":[[0,1],[0,5],[1,2],[1,7],[2,4],[3,6],[4,8],[5,6],[5,11],[6,7],[6,13],[7,8],[7,14],[8,10],[9,10],[11,12],[12,13],[13,14]],"solution":[1,1,1,2,1,1,2,1,2,1,1,1,0,1,1,0,1,2]},
+{"id":"hashi-85","kind":"hashi","title":"Puzzle 86","difficulty":"Hard","guide":"16 islands. Some bridges need you to try one and follow it through.","width":8,"height":9,"islands":[[0,0,2],[4,0,3],[7,0,2],[6,1,1],[0,3,3],[4,3,6],[6,3,5],[7,4,2],[6,5,4],[0,6,3],[2,6,1],[4,6,2],[7,6,1],[1,7,2],[6,7,4],[0,8,1]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,7],[3,6],[4,5],[4,9],[5,6],[5,11],[6,8],[7,12],[8,14],[9,10],[9,15],[10,11],[11,12],[13,14]],"solution":[1,1,1,1,1,1,1,1,2,2,2,1,2,1,1,0,0,2]},
+{"id":"hashi-86","kind":"hashi","title":"Puzzle 87","difficulty":"Hard","guide":"16 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[1,0,1],[3,0,3],[6,0,3],[8,0,3],[0,1,1],[1,2,1],[3,2,3],[8,3,3],[1,5,3],[3,5,3],[6,5,5],[8,5,2],[1,7,2],[5,7,1],[0,8,2],[6,8,2]],"routes":[[0,1],[0,5],[1,2],[1,6],[2,3],[2,10],[3,7],[4,14],[5,6],[5,8],[6,9],[7,11],[8,9],[8,12],[9,10],[10,11],[10,15],[12,13],[14,15]],"solution":[1,0,0,2,1,2,2,1,0,1,1,1,1,1,1,1,1,1,1]},
+{"id":"hashi-87","kind":"hashi","title":"Puzzle 88","difficulty":"Hard","guide":"16 islands. Some bridges need you to try one and follow it through.","width":8,"height":8,"islands":[[0,0,2],[2,0,4],[7,0,2],[2,2,2],[5,2,2],[7,3,1],[1,4,1],[3,4,3],[5,4,3],[0,5,2],[2,5,3],[7,5,3],[0,7,1],[2,7,3],[4,7,1],[7,7,1]],"routes":[[0,1],[0,9],[1,2],[1,3],[2,5],[3,4],[3,10],[4,8],[5,11],[6,7],[7,8],[9,10],[9,12],[10,11],[10,13],[11,15],[12,13],[13,14],[14,15]],"solution":[1,1,2,1,0,1,0,1,1,1,2,1,0,1,1,1,1,1,0]},
+{"id":"hashi-88","kind":"hashi","title":"Puzzle 89","difficulty":"Hard","guide":"16 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,2],[2,0,4],[5,0,1],[4,2,2],[8,2,1],[0,3,1],[2,4,6],[4,4,5],[8,4,3],[5,6,2],[8,6,5],[2,7,4],[4,7,4],[6,7,1],[0,8,2],[8,8,3]],"routes":[[0,1],[0,5],[1,2],[1,6],[2,9],[3,4],[3,7],[4,8],[5,14],[6,7],[6,11],[7,8],[7,12],[8,10],[9,10],[10,15],[11,12],[12,13],[14,15]],"solution":[1,1,1,2,0,1,1,0,0,2,2,1,1,2,2,1,2,1,2]},
+{"id":"hashi-89","kind":"hashi","title":"Puzzle 90","difficulty":"Hard","guide":"16 islands. Some bridges need you to try one and follow it through.","width":7,"height":9,"islands":[[0,0,2],[3,0,3],[6,0,2],[1,2,1],[3,2,4],[5,2,1],[0,3,4],[6,3,3],[1,4,2],[3,4,4],[5,4,3],[1,6,1],[5,7,1],[0,8,2],[3,8,2],[6,8,1]],"routes":[[0,1],[0,6],[1,2],[1,4],[2,7],[3,4],[3,8],[4,5],[4,9],[5,10],[6,7],[6,13],[7,15],[8,9],[8,11],[9,10],[9,14],[10,12],[13,14],[14,15]],"solution":[0,2,1,2,1,1,0,1,0,0,1,1,1,1,1,2,1,1,1,0]},
+{"id":"hashi-90","kind":"hashi","title":"Puzzle 91","difficulty":"Hard","guide":"16 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[0,0,1],[2,0,2],[4,0,1],[8,0,2],[0,2,2],[2,2,4],[6,2,1],[3,4,2],[5,4,2],[8,4,5],[2,5,1],[6,5,1],[0,7,2],[3,7,4],[6,7,3],[8,7,3]],"routes":[[0,1],[0,4],[1,2],[1,5],[2,3],[3,9],[4,5],[4,12],[5,6],[5,10],[6,11],[7,8],[7,13],[8,9],[9,15],[10,11],[11,14],[12,13],[13,14],[14,15]],"solution":[1,0,0,1,1,1,1,1,1,1,0,0,2,2,2,0,1,1,1,1]},
+{"id":"hashi-91","kind":"hashi","title":"Puzzle 92","difficulty":"Hard","guide":"17 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,3],[7,0,1],[0,3,6],[4,3,4],[6,3,2],[8,3,2],[1,5,2],[4,5,6],[8,5,4],[0,6,4],[3,6,1],[6,6,2],[0,8,2],[2,8,2],[4,8,3],[6,8,4],[8,8,2]],"routes":[[0,1],[0,2],[2,3],[2,9],[3,4],[3,7],[4,5],[4,11],[5,8],[6,7],[7,8],[7,14],[8,16],[9,10],[9,12],[10,11],[11,15],[12,13],[13,14],[14,15],[15,16]],"solution":[1,2,2,2,1,1,1,0,1,2,2,1,1,1,1,0,2,1,1,1,1]},
+{"id":"hashi-92","kind":"hashi","title":"Puzzle 93","difficulty":"Hard","guide":"17 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[2,0,2],[8,0,4],[0,1,3],[6,1,4],[1,2,1],[3,2,3],[5,2,1],[0,4,2],[3,4,4],[6,4,3],[8,4,3],[0,6,2],[6,6,1],[0,8,4],[3,8,4],[6,8,3],[8,8,2]],"routes":[[0,1],[1,10],[2,3],[2,7],[3,9],[4,5],[5,6],[5,8],[7,8],[7,11],[8,9],[8,14],[9,10],[9,12],[10,16],[11,12],[11,13],[12,15],[13,14],[14,15],[15,16]],"solution":[2,2,2,1,2,1,1,1,1,0,1,1,0,0,1,0,2,1,2,1,1]},
+{"id":"hashi-93","kind":"hashi","title":"Puzzle 94","difficulty":"Hard","guide":"17 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[2,0,1],[5,0,3],[7,0,1],[0,2,1],[5,2,5],[8,2,2],[7,3,1],[0,4,2],[7,5,3],[0,6,4],[2,6,6],[5,6,4],[8,6,1],[0,8,3],[2,8,6],[5,8,4],[7,8,3]],"routes":[[0,1],[0,10],[1,2],[1,4],[2,6],[3,4],[3,7],[4,5],[4,11],[5,12],[6,8],[7,9],[8,16],[9,10],[9,13],[10,11],[10,14],[11,12],[11,15],[13,14],[14,15],[15,16]],"solution":[0,1,1,2,0,0,1,1,2,1,1,1,2,2,1,1,2,0,1,2,2,1]},
+{"id":"hashi-94","kind":"hashi","title":"Puzzle 95","difficulty":"Hard","guide":"17 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,2],[6,0,2],[1,1,4],[3,1,6],[5,1,2],[8,1,2],[1,3,3],[3,4,4],[6,4,4],[8,4,4],[0,6,1],[3,6,2],[5,6,1],[8,6,2],[1,8,2],[6,8,3],[8,8,2]],"routes":[[0,1],[0,10],[1,8],[2,3],[2,6],[3,4],[3,7],[4,5],[4,12],[5,9],[6,14],[7,8],[7,11],[8,9],[8,15],[9,13],[10,11],[11,12],[12,13],[13,16],[14,15],[15,16]],"solution":[1,1,1,2,2,2,2,0,0,2,1,1,1,1,1,1,0,1,0,1,1,1]},
+{"id":"hashi-95","kind":"hashi","title":"Puzzle 96","difficulty":"Hard","guide":"17 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,3],[2,0,3],[4,0,3],[6,0,3],[8,0,2],[5,1,2],[0,2,3],[4,2,1],[6,2,4],[8,2,3],[0,4,3],[2,4,6],[5,4,3],[8,5,1],[2,8,2],[6,8,3],[8,8,1]],"routes":[[0,1],[0,6],[1,2],[1,11],[2,3],[2,7],[3,4],[3,8],[4,9],[5,12],[6,7],[6,10],[7,8],[8,9],[8,15],[9,13],[10,11],[11,12],[11,14],[13,16],[14,15],[15,16]],"solution":[1,2,1,1,1,1,1,1,1,2,0,1,0,1,2,1,2,1,2,0,0,1]},
+{"id":"hashi-96","kind":"hashi","title":"Puzzle 97","difficulty":"Hard","guide":"18 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,3],[7,0,2],[2,2,2],[5,2,3],[8,2,3],[3,4,1],[5,4,3],[7,4,1],[0,5,4],[2,5,6],[6,5,2],[4,6,1],[8,6,2],[0,7,1],[6,7,1],[2,8,3],[4,8,3],[8,8,1]],"routes":[[0,1],[0,8],[1,7],[2,3],[2,9],[3,4],[3,6],[4,12],[5,6],[6,7],[8,9],[8,13],[9,10],[9,15],[10,14],[11,12],[11,16],[12,17],[13,14],[15,16],[16,17]],"solution":[2,1,0,1,1,1,1,2,1,1,2,1,1,2,1,0,1,0,0,1,1]},
+{"id":"hashi-97","kind":"hashi","title":"Puzzle 98","difficulty":"Hard","guide":"18 islands. Some bridges need you to try one and follow it through.","width":8,"height":9,"islands":[[0,0,3],[3,0,1],[1,1,1],[4,1,2],[7,1,2],[0,2,4],[3,2,4],[6,2,1],[1,4,1],[3,4,4],[7,4,3],[0,5,2],[5,6,1],[1,7,2],[3,7,2],[0,8,3],[5,8,4],[7,8,2]],"routes":[[0,1],[0,5],[1,6],[2,3],[2,8],[3,4],[4,10],[5,6],[5,11],[6,7],[6,9],[8,9],[8,13],[9,10],[9,14],[10,17],[11,15],[12,16],[13,14],[15,16],[16,17]],"solution":[1,2,0,1,0,1,1,1,1,1,2,0,1,1,1,1,1,1,1,2,1]},
+{"id":"hashi-98","kind":"hashi","title":"Puzzle 99","difficulty":"Hard","guide":"18 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,3],[2,0,3],[5,0,1],[0,2,3],[2,2,4],[4,2,2],[8,2,2],[2,4,3],[5,4,5],[8,4,3],[3,6,1],[5,6,4],[7,6,2],[0,7,4],[2,7,5],[6,7,2],[5,8,1],[7,8,2]],"routes":[[0,1],[0,3],[1,2],[1,4],[2,8],[3,4],[3,13],[4,5],[4,7],[5,6],[6,9],[7,8],[7,14],[8,9],[8,11],[10,11],[11,12],[11,16],[12,17],[13,14],[14,15],[16,17]],"solution":[2,1,0,1,1,0,2,2,1,0,2,1,1,1,2,1,1,0,1,2,2,1]},
+{"id":"hashi-99","kind":"hashi","title":"Puzzle 100","difficulty":"Hard","guide":"18 islands. Some bridges need you to try one and follow it through.","width":8,"height":9,"islands":[[0,0,2],[2,0,4],[7,0,3],[2,2,4],[6,2,2],[0,3,4],[5,3,2],[2,4,2],[4,4,1],[7,4,2],[0,6,2],[2,6,3],[5,6,3],[7,6,3],[0,8,1],[2,8,2],[5,8,1],[7,8,3]],"routes":[[0,1],[0,5],[1,2],[1,3],[2,9],[3,4],[3,7],[5,6],[5,10],[6,12],[7,8],[7,11],[8,9],[9,13],[10,11],[10,14],[11,12],[11,15],[12,13],[12,16],[13,17],[14,15],[15,16],[16,17]],"solution":[1,1,1,2,2,2,0,1,2,1,1,1,0,0,0,0,1,1,1,0,2,1,0,1]},
+{"id":"hashi-100","kind":"hashi","title":"Puzzle 101","difficulty":"Hard","guide":"19 islands. Some bridges need you to try one and follow it through.","width":9,"height":8,"islands":[[1,0,2],[5,0,4],[8,0,3],[0,1,2],[2,1,2],[4,1,1],[7,1,1],[8,2,4],[1,3,3],[5,3,3],[2,4,3],[4,4,3],[8,4,2],[1,6,2],[4,6,1],[0,7,3],[2,7,4],[5,7,3],[7,7,2]],"routes":[[0,1],[0,8],[1,2],[1,9],[2,7],[3,4],[3,15],[4,5],[4,10],[5,6],[5,11],[6,18],[7,12],[8,9],[8,13],[9,17],[10,11],[10,16],[11,12],[11,14],[13,14],[15,16],[16,17],[17,18]],"solution":[2,0,1,1,2,1,1,1,0,0,0,1,2,1,2,1,2,1,0,1,0,2,1,1]},
+{"id":"hashi-101","kind":"hashi","title":"Puzzle 102","difficulty":"Hard","guide":"20 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[8,0,1],[0,1,3],[2,1,5],[4,1,4],[7,1,4],[1,2,2],[5,2,1],[8,2,3],[5,4,3],[7,4,3],[2,5,2],[6,5,3],[8,5,5],[0,6,2],[5,6,1],[1,7,4],[4,7,4],[6,7,3],[0,8,2],[8,8,3]],"routes":[[0,7],[1,2],[1,13],[2,3],[2,10],[3,4],[3,16],[4,9],[5,6],[5,15],[6,7],[6,8],[7,12],[8,9],[8,14],[10,11],[11,12],[11,17],[12,19],[13,14],[13,18],[15,16],[16,17],[18,19]],"solution":[1,2,1,1,2,2,1,2,0,2,0,1,2,1,1,0,1,2,2,0,1,2,1,1]},
+{"id":"hashi-102","kind":"hashi","title":"Puzzle 103","difficulty":"Hard","guide":"21 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,3],[5,0,3],[7,0,4],[4,1,1],[6,1,2],[0,2,4],[2,2,3],[8,2,2],[7,3,2],[0,4,2],[2,4,4],[4,4,2],[6,4,3],[2,6,4],[5,6,2],[8,6,4],[0,8,3],[2,8,3],[4,8,3],[6,8,3],[8,8,3]],"routes":[[0,1],[0,5],[1,2],[1,14],[2,8],[3,4],[3,11],[4,12],[5,6],[5,9],[6,7],[6,10],[7,15],[9,10],[9,16],[10,11],[10,13],[11,12],[11,18],[12,19],[13,14],[13,17],[14,15],[15,20],[16,17],[17,18],[18,19],[19,20]],"solution":[1,2,2,0,2,1,0,1,2,0,0,1,2,0,2,1,2,1,0,1,2,0,0,2,1,2,1,1]},
+{"id":"hashi-103","kind":"hashi","title":"Puzzle 104","difficulty":"Hard","guide":"22 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[1,0,3],[5,0,3],[8,0,2],[3,1,1],[6,1,2],[1,2,4],[4,2,2],[0,3,2],[3,3,1],[6,3,3],[8,3,3],[1,5,3],[4,5,5],[8,5,4],[2,6,1],[6,6,2],[1,7,1],[0,8,3],[2,8,3],[4,8,4],[6,8,4],[8,8,2]],"routes":[[0,1],[0,5],[1,2],[2,10],[3,4],[3,8],[4,9],[5,6],[5,11],[6,12],[7,8],[7,17],[8,9],[9,10],[9,15],[10,13],[11,12],[11,16],[12,13],[12,19],[13,21],[14,15],[14,18],[15,20],[17,18],[18,19],[19,20],[20,21]],"solution":[2,1,1,1,1,0,1,2,1,0,0,2,1,1,0,1,1,1,2,2,1,0,1,2,1,1,1,1]},
+{"id":"hashi-104","kind":"hashi","title":"Puzzle 105","difficulty":"Hard","guide":"22 islands. Some bridges need you to try one and follow it through.","width":9,"height":9,"islands":[[0,0,1],[2,0,3],[5,0,4],[7,0,2],[3,1,1],[8,1,2],[2,2,3],[7,2,1],[1,3,1],[3,3,2],[5,3,4],[8,3,3],[0,4,2],[2,4,1],[1,5,3],[5,5,5],[7,5,1],[1,7,2],[3,7,1],[0,8,3],[5,8,5],[8,8,2]],"routes":[[0,1],[0,12],[1,2],[1,6],[2,3],[2,10],[3,7],[4,5],[4,9],[5,11],[6,7],[6,13],[7,16],[8,9],[8,14],[9,10],[9,18],[10,11],[10,15],[11,21],[12,13],[12,19],[14,15],[14,17],[15,16],[15,20],[17,18],[19,20],[20,21]],"solution":[0,1,1,2,1,2,1,0,1,2,0,1,0,0,1,1,0,0,1,1,0,1,1,1,1,2,1,2,1]},
+{"id":"kakuro-05","kind":"kakuro","title":"Puzzle 6","difficulty":"Starter","guide":"3 blanks, 1 printed. Each digit follows from one sum.","mask":["###","#..","#.."],"sums":[11,15,7,11],"givens":[0,0,9,0],"solution":[6,5,9,2]},
+{"id":"kakuro-06","kind":"kakuro","title":"Puzzle 7","difficulty":"Starter","guide":"3 blanks, 1 printed. Each digit follows from one sum.","mask":["###","#..","#.."],"sums":[6,9,11,14],"givens":[1,0,0,0],"solution":[1,5,8,6]},
+{"id":"kakuro-07","kind":"kakuro","title":"Puzzle 8","difficulty":"Starter","guide":"5 blanks, 1 printed. Each digit follows from one sum.","mask":["####","#...","#..."],"sums":[11,13,7,13,22],"givens":[0,0,5,0,0,0],"solution":[4,2,5,9,5,8]},
+{"id":"kakuro-08","kind":"kakuro","title":"Puzzle 9","difficulty":"Starter","guide":"5 blanks, 1 printed. Each digit follows from one sum.","mask":["####","#...","#..."],"sums":[20,7,16,8,11],"givens":[0,0,5,0,0,0],"solution":[6,9,5,1,7,3]},
+{"id":"kakuro-09","kind":"kakuro","title":"Puzzle 10","difficulty":"Starter","guide":"5 blanks, 1 printed. Each digit follows from one sum.","mask":["####","#...","#..."],"sums":[12,9,4,8,9],"givens":[0,0,0,1,0,0],"solution":[8,1,3,1,3,5]},
+{"id":"kakuro-10","kind":"kakuro","title":"Puzzle 11","difficulty":"Starter","guide":"5 blanks, 2 printed. Each digit follows from one sum.","mask":["####","##..","#...","#..#"],"sums":[15,23,9,12,5,10],"givens":[8,0,0,0,0,4,0],"solution":[8,7,1,9,2,4,6]},
+{"id":"kakuro-11","kind":"kakuro","title":"Puzzle 12","difficulty":"Starter","guide":"6 blanks, 1 printed. Each digit follows from one sum.","mask":["####","##..","#...","#..#"],"sums":[3,12,8,16,9,10],"givens":[0,0,0,7,0,0,0],"solution":[1,2,3,7,6,6,4]},
+{"id":"kakuro-12","kind":"kakuro","title":"Puzzle 13","difficulty":"Starter","guide":"6 blanks, 1 printed. Each digit follows from one sum.","mask":["####","#..#","#...","##.."],"sums":[14,14,14,20,9,3],"givens":[0,8,0,0,0,0,0],"solution":[6,8,8,5,7,1,2]},
+{"id":"kakuro-13","kind":"kakuro","title":"Puzzle 14","difficulty":"Starter","guide":"6 blanks, 2 printed. Each digit follows from one sum.","mask":["####","##..","#...","#..."],"sums":[10,15,6,14,9,6],"givens":[0,0,6,0,0,0,2,0],"solution":[8,2,6,5,3,3,2,1]},
+{"id":"kakuro-14","kind":"kakuro","title":"Puzzle 15","difficulty":"Starter","guide":"6 blanks, 2 printed. Each digit follows from one sum.","mask":["####","#...","#...","#..#"],"sums":[11,15,16,15,21,14],"givens":[0,0,0,6,0,7,0,0],"solution":[1,2,8,6,8,7,8,6]},
+{"id":"kakuro-15","kind":"kakuro","title":"Puzzle 16","difficulty":"Easy","guide":"7 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","###..","###..","#...#","#..##"],"sums":[10,13,9,9,15,14,13,15],"givens":[0,1,0,0,8,0,0,0,0],"solution":[9,1,1,8,8,4,3,6,9]},
+{"id":"kakuro-16","kind":"kakuro","title":"Puzzle 17","difficulty":"Easy","guide":"7 blanks, 3 printed. Each digit follows from one sum.","mask":["#####","###..","###..","#....","#..##"],"sums":[10,13,18,7,24,10,11,11],"givens":[0,0,0,3,0,0,0,8,0,8],"solution":[3,7,4,3,7,3,6,8,3,8]},
+{"id":"kakuro-17","kind":"kakuro","title":"Puzzle 18","difficulty":"Easy","guide":"8 blanks, 1 printed. Each digit follows from one sum.","mask":["#####","###..","##...","#..##","#..##"],"sums":[6,14,6,21,12,9,11,7],"givens":[0,0,0,0,0,6,0,0,0],"solution":[5,1,7,9,5,6,3,5,2]},
+{"id":"kakuro-18","kind":"kakuro","title":"Puzzle 19","difficulty":"Easy","guide":"8 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","#...#","#...#","###..","###.."],"sums":[24,14,11,21,9,7,11,17],"givens":[8,0,0,0,0,0,5,0,0,0],"solution":[8,9,7,6,2,1,5,2,8,9]},
+{"id":"kakuro-19","kind":"kakuro","title":"Puzzle 20","difficulty":"Easy","guide":"8 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","###..","###..","#...#","#...#"],"sums":[14,19,15,10,18,17,5,14],"givens":[0,8,0,0,0,0,0,0,0,1],"solution":[6,8,3,7,8,1,9,9,4,1]},
+{"id":"kakuro-20","kind":"kakuro","title":"Puzzle 21","difficulty":"Easy","guide":"8 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","#..##","#..##","#....","###.."],"sums":[9,10,20,10,26,11,15,11],"givens":[0,3,0,0,0,0,0,0,0,9],"solution":[6,3,1,9,3,8,9,6,2,9]},
+{"id":"kakuro-21","kind":"kakuro","title":"Puzzle 22","difficulty":"Easy","guide":"8 blanks, 3 printed. Each digit follows from one sum.","mask":["#####","##...","#....","#..##","#..##"],"sums":[16,23,15,7,22,18,13,12],"givens":[0,0,0,6,3,0,0,0,0,8,0],"solution":[7,6,3,6,3,9,4,4,9,8,4]},
+{"id":"kakuro-22","kind":"kakuro","title":"Puzzle 23","difficulty":"Easy","guide":"9 blanks, 1 printed. Each digit follows from one sum.","mask":["#####","###..","###..","#...#","#...#"],"sums":[13,24,17,16,12,4,14,18],"givens":[0,0,0,0,0,0,3,0,0,0],"solution":[5,8,7,9,1,8,3,3,6,9]},
+{"id":"kakuro-23","kind":"kakuro","title":"Puzzle 24","difficulty":"Easy","guide":"9 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","#...#","#....","###..","###.."],"sums":[7,6,3,22,17,10,9,8],"givens":[0,1,0,0,0,0,0,0,0,3,0],"solution":[2,1,4,4,2,8,3,7,2,3,5]},
+{"id":"kakuro-24","kind":"kakuro","title":"Puzzle 25","difficulty":"Easy","guide":"9 blanks, 3 printed. Each digit follows from one sum.","mask":["#####","#....","#....","##..#","##..#"],"sums":[21,8,30,15,13,24,11,10],"givens":[0,0,0,6,0,0,0,0,7,0,0,1],"solution":[5,8,2,6,3,6,8,7,7,4,9,1]},
+{"id":"kakuro-25","kind":"kakuro","title":"Puzzle 26","difficulty":"Easy","guide":"9 blanks, 3 printed. Each digit follows from one sum.","mask":["#####","##...","##...","#....","#..##"],"sums":[17,30,10,19,22,20,8,8],"givens":[8,0,0,0,0,0,7,0,0,4,0,0],"solution":[8,2,7,9,5,8,7,6,3,4,1,7]},
+{"id":"kakuro-26","kind":"kakuro","title":"Puzzle 27","difficulty":"Easy","guide":"9 blanks, 3 printed. Each digit follows from one sum.","mask":["#####","##..#","#...#","#....","##..."],"sums":[14,20,26,17,11,19,14,21],"givens":[0,0,8,0,4,0,1,0,0,0,0,0],"solution":[8,6,8,5,4,3,1,9,6,6,7,8]},
+{"id":"kakuro-27","kind":"kakuro","title":"Puzzle 28","difficulty":"Easy","guide":"10 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","#..##","#...#","#....","##..."],"sums":[17,14,21,11,8,14,6,7],"givens":[0,0,5,0,0,0,0,0,0,0,0,4],"solution":[8,9,5,4,2,1,6,5,2,2,1,4]},
+{"id":"kakuro-28","kind":"kakuro","title":"Puzzle 29","difficulty":"Easy","guide":"10 blanks, 2 printed. Each digit follows from one sum.","mask":["#####","#....","#....","#..##","#..##"],"sums":[19,22,24,3,15,26,14,5],"givens":[5,0,0,0,0,0,0,0,0,0,0,1],"solution":[5,6,1,7,7,9,2,8,6,8,4,1]},
+{"id":"kakuro-29","kind":"kakuro","title":"Puzzle 30","difficulty":"Easy","guide":"10 blanks, 2 printed. Each digit follows from one sum.","mask":["######","#...##","#...##","###..#","####..","####.."],"sums":[22,17,16,15,19,15,13,11,15,9],"givens":[9,0,0,0,0,0,0,0,2,0,0,0],"solution":[9,7,6,8,9,2,7,8,2,9,3,6]},
+{"id":"kakuro-30","kind":"kakuro","title":"Puzzle 31","difficulty":"Easy","guide":"10 blanks, 2 printed. Each digit follows from one sum.","mask":["######","###...","###...","##..##","#..###","#..###"],"sums":[13,18,9,6,19,3,15,11,7,9],"givens":[0,0,0,8,0,0,0,0,3,0,0,0],"solution":[9,3,1,8,6,5,2,1,3,8,4,5]},
+{"id":"kakuro-31","kind":"kakuro","title":"Puzzle 32","difficulty":"Easy","guide":"11 blanks, 3 printed. Each digit follows from one sum.","mask":["######","#..###","#.....","###...","####..","####.."],"sums":[8,9,11,22,13,16,18,18,11,8],"givens":[0,3,0,0,0,0,0,8,0,0,6,0,0,0],"solution":[5,3,4,8,5,2,3,8,1,9,6,5,7,1]},
+{"id":"kakuro-32","kind":"kakuro","title":"Puzzle 33","difficulty":"Easy","guide":"11 blanks, 3 printed. Each digit follows from one sum.","mask":["######","##....","##....","##..##","#..###","#..###"],"sums":[24,26,10,15,7,18,7,8,7,8],"givens":[0,2,0,0,0,0,0,1,0,0,5,0,0,0],"solution":[7,2,9,6,8,3,6,1,2,5,5,3,2,6]},
+{"id":"kakuro-33","kind":"kakuro","title":"Puzzle 34","difficulty":"Easy","guide":"11 blanks, 3 printed. Each digit follows from one sum.","mask":["######","#..###","#..###","#.....","###...","####.."],"sums":[8,14,12,7,27,17,18,10,20,9],"givens":[0,0,4,0,3,0,0,0,0,0,0,0,6,0],"solution":[7,1,4,3,3,8,9,5,2,8,7,5,6,3]},
+{"id":"kakuro-34","kind":"kakuro","title":"Puzzle 35","difficulty":"Easy","guide":"11 blanks, 3 printed. Each digit follows from one sum.","mask":["######","#..###","#..###","##..##","##....","##...."],"sums":[7,9,24,14,6,10,16,12,9,21],"givens":[0,0,0,9,5,0,0,0,0,0,0,2,0,0],"solution":[4,3,5,9,5,1,1,7,3,5,6,2,9,4]},
+{"id":"kakuro-35","kind":"kakuro","title":"Puzzle 36","difficulty":"Easy","guide":"11 blanks, 3 printed. Each digit follows from one sum.","mask":["######","##....","##....","#..###","#..###","#..###"],"sums":[16,22,6,10,14,20,12,16,10,10],"givens":[0,0,8,0,0,0,0,0,4,0,0,0,3,0],"solution":[2,1,8,5,4,5,2,9,4,8,9,1,3,7]},
+{"id":"kakuro-36","kind":"kakuro","title":"Puzzle 37","difficulty":"Easy","guide":"12 blanks, 2 printed. Each digit follows from one sum.","mask":["######","###..#","##....","##....","#..###","#..###"],"sums":[6,20,11,22,21,9,19,6,6,14],"givens":[0,0,0,9,0,5,0,0,0,0,0,0,0,0],"solution":[5,1,6,9,2,5,1,6,8,4,1,5,5,9]},
+{"id":"kakuro-37","kind":"kakuro","title":"Puzzle 38","difficulty":"Easy","guide":"12 blanks, 2 printed. Each digit follows from one sum.","mask":["######","####..","####..","#..#..","#....#","###..#"],"sums":[7,24,15,12,13,5,14,6,15,4,9],"givens":[1,0,0,0,0,0,0,1,0,0,0,0,0,0],"solution":[1,6,4,8,4,9,5,1,1,5,3,6,1,8]},
+{"id":"kakuro-38","kind":"kakuro","title":"Puzzle 39","difficulty":"Easy","guide":"13 blanks, 1 printed. Each digit follows from one sum.","mask":["######","#..###","#..###","#...##","#.....","####.."],"sums":[7,15,26,10,22,15,28,5,16,10],"givens":[0,0,0,0,0,0,8,0,0,0,0,0,0,0],"solution":[1,6,3,7,5,9,8,6,4,7,2,9,3,7]},
+{"id":"kakuro-39","kind":"kakuro","title":"Puzzle 40","difficulty":"Easy","guide":"13 blanks, 3 printed. Each digit follows from one sum.","mask":["######","#..###","#.....","###...","#....#","#..###"],"sums":[7,14,4,23,11,13,10,11,19,10,11,13],"givens":[0,0,0,0,6,0,0,0,1,0,2,0,0,0,0,0],"solution":[6,1,8,3,6,4,2,2,1,8,2,6,3,8,8,5]},
+{"id":"kakuro-40","kind":"kakuro","title":"Puzzle 41","difficulty":"Easy","guide":"13 blanks, 3 printed. Each digit follows from one sum.","mask":["######","#..###","#...##","#...##","#.....","###..."],"sums":[9,10,18,12,26,7,26,12,10,22],"givens":[0,0,0,0,0,2,0,0,0,8,5,0,0,0,0,0],"solution":[3,6,1,3,8,2,1,4,4,8,5,7,2,9,5,8]},
+{"id":"kakuro-41","kind":"kakuro","title":"Puzzle 42","difficulty":"Easy","guide":"13 blanks, 4 printed. Each digit follows from one sum.","mask":["######","#...##","#...##","#.....","##....","####.."],"sums":[17,21,19,24,20,31,15,17,11,17],"givens":[6,0,8,0,0,0,7,0,0,0,3,0,0,0,0,0,0],"solution":[6,3,8,8,7,5,7,8,9,4,3,1,2,3,5,8,9]},
+{"id":"kakuro-42","kind":"kakuro","title":"Puzzle 43","difficulty":"Easy","guide":"14 blanks, 2 printed. Each digit follows from one sum.","mask":["######","##...#","##...#","##....","#..#..","#..###"],"sums":[14,15,11,21,9,17,3,9,16,4,13],"givens":[0,0,0,0,4,0,0,1,0,0,0,0,0,0,0,0],"solution":[1,6,7,3,4,2,5,1,9,2,7,2,3,1,9,4]},
+{"id":"kakuro-43","kind":"kakuro","title":"Puzzle 44","difficulty":"Easy","guide":"14 blanks, 2 printed. Each digit follows from one sum.","mask":["######","###...","###...","#....#","#....#","#..###"],"sums":[9,21,14,9,14,14,20,7,22,12],"givens":[0,0,0,0,0,4,0,0,0,3,0,0,0,0,0,0],"solution":[3,1,5,8,2,4,5,2,4,3,7,1,6,8,8,4]},
+{"id":"kakuro-44","kind":"kakuro","title":"Puzzle 45","difficulty":"Easy","guide":"14 blanks, 3 printed. Each digit follows from one sum.","mask":["######","###..#","###...","####..","#.....","#....."],"sums":[3,8,29,12,13,10,25,4,6,17,27],"givens":[1,0,0,0,0,0,0,0,0,0,0,2,0,0,0,9,0],"solution":[1,2,7,4,1,6,4,1,5,9,8,2,3,1,8,9,6]},
+{"id":"kakuro-45","kind":"kakuro","title":"Puzzle 46","difficulty":"Medium","guide":"11 blanks, 4 printed. Some digits follow from where a sum's digits must go.","mask":["######","#..###","#..###","#.....","###...","###..."],"sums":[10,13,20,11,18,15,12,13,18,16],"givens":[0,0,4,0,0,5,0,0,0,4,0,0,0,1,0],"solution":[2,8,4,7,7,5,3,2,1,4,9,5,8,1,7]},
+{"id":"kakuro-46","kind":"kakuro","title":"Puzzle 47","difficulty":"Medium","guide":"12 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["######","#..###","#..###","#.....","###...","###..#"],"sums":[5,10,12,8,22,9,20,7,9,14],"givens":[0,0,3,0,0,0,0,0,0,3,0,0,0,0],"solution":[1,4,3,5,6,3,1,7,5,3,4,2,5,9]},
+{"id":"kakuro-47","kind":"kakuro","title":"Puzzle 48","difficulty":"Medium","guide":"13 blanks, 1 printed. Some digits follow from where a sum's digits must go.","mask":["######","###..#","###..#","#...##","#.....","####.."],"sums":[9,21,12,9,18,17,8,33,11,14,14],"givens":[0,0,0,5,0,0,0,0,0,0,0,0,0,0],"solution":[2,7,4,5,8,1,9,9,7,6,3,8,8,6]},
+{"id":"kakuro-48","kind":"kakuro","title":"Puzzle 49","difficulty":"Medium","guide":"13 blanks, 1 printed. Some digits follow from where a sum's digits must go.","mask":["######","#..###","#..###","#..###","#.....","###..."],"sums":[11,28,12,5,12,25,11,11,6,15],"givens":[0,0,0,0,0,0,0,0,0,0,0,9,0,0],"solution":[9,2,4,1,7,5,8,4,2,6,5,9,5,1]},
+{"id":"kakuro-49","kind":"kakuro","title":"Puzzle 50","difficulty":"Medium","guide":"13 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["######","####..","###...","##..##","#....#","#....#"],"sums":[9,11,15,20,17,10,17,19,6,3,11],"givens":[2,0,0,0,0,9,0,0,0,0,0,0,0,0,0],"solution":[2,7,3,9,8,9,1,4,5,8,2,2,3,5,1]},
+{"id":"kakuro-50","kind":"kakuro","title":"Puzzle 51","difficulty":"Medium","guide":"13 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["######","##....","##....","#...##","#..###","#..###"],"sums":[14,30,12,15,6,20,16,12,9,16],"givens":[0,0,0,4,0,0,0,0,0,0,0,0,6,0,0],"solution":[3,1,6,4,4,5,9,2,2,8,6,3,6,7,9]},
+{"id":"kakuro-51","kind":"kakuro","title":"Puzzle 52","difficulty":"Medium","guide":"13 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["######","###..#","#....#","#.....","####..","####.."],"sums":[9,9,22,11,6,5,20,19,5,16],"givens":[0,0,0,0,5,0,0,0,0,0,0,0,0,9,0],"solution":[3,6,1,3,5,2,5,2,1,4,8,1,4,9,7]},
+{"id":"kakuro-52","kind":"kakuro","title":"Puzzle 53","difficulty":"Medium","guide":"13 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["######","#..###","#..###","#.....","#.....","#..###"],"sums":[6,26,27,6,29,10,11,6,26,13],"givens":[5,0,0,0,0,0,0,0,0,6,0,0,0,5,0,0],"solution":[5,1,2,4,9,5,6,8,1,6,8,4,3,5,4,9]},
+{"id":"kakuro-53","kind":"kakuro","title":"Puzzle 54","difficulty":"Medium","guide":"13 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["######","#..###","#...##","#.....","##....","##..##"],"sums":[8,8,29,20,24,27,10,12,20,8],"givens":[0,0,0,0,0,0,3,0,7,0,0,7,0,0,0,0],"solution":[1,7,3,8,9,4,3,5,7,8,6,7,3,4,5,3]},
+{"id":"kakuro-54","kind":"kakuro","title":"Puzzle 55","difficulty":"Medium","guide":"13 blanks, 4 printed. Some digits follow from where a sum's digits must go.","mask":["######","##..##","#...##","#.....","##....","###..."],"sums":[13,23,23,15,15,22,20,14,30,15],"givens":[8,0,0,0,0,8,0,0,0,1,0,8,0,0,0,0,0],"solution":[8,5,7,5,3,8,4,6,3,1,6,8,9,7,1,8,6]},
+{"id":"kakuro-55","kind":"kakuro","title":"Puzzle 56","difficulty":"Medium","guide":"13 blanks, 4 printed. Some digits follow from where a sum's digits must go.","mask":["######","#...##","#...##","##....","#.....","#..###"],"sums":[11,9,23,20,21,16,10,8,29,13,6],"givens":[0,0,2,6,0,7,0,0,0,0,0,0,0,7,0,0,0],"solution":[3,6,2,6,8,7,5,6,3,2,8,3,5,7,6,5,1]},
+{"id":"kakuro-56","kind":"kakuro","title":"Puzzle 57","difficulty":"Medium","guide":"13 blanks, 4 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..####","#..####","#.....#","##....#","#####..","#####.."],"sums":[13,15,19,8,28,14,13,13,21,7,7,4],"givens":[0,8,1,0,0,0,0,0,0,0,6,0,0,0,0,0,3],"solution":[5,8,1,7,9,1,8,6,4,3,6,7,5,3,4,1,3]},
+{"id":"kakuro-57","kind":"kakuro","title":"Puzzle 58","difficulty":"Medium","guide":"14 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["######","####..","#..#..","#.....","#...##","#...##"],"sums":[14,13,16,3,20,24,7,28,11,16,16],"givens":[0,0,0,0,1,0,9,0,0,0,0,7,0,0,0,0,0],"solution":[5,9,1,2,1,6,9,5,6,7,1,7,8,1,3,9,4]},
+{"id":"kakuro-58","kind":"kakuro","title":"Puzzle 59","difficulty":"Medium","guide":"14 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["######","###..#","##...#","#..#..","#.....","#...##"],"sums":[9,9,14,19,20,3,11,10,15,26,9,11],"givens":[0,0,0,0,5,0,0,0,0,0,0,3,0,0,2,0,0],"solution":[3,6,8,6,5,1,2,1,9,8,7,3,2,6,2,3,6]},
+{"id":"kakuro-59","kind":"kakuro","title":"Puzzle 60","difficulty":"Medium","guide":"14 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["#######","####...","####...","####...","###...#","#...###","#..####"],"sums":[14,21,22,19,24,18,15,11,9,3,11,7],"givens":[0,0,6,0,0,0,9,0,4,0,0,0,0,0,0,0,0],"solution":[1,7,6,7,8,9,9,5,4,9,4,2,1,6,2,2,5]},
+{"id":"kakuro-60","kind":"kakuro","title":"Puzzle 61","difficulty":"Medium","guide":"14 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..####","#...###","##..###","##....#","###....","#####.."],"sums":[6,6,18,16,16,3,27,9,13,15,8,3],"givens":[0,2,0,0,0,0,0,0,0,0,7,0,0,0,7,0,0],"solution":[4,2,2,6,8,1,2,9,5,6,7,1,3,4,7,2,1]},
+{"id":"kakuro-61","kind":"kakuro","title":"Puzzle 62","difficulty":"Medium","guide":"15 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["#######","##..###","#...###","#.....#","###...#","#####..","#####.."],"sums":[13,17,16,22,17,24,12,13,12,10,12,6],"givens":[0,0,0,0,0,8,1,0,0,0,0,0,0,0,0,0,0],"solution":[9,4,9,7,6,8,1,5,3,7,1,9,2,3,7,1,5]},
+{"id":"kakuro-62","kind":"kakuro","title":"Puzzle 63","difficulty":"Medium","guide":"15 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["######","##..##","##....","#..#..","#..#..","#..#.."],"sums":[10,25,5,15,20,16,10,19,6,11,11,13,9],"givens":[0,0,0,0,0,6,0,8,0,0,0,0,0,5,0,0,0,0],"solution":[7,3,3,2,4,6,2,8,2,4,9,2,6,5,8,5,8,1]},
+{"id":"kakuro-63","kind":"kakuro","title":"Puzzle 64","difficulty":"Medium","guide":"15 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..####","#..####","#..####","##...##","##.....","###...."],"sums":[8,16,31,12,13,16,19,11,23,9,13,27],"givens":[0,0,0,0,9,0,0,4,0,0,0,0,0,0,0,0,0,5],"solution":[2,6,5,7,9,4,9,4,3,5,6,1,3,8,9,7,6,5]},
+{"id":"kakuro-64","kind":"kakuro","title":"Puzzle 65","difficulty":"Medium","guide":"15 blanks, 5 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#####..","####...","####...","#.....#","#....##","##...##"],"sums":[8,20,11,23,32,13,29,9,17,16,14,18],"givens":[0,0,0,0,0,0,4,2,0,0,9,0,0,0,0,0,5,6,0,0],"solution":[5,3,8,9,6,7,4,2,7,8,9,3,2,2,3,4,5,6,3,9]},
+{"id":"kakuro-65","kind":"kakuro","title":"Puzzle 66","difficulty":"Medium","guide":"17 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["#######","##..###","##....#","####...","###....","#...###","#...###"],"sums":[12,11,17,27,13,15,8,13,28,22,13,9,5,17],"givens":[0,0,0,0,0,5,0,0,0,0,0,0,0,4,0,0,0,0,0],"solution":[4,8,7,9,6,5,2,1,5,6,5,9,8,4,2,7,5,3,9]},
+{"id":"kakuro-66","kind":"kakuro","title":"Puzzle 67","difficulty":"Medium","guide":"17 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["#######","####..#","#..#...","#......","###..##","###...#","####..#"],"sums":[9,30,11,11,5,15,12,9,27,17,13,15,16,16],"givens":[0,0,0,0,8,0,0,0,0,0,0,3,0,0,0,0,0,0,7,0],"solution":[2,7,3,8,8,1,3,2,7,8,1,3,6,4,9,5,3,7,7,9]},
+{"id":"kakuro-67","kind":"kakuro","title":"Puzzle 68","difficulty":"Medium","guide":"17 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..####","#..####","#..#..#","#......","###....","###..##"],"sums":[6,20,20,15,12,7,21,20,29,16,3,26,5],"givens":[4,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,1],"solution":[4,2,6,9,7,5,3,4,3,4,5,9,7,1,7,8,9,2,4,1]},
+{"id":"kakuro-68","kind":"kakuro","title":"Puzzle 69","difficulty":"Medium","guide":"17 blanks, 5 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#####..","#####..","###....","#......","#.....#","##...##"],"sums":[9,24,22,5,26,22,13,26,11,13,24,15],"givens":[0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,7,3,0,9,0],"solution":[6,3,1,4,6,3,9,8,3,8,2,1,5,7,8,1,5,7,3,4,9,2]},
+{"id":"kakuro-69","kind":"kakuro","title":"Puzzle 70","difficulty":"Medium","guide":"17 blanks, 5 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..####","#..#..#","##.....","##.....","#...###","#...###"],"sums":[10,16,28,9,15,16,14,22,25,10,27,18,9,17],"givens":[0,0,0,0,0,7,0,0,0,0,8,0,7,0,0,0,4,6,0,0,0,0],"solution":[9,1,7,2,8,7,7,1,2,4,8,9,7,6,3,2,4,6,8,5,3,9]},
+{"id":"kakuro-70","kind":"kakuro","title":"Puzzle 71","difficulty":"Medium","guide":"18 blanks, 2 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#......","#......","###..##","###..##","###..##","###..##"],"sums":[31,16,15,36,23,6,11,33,9,16,13,5],"givens":[0,0,3,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"solution":[7,8,3,2,5,6,9,7,8,3,1,5,5,4,9,7,7,6,4,1]},
+{"id":"kakuro-71","kind":"kakuro","title":"Puzzle 72","difficulty":"Medium","guide":"18 blanks, 3 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#####..","#####..","####..#","#......","#......","###...#"],"sums":[4,30,6,11,7,23,24,8,6,11,12,32,18],"givens":[0,0,0,0,0,0,6,0,0,0,0,0,0,1,0,0,0,0,0,0,7],"solution":[3,1,6,5,3,4,6,5,1,7,2,3,2,1,7,5,8,9,3,8,7]},
+{"id":"kakuro-72","kind":"kakuro","title":"Puzzle 73","difficulty":"Medium","guide":"19 blanks, 4 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#####..","####...","#......","#....##","#..#...","####..."],"sums":[11,10,18,12,17,29,18,13,5,10,14,12,15,9,17],"givens":[0,6,0,0,0,0,2,0,0,0,7,0,0,0,0,0,0,0,0,2,0,0,0],"solution":[5,6,6,1,5,8,2,3,5,4,7,4,3,2,1,6,8,3,7,2,2,8,7]},
+{"id":"kakuro-73","kind":"kakuro","title":"Puzzle 74","difficulty":"Medium","guide":"19 blanks, 5 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..####","#..#...","##.....","#......","#..#..#","####..#"],"sums":[10,7,29,8,12,29,24,13,32,16,36,13,15,4,14],"givens":[0,9,0,0,0,2,0,0,0,0,0,0,0,3,0,0,0,0,0,0,3,0,0,9],"solution":[1,9,6,2,4,2,6,8,7,9,5,3,5,3,9,8,7,4,8,7,3,1,5,9]},
+{"id":"kakuro-74","kind":"kakuro","title":"Puzzle 75","difficulty":"Medium","guide":"21 blanks, 5 printed. Some digits follow from where a sum's digits must go.","mask":["#######","#..#...","#......","#......","#..####","#....##","##...##"],"sums":[8,31,29,11,11,7,11,28,17,33,6,22,15,8,21],"givens":[0,0,1,0,6,0,0,9,0,0,0,6,0,0,0,0,0,0,0,0,0,0,0,0,8,0],"solution":[7,1,1,4,6,5,6,9,3,1,4,6,9,8,7,2,1,4,2,9,4,7,2,7,8,6]},
+{"id":"kakuro-75","kind":"kakuro","title":"Puzzle 76","difficulty":"Hard","guide":"15 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","#..####","#..####","#..####","#....##","##.....","##....."],"sums":[10,20,31,13,8,15,12,19,31,7,13,25],"givens":[0,0,0,0,0,2,4,0,0,0,0,7,4,0,0,0,2,0,0,0],"solution":[2,8,8,5,6,2,4,1,3,7,9,7,4,3,8,6,2,8,4,5]},
+{"id":"kakuro-76","kind":"kakuro","title":"Puzzle 77","difficulty":"Hard","guide":"16 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["#######","#####..","#...#..","#......","###...#","####..#","####..#"],"sums":[10,25,14,14,5,10,13,8,24,15,9,9,8],"givens":[0,7,0,7,0,0,2,0,0,0,0,0,0,0,1,0,0,0,0,0],"solution":[3,7,4,7,3,6,2,1,3,4,2,9,5,6,1,2,5,4,7,1]},
+{"id":"kakuro-77","kind":"kakuro","title":"Puzzle 78","difficulty":"Hard","guide":"17 blanks, 3 printed. Some digits need you to try one and follow it through.","mask":["#######","#....##","#.....#","####...","#####..","####...","####..."],"sums":[25,13,11,16,9,23,25,11,25,13,15,6,18],"givens":[0,0,0,0,0,8,0,0,0,0,6,0,0,0,0,0,0,0,0,8],"solution":[8,3,9,5,5,8,7,1,2,3,6,2,7,6,5,1,9,1,9,8]},
+{"id":"kakuro-78","kind":"kakuro","title":"Puzzle 79","difficulty":"Hard","guide":"17 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["#######","##..###","#...###","#...###","###...#","##.....","##....."],"sums":[12,15,28,11,6,7,14,19,12,21,8,3,26],"givens":[0,0,4,0,0,0,0,0,7,0,1,0,0,0,0,0,0,0,8,0,0],"solution":[9,3,4,2,5,2,4,1,7,6,1,3,8,5,4,1,5,4,8,7,2]},
+{"id":"kakuro-79","kind":"kakuro","title":"Puzzle 80","difficulty":"Hard","guide":"18 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","######..","#####...","#####..#","##.....#","##....##","#..#..##","#..#####"],"sums":[7,19,7,11,17,8,25,19,11,14,17,12,7,3,11],"givens":[0,0,0,0,2,0,0,0,7,0,0,0,0,0,8,0,0,0,0,0,0,9],"solution":[2,5,6,3,2,2,6,1,7,4,5,8,2,4,8,3,5,7,2,1,2,9]},
+{"id":"kakuro-80","kind":"kakuro","title":"Puzzle 81","difficulty":"Hard","guide":"18 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","#..#...","#..#...","#.....#","###..##","#...###","#...###"],"sums":[14,16,22,17,22,13,13,15,18,25,26,11,14,13,3,14],"givens":[0,0,0,2,0,0,8,0,3,6,0,0,0,0,0,0,0,9,0,0,0,0,0],"solution":[5,9,8,2,7,7,8,9,3,6,4,5,6,2,8,8,3,9,2,3,4,1,9]},
+{"id":"kakuro-81","kind":"kakuro","title":"Puzzle 82","difficulty":"Hard","guide":"19 blanks, 2 printed. Some digits need you to try one and follow it through.","mask":["#######","#...#..","#...#..","###....","###..##","#...###","#..####"],"sums":[17,11,15,23,12,14,12,15,11,17,9,5,13,11,12,17],"givens":[0,8,0,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"solution":[5,8,4,7,5,6,7,2,5,6,9,5,2,1,1,4,2,4,7,9,8]},
+{"id":"kakuro-82","kind":"kakuro","title":"Puzzle 83","difficulty":"Hard","guide":"19 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","#..##..","#......","##.....","#...###","#....##","###..##"],"sums":[8,9,24,9,13,13,36,23,9,24,6,5,20,13,6],"givens":[0,0,4,0,0,0,0,0,0,0,8,0,3,0,0,0,0,0,0,1,0,0,0,5],"solution":[1,7,4,5,8,5,9,6,7,1,8,4,3,2,7,1,3,2,4,1,7,8,1,5]},
+{"id":"kakuro-83","kind":"kakuro","title":"Puzzle 84","difficulty":"Hard","guide":"20 blanks, 3 printed. Some digits need you to try one and follow it through.","mask":["########","######..","######..","####....","##.....#","#....###","#....###","#..#####"],"sums":[5,17,15,13,10,13,5,25,14,12,20,21,19,5],"givens":[0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,9,4,0,0,0,0],"solution":[1,4,5,8,1,2,4,3,2,9,4,3,7,8,7,2,3,9,4,1,5,4,1]},
+{"id":"kakuro-84","kind":"kakuro","title":"Puzzle 85","difficulty":"Hard","guide":"20 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["#######","####..#","####..#","#....##","#......","#......","#....##"],"sums":[16,38,12,12,14,18,11,11,25,5,12,21,19],"givens":[0,0,9,0,0,0,0,0,0,0,1,6,0,0,0,0,0,0,0,0,0,0,3,0],"solution":[7,9,9,3,1,3,2,8,2,5,1,6,3,8,6,1,5,3,2,4,9,2,3,5]},
+{"id":"kakuro-85","kind":"kakuro","title":"Puzzle 86","difficulty":"Hard","guide":"20 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","###..##","###...#","#..#...","#..#...","#......","###...."],"sums":[8,7,38,18,31,13,12,13,22,23,9,17,31,15,21],"givens":[0,0,0,0,0,0,0,0,0,0,3,0,0,0,4,0,0,8,0,5,9,0,0,0,0],"solution":[5,3,2,9,7,8,5,5,9,8,3,6,7,6,4,1,2,8,6,5,9,7,8,4,2]},
+{"id":"kakuro-86","kind":"kakuro","title":"Puzzle 87","difficulty":"Hard","guide":"20 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","##....#","##.....","#......","#......","#..####","#..####"],"sums":[13,38,21,16,25,28,7,30,21,30,12,15],"givens":[0,0,4,2,0,0,5,9,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0],"solution":[6,1,4,2,8,4,5,9,2,3,7,9,1,6,4,5,3,7,6,8,1,7,5,6,9]},
+{"id":"kakuro-87","kind":"kakuro","title":"Puzzle 88","difficulty":"Hard","guide":"21 blanks, 2 printed. Some digits need you to try one and follow it through.","mask":["########","###..###","#......#","#...#..#","#####...","#####...","####..##","####..##"],"sums":[11,11,7,30,15,11,37,25,14,7,23,15,20,12,4,8],"givens":[0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,0,0],"solution":[5,6,7,9,2,1,6,5,8,2,4,4,3,8,9,6,3,8,9,3,9,1,7]},
+{"id":"kakuro-88","kind":"kakuro","title":"Puzzle 89","difficulty":"Hard","guide":"21 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","####...","###....","#......","#......","##.....","#####.."],"sums":[18,22,24,28,23,28,24,6,19,30,27,5],"givens":[0,0,8,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,2,6,5,0,0,0,0,0],"solution":[4,6,8,9,8,2,4,1,4,8,2,3,6,5,9,6,7,1,2,6,5,1,8,7,4,1]},
+{"id":"kakuro-89","kind":"kakuro","title":"Puzzle 90","difficulty":"Hard","guide":"21 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","#.....#","#......","#..#...","####...","##....#","##...##"],"sums":[27,20,10,14,30,28,29,11,7,17,19,20,11,13,18],"givens":[0,0,0,1,0,6,0,0,0,0,0,0,0,0,0,0,6,5,0,0,0,9,0,0,0,0],"solution":[9,7,6,1,4,6,1,8,5,7,2,5,2,7,9,1,6,5,8,2,6,9,3,9,7,2]},
+{"id":"kakuro-90","kind":"kakuro","title":"Puzzle 91","difficulty":"Hard","guide":"22 blanks, 2 printed. Some digits need you to try one and follow it through.","mask":["#######","##.....","##.....","#......","#..##..","#..####","#..####"],"sums":[31,29,7,8,25,19,23,22,21,13,6,11,3],"givens":[0,0,0,0,0,2,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"solution":[9,4,3,7,8,2,1,4,9,7,7,5,2,1,4,3,9,4,5,1,3,8,2,1]},
+{"id":"kakuro-91","kind":"kakuro","title":"Puzzle 92","difficulty":"Hard","guide":"22 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["#######","#....##","#.....#","###....","#......","#......","###..##"],"sums":[23,7,16,29,26,21,18,16,18,33,15,12,38,10],"givens":[0,0,0,4,0,0,0,0,0,0,0,0,8,0,0,0,0,6,0,0,0,0,0,0,6,2,0],"solution":[2,9,8,4,5,7,1,6,2,4,1,3,8,7,9,5,2,6,4,8,3,9,5,7,6,2,8]},
+{"id":"kakuro-92","kind":"kakuro","title":"Puzzle 93","difficulty":"Hard","guide":"22 blanks, 6 printed. Some digits need you to try one and follow it through.","mask":["########","####....","####....","####..##","#####..#","###....#","#......#","#......#"],"sums":[18,14,34,5,8,17,9,6,21,24,19,10,30,15,13,35],"givens":[3,0,0,0,0,7,0,1,0,0,0,0,0,0,0,0,0,0,0,2,0,7,0,0,5,0,0,0],"solution":[3,6,2,7,6,7,3,1,5,4,5,1,8,5,2,9,9,5,6,2,1,7,6,8,5,3,9,4]},
+{"id":"kakuro-93","kind":"kakuro","title":"Puzzle 94","difficulty":"Hard","guide":"22 blanks, 6 printed. Some digits need you to try one and follow it through.","mask":["########","####....","####....","####...#","#.....##","#....###","#..#..##","#..#..##"],"sums":[20,42,22,12,11,14,19,22,21,22,4,20,14,9,10,11,15],"givens":[0,0,0,0,0,0,4,0,3,0,0,0,6,0,0,7,0,7,0,0,0,0,6,0,0,0,0,0],"solution":[7,4,1,8,5,2,4,3,3,9,7,2,6,3,4,7,3,7,1,9,9,5,6,3,7,4,8,7]},
+{"id":"kakuro-94","kind":"kakuro","title":"Puzzle 95","difficulty":"Hard","guide":"23 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","#####...","####....","#..#....","#.....##","#....###","###...##","####..##"],"sums":[19,18,14,17,24,34,17,20,20,15,16,11,24,20,8,7],"givens":[0,0,2,0,0,1,0,9,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,0,0,0,0],"solution":[9,8,2,9,6,1,8,9,8,2,1,5,7,6,3,1,4,2,5,9,2,8,8,5,7,6,1]},
+{"id":"kakuro-95","kind":"kakuro","title":"Puzzle 96","difficulty":"Hard","guide":"24 blanks, 3 printed. Some digits need you to try one and follow it through.","mask":["########","###...##","###....#","######..","######..","#.......","#.....##","##....##"],"sums":[19,15,7,16,26,14,4,10,7,35,7,19,16,20,22,28,27],"givens":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,9,0,7,6,0],"solution":[9,3,7,6,4,9,7,1,3,2,5,5,6,1,9,8,4,2,2,4,8,5,9,9,7,6,5]},
+{"id":"kakuro-96","kind":"kakuro","title":"Puzzle 97","difficulty":"Hard","guide":"24 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","#####..#","###.....","##......","##...###","###....#","#......#","#..#####"],"sums":[4,16,14,29,21,23,4,32,10,15,13,13,5,24,13,7,9],"givens":[0,0,0,0,0,0,0,0,6,0,5,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,4],"solution":[3,1,7,6,8,5,3,3,6,9,5,8,1,7,5,3,2,1,7,3,8,3,1,4,6,2,5,4]},
+{"id":"kakuro-97","kind":"kakuro","title":"Puzzle 98","difficulty":"Hard","guide":"24 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","####....","####....","###..#..","###....#","#..#...#","#.....##","##..####"],"sums":[18,28,16,20,12,20,11,11,9,23,19,5,12,13,15,28,4,6],"givens":[0,0,0,2,0,0,0,0,0,0,0,1,0,8,0,0,0,0,0,0,0,0,0,0,0,4,0,0],"solution":[4,9,3,2,3,7,1,9,9,2,8,1,2,8,7,6,4,1,5,8,2,8,7,3,6,4,5,1]},
+{"id":"kakuro-98","kind":"kakuro","title":"Puzzle 99","difficulty":"Hard","guide":"24 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["########","####..##","#..#..##","#.......","##......","##....##","#..#..##","#..#####"],"sums":[11,35,35,11,10,27,10,36,20,7,8,30,27,13,15,11,8],"givens":[0,4,2,0,0,0,0,0,0,0,0,0,0,0,0,0,6,0,0,0,0,0,0,0,4,0,9,0,0],"solution":[7,4,2,9,3,7,8,5,9,6,1,4,3,1,7,8,6,3,5,6,4,9,8,9,4,2,9,6,2]},
+{"id":"kakuro-99","kind":"kakuro","title":"Puzzle 100","difficulty":"Hard","guide":"25 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","#....#..","#....#..","#....#..","###.....","####..##","###..###","###..###"],"sums":[15,18,19,16,35,10,14,22,23,5,17,15,25,8,10,15,9,6],"givens":[0,0,0,0,0,0,5,0,0,0,1,0,0,5,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0],"solution":[4,6,2,3,2,8,5,8,4,6,1,4,9,5,1,2,6,9,9,8,2,5,1,4,6,8,7,1,5]},
+{"id":"kakuro-100","kind":"kakuro","title":"Puzzle 101","difficulty":"Hard","guide":"25 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","##..####","##...###","##.....#","##..#..#","##......","#.......","#..#####"],"sums":[13,40,26,11,7,20,22,19,12,7,35,13,10,37,5,7],"givens":[0,0,0,2,0,0,7,0,0,0,0,0,0,0,1,0,7,0,0,0,0,0,0,0,0,0,0,0,0],"solution":[8,5,6,2,3,5,7,4,3,1,9,3,2,5,1,8,7,9,4,6,2,7,1,6,8,9,4,3,4]},
+{"id":"kakuro-101","kind":"kakuro","title":"Puzzle 102","difficulty":"Hard","guide":"25 blanks, 4 printed. Some digits need you to try one and follow it through.","mask":["########","###...##","###...##","#.....##","#..#####","##...#..","##......","##..#..."],"sums":[21,16,14,21,9,30,7,31,14,15,14,12,9,12,18,28,5,6,18],"givens":[0,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,1,0,6,0],"solution":[9,5,7,3,1,5,2,7,4,8,9,5,9,2,6,7,2,7,8,7,5,1,4,3,5,1,4,6,8]},
+{"id":"kakuro-102","kind":"kakuro","title":"Puzzle 103","difficulty":"Hard","guide":"25 blanks, 6 printed. Some digits need you to try one and follow it through.","mask":["########","#####...","###.....","#....#..","#.......","####....","#####...","#####..."],"sums":[18,16,31,37,28,16,21,19,11,5,12,34,21,15,21,11],"givens":[0,0,0,0,8,0,0,0,0,0,0,0,0,0,0,0,3,7,0,4,0,0,0,9,0,0,0,0,5,0,0],"solution":[9,1,8,6,8,7,5,2,3,4,7,5,3,9,8,1,3,7,6,4,5,1,2,9,3,8,7,6,5,2,4]},
+{"id":"kakuro-103","kind":"kakuro","title":"Puzzle 104","difficulty":"Hard","guide":"25 blanks, 6 printed. Some digits need you to try one and follow it through.","mask":["########","##...#..","#.......","#.....##","#.....##","###..###","###....#","####...#"],"sums":[16,13,28,39,14,14,7,38,23,21,29,25,7,17,8,6,13],"givens":[0,9,0,0,0,8,0,3,0,0,0,2,0,6,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0],"solution":[1,9,6,9,5,8,4,3,9,7,5,2,9,6,1,8,5,6,2,5,3,9,6,1,4,7,1,5,5,7,1]},
+{"id":"kakuro-104","kind":"kakuro","title":"Puzzle 105","difficulty":"Hard","guide":"27 blanks, 5 printed. Some digits need you to try one and follow it through.","mask":["########","####..##","###....#","##..#...","#...#...","#.......","###.....","####...#"],"sums":[6,7,41,22,23,30,14,13,13,30,12,8,15,36,16,32,18],"givens":[0,0,0,0,0,4,0,0,0,0,7,0,1,0,0,0,0,0,0,0,7,0,0,0,0,0,0,0,0,0,5,0],"solution":[4,2,9,3,6,4,9,5,4,2,7,7,1,4,8,1,6,1,3,2,7,9,6,8,3,5,7,8,9,4,5,9]},
+{"id":"mines-05","kind":"mines","title":"Puzzle 6","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[5,19,21],"open":7},
+{"id":"mines-06","kind":"mines","title":"Puzzle 7","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[11,13,14],"open":0},
+{"id":"mines-07","kind":"mines","title":"Puzzle 8","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[4,9,21],"open":2},
+{"id":"mines-08","kind":"mines","title":"Puzzle 9","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[10,17,23],"open":7},
+{"id":"mines-09","kind":"mines","title":"Puzzle 10","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[3,15,24],"open":5},
+{"id":"mines-10","kind":"mines","title":"Puzzle 11","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[2,18,22],"open":10},
+{"id":"mines-11","kind":"mines","title":"Puzzle 12","difficulty":"Starter","guide":"5 × 5 cells with 3 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[0,8,10],"open":18},
+{"id":"mines-12","kind":"mines","title":"Puzzle 13","difficulty":"Starter","guide":"5 × 5 cells with 4 mines. Each square follows from one number. No guessing needed.","side":5,"mines":[0,1,8,19],"open":11},
+{"id":"mines-13","kind":"mines","title":"Puzzle 14","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[2,9,14,16,35],"open":27},
+{"id":"mines-14","kind":"mines","title":"Puzzle 15","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[12,13,18,23,28],"open":15},
+{"id":"mines-15","kind":"mines","title":"Puzzle 16","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[2,7,24,28,35],"open":5},
+{"id":"mines-16","kind":"mines","title":"Puzzle 17","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,13,14,25,31],"open":2},
+{"id":"mines-17","kind":"mines","title":"Puzzle 18","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[13,18,25,29,31],"open":1},
+{"id":"mines-18","kind":"mines","title":"Puzzle 19","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[12,14,24,29,32],"open":0},
+{"id":"mines-19","kind":"mines","title":"Puzzle 20","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[10,16,18,22,28],"open":26},
+{"id":"mines-20","kind":"mines","title":"Puzzle 21","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[3,10,18,23,30],"open":26},
+{"id":"mines-21","kind":"mines","title":"Puzzle 22","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[10,16,20,23,35],"open":18},
+{"id":"mines-22","kind":"mines","title":"Puzzle 23","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[22,27,30,31,33],"open":5},
+{"id":"mines-23","kind":"mines","title":"Puzzle 24","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[5,12,15,19,20],"open":32},
+{"id":"mines-24","kind":"mines","title":"Puzzle 25","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,3,8,15,22],"open":25},
+{"id":"mines-25","kind":"mines","title":"Puzzle 26","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,21,22,34,35],"open":3},
+{"id":"mines-26","kind":"mines","title":"Puzzle 27","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[1,15,21,23,26],"open":18},
+{"id":"mines-27","kind":"mines","title":"Puzzle 28","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,3,7,21,22],"open":31},
+{"id":"mines-28","kind":"mines","title":"Puzzle 29","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[12,17,22,31,33],"open":4},
+{"id":"mines-29","kind":"mines","title":"Puzzle 30","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,2,6,13,21],"open":33},
+{"id":"mines-30","kind":"mines","title":"Puzzle 31","difficulty":"Easy","guide":"6 × 6 cells with 5 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[1,5,10,26,32],"open":28},
+{"id":"mines-31","kind":"mines","title":"Puzzle 32","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,1,4,11,18,25],"open":34},
+{"id":"mines-32","kind":"mines","title":"Puzzle 33","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,7,8,23,24,31],"open":20},
+{"id":"mines-33","kind":"mines","title":"Puzzle 34","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[8,16,18,22,23,34],"open":31},
+{"id":"mines-34","kind":"mines","title":"Puzzle 35","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[4,5,15,21,31,32],"open":23},
+{"id":"mines-35","kind":"mines","title":"Puzzle 36","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[0,6,19,28,30,31],"open":10},
+{"id":"mines-36","kind":"mines","title":"Puzzle 37","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[2,4,9,32,34,35],"open":20},
+{"id":"mines-37","kind":"mines","title":"Puzzle 38","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[2,3,12,13,16,35],"open":33},
+{"id":"mines-38","kind":"mines","title":"Puzzle 39","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[13,14,22,23,32,34],"open":4},
+{"id":"mines-39","kind":"mines","title":"Puzzle 40","difficulty":"Easy","guide":"6 × 6 cells with 6 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[7,12,25,26,31,35],"open":9},
+{"id":"mines-40","kind":"mines","title":"Puzzle 41","difficulty":"Easy","guide":"6 × 6 cells with 7 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[2,3,4,17,27,32,33],"open":15},
+{"id":"mines-41","kind":"mines","title":"Puzzle 42","difficulty":"Easy","guide":"6 × 6 cells with 7 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[9,15,16,22,28,29,35],"open":13},
+{"id":"mines-42","kind":"mines","title":"Puzzle 43","difficulty":"Easy","guide":"6 × 6 cells with 7 mines. Each square follows from one number. No guessing needed.","side":6,"mines":[6,9,10,11,17,23,34],"open":30},
+{"id":"mines-43","kind":"mines","title":"Puzzle 44","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[7,15,17,20,21,33,43,46],"open":3},
+{"id":"mines-44","kind":"mines","title":"Puzzle 45","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,2,11,16,40,41,43,45],"open":13},
+{"id":"mines-45","kind":"mines","title":"Puzzle 46","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,1,7,9,13,24,30,40],"open":28},
+{"id":"mines-46","kind":"mines","title":"Puzzle 47","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[6,8,18,19,32,35,43,47],"open":21},
+{"id":"mines-47","kind":"mines","title":"Puzzle 48","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[8,12,19,20,22,31,32,41],"open":43},
+{"id":"mines-48","kind":"mines","title":"Puzzle 49","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[2,7,9,12,13,19,21,42],"open":45},
+{"id":"mines-49","kind":"mines","title":"Puzzle 50","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[6,15,18,21,25,29,31,47],"open":43},
+{"id":"mines-50","kind":"mines","title":"Puzzle 51","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[4,9,24,27,29,33,40,45],"open":0},
+{"id":"mines-51","kind":"mines","title":"Puzzle 52","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[2,4,13,20,25,26,27,46],"open":42},
+{"id":"mines-52","kind":"mines","title":"Puzzle 53","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[10,16,17,31,33,34,37,44],"open":19},
+{"id":"mines-53","kind":"mines","title":"Puzzle 54","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[6,8,9,12,22,27,36,42],"open":38},
+{"id":"mines-54","kind":"mines","title":"Puzzle 55","difficulty":"Medium","guide":"7 × 7 cells with 8 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[1,11,23,27,28,34,35,48],"open":6},
+{"id":"mines-55","kind":"mines","title":"Puzzle 56","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[3,8,13,15,19,33,35,36,46],"open":24},
+{"id":"mines-56","kind":"mines","title":"Puzzle 57","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,2,7,8,14,16,32,39,41],"open":44},
+{"id":"mines-57","kind":"mines","title":"Puzzle 58","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[3,5,6,16,20,24,25,31,47],"open":45},
+{"id":"mines-58","kind":"mines","title":"Puzzle 59","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[7,9,11,25,34,36,37,41,45],"open":23},
+{"id":"mines-59","kind":"mines","title":"Puzzle 60","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,2,10,24,25,26,35,41,43],"open":14},
+{"id":"mines-60","kind":"mines","title":"Puzzle 61","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,2,5,7,8,40,41,43,48],"open":18},
+{"id":"mines-61","kind":"mines","title":"Puzzle 62","difficulty":"Medium","guide":"7 × 7 cells with 9 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[2,17,23,26,27,31,32,34,35],"open":44},
+{"id":"mines-62","kind":"mines","title":"Puzzle 63","difficulty":"Medium","guide":"7 × 7 cells with 10 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[2,22,24,26,28,30,35,36,38,42],"open":12},
+{"id":"mines-63","kind":"mines","title":"Puzzle 64","difficulty":"Medium","guide":"7 × 7 cells with 10 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[4,6,8,21,24,26,28,38,42,45],"open":47},
+{"id":"mines-64","kind":"mines","title":"Puzzle 65","difficulty":"Medium","guide":"7 × 7 cells with 10 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[6,14,24,29,30,32,34,35,44,45],"open":11},
+{"id":"mines-65","kind":"mines","title":"Puzzle 66","difficulty":"Medium","guide":"7 × 7 cells with 10 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,5,11,18,19,24,28,35,44,45],"open":47},
+{"id":"mines-66","kind":"mines","title":"Puzzle 67","difficulty":"Medium","guide":"7 × 7 cells with 10 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,1,6,11,21,23,33,38,44,45],"open":20},
+{"id":"mines-67","kind":"mines","title":"Puzzle 68","difficulty":"Medium","guide":"7 × 7 cells with 10 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[1,17,18,27,31,33,35,42,44,45],"open":13},
+{"id":"mines-68","kind":"mines","title":"Puzzle 69","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,4,5,6,8,10,12,15,42,43,46],"open":26},
+{"id":"mines-69","kind":"mines","title":"Puzzle 70","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,5,8,12,15,33,35,36,37,42,47],"open":24},
+{"id":"mines-70","kind":"mines","title":"Puzzle 71","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[6,7,12,16,19,26,31,33,44,46,47],"open":42},
+{"id":"mines-71","kind":"mines","title":"Puzzle 72","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[5,6,12,15,23,25,29,36,37,43,48],"open":1},
+{"id":"mines-72","kind":"mines","title":"Puzzle 73","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[4,6,12,13,14,20,28,35,36,39,42],"open":23},
+{"id":"mines-73","kind":"mines","title":"Puzzle 74","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[0,2,10,17,20,24,28,30,33,38,40],"open":15},
+{"id":"mines-74","kind":"mines","title":"Puzzle 75","difficulty":"Medium","guide":"7 × 7 cells with 11 mines. Some squares follow from two numbers together. No guessing needed.","side":7,"mines":[3,7,9,10,13,23,29,33,36,42,47],"open":38},
+{"id":"mines-75","kind":"mines","title":"Puzzle 76","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,6,11,18,27,34,44,48,58,59,61],"open":21},
+{"id":"mines-76","kind":"mines","title":"Puzzle 77","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[3,5,9,10,12,18,26,30,42,43,62],"open":60},
+{"id":"mines-77","kind":"mines","title":"Puzzle 78","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[4,5,6,26,33,34,39,46,54,59,62],"open":22},
+{"id":"mines-78","kind":"mines","title":"Puzzle 79","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[1,2,3,9,13,22,32,38,42,49,58],"open":55},
+{"id":"mines-79","kind":"mines","title":"Puzzle 80","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[4,10,12,21,22,48,49,50,52,58,60],"open":36},
+{"id":"mines-80","kind":"mines","title":"Puzzle 81","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,6,8,29,30,31,33,35,44,50,53],"open":4},
+{"id":"mines-81","kind":"mines","title":"Puzzle 82","difficulty":"Hard","guide":"8 × 8 cells with 11 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[6,10,21,23,27,35,36,38,39,44,52],"open":57},
+{"id":"mines-82","kind":"mines","title":"Puzzle 83","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,6,12,14,17,25,31,32,37,41,55,57],"open":60},
+{"id":"mines-83","kind":"mines","title":"Puzzle 84","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[1,5,11,13,16,23,25,30,31,32,55,60],"open":57},
+{"id":"mines-84","kind":"mines","title":"Puzzle 85","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,1,3,10,11,18,27,34,36,45,50,54],"open":6},
+{"id":"mines-85","kind":"mines","title":"Puzzle 86","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[14,15,17,19,20,31,46,52,54,55,58,63],"open":42},
+{"id":"mines-86","kind":"mines","title":"Puzzle 87","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[1,3,8,17,21,32,39,42,49,50,53,60],"open":63},
+{"id":"mines-87","kind":"mines","title":"Puzzle 88","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[5,8,9,10,13,16,22,28,29,32,34,62],"open":50},
+{"id":"mines-88","kind":"mines","title":"Puzzle 89","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[3,14,16,21,27,30,32,36,37,44,47,55],"open":58},
+{"id":"mines-89","kind":"mines","title":"Puzzle 90","difficulty":"Hard","guide":"8 × 8 cells with 12 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[2,11,13,14,17,21,26,32,37,39,40,49],"open":43},
+{"id":"mines-90","kind":"mines","title":"Puzzle 91","difficulty":"Hard","guide":"8 × 8 cells with 13 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[4,8,9,10,21,23,30,31,33,34,38,44,50],"open":48},
+{"id":"mines-91","kind":"mines","title":"Puzzle 92","difficulty":"Hard","guide":"8 × 8 cells with 13 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,1,10,17,22,25,33,46,48,50,54,60,62],"open":7},
+{"id":"mines-92","kind":"mines","title":"Puzzle 93","difficulty":"Hard","guide":"8 × 8 cells with 13 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[3,20,21,22,27,35,39,42,46,49,50,54,61],"open":17},
+{"id":"mines-93","kind":"mines","title":"Puzzle 94","difficulty":"Hard","guide":"8 × 8 cells with 13 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[1,3,9,16,17,18,22,30,37,43,53,57,59],"open":63},
+{"id":"mines-94","kind":"mines","title":"Puzzle 95","difficulty":"Hard","guide":"8 × 8 cells with 13 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,6,11,14,30,33,40,46,47,50,53,54,61],"open":17},
+{"id":"mines-95","kind":"mines","title":"Puzzle 96","difficulty":"Hard","guide":"8 × 8 cells with 13 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[3,13,14,16,22,25,29,43,49,53,54,57,61],"open":19},
+{"id":"mines-96","kind":"mines","title":"Puzzle 97","difficulty":"Hard","guide":"8 × 8 cells with 14 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[3,4,8,9,14,20,22,25,40,42,50,52,58,61],"open":47},
+{"id":"mines-97","kind":"mines","title":"Puzzle 98","difficulty":"Hard","guide":"8 × 8 cells with 14 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[1,3,9,15,18,23,24,25,29,31,34,40,57,63],"open":44},
+{"id":"mines-98","kind":"mines","title":"Puzzle 99","difficulty":"Hard","guide":"8 × 8 cells with 14 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[2,6,9,10,11,12,17,26,39,40,42,53,60,63],"open":23},
+{"id":"mines-99","kind":"mines","title":"Puzzle 100","difficulty":"Hard","guide":"8 × 8 cells with 14 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[0,8,10,16,21,28,36,38,40,44,46,51,52,63],"open":57},
+{"id":"mines-100","kind":"mines","title":"Puzzle 101","difficulty":"Hard","guide":"8 × 8 cells with 14 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[12,14,15,16,17,21,33,34,35,43,49,50,51,54],"open":37},
+{"id":"mines-101","kind":"mines","title":"Puzzle 102","difficulty":"Hard","guide":"8 × 8 cells with 15 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[3,7,12,13,21,22,28,36,37,38,40,44,49,60,63],"open":18},
+{"id":"mines-102","kind":"mines","title":"Puzzle 103","difficulty":"Hard","guide":"8 × 8 cells with 15 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[2,3,6,8,9,23,29,30,35,40,46,51,56,58,59],"open":24},
+{"id":"mines-103","kind":"mines","title":"Puzzle 104","difficulty":"Hard","guide":"8 × 8 cells with 15 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[4,5,15,16,20,27,28,38,42,52,54,55,58,60,61],"open":2},
+{"id":"mines-104","kind":"mines","title":"Puzzle 105","difficulty":"Hard","guide":"8 × 8 cells with 15 mines. Some squares need several numbers at once, or the mine count. No guessing needed.","side":8,"mines":[1,4,5,8,9,12,29,30,40,42,43,45,46,47,56],"open":62}
 ]

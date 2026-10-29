@@ -5,14 +5,14 @@ A five-letter word puzzle, new each day, that works offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/solved.png" alt="A solved puzzle"><br>A solved puzzle</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/knowledge.png" alt="Known letters shown while typing"><br>Known letters shown while typing</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/knowledge.png" alt="The board above the keys, with known letters"><br>The board above the keys, with known letters</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/stats.png" alt="Statistics and win distribution"><br>Statistics and win distribution</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/archive.png" alt="The archive of past days"><br>The archive of past days</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/help.png" alt="How to play"><br>How to play</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/help.png" alt="Rules"><br>Rules</td>
 </tr>
 </table>
 
@@ -20,10 +20,14 @@ A five-letter word puzzle, new each day, that works offline.
 
 - Six guesses, with correct scoring for repeated letters and an optional hard
   mode.
-- Letter states are shown in grayscale and always in uppercase: `[L]` is in
-  the right place, `(L)` is elsewhere in the word, and `L×` is not in it.
-- While you type, the letters your earlier guesses have already proven are
+- The board stays in view above the keys while you type. A letter in the
+  right place is a filled square, a letter elsewhere in the word is in
+  brackets, `(L)`, and a plain letter is not in the word. A word that is not
+  accepted stays typed, so one wrong letter is one backspace.
+- Above the board, the letters your earlier guesses have already proven are
   listed.
+- **Rules** sits in the top bar, and the menu beside it holds New game (an
+  earlier day), hard mode and statistics, where every Cobalt game keeps them.
 - Saved daily progress, played and won totals, and a win distribution by
   number of guesses.
 - **Export results** saves the day's board and statistics as
@@ -33,8 +37,9 @@ A five-letter word puzzle, new each day, that works offline.
 
 ## How the daily word is chosen
 
-The answer is picked from a hash of the UTC date, so every reader gets the
-same puzzle each day without a server. The title shows the real date. For
+The answer is picked from a hash of the date on the reader's own calendar,
+so every reader gets the same puzzle each day without a server, and the next
+one arrives at local midnight. The title shows the real date. For
 simulator recordings, `KOBO_INKLING_DAY=YYYY-MM-DD` pins the day.
 
 The word lists are hand-checked common English: 870 possible answers and

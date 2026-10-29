@@ -9,3 +9,35 @@ expect Getting started
 expect 6 due
 clean
 shot flashcards-decks
+# A card answered Again comes back at the end of the session, and the last
+# card leaves a "Done for today" that says when the next ones are due.
+tap Getting started
+wait-for 1 of 6
+tap-id answer
+wait-for Answer
+tap-id again
+wait-for 1 of 6
+tap-id answer
+tap-id good
+wait-for 2 of 6
+tap-id answer
+tap-id good
+wait-for 3 of 6
+tap-id answer
+tap-id good
+wait-for 4 of 6
+tap-id answer
+tap-id good
+wait-for 5 of 6
+tap-id answer
+tap-id good
+wait-for 6 of 6
+clean
+shot flashcards-missed-card-last
+tap-id answer
+tap-id good
+wait-for Done for today
+expect You reviewed 6 cards today.
+expect-missing recorded locally
+clean
+shot flashcards-done-for-today

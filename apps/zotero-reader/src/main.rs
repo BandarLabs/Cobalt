@@ -90,6 +90,10 @@ struct Kept {
 }
 
 #[derive(Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the reading list, not the states of one machine"
+)]
 struct ReadingList {
     view: View,
     user_id: Option<String>,
@@ -135,11 +139,21 @@ struct ReadingList {
     place: Option<Memory>,
     figure_task: Option<(TaskId, String)>,
     credential_setup: CredentialSetup,
+    /// The owner tapped Check again on setup and is owed an answer.
+    checking: bool,
     credential_retry: Option<Awaiting>,
     figures: VecDeque<String>,
 }
 
 impl ReadingList {
+    /// A key or user ID set up on the computer arrives while the app is away.
+    fn returned(&mut self, context: &mut Context) {
+        self.credential_setup.recheck(context);
+        if self.view == View::Setup {
+            context.store().load(USER_ID_KEY);
+        }
+    }
+
     fn bridge_origin() -> Option<&'static str> {
         option_env!("ZOTERO_READER_BRIDGE_ORIGIN").filter(|origin| valid_origin(origin))
     }
@@ -316,6 +330,10 @@ impl ReadingList {
             return;
         }
         if self.user_id.is_none() {
+            // The user ID is all digits, so its keyboard opens on them.
+            if self.keyboard.is_empty() {
+                self.keyboard = Keyboard::numeric();
+            }
             self.view = View::Setup;
             return;
         }
@@ -864,7 +882,8 @@ impl ReadingList {
             screen.secondary("Enter the numeric user ID shown beside your Zotero API key.")
         };
         screen
-            .secondary("Read-only: kobo secret set zotero")
+            .top_bar_action("check-again", "Check again")
+            .secondary("Or run kobo connect zotero-reader on a computer.")
             .field(
                 "zotero-user-id",
                 self.keyboard.text(),
@@ -1332,8 +1351,17 @@ impl ReadingList {
 }
 
 impl KoboApp for ReadingList {
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
     fn on_start(&mut self, context: &mut Context) {
-        self.credential_setup = CredentialSetup::new(ZOTERO_CREDENTIAL, "Zotero");
+        self.credential_setup = CredentialSetup::new(ZOTERO_CREDENTIAL, "Zotero")
+            .with_computer_command("kobo connect zotero-reader");
         context.store().load(USER_ID_KEY);
         context.store().load(SELECTED_KEY);
         context.store().load(LIBRARY_KEY);
@@ -1351,6 +1379,12 @@ impl KoboApp for ReadingList {
                 }
                 self.show(context);
             }
+            return;
+        }
+        if self.view == View::Setup && action == action_id("check-again") {
+            self.trouble = None;
+            self.checking = true;
+            context.store().load(USER_ID_KEY);
             return;
         }
         if self.view == View::Setup {
@@ -1769,14 +1803,33 @@ impl KoboApp for ReadingList {
         }
         if let StoreResult::Loaded { key, value } = result {
             if key == USER_ID_KEY {
-                self.user_id = value
+                let loaded = value
                     .as_deref()
                     .and_then(|bytes| std::str::from_utf8(bytes).ok())
                     .map(str::trim)
                     .filter(|user_id| valid_user_id(user_id))
                     .map(str::to_owned);
-                self.config_loaded |= USER_ID_LOADED;
-                self.begin_after_config(context);
+                let checking = std::mem::take(&mut self.checking);
+                if self.config_loaded & USER_ID_LOADED == 0 {
+                    self.user_id = loaded;
+                    self.config_loaded |= USER_ID_LOADED;
+                    self.begin_after_config(context);
+                } else if self.view == View::Setup {
+                    // The ID may have arrived from `kobo connect zotero-reader`
+                    // while setup was on screen. A reload anywhere else
+                    // changes nothing.
+                    if loaded.is_some() {
+                        self.user_id = loaded;
+                        self.trouble = None;
+                        self.keyboard.clear();
+                        self.fetch_collections(context);
+                    } else if checking {
+                        self.trouble = Some(
+                            "No user ID has arrived from the computer yet. Run the command, then check again."
+                                .to_owned(),
+                        );
+                    }
+                }
             } else if key == SELECTED_KEY {
                 self.selected = value.as_deref().and_then(decode_selection);
                 self.config_loaded |= SELECTION_LOADED;
@@ -2019,19 +2072,17 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
     }
 
     match error {
-        TaskError::NoCredential => {
-            "Install a dedicated read-only Zotero key with: kobo secret set zotero.".to_owned()
-        }
-        TaskError::Offline => {
-            "This reader is offline. Cached papers are still available.".to_owned()
-        }
-        TaskError::Denied => "Stacks is not allowed to reach this endpoint.".to_owned(),
-        TaskError::Unauthorized => "Zotero rejected its credential.".to_owned(),
-        TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
-        TaskError::TimedOut => "Zotero took too long to answer.".to_owned(),
         TaskError::NotFound => "The requested Zotero item is no longer available.".to_owned(),
-        TaskError::Unreachable => "Zotero could not be reached.".to_owned(),
-        TaskError::RateLimited(_) => "Zotero asked this reader to slow down.".to_owned(),
+        TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
+        TaskError::Offline => {
+            "This reader is not on Wi-Fi. Cached papers are still available.".to_owned()
+        }
+        error => {
+            kobo_sdk::failure::Service::new("Zotero")
+                .fixed_by("Run kobo connect zotero-reader on your computer.")
+                .explain(error)
+                .message
+        }
     }
 }
 
@@ -2120,10 +2171,9 @@ mod tests {
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(" ");
-                    assert!(text.to_ascii_lowercase().contains("read-only"));
                     assert!(
-                        text.contains("secret set zotero"),
-                        "the installation command must not be clipped"
+                        text.contains("kobo connect zotero-reader"),
+                        "the computer route must not be clipped: {text}"
                     );
                 }
             }
@@ -2604,6 +2654,44 @@ mod tests {
     }
 
     #[test]
+    fn the_user_id_opens_on_the_digits_and_arrives_from_the_computer_on_check_again() {
+        use super::{View, SELECTED_KEY, USER_ID_KEY};
+        let mut runner = AppRunner::new(ReadingList::default());
+        runner.start();
+        for key in [USER_ID_KEY, SELECTED_KEY] {
+            runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value: None,
+            });
+        }
+        assert!(runner.app().view == View::Setup);
+        assert_eq!(
+            runner.app().keyboard.layer(),
+            kobo_sdk::keyboard::Layer::Symbols
+        );
+        runner.action(action_id("check-again"));
+        runner.store_result(StoreResult::Loaded {
+            key: USER_ID_KEY.into(),
+            value: None,
+        });
+        assert!(runner
+            .app()
+            .trouble
+            .as_deref()
+            .unwrap()
+            .contains("No user ID has arrived"));
+        runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: USER_ID_KEY.into(),
+            value: Some(b"475425".to_vec()),
+        });
+        assert_eq!(runner.app().user_id.as_deref(), Some("475425"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+    }
+
+    #[test]
     fn unreachable_errors_name_the_service_that_was_requested() {
         assert_eq!(
             super::explain_failure(
@@ -2614,8 +2702,11 @@ mod tests {
         );
         assert_eq!(
             super::explain_failure(super::Awaiting::Collections, super::TaskError::Unreachable),
-            "Zotero could not be reached."
+            "Zotero did not answer, or its certificate is not one this reader trusts. Try again later."
         );
+        let refused =
+            super::explain_failure(super::Awaiting::Collections, super::TaskError::Unauthorized);
+        assert!(refused.contains("kobo connect zotero-reader"), "{refused}");
     }
 
     #[test]

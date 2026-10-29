@@ -1,0 +1,9 @@
+# sweep: --bare
+# Empty-shelf path, run with --bare: no documents on the card. The shelf says
+# how to add books instead of only that there are none.
+expect Books
+expect No books yet
+expect copy EPUB, Markdown, HTML or text files
+expect-missing not readable yet
+shot books-empty
+dump

@@ -2,16 +2,18 @@
 //!
 //! Books is an included application. It lists files on the card (`/mnt/onboard`,
 //! `/mnt/sd`, Cobalt shelves) and titles from the stock Kobo library. EPUB,
-//! Markdown, HTML and plain text open in the shared reader. PDF is listed
-//! and not opened. A Kobo Store title that has not been downloaded is listed
-//! and says so when opened.
+//! Markdown, HTML and plain text open in the shared reader, at the page and
+//! text size they were closed at. PDF and Kobo Store books are listed after
+//! them and say they open in the Kobo reader. A Kobo Store title that has not
+//! been downloaded is listed and says so when opened.
 
+use kobo_bookview::positions::{Progress, KEY as READING};
 use kobo_bookview::{BookView, Step};
-use kobo_read::{Memory, Outcome};
+use kobo_read::Outcome;
 use kobo_sdk::{
-    action_id, document_preview, stamp_format_badge, ActionId, Context, DeviceRequest,
-    DeviceResult, Glyph, KoboApp, LibraryEntry, PictureHandle, Screen, ScreenBuilder, TaskId,
-    TaskOutcome, Tile, TilePicture, TileShape,
+    action_id, document_preview, stamp_format_badge, ActionId, BannerLevel, Context, DeviceRequest,
+    DeviceResult, Glyph, KoboApp, LibraryEntry, PictureHandle, Screen, ScreenBuilder, StoreResult,
+    TaskId, TaskOutcome, Tile, TilePicture, TileShape,
 };
 use std::process::ExitCode;
 
@@ -25,6 +27,10 @@ const SHELF_PAGE: usize = 6;
 const PREVIOUS: &str = "previous";
 const NEXT: &str = "next";
 const BACK: &str = "back";
+const RELIST: &str = "relist";
+
+/// Where to send an owner for anything Books cannot open itself.
+const IN_KOBO_READER: &str = "To get there, tap Kobo reader at the foot of the Cobalt home screen.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Kind {
@@ -62,6 +68,14 @@ impl Kind {
             Self::Pdf => "timetable.pdf",
             Self::Kepub => "purchase.kepub.epub",
         }
+    }
+}
+
+impl Document {
+    /// Whether tapping it opens it here rather than sending the owner to the
+    /// Kobo reader.
+    const fn opens_here(&self) -> bool {
+        self.on_card && self.kind.is_readable()
     }
 }
 
@@ -151,6 +165,19 @@ struct Books {
     documents: Vec<Document>,
     book: BookView,
     open_title: Option<String>,
+    /// Where every book was left, and at what size.
+    ///
+    /// Every open used to start from a blank record and nothing was ever
+    /// written back, so closing a book lost the page, the text size, the
+    /// bookmarks and the highlights. The shared record is the one Feeds and
+    /// the other readers keep, which also gives a book opened for the first
+    /// time the text size last chosen here.
+    progress: Progress,
+    /// The record the open book is kept under.
+    reading_id: Option<String>,
+    /// Whether the last attempt to list the library failed, which is not the
+    /// same thing as a library with nothing in it.
+    library_failed: bool,
 }
 
 impl Default for Books {
@@ -162,13 +189,9 @@ impl Default for Books {
 impl Books {
     #[cfg(test)]
     fn seeded() -> Self {
-        Self {
-            view: View::Shelf,
-            page: 0,
-            documents: fixtures(),
-            book: BookView::new(),
-            open_title: None,
-        }
+        let mut books = Self::empty();
+        books.take_documents(fixtures());
+        books
     }
 
     fn empty() -> Self {
@@ -178,7 +201,18 @@ impl Books {
             documents: Vec::new(),
             book: BookView::new(),
             open_title: None,
+            progress: Progress::default(),
+            reading_id: None,
+            library_failed: false,
         }
+    }
+
+    /// Puts what can be read here first, so the first page of the shelf is
+    /// books that open rather than PDFs and Store titles that send the owner
+    /// somewhere else. The runtime's own order is kept within each group.
+    fn take_documents(&mut self, mut documents: Vec<Document>) {
+        documents.sort_by_key(|document| !document.opens_here());
+        self.documents = documents;
     }
 
     fn show(&mut self, context: &mut Context) {
@@ -192,14 +226,30 @@ impl Books {
 
     fn shelf(&mut self, context: &mut Context) -> Screen {
         let mut screen = ScreenBuilder::new("books").top_bar("Books");
+        if self.library_failed && self.documents.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::Book),
+                    "The library could not be read",
+                    "Books could not list the files on this reader. Try again.",
+                )
+                .button(RELIST, "Try again")
+                .build();
+        }
         if self.documents.is_empty() {
             return screen
                 .splash(
                     Some(Glyph::Book),
                     "No books yet",
-                    "Documents already on this device will appear here.",
+                    "Plug the reader into a computer and copy EPUB, Markdown, HTML or text files onto it. They appear here the next time you open Books.",
                 )
                 .build();
+        }
+        if self.progress.failed {
+            screen = screen.banner(
+                BannerLevel::Attention,
+                "Books could not save your place in the last book. It tries again the next time you turn a page.",
+            );
         }
         let pages = self.pages(context);
         self.page = self.page.min(pages.len().saturating_sub(1));
@@ -208,14 +258,22 @@ impl Books {
         let tiles = page.into_iter().filter_map(|index| {
             let document = self.documents.get(index)?;
             let title = document.title.clone();
+            let elsewhere = !document.opens_here();
             let picture = self.picture(context, index, width, height);
             Some((
                 format!("book-{index}"),
                 title,
                 Glyph::Book,
-                move |tile: Tile| match picture {
-                    Some(picture) => tile.with_picture(picture),
-                    None => tile,
+                move |blank: Tile| {
+                    let drawn = match picture {
+                        Some(picture) => blank.with_picture(picture),
+                        None => blank,
+                    };
+                    if elsewhere {
+                        drawn.with_subtitle("Opens in Kobo reader")
+                    } else {
+                        drawn
+                    }
                 },
             ))
         });
@@ -240,28 +298,39 @@ impl Books {
             .splash(
                 Some(Glyph::Book),
                 "This document",
-                "This document is listed but is not openable yet.",
+                "This file could not be opened. It may be damaged, or written in a way Books cannot read.",
             )
             .button(BACK, "Back")
             .build()
     }
 
+    /// Says where a book that does not open here can be read instead.
+    ///
+    /// "Not readable yet" left the owner holding a book with nowhere to take
+    /// it. Each of these does open in the stock reader, so the screen says
+    /// that, and how to get there.
     fn unreadable(&self, index: usize) -> Screen {
         let document = self.documents.get(index);
         let title = document.map_or("This document", |document| document.title.as_str());
         let reason = if document.is_some_and(|document| !document.on_card) {
-            "This book is in the Kobo library but is not on the card. Open it in the Kobo reader to download."
+            format!("This book is in your Kobo library but is not downloaded yet. Open it in the Kobo reader to download it. {IN_KOBO_READER}")
         } else if document.is_some_and(|document| document.kind == Kind::Kepub) {
-            "This Kobo Store book is listed but is not readable yet."
-        } else if document.is_some_and(|document| !document.kind.is_readable()) {
-            "PDF is listed but is not readable yet."
+            format!("Books from the Kobo Store open in the Kobo reader. {IN_KOBO_READER}")
+        } else if document.is_some_and(|document| document.kind == Kind::Pdf) {
+            format!(
+                "PDFs open in the Kobo reader. Books cannot show PDF pages yet. {IN_KOBO_READER}"
+            )
         } else {
-            "This document is listed but is not openable yet."
+            "This file could not be opened. It may be damaged, or written in a way Books cannot read."
+                .to_owned()
         };
+        // The bar's own back arrow returns to the shelf too. Without owning
+        // it, that arrow left Books altogether from a screen that is only a
+        // note about one book.
         ScreenBuilder::new("books-unreadable")
             .top_bar("Books")
+            .owns_back(true)
             .splash(Some(Glyph::Book), title, reason)
-            .button(BACK, "Back")
             .build()
     }
 
@@ -302,7 +371,7 @@ impl Books {
         let Some(document) = self.documents.get(index).cloned() else {
             return;
         };
-        if !document.on_card || !document.kind.is_readable() {
+        if !document.opens_here() {
             self.book.close(context);
             self.open_title = None;
             self.view = View::Unreadable(index);
@@ -333,12 +402,15 @@ impl Books {
             self.show(context);
             return;
         }
+        let id = position_id(&document.id);
+        let memory = self.progress.memory(&id);
         if self
             .book
-            .open_bytes(context, document.kind.filename(), bytes, Memory::default())
+            .open_bytes(context, document.kind.filename(), bytes, memory)
             .is_ok()
         {
             self.open_title = Some(document.title.clone());
+            self.reading_id = Some(id);
             self.view = View::Reading;
         } else {
             self.book.close(context);
@@ -349,10 +421,27 @@ impl Books {
     }
 
     fn close_reader(&mut self, context: &mut Context) {
+        self.keep_position(context);
         self.book.close(context);
         self.open_title = None;
+        self.reading_id = None;
         self.view = View::Shelf;
         self.show(context);
+    }
+
+    /// Writes down where the open book is, at what size, with its marks.
+    ///
+    /// A record that failed to save is tried again on the next page turn
+    /// rather than given up on, because the usual cause is a write that
+    /// collided with something else and will go through the next time.
+    fn keep_position(&mut self, context: &mut Context) {
+        let (Some(id), Some(memory)) = (&self.reading_id, self.book.memory()) else {
+            return;
+        };
+        self.progress.keep(context, id.clone(), memory.clone());
+        if self.progress.failed {
+            self.progress.retry(context);
+        }
     }
 
     fn read_action(&mut self, context: &mut Context, action: ActionId) -> bool {
@@ -364,9 +453,14 @@ impl Books {
                 Outcome::Close => self.close_reader(context),
                 Outcome::Light(level) => {
                     context.device().set_frontlight(level);
+                    self.keep_position(context);
                     self.show(context);
                 }
-                Outcome::Elsewhere | Outcome::Repaint | Outcome::Save => self.show(context),
+                Outcome::Save => {
+                    self.keep_position(context);
+                    self.show(context);
+                }
+                Outcome::Elsewhere | Outcome::Repaint => self.show(context),
             }
             return true;
         }
@@ -380,17 +474,64 @@ impl Books {
 
 impl KoboApp for Books {
     fn on_start(&mut self, context: &mut Context) {
+        context.store().load(READING);
         if self.documents.is_empty() {
             context.device().list_library();
         }
         self.show(context);
     }
 
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key == READING {
+            self.progress.load(result);
+            self.show(context);
+        }
+    }
+
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key == READING {
+            self.progress.saved(context, result);
+            if matches!(self.view, View::Shelf) {
+                self.show(context);
+            }
+        }
+    }
+
+    /// Lists the card again when the shelf comes back into view, so a book
+    /// copied on while Books was in the background is there without a
+    /// restart.
+    fn on_foreground(&mut self, context: &mut Context) {
+        if matches!(self.view, View::Shelf) {
+            context.device().list_library();
+        }
+    }
+
+    /// Keeps the place before the panel goes elsewhere, because an
+    /// application in the background can be stopped without another word.
+    fn on_background(&mut self, context: &mut Context) {
+        self.keep_position(context);
+    }
+
+    fn on_suspend(&mut self, context: &mut Context) {
+        self.keep_position(context);
+    }
+
+    fn on_exit(&mut self, context: &mut Context) {
+        self.keep_position(context);
+    }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.read_action(context, action) {
             return;
         }
-        if action == action_id(BACK) {
+        if action == action_id(RELIST) {
+            self.library_failed = false;
+            context.device().list_library();
+            return;
+        }
+        if action == action_id(BACK)
+            || (action == ActionId::BACK && matches!(self.view, View::Unreadable(_)))
+        {
             self.view = View::Shelf;
             self.show(context);
             return;
@@ -438,14 +579,17 @@ impl KoboApp for Books {
         if request == DeviceRequest::ListLibrary {
             match result {
                 DeviceResult::Library { entries, .. } => {
-                    self.documents = entries.into_iter().filter_map(from_entry).collect();
-                    self.view = View::Shelf;
-                    self.show(context);
+                    self.library_failed = false;
+                    self.take_documents(entries.into_iter().filter_map(from_entry).collect());
+                    if matches!(self.view, View::Shelf) {
+                        self.show(context);
+                    }
                 }
                 DeviceResult::Denied(_) | DeviceResult::Failed(_) => {
-                    self.documents.clear();
-                    self.view = View::Shelf;
-                    self.show(context);
+                    self.library_failed = true;
+                    if matches!(self.view, View::Shelf) {
+                        self.show(context);
+                    }
                 }
                 _ => {}
             }
@@ -483,6 +627,16 @@ impl KoboApp for Books {
             let _ = self.read_action(context, action_id(action));
         }
     }
+}
+
+/// The record a book's place is kept under.
+///
+/// The shared record names an article by the SHA-256 of something that
+/// identifies it, and only that, so a library path never reaches the file.
+/// The prefix keeps a book from ever sharing a record with anything else
+/// that might one day be kept in the same file.
+fn position_id(document: &str) -> String {
+    kobo_bookview::positions::identity(&format!("books:{document}"))
 }
 
 fn from_entry(entry: LibraryEntry) -> Option<Document> {
@@ -586,9 +740,11 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{fixtures, painted_cover, Books, Kind, View, SHELF_PAGE};
+    use super::{fixtures, painted_cover, Books, Document, Kind, View, READING, SHELF_PAGE};
     use kobo_sdk::prelude::*;
-    use kobo_sdk::{document_preview, DeviceResult, LibraryEntry, CLARA_BW_METRICS};
+    use kobo_sdk::{
+        document_preview, DeviceResult, LibraryEntry, StoreRequest, StoreResult, CLARA_BW_METRICS,
+    };
     use kobo_ui::{Chrome, LayoutKind, TileShape};
 
     fn shown(commands: Vec<Command>) -> Screen {
@@ -614,11 +770,53 @@ mod tests {
     }
 
     fn open(runner: &mut AppRunner<Books>, kind: Kind) -> Screen {
-        let index = fixtures()
+        let index = runner
+            .app()
+            .documents
             .iter()
             .position(|document| document.kind == kind)
             .expect("a document of that kind");
         shown(runner.action(action_id(&format!("book-{index}"))))
+    }
+
+    /// A plain text book long enough to turn several pages.
+    fn long_book() -> Document {
+        let body = (1..=400)
+            .map(|line| format!("Line {line} of a letter that runs on for page after page."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Document {
+            id: "0/long-letter.txt".to_owned(),
+            title: "A Long Letter".to_owned(),
+            kind: Kind::Text,
+            preview: "Line 1".to_owned(),
+            on_card: true,
+            has_cover: false,
+            body: Some(body),
+        }
+    }
+
+    /// Books started fresh, with its saved reading record handed back the way
+    /// the store hands it back after a restart.
+    fn started_with(record: Option<Vec<u8>>) -> AppRunner<Books> {
+        let mut books = Books::empty();
+        books.take_documents(vec![long_book()]);
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: READING.into(),
+            value: record,
+        });
+        runner
+    }
+
+    fn saved(commands: &[Command]) -> Option<Vec<u8>> {
+        commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == READING => {
+                Some(value.clone())
+            }
+            _ => None,
+        })
     }
 
     #[test]
@@ -698,7 +896,7 @@ mod tests {
         let screen = shown(runner.action(action_id("book-0")));
         let text = words(&screen);
         assert!(
-            text.contains("not on the card"),
+            text.contains("not downloaded yet") && text.contains("Kobo reader"),
             "opening an undownloaded title did not say why: {text}"
         );
         assert!(
@@ -725,22 +923,21 @@ mod tests {
             tiles.iter().all(|tile| tile.picture.is_some()),
             "a document was left on a generic glyph"
         );
-        assert!(
-            tiles.iter().all(|tile| tile.subtitle.is_empty()),
-            "the format was written under the title"
-        );
+        for (tile, document) in tiles.iter().zip(&runner.app().documents) {
+            if document.opens_here() {
+                assert!(
+                    tile.subtitle.is_empty(),
+                    "the format was written under {}",
+                    document.title
+                );
+            } else {
+                assert_eq!(tile.subtitle, "Opens in Kobo reader");
+            }
+        }
         let text = words(&screen);
         assert!(text.contains("The Open Sea"), "{text}");
         assert!(text.contains("Notes on a Rainy Afternoon"), "{text}");
         assert!(text.contains("Timetable"), "{text}");
-        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
-        assert!(
-            !layout
-                .nodes
-                .iter()
-                .any(|node| node.kind == LayoutKind::TileSubtitle),
-            "a format caption was drawn under a title"
-        );
     }
 
     #[test]
@@ -854,8 +1051,8 @@ mod tests {
         let screen = open(&mut runner, Kind::Pdf);
         let text = words(&screen);
         assert!(
-            text.contains("not readable yet"),
-            "opening a PDF did not say it was unreadable: {text}"
+            text.contains("PDFs open in the Kobo reader"),
+            "opening a PDF did not say where to read it: {text}"
         );
         assert!(
             matches!(runner.app().view, View::Unreadable(_)),
@@ -864,6 +1061,12 @@ mod tests {
         assert!(
             !runner.app().book.is_open(),
             "a PDF was opened in the reader"
+        );
+        runner.action(ActionId::BACK);
+        assert_eq!(
+            runner.app().view,
+            View::Shelf,
+            "the bar's back arrow did not return to the shelf"
         );
     }
 
@@ -896,5 +1099,123 @@ mod tests {
                 .any(|node| matches!(node.kind, LayoutKind::FramedPicture(_))),
             "the shelf drew glyphs where the covers should be"
         );
+    }
+
+    #[test]
+    fn a_book_reopens_at_the_page_and_text_size_it_was_closed_at() {
+        let mut runner = started_with(None);
+        runner.action(action_id("book-0"));
+        assert_eq!(runner.app().view, View::Reading);
+        let mut record = None;
+        for _ in 0..3 {
+            record = saved(&runner.page_turn(true)).or(record);
+            runner.store_result(StoreResult::Saved {
+                key: READING.into(),
+            });
+        }
+        record = saved(&runner.action(action_id(kobo_read::action::LARGER))).or(record);
+        runner.store_result(StoreResult::Saved {
+            key: READING.into(),
+        });
+        let left = runner.app().book.memory().cloned().expect("a book is open");
+        assert!(left.at > 0, "three page turns left the book at its start");
+        assert_ne!(left.scale, kobo_read::Memory::default().scale);
+        record = saved(&runner.action(ActionId::BACK)).or(record);
+        assert_eq!(runner.app().view, View::Shelf);
+        let record = record.expect("closing a book wrote its place down");
+
+        // Books restarts with only what the store kept.
+        let mut runner = started_with(Some(record));
+        runner.action(action_id("book-0"));
+        let reopened = runner
+            .app()
+            .book
+            .memory()
+            .cloned()
+            .expect("the book opened again");
+        assert_eq!(reopened.at, left.at, "the book reopened at another page");
+        assert_eq!(
+            reopened.scale, left.scale,
+            "the book reopened at another size"
+        );
+    }
+
+    #[test]
+    fn quick_page_turns_and_leaving_still_keep_the_last_page() {
+        let mut runner = started_with(None);
+        runner.action(action_id("book-0"));
+        runner.page_turn(true);
+        runner.page_turn(true);
+        runner.lifecycle(Lifecycle::Background);
+        let left = runner.app().book.memory().map(|memory| memory.at);
+        // The second turn waited for the first write; its answer releases it.
+        let commands = runner.store_result(StoreResult::Saved {
+            key: READING.into(),
+        });
+        let record =
+            saved(&commands).expect("the last page was written once the first write was kept");
+        let mut runner = started_with(Some(record));
+        runner.action(action_id("book-0"));
+        assert_eq!(runner.app().book.memory().map(|memory| memory.at), left);
+    }
+
+    #[test]
+    fn books_that_open_here_come_before_those_that_open_in_the_kobo_reader() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        runner.device_result(DeviceResult::Library {
+            entries: vec![
+                LibraryEntry {
+                    id: "0/timetable.pdf".to_owned(),
+                    title: "Timetable".to_owned(),
+                    kind: 5,
+                    bytes: 80,
+                    on_card: true,
+                },
+                LibraryEntry {
+                    id: "n/uuid-piranesi".to_owned(),
+                    title: "Piranesi".to_owned(),
+                    kind: 1,
+                    bytes: 0,
+                    on_card: false,
+                },
+                LibraryEntry {
+                    id: "0/notes.md".to_owned(),
+                    title: "Notes".to_owned(),
+                    kind: 2,
+                    bytes: 80,
+                    on_card: true,
+                },
+            ],
+            truncated: false,
+        });
+        let order = runner
+            .app()
+            .documents
+            .iter()
+            .map(|document| document.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["Notes", "Timetable", "Piranesi"]);
+    }
+
+    #[test]
+    fn an_empty_library_says_how_to_add_books() {
+        let mut runner = AppRunner::new(Books::empty());
+        let text = words(&shown(runner.start()));
+        assert!(text.contains("copy EPUB"), "{text}");
+    }
+
+    #[test]
+    fn a_library_that_could_not_be_listed_offers_to_try_again() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        let screen = shown(runner.device_result(DeviceResult::Failed(DeviceError::Backend)));
+        let text = words(&screen);
+        assert!(text.contains("could not be read"), "{text}");
+        assert!(!text.contains("No books yet"), "{text}");
+        let commands = runner.action(action_id("relist"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ListLibrary))));
     }
 }

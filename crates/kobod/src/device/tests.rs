@@ -869,36 +869,108 @@ fn app_file_roots_are_private_per_app() {
     );
 }
 
-/// `TZ` is read from the environment, which is process-global, so these
-/// are one test rather than several: two tests setting it at once would
-/// see each other's value.
+/// A zone file as the C library sees it: a version 2 header, a table this
+/// code never reads, and the POSIX rule on the last line.
+fn zone(rule: &str) -> Vec<u8> {
+    let mut bytes = b"TZif2\0\0\0binary transition table\n".to_vec();
+    bytes.extend_from_slice(format!("\n{rule}\n").as_bytes());
+    bytes
+}
+
 #[test]
 fn the_clock_reads_the_offset_posix_spells_backwards() {
     // POSIX inverts the sign everyone expects: EST5 is five hours *behind*
     // UTC, not ahead. Getting this backwards puts the band ten hours out.
     let cases = [
         ("UTC0", 0),
-        ("EST5", -5 * 3600),
-        ("IST-5:30", 5 * 3600 + 30 * 60),
-        ("CET-1", 3600),
-        ("NZST-12:45", 12 * 3600 + 45 * 60),
-        // Nothing understood is UTC rather than a guess.
+        ("EST5", -5 * 60),
+        ("IST-5:30", 5 * 60 + 30),
+        ("CET-1", 60),
+        ("NZST-12:45", 12 * 60 + 45),
+        // An empty TZ is UTC to the C library, and so is anything not
+        // understood rather than a guess.
         ("", 0),
         ("Etc/Unknown", 0),
     ];
     for (tz, want) in cases {
-        std::env::set_var("TZ", tz);
         assert_eq!(
-            super::local_offset_seconds(),
+            super::offset_minutes(Some(tz), |_| None),
             want,
             "TZ={tz} was read as the wrong offset"
         );
     }
-    std::env::remove_var("TZ");
     assert_eq!(
-        super::local_offset_seconds(),
+        super::offset_minutes(None, |_| None),
         0,
-        "a device with no TZ at all did not fall back to UTC"
+        "a device with no TZ and no zone file did not fall back to UTC"
+    );
+}
+
+#[test]
+fn without_tz_the_offset_comes_from_the_zone_file_the_c_library_reads() {
+    let localtime = |path: &std::path::Path| {
+        (path == std::path::Path::new("/etc/localtime")).then(|| zone("IST-5:30"))
+    };
+    assert_eq!(super::offset_minutes(None, localtime), 330);
+    // A TZ that says something wins over the file, as it does for the C
+    // library.
+    assert_eq!(super::offset_minutes(Some("EST5"), localtime), -300);
+    // A version 1 file has no rule to read, and an unreadable one is not a
+    // zone at all. Both are UTC rather than a guess.
+    assert_eq!(
+        super::offset_minutes(None, |_| Some(b"TZif\0\0\0\0table\nIST-5:30\n".to_vec())),
+        0
+    );
+    assert_eq!(
+        super::offset_minutes(None, |_| Some(b"not a zone".to_vec())),
+        0
+    );
+}
+
+#[test]
+fn a_named_zone_is_read_from_the_zone_directory_and_cannot_climb_out_of_it() {
+    let zoneinfo = |path: &std::path::Path| match path.to_str() {
+        Some("/usr/share/zoneinfo/America/New_York") => Some(zone("EST5EDT,M3.2.0,M11.1.0")),
+        Some("/usr/share/zoneinfo/Asia/Kathmandu") => Some(zone("<+0545>-5:45")),
+        Some("/etc/zones/Here") => Some(zone("<+03>-3")),
+        _ => None,
+    };
+    assert_eq!(
+        super::offset_minutes(Some("America/New_York"), zoneinfo),
+        -300
+    );
+    assert_eq!(
+        super::offset_minutes(Some(":Asia/Kathmandu"), zoneinfo),
+        345
+    );
+    assert_eq!(
+        super::offset_minutes(Some(":/etc/zones/Here"), zoneinfo),
+        180
+    );
+    for escape in ["../../etc/zones/Here", "Asia//Kathmandu", ":"] {
+        assert_eq!(super::zone_file(escape), None, "{escape}");
+    }
+}
+
+#[test]
+fn every_application_is_started_with_the_readers_offset_and_nothing_else_of_ours() {
+    let socket = std::path::Path::new("/tmp/kobo-session-test.sock");
+    let mut command = super::application_command(std::path::Path::new("/usr/bin/env"), socket, 330);
+    command.stdout(std::process::Stdio::piped());
+    let output = command.output().expect("run env as an application");
+    assert!(output.status.success());
+    let mut seen = String::from_utf8(output.stdout)
+        .expect("env prints text")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            format!("KOBO_SOCKET={}", socket.display()),
+            format!("{}=330", kobo_policy::clock::READER_OFFSET_VARIABLE),
+        ]
     );
 }
 

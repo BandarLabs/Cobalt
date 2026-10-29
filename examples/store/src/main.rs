@@ -5,9 +5,9 @@
 //! it never receives a package URL or chooses an installation path.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, AppLinkState, Context, DenyReason, DeviceError, DeviceRequest,
-    DeviceResult, Glyph, Heartbeat, KoboApp, PictureHandle, Position, RemoteInstallOutcome,
-    RowLead, Screen, ScreenBuilder, TaskId, TaskOutcome, TilePicture,
+    action_id, ActionId, AppInfo, AppLinkState, BannerLevel, Capability, Context, DenyReason,
+    DeviceError, DeviceRequest, DeviceResult, Glyph, Heartbeat, KoboApp, PictureHandle,
+    RemoteInstallOutcome, RowLead, Screen, ScreenBuilder, TaskId, TaskOutcome, TilePicture,
 };
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::process::ExitCode;
@@ -19,6 +19,8 @@ const DISCONNECT_LINK: &str = "disconnect-link";
 const PREVIOUS: &str = "previous";
 const NEXT: &str = "next";
 const UPDATE_COBALT: &str = "update-cobalt";
+const CONFIRM_REMOVE: &str = "confirm-remove";
+const CANCEL_REMOVE: &str = "cancel-remove";
 const QR_HANDLE: PictureHandle = PictureHandle(1);
 const QR_SCALE: u32 = 7;
 const QR_QUIET_ZONE: i32 = 4;
@@ -28,6 +30,8 @@ enum View {
     #[default]
     Catalog,
     Detail(String),
+    /// The detail screen with the uninstall question over it.
+    ConfirmUninstall(String),
     Working {
         id: String,
         action: &'static str,
@@ -35,13 +39,78 @@ enum View {
     AppLink,
 }
 
+/// Which apps the catalog lists.
+///
+/// Forty-odd apps over ten pages is a list nobody reads to the end, and the
+/// questions an owner brings to the Store are "what is new for the apps I
+/// have", "what do I have" and "what else is there". Each is answered from
+/// the installed and available versions the catalog already carries, so the
+/// filter needs nothing from the runtime that it does not already send.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Filter {
+    #[default]
+    All,
+    Installed,
+    Updates,
+    Available,
+}
+
+impl Filter {
+    const ALL: [Self; 4] = [Self::All, Self::Installed, Self::Updates, Self::Available];
+
+    const fn action(self) -> &'static str {
+        match self {
+            Self::All => "filter-all",
+            Self::Installed => "filter-installed",
+            Self::Updates => "filter-updates",
+            Self::Available => "filter-available",
+        }
+    }
+
+    fn admits(self, entry: &AppInfo) -> bool {
+        match self {
+            Self::All => true,
+            Self::Installed => entry.is_installed() || is_system_app(&entry.id),
+            Self::Updates => has_compatible_update(entry),
+            Self::Available => !entry.is_installed() && !is_system_app(&entry.id),
+        }
+    }
+}
+
+/// A sentence for the top of whichever screen is showing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Notice {
+    level: BannerLevel,
+    text: String,
+}
+
+impl Notice {
+    fn info(text: impl Into<String>) -> Self {
+        Self {
+            level: BannerLevel::Info,
+            text: text.into(),
+        }
+    }
+
+    fn attention(text: impl Into<String>) -> Self {
+        Self {
+            level: BannerLevel::Attention,
+            text: text.into(),
+        }
+    }
+}
+
 struct Store {
     entries: Vec<AppInfo>,
     view: View,
+    filter: Filter,
     page: usize,
     refreshing: bool,
     refresh_after_cache: bool,
-    notice: Option<String>,
+    notice: Option<Notice>,
+    /// The app whose last install or update failed, so its detail screen
+    /// offers to try again rather than repeating the word that just failed.
+    failed: Option<String>,
     app_link: AppLinkState,
     link_poll: Heartbeat,
     link_request_pending: bool,
@@ -54,10 +123,12 @@ impl Default for Store {
         Self {
             entries: Vec::new(),
             view: View::Catalog,
+            filter: Filter::All,
             page: 0,
             refreshing: false,
             refresh_after_cache: false,
             notice: None,
+            failed: None,
             app_link: AppLinkState::Unpaired,
             link_poll: Heartbeat::every(5),
             link_request_pending: false,
@@ -72,49 +143,125 @@ impl Store {
         let screen = match self.view.clone() {
             View::Catalog => self.catalog(context),
             View::Detail(id) => self.detail(&id),
+            View::ConfirmUninstall(id) => self.confirm_uninstall(&id),
             View::Working { id, action } => self.working(&id, action),
             View::AppLink => self.app_link(),
         };
         context.set_screen(screen);
     }
 
-    fn catalog(&mut self, context: &Context) -> Screen {
-        let states = self.entries.iter().map(app_state).collect::<Vec<_>>();
-        let rows = self
+    /// The apps the current filter lists, in the order an owner wants them.
+    ///
+    /// Updates come first because they are the one thing on the page that
+    /// asks for a tap, then what is already installed, then everything else.
+    /// Built-in apps go last: nothing about them can be changed here, so the
+    /// top of the first page is no place for them.
+    fn listed(&self) -> Vec<&AppInfo> {
+        let mut listed = self
             .entries
             .iter()
-            .zip(&states)
-            .map(|(entry, state)| (entry.title.as_str(), entry.summary.as_str(), state.as_str()))
+            .filter(|entry| self.filter.admits(entry))
             .collect::<Vec<_>>();
-        let without_controls = context.paginate_rows_below_section(
-            &rows,
-            false,
-            Position::Elsewhere,
-            self.notice.as_deref(),
-        );
-        // A one-page catalog draws no bottom bar and gets that room for apps.
-        // Once it turns, measure again with the navigation bar it will draw.
-        let page_indices = if without_controls.len() > 1 {
-            context.paginate_rows_below_section(
-                &rows,
-                true,
-                Position::Elsewhere,
-                self.notice.as_deref(),
-            )
-        } else {
-            without_controls
+        listed.sort_by_key(|entry| standing(entry));
+        listed
+    }
+
+    /// Everything on the catalog screen above the list itself.
+    ///
+    /// Drawn and measured from the same builder, so the list is paginated
+    /// against exactly the room the screen leaves it.
+    fn catalog_head(&self, page: usize, pages: usize) -> ScreenBuilder {
+        let count = |filter: Filter| {
+            self.entries
+                .iter()
+                .filter(|entry| filter.admits(entry))
+                .count()
         };
-        let pages = page_indices.len();
-        self.page = self.page.min(pages - 1);
         let mut screen = ScreenBuilder::new("store-catalog")
             .top_bar("App Store")
             .top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh)
-            .top_bar_glyph(APP_LINK, "Install links", Glyph::Globe);
+            .top_bar_action(APP_LINK, "Link browser");
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice.clone());
+            screen = screen.banner(notice.level, notice.text.clone());
         }
+        let selected = Filter::ALL
+            .iter()
+            .position(|filter| *filter == self.filter)
+            .unwrap_or(0);
+        screen = screen.tabs(
+            selected,
+            [
+                (Filter::All.action(), "All".to_owned()),
+                (
+                    Filter::Installed.action(),
+                    format!("Installed {}", count(Filter::Installed)),
+                ),
+                (
+                    Filter::Updates.action(),
+                    format!("Updates {}", count(Filter::Updates)),
+                ),
+                (
+                    Filter::Available.action(),
+                    format!("Available {}", count(Filter::Available)),
+                ),
+            ],
+        );
+        let title = match (self.filter, self.refreshing) {
+            (Filter::All, false) => "Apps",
+            (Filter::All, true) => "Apps · refreshing",
+            (Filter::Installed, _) => "Installed",
+            (Filter::Updates, _) => "Updates",
+            (Filter::Available, _) => "Available to install",
+        };
+        screen.section_with_value(title, format!("{} / {}", page + 1, pages.max(1)))
+    }
+
+    /// Breaks the listed apps into pages under the catalog's own head.
+    ///
+    /// The SDK measures rows with a trailing value below a section, and rows
+    /// under an arbitrary head, but not both at once, and the filter strip is
+    /// what makes this screen need both. So the room is worked out here the
+    /// way the SDK works it out, from the head as the layout engine actually
+    /// draws it. The catalog tests lay every page out at every text size, so
+    /// if the two ever disagree a row under the bottom bar fails a test
+    /// rather than reaching a reader.
+    fn pages(
+        &self,
+        context: &Context,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+    ) -> Vec<Vec<usize>> {
+        let metrics = context.metrics();
+        let head = self.catalog_head(0, 1).build();
+        let pages = kobo_ui::with_text_scale(metrics.text_scale, || {
+            let used = head
+                .layout_with(&metrics, &kobo_ui::Chrome::measuring(true))
+                .content_used();
+            let mut area = metrics.prose_area_in(true, nav_bar, kobo_ui::Face::Text);
+            area.height = area
+                .height
+                .saturating_sub(metrics.status_band_height())
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(1);
+            kobo_ui::paginate_rows_with_trailing(rows, &metrics, area)
+        });
+        if pages.is_empty() {
+            vec![Vec::new()]
+        } else {
+            pages
+        }
+    }
+
+    fn catalog(&mut self, context: &Context) -> Screen {
         if self.entries.is_empty() {
-            screen = screen
+            let mut screen = ScreenBuilder::new("store-catalog")
+                .top_bar("App Store")
+                .top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh)
+                .top_bar_action(APP_LINK, "Link browser");
+            if let Some(notice) = &self.notice {
+                screen = screen.banner(notice.level, notice.text.clone());
+            }
+            return screen
                 .splash(
                     Some(Glyph::Download),
                     if self.refreshing {
@@ -128,22 +275,44 @@ impl Store {
                         "Connect Wi-Fi and refresh the catalog."
                     },
                 )
-                .bottom_action_marked(REFRESH, "Refresh", Glyph::Refresh);
-            return screen.build();
+                .bottom_action_marked(REFRESH, "Refresh", Glyph::Refresh)
+                .build();
         }
-        screen = screen
-            .section_with_value(
-                if self.refreshing {
-                    "Apps · refreshing"
-                } else {
-                    "Apps"
-                },
-                format!("{} / {pages}", self.page + 1),
-            )
-            .rows_with_trailing(
-                page_indices[self.page]
+        let listed = self.listed();
+        let states = listed
+            .iter()
+            .map(|entry| app_state(entry))
+            .collect::<Vec<_>>();
+        let rows = listed
+            .iter()
+            .zip(&states)
+            .map(|(entry, state)| (entry.title.as_str(), entry.summary.as_str(), state.as_str()))
+            .collect::<Vec<_>>();
+        // A one-page catalog draws no bottom bar and gets that room for apps.
+        // Once it turns, measure again with the navigation bar it will draw.
+        let without_controls = self.pages(context, &rows, false);
+        let page_indices = if without_controls.len() > 1 {
+            self.pages(context, &rows, true)
+        } else {
+            without_controls
+        };
+        let pages = page_indices.len();
+        let page = self.page.min(pages - 1);
+        let mut screen = self.catalog_head(page, pages);
+        if listed.is_empty() {
+            screen = screen.text(match self.filter {
+                Filter::All => "No apps are in the catalog.",
+                Filter::Installed => {
+                    "No apps are installed yet. Choose All to see what you can install."
+                }
+                Filter::Updates => "Every installed app is up to date.",
+                Filter::Available => "Every app in the catalog is installed.",
+            });
+        } else {
+            screen = screen.rows_with_trailing(
+                page_indices[page]
                     .iter()
-                    .filter_map(|index| self.entries.get(*index))
+                    .filter_map(|index| listed.get(*index))
                     .map(|entry| {
                         (
                             app_action(&entry.id),
@@ -154,12 +323,14 @@ impl Store {
                         )
                     }),
             );
+        }
+        self.page = page;
         if pages > 1 {
             let mut actions = Vec::new();
-            if self.page > 0 {
+            if page > 0 {
                 actions.push((PREVIOUS, "Previous", Some(Glyph::Previous)));
             }
-            if self.page + 1 < pages {
+            if page + 1 < pages {
                 actions.push((NEXT, "More", Some(Glyph::Next)));
             }
             screen = if actions.len() == 1 {
@@ -174,10 +345,10 @@ impl Store {
 
     fn app_link(&self) -> Screen {
         let mut screen = ScreenBuilder::new("store-app-link")
-            .top_bar("Install links")
+            .top_bar("Install from a browser")
             .owns_back(true);
         if let Some(notice) = &self.notice {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, notice.clone());
+            screen = screen.banner(notice.level, notice.text.clone());
         }
         match &self.app_link {
             AppLinkState::Unpaired => screen
@@ -319,30 +490,43 @@ impl Store {
             }
             DeviceResult::Failed(error) => {
                 self.link_request_pending = false;
-                self.notice = Some(format!(
+                self.notice = Some(Notice::attention(format!(
                     "Install links are unavailable: {}. Connect Wi-Fi and try again.",
                     error.describe()
-                ));
+                )));
             }
             _ => return false,
         }
         true
     }
 
+    /// One app, with what it can do and the one or two things to do with it.
+    ///
+    /// The permissions are said in words because this is the screen where an
+    /// owner decides whether to let an app onto the reader, and
+    /// `keep-awake, scheduled-wake` answers a question only a developer would
+    /// ask.
     fn detail(&self, id: &str) -> Screen {
+        self.detail_screen(id).build()
+    }
+
+    fn detail_screen(&self, id: &str) -> ScreenBuilder {
         let Some(entry) = self.entries.iter().find(|entry| entry.id == id) else {
             return ScreenBuilder::new("store-missing")
                 .top_bar("App Store")
                 .owns_back(true)
-                .error_state("This app is no longer in the verified catalog.")
-                .build();
+                .error_state("This app is no longer in the verified catalog.");
         };
         let installed = entry.installed_version.as_deref();
         let system = is_system_app(id);
         let compatible = entry.is_compatible_with(env!("CARGO_PKG_VERSION"));
         let mut screen = ScreenBuilder::new("store-detail")
             .top_bar(entry.title.clone())
-            .owns_back(true)
+            .owns_back(true);
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(notice.level, notice.text.clone());
+        }
+        screen = screen
             .splash(
                 Some(entry.glyph),
                 entry.title.clone(),
@@ -360,16 +544,10 @@ impl Store {
                         "Managed by App Store".to_owned()
                     },
                 ),
-                (
-                    "Permissions",
-                    if entry.capabilities.is_empty() {
-                        "None".to_owned()
-                    } else {
-                        entry.capabilities.join(", ")
-                    },
-                ),
+                ("Permissions", permissions(&entry.capabilities)),
             ]);
-        screen = if system {
+        let retry = self.failed.as_deref() == Some(id);
+        if system {
             screen.bottom_action_marked(open_action(id), "Open", entry.glyph)
         } else if !compatible {
             if installed.is_some() {
@@ -391,13 +569,50 @@ impl Store {
                 (remove_action(id), "Uninstall", Some(Glyph::Trash)),
             ];
             if entry.has_update() {
-                actions.insert(0, (install_action(id), "Update", Some(Glyph::Download)));
+                actions.insert(
+                    0,
+                    (
+                        install_action(id),
+                        if retry { "Try again" } else { "Update" },
+                        Some(Glyph::Download),
+                    ),
+                );
             }
             screen.action_bar_marked(actions)
         } else {
-            screen.bottom_action_marked(install_action(id), "Install", Glyph::Download)
-        };
-        screen.build()
+            screen.bottom_action_marked(
+                install_action(id),
+                if retry { "Try again" } else { "Install" },
+                if retry {
+                    Glyph::Refresh
+                } else {
+                    Glyph::Download
+                },
+            )
+        }
+    }
+
+    /// Asks before an uninstall, over the screen the owner tapped it on.
+    ///
+    /// Uninstalling is one tap away from Open on the same bar, and an app
+    /// that took a USB trip and a key to set up should not be one brush of
+    /// the panel from gone. The question also answers the thing an owner
+    /// worries about: the app's saved data stays, because `kobod` keeps an
+    /// app's state outside the package it removes.
+    fn confirm_uninstall(&self, id: &str) -> Screen {
+        let title = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map_or(id, |entry| entry.title.as_str());
+        self.detail_screen(id)
+            .confirm(
+                format!("Uninstall {title}?"),
+                "Its saved data stays on this reader, so installing it again picks up where you left off.",
+                (CONFIRM_REMOVE, "Uninstall"),
+                (CANCEL_REMOVE, "Cancel"),
+            )
+            .build()
     }
 
     fn working(&self, id: &str, action: &str) -> Screen {
@@ -426,6 +641,13 @@ impl Store {
         self.entries = entries;
     }
 
+    fn title_of(&self, id: &str) -> String {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map_or_else(|| id.to_owned(), |entry| entry.title.clone())
+    }
+
     fn request_install(&mut self, context: &mut Context, id: String) {
         let action = self
             .entries
@@ -434,30 +656,68 @@ impl Store {
             .filter(|entry| entry.is_installed())
             .map_or("Installing", |_| "Updating");
         self.notice = None;
+        self.failed = None;
         self.view = View::Working {
             id: id.clone(),
             action,
         };
         self.show(context);
-        if !context.applications().install(id) {
-            self.notice = Some("That application identity is invalid.".to_owned());
-            self.view = View::Catalog;
+        if !context.applications().install(id.clone()) {
+            self.notice = Some(Notice::attention("That application identity is invalid."));
+            self.view = View::Detail(id);
             self.show(context);
         }
     }
 
     fn request_uninstall(&mut self, context: &mut Context, id: String) {
         self.notice = None;
+        self.failed = None;
         self.view = View::Working {
             id: id.clone(),
             action: "Removing",
         };
         self.show(context);
-        if !context.applications().uninstall(id) {
-            self.notice = Some("That application identity is invalid.".to_owned());
-            self.view = View::Catalog;
+        if !context.applications().uninstall(id.clone()) {
+            self.notice = Some(Notice::attention("That application identity is invalid."));
+            self.view = View::Detail(id);
             self.show(context);
         }
+    }
+
+    /// Where a finished or refused change leaves the owner: on the app it was
+    /// about, unless nothing was in progress.
+    fn after_working(&self) -> View {
+        match &self.view {
+            View::Working { id, .. } => View::Detail(id.clone()),
+            other => other.clone(),
+        }
+    }
+
+    /// What an install that just finished changed, written into the list
+    /// before the runtime's own reply arrives.
+    ///
+    /// The detail screen is drawn from the entry, so without this it would
+    /// offer Install again for the second it takes the catalog to come back.
+    fn mark_installed(&mut self, id: &str) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+            entry.installed_version = Some(entry.version.clone());
+        }
+    }
+
+    fn take_filter(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let Some(filter) = Filter::ALL
+            .into_iter()
+            .find(|filter| action == action_id(filter.action()))
+        else {
+            return false;
+        };
+        if filter != self.filter {
+            self.filter = filter;
+            self.page = 0;
+            self.notice = None;
+        }
+        self.show(context);
+        true
     }
 }
 
@@ -471,9 +731,23 @@ impl KoboApp for Store {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == ActionId::BACK {
-            self.view = View::Catalog;
+        if action == ActionId::BACK || action == action_id(CANCEL_REMOVE) {
+            if let View::ConfirmUninstall(id) = &self.view {
+                self.view = View::Detail(id.clone());
+            } else if action == ActionId::BACK {
+                self.notice = None;
+                self.failed = None;
+                self.view = View::Catalog;
+            } else {
+                return;
+            }
             self.show(context);
+            return;
+        }
+        if action == action_id(CONFIRM_REMOVE) {
+            if let View::ConfirmUninstall(id) = self.view.clone() {
+                self.request_uninstall(context, id);
+            }
             return;
         }
         if action == action_id(APP_LINK) {
@@ -504,7 +778,13 @@ impl KoboApp for Store {
             context.launch("settings");
             return;
         }
+        if self.take_filter(context, action) {
+            return;
+        }
         if action == action_id(PREVIOUS) || action == action_id(NEXT) {
+            // The banner was read on the page it arrived on. Carrying it onto
+            // every later page spends a row of apps on old news.
+            self.notice = None;
             self.page = if action == action_id(NEXT) {
                 self.page.saturating_add(1)
             } else {
@@ -519,6 +799,8 @@ impl KoboApp for Store {
             .find(|entry| action == action_id(&app_action(&entry.id)))
         {
             self.view = View::Detail(entry.id.clone());
+            self.notice = None;
+            self.failed = None;
             self.show(context);
             return;
         }
@@ -532,7 +814,8 @@ impl KoboApp for Store {
             if action == action_id(&open_action(&id)) {
                 context.launch(id);
             } else if action == action_id(&remove_action(&id)) {
-                self.request_uninstall(context, id);
+                self.view = View::ConfirmUninstall(id);
+                self.show(context);
             } else if !compatible {
                 context.launch("settings");
             } else {
@@ -555,26 +838,17 @@ impl KoboApp for Store {
         match (request, result) {
             (DeviceRequest::ReadAppCatalog, DeviceResult::Apps { entries }) => {
                 self.replace_entries(entries);
-                if !matches!(self.view, View::Working { .. } | View::AppLink) {
-                    self.view = View::Catalog;
-                }
                 refresh_after_paint = self.refresh_after_cache;
                 self.refresh_after_cache = false;
             }
             (DeviceRequest::RefreshAppCatalog, DeviceResult::Apps { entries }) => {
                 self.replace_entries(entries);
                 self.refreshing = false;
-                if !matches!(self.view, View::Working { .. } | View::AppLink) {
+                if self.view == View::Catalog {
                     self.notice = None;
-                    self.view = View::Catalog;
                 }
             }
             (DeviceRequest::InstallApp { id }, DeviceResult::Done) => {
-                let title = self
-                    .entries
-                    .iter()
-                    .find(|entry| entry.id == id)
-                    .map_or_else(|| id.clone(), |entry| entry.title.clone());
                 let outcome = match &self.view {
                     View::Working {
                         id: working_id,
@@ -582,49 +856,54 @@ impl KoboApp for Store {
                     } if working_id == &id => "updated",
                     _ => "installed",
                 };
-                self.notice = Some(format!("{title} {outcome} successfully."));
-                self.view = View::Catalog;
+                self.notice = Some(Notice::info(format!(
+                    "{} is {outcome}.",
+                    self.title_of(&id)
+                )));
+                self.mark_installed(&id);
+                self.view = View::Detail(id);
                 context.applications().cached_catalog();
             }
             (DeviceRequest::UninstallApp { id }, DeviceResult::Done) => {
-                let title = self
-                    .entries
-                    .iter()
-                    .find(|entry| entry.id == id)
-                    .map_or_else(|| id.clone(), |entry| entry.title.clone());
-                self.notice = Some(format!("{title} removed successfully."));
+                self.notice = Some(Notice::info(format!(
+                    "{} is uninstalled. Its saved data is still on this reader.",
+                    self.title_of(&id)
+                )));
+                if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+                    entry.installed_version = None;
+                }
                 self.view = View::Catalog;
                 context.applications().cached_catalog();
             }
             (DeviceRequest::RefreshAppCatalog, DeviceResult::Failed(error)) => {
                 self.refreshing = false;
-                self.notice = Some(format!(
+                self.notice = Some(Notice::attention(format!(
                     "The catalog could not be refreshed: {}. The last verified list is still shown.",
                     error.describe()
-                ));
-                if !matches!(self.view, View::Working { .. } | View::AppLink) {
-                    self.view = View::Catalog;
-                }
+                )));
             }
             (DeviceRequest::ReadAppCatalog, DeviceResult::Failed(_)) => {
                 refresh_after_paint = self.refresh_after_cache;
                 self.refresh_after_cache = false;
             }
-            (
-                DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. },
-                DeviceResult::Failed(error),
-            ) => {
-                self.notice = Some(app_failure(error).to_owned());
-                self.view = View::Catalog;
+            (DeviceRequest::InstallApp { id }, DeviceResult::Failed(error)) => {
+                self.notice = Some(Notice::attention(app_failure(error)));
+                self.failed = Some(id.clone());
+                self.view = View::Detail(id);
                 // A write may have reached disk before its final flush failed.
                 // Re-read verified installed metadata instead of promising rollback.
+                context.applications().cached_catalog();
+            }
+            (DeviceRequest::UninstallApp { id }, DeviceResult::Failed(error)) => {
+                self.notice = Some(Notice::attention(app_failure(error)));
+                self.view = View::Detail(id);
                 context.applications().cached_catalog();
             }
             (_, DeviceResult::Denied(reason)) => {
                 self.link_request_pending = false;
                 self.refreshing = false;
-                self.notice = Some(denied(reason).to_owned());
-                self.view = View::Catalog;
+                self.notice = Some(Notice::attention(denied(reason)));
+                self.view = self.after_working();
             }
             _ => {}
         }
@@ -689,7 +968,7 @@ fn pairing_verification(url: &str) -> Option<String> {
     Some(format!("{}.{}", fingerprint?, secret?))
 }
 
-fn remote_install_notice(outcome: &RemoteInstallOutcome, entries: &[AppInfo]) -> Option<String> {
+fn remote_install_notice(outcome: &RemoteInstallOutcome, entries: &[AppInfo]) -> Option<Notice> {
     let name = |id: &str| {
         entries
             .iter()
@@ -699,28 +978,53 @@ fn remote_install_notice(outcome: &RemoteInstallOutcome, entries: &[AppInfo]) ->
     match outcome {
         RemoteInstallOutcome::None => None,
         RemoteInstallOutcome::Installed { id } => {
-            Some(format!("{} installed successfully.", name(id)))
+            Some(Notice::info(format!("{} is installed.", name(id))))
         }
-        RemoteInstallOutcome::Updated { id } => Some(format!("{} updated successfully.", name(id))),
-        RemoteInstallOutcome::AlreadyInstalled { id } => {
-            Some(format!("{} is already installed and up to date.", name(id)))
+        RemoteInstallOutcome::Updated { id } => {
+            Some(Notice::info(format!("{} is updated.", name(id))))
         }
-        RemoteInstallOutcome::Included { id } => {
-            Some(format!("{} is included with Cobalt.", name(id)))
-        }
-        RemoteInstallOutcome::Unavailable { id } => Some(format!(
+        RemoteInstallOutcome::AlreadyInstalled { id } => Some(Notice::info(format!(
+            "{} is already installed and up to date.",
+            name(id)
+        ))),
+        RemoteInstallOutcome::Included { id } => Some(Notice::info(format!(
+            "{} is included with Cobalt.",
+            name(id)
+        ))),
+        RemoteInstallOutcome::Unavailable { id } => Some(Notice::attention(format!(
             "{} is not available in the current catalog. Nothing changed.",
             name(id)
-        )),
+        ))),
         RemoteInstallOutcome::RequiresCobalt {
             id,
             minimum_cobalt_version,
-        } => Some(format!(
+        } => Some(Notice::attention(format!(
             "{} requires Cobalt {}. Update Cobalt, then try again.",
             name(id),
             minimum_cobalt_version
-        )),
+        ))),
     }
+}
+
+/// An app's permissions as sentences an owner can weigh.
+///
+/// A name this build of the Store does not recognise belongs to a newer
+/// Cobalt; it is shown rather than dropped, because a permission that
+/// silently vanished from this screen is worse than one shown by its name.
+fn permissions(capabilities: &[String]) -> String {
+    if capabilities.is_empty() {
+        return "None".to_owned();
+    }
+    capabilities
+        .iter()
+        .map(|name| {
+            Capability::parse(name).map_or_else(
+                || format!("Another permission ({name})."),
+                |capability| format!("{}.", capability.plain_wording()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn denied(reason: DenyReason) -> &'static str {
@@ -729,9 +1033,11 @@ fn denied(reason: DenyReason) -> &'static str {
         DenyReason::WithheldForBattery => {
             "Charge the reader before downloading or changing applications."
         }
-        DenyReason::Unsupported => "This Cobalt build does not include app-store support.",
-        DenyReason::Busy => "Another operation is still in progress.",
-        DenyReason::PolicyRejected => "The runtime policy refused this operation.",
+        DenyReason::Unsupported => "This version of Cobalt cannot install apps.",
+        DenyReason::Busy => {
+            "Another install or update is still running. Try again when it finishes."
+        }
+        DenyReason::PolicyRejected => "Cobalt does not allow this change.",
     }
 }
 
@@ -758,6 +1064,30 @@ fn app_state(entry: &AppInfo) -> String {
         None => "Available".to_owned(),
         Some(version) if entry.has_update() => format!("{version} → {}", entry.version),
         Some(version) => format!("Installed · {version}"),
+    }
+}
+
+/// An update this reader can actually take now.
+///
+/// One that needs a newer Cobalt is not offered as an update, because the
+/// tap would lead to Settings instead, and an Updates list that cannot be
+/// cleared from the Store is a list of nagging.
+fn has_compatible_update(entry: &AppInfo) -> bool {
+    !is_system_app(&entry.id)
+        && entry.has_update()
+        && entry.is_compatible_with(env!("CARGO_PKG_VERSION"))
+}
+
+/// Where an app sorts in the catalog: updates, installed, the rest, built in.
+fn standing(entry: &AppInfo) -> u8 {
+    if is_system_app(&entry.id) {
+        3
+    } else if has_compatible_update(entry) {
+        0
+    } else if entry.is_installed() {
+        1
+    } else {
+        2
     }
 }
 
@@ -806,6 +1136,49 @@ mod tests {
         pixels_per_inch: 227,
         text_scale: TextScale::Default,
     };
+
+    fn notice(runner: &AppRunner<Store>) -> Option<&str> {
+        runner
+            .app()
+            .notice
+            .as_ref()
+            .map(|notice| notice.text.as_str())
+    }
+
+    fn words(screen: &Screen, metrics: &DisplayMetrics) -> String {
+        screen
+            .layout_with(metrics, &Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// A store that has already painted its cached catalog and link state.
+    fn opened(entries: &[AppInfo]) -> AppRunner<Store> {
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: entries.to_vec(),
+        });
+        runner.device_result(DeviceResult::AppLink(AppLinkState::Unpaired));
+        runner.device_result(DeviceResult::Apps {
+            entries: entries.to_vec(),
+        });
+        runner
+    }
+
+    fn painted(commands: &[Command]) -> Screen {
+        commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a screen was painted")
+    }
 
     fn app(id: &str, installed: Option<&str>) -> AppInfo {
         AppInfo {
@@ -928,7 +1301,8 @@ mod tests {
             .iter()
             .any(|command| matches!(command, Command::Launch(id) if id == "notes")));
 
-        let remove = runner.action(action_id(&remove_action("notes")));
+        runner.action(action_id(&remove_action("notes")));
+        let remove = runner.action(action_id(CONFIRM_REMOVE));
         assert!(remove.iter().any(|command| matches!(
             command,
             Command::Device(DeviceRequest::UninstallApp { id }) if id == "notes"
@@ -949,20 +1323,18 @@ mod tests {
         runner.action(action_id(&app_action("sudoku")));
         runner.action(action_id(&install_action("sudoku")));
         runner.device_result(DeviceResult::Done);
-        assert_eq!(
-            runner.app().notice.as_deref(),
-            Some("sudoku app installed successfully.")
-        );
+        assert_eq!(notice(&runner), Some("sudoku app is installed."));
 
         runner.device_result(DeviceResult::Apps {
             entries: vec![app("sudoku", Some("1.1.0"))],
         });
         runner.action(action_id(&app_action("sudoku")));
         runner.action(action_id(&remove_action("sudoku")));
+        runner.action(action_id(CONFIRM_REMOVE));
         runner.device_result(DeviceResult::Done);
         assert_eq!(
-            runner.app().notice.as_deref(),
-            Some("sudoku app removed successfully.")
+            notice(&runner),
+            Some("sudoku app is uninstalled. Its saved data is still on this reader.")
         );
     }
 
@@ -980,10 +1352,7 @@ mod tests {
         runner.action(action_id(&app_action("sudoku")));
         runner.action(action_id(&install_action("sudoku")));
         runner.device_result(DeviceResult::Done);
-        assert_eq!(
-            runner.app().notice.as_deref(),
-            Some("sudoku app updated successfully.")
-        );
+        assert_eq!(notice(&runner), Some("sudoku app is updated."));
     }
 
     #[test]
@@ -1004,7 +1373,7 @@ mod tests {
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::ReadAppCatalog))));
         let notice = runner.app().notice.clone();
-        assert!(notice.as_deref().unwrap().contains("installed version"));
+        assert!(notice.as_ref().unwrap().text.contains("installed version"));
         runner.device_result(DeviceResult::Apps {
             entries: vec![app("sudoku", Some("1.1.0"))],
         });
@@ -1062,7 +1431,7 @@ mod tests {
                     let context = AppRunner::with_metrics(Store::default(), metrics).context();
                     let mut store = Store::default();
                     store.replace_entries(entries.clone());
-                    store.notice = notice.map(str::to_owned);
+                    store.notice = notice.map(Notice::attention);
                     let mut shown = BTreeSet::new();
                     for page in 0..entries.len() {
                         store.page = page;
@@ -1251,6 +1620,7 @@ mod tests {
                 },
                 &[app("sudoku", Some("1.1.0"))]
             )
+            .map(|notice| notice.text)
             .as_deref(),
             Some("sudoku app is already installed and up to date.")
         );
@@ -1261,6 +1631,7 @@ mod tests {
                 },
                 &[]
             )
+            .map(|notice| notice.text)
             .as_deref(),
             Some("settings is included with Cobalt.")
         );
@@ -1271,6 +1642,7 @@ mod tests {
                 },
                 &[]
             )
+            .map(|notice| notice.text)
             .as_deref(),
             Some("removed-app is not available in the current catalog. Nothing changed.")
         );
@@ -1282,6 +1654,7 @@ mod tests {
                 },
                 &[app("sudoku", None)]
             )
+            .map(|notice| notice.text)
             .as_deref(),
             Some("sudoku app requires Cobalt 0.4.0. Update Cobalt, then try again.")
         );
@@ -1339,5 +1712,220 @@ mod tests {
         assert!(layout
             .rect_of_action(action_id(&remove_action("settings")))
             .is_none());
+    }
+
+    #[test]
+    fn an_install_stays_on_the_app_and_offers_to_open_it() {
+        let mut runner = opened(&[app("birds", None), app("notes", None)]);
+        runner.action(action_id(&app_action("birds")));
+        runner.action(action_id(&install_action("birds")));
+        let commands = runner.device_result(DeviceResult::Done);
+        assert_eq!(runner.app().view, View::Detail("birds".to_owned()));
+        let screen = painted(&commands);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(
+            layout
+                .rect_of_action(action_id(&open_action("birds")))
+                .is_some(),
+            "the app that was just installed cannot be opened from its own page"
+        );
+        assert!(
+            layout
+                .rect_of_action(action_id(&install_action("birds")))
+                .is_none(),
+            "the page still offered to install what had just been installed"
+        );
+        assert!(words(&screen, &CLARA_BW_METRICS).contains("birds app is installed."));
+        // The runtime's own answer arriving afterwards must not throw the
+        // owner back to the catalog.
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("birds", Some("1.1.0")), app("notes", None)],
+        });
+        assert_eq!(runner.app().view, View::Detail("birds".to_owned()));
+    }
+
+    #[test]
+    fn uninstalling_asks_first_and_cancel_keeps_the_app() {
+        let mut runner = opened(&[app("birds", Some("1.1.0"))]);
+        runner.action(action_id(&app_action("birds")));
+        let commands = runner.action(action_id(&remove_action("birds")));
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::Device(DeviceRequest::UninstallApp { .. })
+            )),
+            "one tap on Uninstall removed the app without asking"
+        );
+        let question = words(&painted(&commands), &CLARA_BW_METRICS);
+        assert!(question.contains("Uninstall birds app?"), "{question}");
+        assert!(question.contains("saved data stays"), "{question}");
+
+        let commands = runner.action(action_id(CANCEL_REMOVE));
+        assert!(commands
+            .iter()
+            .all(|command| !matches!(command, Command::Device(_))));
+        assert_eq!(runner.app().view, View::Detail("birds".to_owned()));
+
+        runner.action(action_id(&remove_action("birds")));
+        let commands = runner.action(action_id(CONFIRM_REMOVE));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::UninstallApp { id }) if id == "birds"
+        )));
+    }
+
+    #[test]
+    fn a_failed_install_stays_on_the_app_and_offers_to_try_again() {
+        let mut runner = opened(&[app("birds", None)]);
+        runner.action(action_id(&app_action("birds")));
+        runner.action(action_id(&install_action("birds")));
+        let commands = runner.device_result(DeviceResult::Failed(DeviceError::Unreachable));
+        assert_eq!(runner.app().view, View::Detail("birds".to_owned()));
+        let screen = painted(&commands);
+        let text = words(&screen, &CLARA_BW_METRICS);
+        assert!(text.contains("Check Wi-Fi and try again."), "{text}");
+        assert!(text.contains("Try again"), "{text}");
+        let retry = runner.action(action_id(&install_action("birds")));
+        assert!(retry.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::InstallApp { id }) if id == "birds"
+        )));
+    }
+
+    #[test]
+    fn permissions_are_described_in_words_not_identifiers() {
+        let mut birds = app("birds", None);
+        birds.capabilities = vec!["keep-awake".to_owned(), "scheduled-wake".to_owned()];
+        let store = Store {
+            entries: vec![birds],
+            ..Store::default()
+        };
+        let text = words(&store.detail("birds"), &CLARA_BW_METRICS);
+        assert!(text.contains("Can keep the reader awake"), "{text}");
+        assert!(!text.contains("keep-awake"), "{text}");
+        assert!(!text.contains("scheduled-wake"), "{text}");
+        assert_eq!(
+            permissions(&["a-future-permission".to_owned()]),
+            "Another permission (a-future-permission)."
+        );
+    }
+
+    #[test]
+    fn updates_and_installed_apps_come_first_on_the_first_page() {
+        let mut stale = app("zebra", Some("1.0.0"));
+        stale.version = "1.1.0".to_owned();
+        let entries = vec![
+            app("apple", None),
+            app("banana", None),
+            app("settings", Some("0.3.0")),
+            app("yak", Some("1.1.0")),
+            stale,
+        ];
+        let mut store = Store::default();
+        store.replace_entries(entries);
+        let order = store
+            .listed()
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["zebra", "yak", "apple", "banana", "settings"]);
+    }
+
+    #[test]
+    fn each_filter_lists_only_the_apps_it_names() {
+        let mut stale = app("zebra", Some("1.0.0"));
+        stale.version = "1.1.0".to_owned();
+        let mut runner = opened(&[app("apple", None), app("yak", Some("1.1.0")), stale]);
+        let shown = |screen: &Screen| -> Vec<&str> {
+            let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+            let mut rows = ["zebra", "yak", "apple"]
+                .into_iter()
+                .filter_map(|id| {
+                    layout
+                        .rect_of_action(action_id(&app_action(id)))
+                        .map(|rect| (rect.y, id))
+                })
+                .collect::<Vec<_>>();
+            rows.sort_unstable();
+            rows.into_iter().map(|(_, id)| id).collect()
+        };
+        let installed = painted(&runner.action(action_id(Filter::Installed.action())));
+        assert_eq!(shown(&installed), ["zebra", "yak"]);
+        let updates = painted(&runner.action(action_id(Filter::Updates.action())));
+        assert_eq!(shown(&updates), ["zebra"]);
+        let available = painted(&runner.action(action_id(Filter::Available.action())));
+        assert_eq!(shown(&available), ["apple"]);
+        let all = painted(&runner.action(action_id(Filter::All.action())));
+        assert_eq!(shown(&all), ["zebra", "yak", "apple"]);
+    }
+
+    #[test]
+    fn an_empty_filter_says_so_rather_than_drawing_a_blank_page() {
+        let mut runner = opened(&[app("apple", None)]);
+        let screen = painted(&runner.action(action_id(Filter::Updates.action())));
+        assert!(words(&screen, &CLARA_BW_METRICS).contains("Every installed app is up to date."));
+    }
+
+    #[test]
+    fn the_browser_link_is_labelled_in_words() {
+        let mut runner = opened(&[app("apple", None)]);
+        let screen = painted(&runner.action(action_id(Filter::Installed.action())));
+        let bar = screen.top_bar.as_ref().expect("the catalog has a top bar");
+        let link = bar
+            .actions
+            .iter()
+            .find(|action| action.action == action_id(APP_LINK))
+            .expect("the catalog offers browser installs");
+        assert!(
+            link.glyph.is_none(),
+            "the browser link is an unlabelled icon"
+        );
+        assert!(words(&screen, &CLARA_BW_METRICS).contains("Link browser"));
+    }
+
+    #[test]
+    fn every_bundled_app_page_fits_at_each_interface_size_with_a_banner() {
+        let entries = kobo_catalog::bundled()
+            .unwrap()
+            .into_iter()
+            .map(|entry| AppInfo {
+                id: entry.id,
+                title: entry.title,
+                label: entry.label,
+                summary: entry.summary,
+                version: entry.version,
+                minimum_cobalt_version: env!("CARGO_PKG_VERSION").into(),
+                glyph: Glyph::App,
+                capabilities: entry.capabilities,
+                installed_version: Some("0.0.1".to_owned()),
+            })
+            .collect::<Vec<_>>();
+        for panel in [CLARA_BW_METRICS, ELIPSA_2E_METRICS] {
+            for scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..panel
+                };
+                // A runner installs the face the runtime measures with.
+                // Without one, this test measured in the built-in fallback type
+                // whenever it ran before any other test had made one.
+                let _runner = AppRunner::with_metrics(Store::default(), metrics);
+                for entry in &entries {
+                    let mut store = Store::default();
+                    store.replace_entries(entries.clone());
+                    store.notice = Some(Notice::attention(app_failure(DeviceError::Backend)));
+                    store.failed = Some(entry.id.clone());
+                    for screen in [store.detail(&entry.id), store.confirm_uninstall(&entry.id)] {
+                        let report = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(
+                            !report.has_errors(),
+                            "{} on {metrics:?}: {:?}",
+                            entry.id,
+                            report.issues
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -10,15 +10,19 @@ const CREDENTIAL: &str = "hermes-post";
 const DEVICE_STATE: &str = "/mnt/onboard/.adds/cobalt/state/post";
 const GATEWAY_KEY: &str = "gateway";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
-const USAGE: &str =
-    "usage: kobo post login --gateway URL --token-file PATH (--sim | --device IP)\n\
+const USAGE: &str = concat!(
+    "usage: kobo post login --gateway URL --token-file PATH ",
+    crate::targets::target_choice!(),
+    "\n\
                      \n\
                      Signs Post in to a Hermes gateway. The token file holds the\n\
                      gateway's bearer token; it is checked against the gateway\n\
                      (GET /letters) before anything is installed, pinned to that\n\
                      one gateway, and delivered to the reader's credential store,\n\
                      where only the runtime reads it. The gateway address is\n\
-                     saved into Post's state so the app opens the inbox directly.";
+                     saved into Post's state so the app opens the inbox directly.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 enum Target {
     Device(String),
@@ -131,9 +135,11 @@ fn login(arguments: &[String]) -> Result<(), String> {
         target,
     } = parse_options(arguments)?;
 
-    // The simulator's own trust override, so a developer's local fixture
-    // gateway can be logged in to exactly the way the application will use it.
-    if let Some(directory) = std::env::var_os("KOBO_SIM_TRUST_DIR") {
+    // The simulator's own fixture and trust override, so a developer's local
+    // gateway is logged in to exactly the way the application will use it.
+    if matches!(target, Target::Sim) {
+        super::account::prepare_sim()?;
+    } else if let Some(directory) = std::env::var_os("KOBO_SIM_TRUST_DIR") {
         let _ = kobo_net::trust_owner_roots_from_dir(std::path::Path::new(&directory));
     }
 
@@ -152,8 +158,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
     let credential = credential_value(&gateway, &token);
     match target {
         Target::Sim => {
-            let secrets = std::env::temp_dir()
-                .join("cobalt-sim-secrets")
+            let secrets = kobo_sim::simulated_secrets_root()
                 .join("apps")
                 .join("post")
                 .join("servers");
@@ -161,13 +166,13 @@ fn login(arguments: &[String]) -> Result<(), String> {
             let credential_path = secrets.join(CREDENTIAL);
             fs::write(&credential_path, &credential)
                 .map_err(|error| format!("write {credential_path:?}: {error}"))?;
-            let state = std::env::temp_dir().join("cobalt-sim-state").join("post");
+            let state = kobo_sim::simulated_state_root("post");
             fs::create_dir_all(&state).map_err(|error| format!("create {state:?}: {error}"))?;
             let gateway_path = state.join(GATEWAY_KEY);
             fs::write(&gateway_path, &gateway)
                 .map_err(|error| format!("write {gateway_path:?}: {error}"))?;
             println!(
-                "Signed Post in to {gateway}; the simulator picks up the credential on its next start."
+                "Signed Post in to {gateway}. Open Post in the simulator, or tap Check again if it is already open."
             );
         }
         Target::Device(host) => {
@@ -188,7 +193,7 @@ fn login(arguments: &[String]) -> Result<(), String> {
                  sync\n"
             );
             remote(&host, &script)?;
-            println!("Signed Post in to {gateway}; Post on {host} picks it up on its next start.");
+            println!("Signed Post in to {gateway}. Open Post on {host}, or tap Check again if it is already open.");
         }
     }
     Ok(())

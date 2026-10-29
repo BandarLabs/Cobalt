@@ -1,4 +1,5 @@
 use super::*;
+use kobo_sdk::game as chrome;
 use kobo_sdk::{AppRunner, Command, StoreError, StoreRequest};
 use kobo_ui::{Chrome, DisplayMetrics, TextScale};
 
@@ -167,7 +168,7 @@ fn legacy_progress_preserved_and_corrupt_values_refused() {
     }
     let future = String::from_utf8(saved::encode(&games, current))
         .unwrap()
-        .replace("\"version\":1", "\"version\":99");
+        .replace("\"version\":2", "\"version\":99");
     assert!(saved::decode(future.as_bytes()).is_err());
 }
 fn ready() -> AppRunner<Crossword> {
@@ -222,6 +223,8 @@ fn unreadable_save_never_replaced_by_taps() {
 }
 #[test]
 fn every_view_fits_all_text_sizes_on_both_portrait_profiles() {
+    // The screens whose words come from the puzzle are drawn for every
+    // puzzle; the rest look the same whichever puzzle is open.
     for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
         for text_scale in TextScale::STEPS {
             let metrics = DisplayMetrics {
@@ -237,42 +240,58 @@ fn every_view_fits_all_text_sizes_on_both_portrait_profiles() {
             };
             for (index, puzzle) in PUZZLES.iter().enumerate() {
                 app.current = index;
-                for view in [
-                    View::Puzzles,
-                    View::Board,
-                    View::Entry,
-                    View::Clues,
-                    View::More,
-                    View::Reveal,
-                    View::Restart,
-                    View::Result,
-                    View::Help,
-                ] {
-                    app.view = view;
-                    let screen = app.screen(&context);
-                    let chrome = Chrome::measuring(true);
-                    let issues = screen.diagnostics(&metrics, &chrome).issues;
-                    assert!(
-                        issues.is_empty(),
-                        "view={} puzzle={index} {metrics:?}: {issues:?}",
-                        view as u8
-                    );
-                    if view == View::Board {
-                        let layout = screen.layout_with(&metrics, &chrome);
-                        for cell in (0..puzzle.answer.len()).filter(|c| puzzle.answer[*c] != b'#') {
-                            assert!(layout
-                                .rect_of_action(action_id(&format!("cell-{cell}")))
-                                .is_some());
+                let views: &[View] = if index == 3 {
+                    &[
+                        View::Puzzles,
+                        View::Board,
+                        View::Entry,
+                        View::Clues,
+                        View::Reveal,
+                        View::Restart,
+                        View::Result,
+                        View::Rules,
+                    ]
+                } else {
+                    &[View::Board, View::Clues]
+                };
+                for view in views {
+                    app.view = *view;
+                    for open in [false, true] {
+                        if open && *view != View::Board {
+                            continue;
+                        }
+                        app.menu = Menu::default();
+                        if open {
+                            app.menu.read(action_id(chrome::MORE));
+                        }
+                        let screen = app.screen(&context);
+                        let chrome = Chrome::measuring(true);
+                        let issues = screen.diagnostics(&metrics, &chrome).issues;
+                        assert!(
+                            issues.is_empty(),
+                            "view={} menu={open} puzzle={index} {metrics:?}: {issues:?}",
+                            *view as u8
+                        );
+                        if *view == View::Board && !open {
+                            let layout = screen.layout_with(&metrics, &chrome);
+                            for cell in
+                                (0..puzzle.answer.len()).filter(|c| puzzle.answer[*c] != b'#')
+                            {
+                                assert!(layout
+                                    .rect_of_action(action_id(&format!("cell-{cell}")))
+                                    .is_some());
+                            }
                         }
                     }
                 }
             }
+            app.menu = Menu::default();
         }
     }
 }
 
 #[test]
-fn crossword_requests_portrait_and_help_returns_to_the_library() {
+fn crossword_requests_portrait_and_rules_from_the_shelf_return_to_the_shelf() {
     let mut r = AppRunner::new(Crossword::default());
     let commands = r.start();
     assert_eq!(
@@ -283,7 +302,8 @@ fn crossword_requests_portrait_and_help_returns_to_the_library() {
         key: saved::KEY.into(),
         value: None,
     });
-    r.action(action_id("help"));
+    r.action(action_id(chrome::RULES));
+    assert!(r.app().view == View::Rules);
     r.action(ActionId::BACK);
     assert!(r.app().view == View::Puzzles);
 }
@@ -302,25 +322,28 @@ fn every_clue_entry_and_validation_message_fits_at_largest_text() {
             view: View::Entry,
             ..Crossword::default()
         };
+        // Collected rather than stopping at the first, so that a clue too long
+        // for the panel is reported together with every other one.
+        let mut overflowing = std::collections::BTreeSet::new();
         for (index, p) in PUZZLES.iter().enumerate() {
             app.current = index;
-            for cell in (0..p.answer.len()).filter(|c| p.answer[*c] != b'#') {
-                for down in [false, true] {
-                    app.game_mut().position.selected = cell;
-                    app.game_mut().position.down = down;
-                    app.keyboard = Keyboard::with_text("AB");
-                    app.notice = Some("Enter one letter or the whole word.".into());
-                    let issues = app
-                        .screen(&context)
-                        .diagnostics(&metrics, &Chrome::measuring(true))
-                        .issues;
-                    assert!(
-                        issues.is_empty(),
-                        "puzzle={index} cell={cell} down={down} {metrics:?}: {issues:?}"
-                    );
+            // Every square of an entry shows the same clue, so one square per
+            // entry covers every clue the screen can show.
+            for entry in p.entries() {
+                app.game_mut().position.selected = entry.first;
+                app.game_mut().position.down = entry.down;
+                app.keyboard = Keyboard::with_text("AB");
+                app.notice = Some("Enter one letter or the whole word.".into());
+                let issues = app
+                    .screen(&context)
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .issues;
+                if !issues.is_empty() {
+                    overflowing.insert(p.clue_of(&entry));
                 }
             }
         }
+        assert!(overflowing.is_empty(), "{metrics:?}: {overflowing:#?}");
     }
 }
 #[test]
@@ -344,7 +367,7 @@ fn black_squares_are_not_touch_targets_and_do_not_change_progress() {
     assert_eq!(app.games, before);
 }
 #[test]
-fn all_histories_fit_the_record_bound_and_undo_stays_bounded() {
+fn every_puzzle_played_with_full_history_still_fits_and_keeps_the_current_undo() {
     let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
     for (g, p) in games.iter_mut().zip(PUZZLES) {
         for _ in 0..100 {
@@ -352,9 +375,76 @@ fn all_histories_fit_the_record_bound_and_undo_stays_bounded() {
         }
         assert_eq!(g.undo.len(), game::HISTORY);
     }
+    let current = PUZZLES.len() - 1;
+    let encoded = saved::encode(&games, current);
+    assert!(encoded.len() <= saved::LIMIT);
+    let (restored, at) = saved::decode(&encoded).unwrap();
+    assert_eq!(at, current);
+    assert_eq!(restored[current], games[current]);
+    for (restored, played) in restored.iter().zip(&games) {
+        assert_eq!(restored.position, played.position, "letters always fit");
+    }
+}
+
+#[test]
+fn a_few_played_puzzles_keep_every_undo_step() {
+    let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
+    for index in [0, 3, 10] {
+        for _ in 0..40 {
+            games[index].enter(&PUZZLES[index], "X").unwrap();
+        }
+    }
     let encoded = saved::encode(&games, 3);
-    assert!(encoded.len() < saved::LIMIT);
     assert_eq!(saved::decode(&encoded).unwrap().0, games);
+}
+
+#[test]
+fn a_save_names_only_the_puzzles_that_have_been_played() {
+    let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
+    games[20].enter(&PUZZLES[20], "X").unwrap();
+    let text = String::from_utf8(saved::encode(&games, 20)).unwrap();
+    assert_eq!(text.matches("\"id\":").count(), 1);
+    assert!(text.contains(PUZZLES[20].id));
+    assert_eq!(saved::decode(text.as_bytes()).unwrap(), (games, 20));
+}
+
+#[test]
+fn a_save_from_the_four_puzzle_version_opens_with_every_new_puzzle_fresh() {
+    // Version 1 wrote all four puzzles of its day, in order, on every save.
+    let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
+    for (index, game) in games.iter_mut().enumerate().take(4) {
+        game.checks = u32::try_from(index).unwrap() + 1;
+    }
+    games[3].enter(&PUZZLES[3], "put").unwrap();
+    let old = String::from_utf8(saved::encode(&games, 3))
+        .unwrap()
+        .replace("\"version\":2", "\"version\":1");
+    assert_eq!(old.matches("\"id\":").count(), 4);
+    let (restored, current) = saved::decode(old.as_bytes()).unwrap();
+    assert_eq!(current, 3);
+    assert_eq!(restored, games);
+    assert!(restored[4..]
+        .iter()
+        .zip(&PUZZLES[4..])
+        .all(|(game, puzzle)| *game == Progress::new(puzzle)));
+}
+
+#[test]
+fn a_save_naming_a_puzzle_twice_or_one_this_version_lacks_is_refused() {
+    let mut games = PUZZLES.iter().map(Progress::new).collect::<Vec<_>>();
+    games[5].enter(&PUZZLES[5], "X").unwrap();
+    let text = String::from_utf8(saved::encode(&games, 5)).unwrap();
+    let unknown = text.replace(PUZZLES[5].id, "mini-999");
+    assert!(saved::decode(unknown.as_bytes()).is_err());
+    games[4].enter(&PUZZLES[4], "X").unwrap();
+    let twice = String::from_utf8(saved::encode(&games, 5))
+        .unwrap()
+        .replace(PUZZLES[4].id, PUZZLES[5].id)
+        .replace(
+            std::str::from_utf8(PUZZLES[4].answer).unwrap(),
+            std::str::from_utf8(PUZZLES[5].answer).unwrap(),
+        );
+    assert!(saved::decode(twice.as_bytes()).is_err());
 }
 
 #[test]
@@ -406,4 +496,202 @@ fn completed_board_clears_active_word_highlighting() {
         selected(app.screen(&context)) > 0,
         "reopening an answer restores its highlight"
     );
+}
+
+#[test]
+fn the_first_four_puzzles_keep_their_place_because_old_saves_name_them_by_position() {
+    let ids: Vec<&str> = PUZZLES.iter().take(4).map(|p| p.id).collect();
+    assert_eq!(ids, ["cat-v1", "ball-v1", "heart-v1", "mini-v1"]);
+    assert_eq!(PUZZLES[3].answer, b"#PUT#MINORALIKENOTED#TEN#");
+    assert!(PUZZLES.len() >= 60, "{} puzzles", PUZZLES.len());
+    let mut ids = std::collections::BTreeSet::new();
+    for puzzle in PUZZLES {
+        assert!(ids.insert(puzzle.id), "{} appears twice", puzzle.id);
+    }
+}
+
+#[test]
+fn every_entry_has_exactly_one_clue_and_no_clue_gives_its_answer_away() {
+    for puzzle in PUZZLES {
+        let entries = puzzle.entries();
+        let across = entries.iter().filter(|entry| !entry.down).count();
+        assert_eq!(puzzle.across.len(), across, "{}: across clues", puzzle.id);
+        assert_eq!(
+            puzzle.down.len(),
+            entries.len() - across,
+            "{}: down clues",
+            puzzle.id
+        );
+        if !puzzle.answer.contains(&b'#') {
+            continue;
+        }
+        for entry in &entries {
+            let word: String = puzzle
+                .run(entry.first, entry.down)
+                .iter()
+                .map(|cell| char::from(puzzle.answer[*cell]))
+                .collect();
+            let clue = puzzle.clue_of(entry).to_ascii_uppercase();
+            assert!(
+                !clue
+                    .split(|c: char| !c.is_ascii_alphabetic())
+                    .any(|part| part == word),
+                "{}: the clue for {word} contains it",
+                puzzle.id
+            );
+            assert!(!clue.contains('\u{2014}'), "{}: dash in a clue", puzzle.id);
+        }
+    }
+}
+
+#[test]
+fn no_answer_turns_up_more_often_than_the_generator_allows() {
+    // The same limits tools/crossword/generate.py fills to, so that a hand
+    // edit of the generated file cannot quietly make the puzzles samey.
+    let mut uses = std::collections::BTreeMap::<String, usize>::new();
+    for puzzle in PUZZLES.iter().filter(|p| p.answer.contains(&b'#')) {
+        for entry in puzzle.entries() {
+            let word: String = puzzle
+                .run(entry.first, entry.down)
+                .iter()
+                .map(|cell| char::from(puzzle.answer[*cell]))
+                .collect();
+            *uses.entry(word).or_default() += 1;
+        }
+    }
+    for (word, count) in uses {
+        let cap = if word.len() == 3 { 3 } else { 2 };
+        assert!(count <= cap, "{word} is used {count} times");
+    }
+}
+
+fn on_board(index: usize) -> AppRunner<Crossword> {
+    let mut r = ready();
+    r.action(action_id(&format!("puzzle-{index}")));
+    assert!(r.app().view == View::Board);
+    r
+}
+
+fn notice_line(r: &AppRunner<Crossword>) -> String {
+    let screen = r.app().screen(&r.context());
+    screen
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            kobo_sdk::Node::Secondary { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn undo_sits_first_at_the_foot_of_the_grid_and_answers_when_there_is_nothing_to_undo() {
+    let mut r = on_board(3);
+    let screen = r.app().screen(&r.context());
+    let bar = screen.nav_bar.expect("the play screen has a foot bar");
+    let labels: Vec<_> = bar.destinations.iter().map(|a| a.label.as_str()).collect();
+    assert_eq!(labels, [chrome::UNDO_LABEL, "Clues", "Down"]);
+
+    r.action(action_id(chrome::UNDO));
+    assert_eq!(notice_line(&r), chrome::NOTHING_TO_UNDO);
+    r.action(action_id("cell-1"));
+    r.app_mut().keyboard = Keyboard::with_text("P");
+    r.action(action_id("kb.enter"));
+    r.action(action_id("board"));
+    assert_eq!(r.app().game().position.letters[1], b'P');
+    r.action(action_id(chrome::UNDO));
+    assert_eq!(r.app().game().position.letters[1], b'.');
+    assert!(r.app().view == View::Board);
+}
+
+#[test]
+fn the_direction_switch_is_one_tap_away_at_the_foot_of_the_grid() {
+    let mut r = on_board(3);
+    assert!(!r.app().game().position.down);
+    r.action(action_id("direction"));
+    assert!(r.app().game().position.down);
+    assert!(notice_line(&r).contains("Down"));
+    let screen = r.app().screen(&r.context());
+    let bar = screen.nav_bar.expect("foot bar");
+    assert_eq!(bar.destinations[2].label, "Across");
+}
+
+#[test]
+fn rules_open_in_one_tap_from_the_top_bar_and_back_returns_to_the_grid() {
+    let mut r = on_board(3);
+    let screen = r.app().screen(&r.context());
+    let bar = screen.top_bar.expect("top bar");
+    let labels: Vec<_> = bar.actions.iter().map(|a| a.label.as_str()).collect();
+    assert_eq!(labels, [chrome::RULES_LABEL, "More"]);
+    r.action(action_id(chrome::RULES));
+    assert!(r.app().view == View::Rules);
+    r.action(ActionId::BACK);
+    assert!(r.app().view == View::Board);
+}
+
+#[test]
+fn the_menu_starts_with_new_game_and_no_longer_holds_undo_or_the_rules() {
+    let mut r = on_board(3);
+    r.action(action_id(chrome::MORE));
+    let screen = r.app().screen(&r.context());
+    let labels: Vec<String> = screen
+        .overlay
+        .expect("the menu is open")
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            kobo_sdk::Node::Button { label, .. } => Some(label.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(labels[0], chrome::NEW_GAME_LABEL);
+    assert!(labels
+        .iter()
+        .all(|label| label != "Undo" && label != "How to play"));
+    // A tap outside the menu closes it rather than leaving the puzzle.
+    r.action(ActionId::BACK);
+    assert!(r.app().view == View::Board);
+    assert!(!r.app().menu.is_open());
+}
+
+#[test]
+fn new_game_opens_the_next_puzzle_nobody_has_started() {
+    let mut r = on_board(3);
+    r.action(action_id("cell-1"));
+    r.app_mut().keyboard = Keyboard::with_text("P");
+    r.action(action_id("kb.enter"));
+    r.action(action_id("board"));
+    r.action(action_id(chrome::MORE));
+    r.action(action_id(chrome::NEW_GAME));
+    // The shelf puts the hand-written crossword first, then the word squares.
+    assert_eq!(r.app().current, 0);
+    assert!(r.app().view == View::Board);
+    assert_eq!(r.app().games[3].position.letters[1], b'P', "kept");
+}
+
+#[test]
+fn clearing_an_empty_square_says_so_instead_of_doing_nothing() {
+    let mut r = on_board(3);
+    r.action(action_id(chrome::MORE));
+    r.action(action_id("clear"));
+    assert_eq!(notice_line(&r), "This square is already empty.");
+}
+
+#[test]
+fn a_square_in_one_word_only_carries_no_number() {
+    // The generated grids have squares at the ends of short rows that belong
+    // to one word; numbering them pushed every later clue number out by one.
+    for puzzle in PUZZLES {
+        let numbers: Vec<usize> = (0..puzzle.answer.len())
+            .filter_map(|cell| puzzle.number(cell))
+            .collect();
+        let expected: Vec<usize> = (1..=numbers.len()).collect();
+        assert_eq!(numbers, expected, "{}", puzzle.id);
+        for entry in puzzle.entries() {
+            assert_eq!(puzzle.number(entry.first), Some(entry.number));
+        }
+        let starts: std::collections::BTreeSet<usize> =
+            puzzle.entries().iter().map(|entry| entry.first).collect();
+        assert_eq!(starts.len(), numbers.len(), "{}", puzzle.id);
+    }
 }

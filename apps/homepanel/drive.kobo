@@ -1,9 +1,14 @@
-# The setup screen explains the connection and the address field takes
-# typed input on the on-screen keyboard.
+# The setup screen names the token command and the HTTPS requirement before
+# anything has failed, and the address field takes typed input.
 wait-for Home Panel
-expect Connect Home Assistant
+expect kobo connect homepanel
+expect must be on HTTPS
 clean
 shot homepanel-setup
+tap Check again
+wait-for No address has arrived
+clean
+shot homepanel-check-again
 type homeassistant
 expect https://homeassistant
 clean

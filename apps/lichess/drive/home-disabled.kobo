@@ -2,9 +2,11 @@ expect Offline
 expect Account/Games
 expect Puzzles
 expect 10+0
-expect Rapid
-shot unavailable-home
+expect Rapid · Rated
+shot unready-home
 tap 10+0
-wait 300
-expect Offline
-shot unavailable-still
+wait-for Not connected
+tap 10+0
+wait-for Connect Lichess
+expect Connect a Lichess account to play people
+shot unready-tap-connect

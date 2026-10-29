@@ -194,8 +194,11 @@ cargo run -p kobo-cli -- setup --source
 `--source` builds the package before writing. Everything else works the same
 as the prebuilt install.
 
-For development, `kobo setup --enable-ssh` turns on the Kobo's SSH server so
-`kobo deploy` can install over Wi-Fi without a restart. See
+`kobo setup` also turns on the Kobo's SSH server, with this computer's key as
+the only way in, waits for the reader to restart onto Wi-Fi, and saves it. The
+companion commands (`kobo frame push`, `kobo send` and the rest) then reach
+it with no address and no separate pairing step, and `kobo deploy` can install
+over Wi-Fi without a restart. `kobo setup --no-ssh` leaves SSH off. See
 [Connecting a device](DEVICES.md#connecting-a-device).
 
 ## Uninstalling
@@ -210,8 +213,8 @@ kobo setup --undo
 This removes Cobalt, its launcher script and its menu entry. Before deleting
 anything, it moves your `secrets`, `trust`, `state`, `data`, `apps` and
 `store` folders to `.adds/cobalt.recovery.N` on the Kobo, and it reports any
-`.adds/cobalt.unusable` folders. Check those before deleting them. If you used
-`--enable-ssh`, SSH is turned off again.
+`.adds/cobalt.unusable` folders. Check those before deleting them. SSH is
+turned off again.
 
 To remove the `kobo` command, delete the `binary` path listed in
 `~/.local/share/kobo/install-state`, then `~/.local/share/kobo`, then the

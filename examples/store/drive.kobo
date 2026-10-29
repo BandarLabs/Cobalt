@@ -1,0 +1,40 @@
+# The simulator's catalog has every app installed except Sudoku.
+# First run: the filters, the labelled browser link, and updates first.
+wait-for App Store
+expect Link browser
+expect Available 1
+shot store-catalog
+tap Available 1
+wait-for Available to install
+expect Sudoku
+# A failed install stays on the app and offers to try again.
+scenario offline
+tap Sudoku
+wait-for Not installed
+tap Install
+wait-for Check Wi-Fi and try again.
+expect Try again
+shot store-install-failed
+# Trying again with Wi-Fi back installs it and stays on the app, with Open.
+scenario normal
+tap Try again
+wait-for Sudoku is installed.
+expect Open
+expect Uninstall
+expect-missing Not installed
+shot store-installed
+# Uninstall asks first, and Cancel keeps the app.
+tap Uninstall
+wait-for Uninstall Sudoku?
+expect Its saved data stays on this reader
+shot store-uninstall-confirm
+tap Cancel
+expect-missing Uninstall Sudoku?
+expect Open
+tap Uninstall
+wait-for Uninstall Sudoku?
+tap-id confirm-remove
+wait-for Sudoku is uninstalled.
+shot store-uninstalled
+tap Updates 0
+wait-for Every installed app is up to date.

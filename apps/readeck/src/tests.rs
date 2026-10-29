@@ -45,6 +45,19 @@ fn spawned(commands: &[Command]) -> (TaskId, &Task) {
         })
         .expect("spawn")
 }
+/// Fails a task the way the runtime does: a retryable failure is retried once
+/// after a nap before the app hears of it.
+fn fail(runner: &mut AppRunner<Readeck>, task: TaskId, error: TaskError) -> Vec<Command> {
+    let commands = runner.task_outcome(task, TaskOutcome::Failed(error));
+    let Some((nap, Task::Sleep { .. })) = commands.iter().find_map(|c| match c {
+        Command::Spawn { task, work } => Some((*task, work)),
+        _ => None,
+    }) else {
+        return commands;
+    };
+    let again = runner.task_outcome(nap, TaskOutcome::Completed(Vec::new()));
+    runner.task_outcome(spawned(&again).0, TaskOutcome::Failed(error))
+}
 fn no_spawn(commands: &[Command]) {
     assert!(!commands.iter().any(|c| matches!(c, Command::Spawn { .. })));
 }
@@ -62,11 +75,18 @@ fn configured() -> (AppRunner<Readeck>, Vec<Command>) {
         key: SCALE.into(),
         value: None,
     });
+    runner.store_result(StoreResult::Loaded {
+        key: kobo_sdk::cache_key(inbox_key(ORIGIN)),
+        value: None,
+    });
     (runner, commands)
 }
 fn loaded() -> AppRunner<Readeck> {
     let (mut runner, commands) = configured();
     runner.task_outcome(spawned(&commands).0, TaskOutcome::Completed(batch(3, true)));
+    runner.store_result(StoreResult::Saved {
+        key: kobo_sdk::cache_key(inbox_key(ORIGIN)),
+    });
     runner
 }
 fn read(runner: &mut AppRunner<Readeck>) -> Vec<Command> {
@@ -77,11 +97,16 @@ fn read(runner: &mut AppRunner<Readeck>) -> Vec<Command> {
         key: place_key(ORIGIN, &id),
         value: None,
     });
+    no_spawn(&commands);
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: kobo_sdk::cache_key(kept_key(ORIGIN, &id)),
+        value: None,
+    });
     let (task, work) = spawned(&commands);
     assert!(
         matches!(work, Task::Fetch { credential: Some(c), .. } if c == &Credential::bearer("readeck"))
     );
-    runner.task_outcome(
+    let mut commands = runner.task_outcome(
         task,
         TaskOutcome::Completed(
             format!(
@@ -91,7 +116,15 @@ fn read(runner: &mut AppRunner<Readeck>) -> Vec<Command> {
             )
             .into_bytes(),
         ),
-    )
+    );
+    assert!(
+        commands.iter().any(|c| matches!(c, Command::Store(StoreRequest::Save { key, .. }) if *key == kobo_sdk::cache_key(kept_key(ORIGIN, &id)))),
+        "an opened article is kept for reading offline"
+    );
+    commands.extend(runner.store_result(StoreResult::Saved {
+        key: kobo_sdk::cache_key(kept_key(ORIGIN, &id)),
+    }));
+    commands
 }
 fn search(runner: &mut AppRunner<Readeck>, query: &str) -> Vec<Command> {
     let commands = runner.action(action_id("search"));
@@ -382,15 +415,17 @@ fn saved_position_and_reading_size_are_restored_after_restart() {
     let bytes = encode_place(ORIGIN, &memory);
     let (mut restarted, commands) = configured();
     restarted.app_mut().scale = memory.scale;
-    restarted.task_outcome(spawned(&commands).0, TaskOutcome::Completed(batch(3, true)));
+    fail(&mut restarted, spawned(&commands).0, TaskError::Offline);
+    restarted.app_mut().bookmarks = parse_bookmarks(&batch(3, true)).unwrap().0;
     restarted.action(action_id("article-0"));
-    let commands = restarted.store_result(StoreResult::Loaded {
+    restarted.store_result(StoreResult::Loaded {
         key: place_key(ORIGIN, &id),
         value: Some(bytes),
     });
-    restarted.task_outcome(
-        spawned(&commands).0,
-        TaskOutcome::Completed(
+    // Offline after the restart: the kept copy opens at the saved place.
+    let commands = restarted.store_result(StoreResult::Loaded {
+        key: kobo_sdk::cache_key(kept_key(ORIGIN, &id)),
+        value: Some(
             format!(
                 "<article>{}</article>",
                 "<p>A paragraph for a long readable article, with words to wrap across lines.</p>"
@@ -398,7 +433,9 @@ fn saved_position_and_reading_size_are_restored_after_restart() {
             )
             .into_bytes(),
         ),
-    );
+    });
+    no_spawn(&commands);
+    assert_eq!(restarted.app_mut().view, View::Reading);
     assert_eq!(restarted.app_mut().book.memory().unwrap(), &memory);
     for id in ["a".repeat(18), "Z".repeat(22)] {
         assert!(kobo_protocol::is_valid_key(&place_key(ORIGIN, &id)));
@@ -435,8 +472,12 @@ fn ordinary_images_fetch_without_token_and_other_origins_are_not_requested() {
     let mut runner = loaded();
     runner.action(action_id("article-0"));
     let id = runner.app_mut().open.clone().unwrap();
-    let commands = runner.store_result(StoreResult::Loaded {
+    runner.store_result(StoreResult::Loaded {
         key: place_key(ORIGIN, &id),
+        value: None,
+    });
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: kobo_sdk::cache_key(kept_key(ORIGIN, &id)),
         value: None,
     });
     let commands = runner.task_outcome(spawned(&commands).0, TaskOutcome::Completed(
@@ -469,11 +510,29 @@ fn screens_fit_clara_and_elipsa() {
             key: SCALE.into(),
             value: None,
         });
+        runner.store_result(StoreResult::Loaded {
+            key: kobo_sdk::cache_key(inbox_key(ORIGIN)),
+            value: None,
+        });
         let commands = runner.task_outcome(
             spawned(&commands).0,
             TaskOutcome::Completed(batch(50, true)),
         );
+        runner.store_result(StoreResult::Saved {
+            key: kobo_sdk::cache_key(inbox_key(ORIGIN)),
+        });
         let mut screens = vec![last_screen(&commands).clone()];
+        let refresh = runner.action(action_id("refresh"));
+        let refused = runner.task_outcome(
+            spawned(&refresh).0,
+            TaskOutcome::Failed(TaskError::Unauthorized),
+        );
+        screens.push(last_screen(&refused).clone());
+        let refresh = runner.action(action_id("refresh"));
+        runner.task_outcome(spawned(&refresh).0, TaskOutcome::Completed(batch(50, true)));
+        runner.store_result(StoreResult::Saved {
+            key: kobo_sdk::cache_key(inbox_key(ORIGIN)),
+        });
         screens.push(last_screen(&read(&mut runner)).clone());
         screens.push(last_screen(&runner.action(action_id(kobo_read::action::CONTROLS))).clone());
         runner.action(ActionId::BACK);
@@ -489,4 +548,83 @@ fn screens_fit_clara_and_elipsa() {
             assert!(errors.is_empty(), "layout: {errors:?}");
         }
     }
+}
+
+#[test]
+fn a_failed_refresh_shows_its_cause_over_the_kept_inbox_and_never_an_empty_one() {
+    let (mut runner, commands) = configured();
+    let list = spawned(&commands).0;
+    runner.app_mut().bookmarks = parse_bookmarks(&batch(3, true)).unwrap().0;
+    let commands = runner.task_outcome(list, TaskOutcome::Failed(TaskError::Unauthorized));
+    let drawn = format!("{:?}", last_screen(&commands));
+    assert!(drawn.contains("Article 0"), "the kept inbox stays: {drawn}");
+    assert!(drawn.contains("did not accept your account"), "{drawn}");
+    assert!(drawn.contains("kobo connect readeck"), "{drawn}");
+    assert!(drawn.contains("Sign in again"), "{drawn}");
+    assert!(!drawn.contains("inbox is empty"), "{drawn}");
+    let commands = runner.action(action_id("sign-in-again"));
+    assert!(format!("{:?}", last_screen(&commands)).contains("Enter account key"));
+
+    let (mut empty, commands) = configured();
+    let commands = fail(&mut empty, spawned(&commands).0, TaskError::Offline);
+    let drawn = format!("{:?}", last_screen(&commands));
+    assert!(drawn.contains("Join Wi-Fi"), "{drawn}");
+    assert!(!drawn.contains("inbox is empty"), "{drawn}");
+}
+
+#[test]
+fn an_inbox_kept_from_the_last_visit_is_shown_when_the_refresh_fails() {
+    let mut runner = AppRunner::new(Readeck::default());
+    runner.start();
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: SERVER.into(),
+        value: Some(ORIGIN.as_bytes().to_vec()),
+    });
+    let list = spawned(&commands).0;
+    runner.store_result(StoreResult::Loaded {
+        key: SCALE.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: kobo_sdk::cache_key(inbox_key(ORIGIN)),
+        value: Some(batch(2, true)),
+    });
+    let commands = fail(&mut runner, list, TaskError::Unreachable);
+    let drawn = format!("{:?}", last_screen(&commands));
+    assert!(drawn.contains("Article 1"), "{drawn}");
+    assert!(drawn.contains("did not answer"), "{drawn}");
+}
+
+#[test]
+fn a_server_written_from_the_computer_is_picked_up_on_return_without_a_restart() {
+    let mut runner = AppRunner::new(Readeck::default());
+    runner.start();
+    runner.store_result(StoreResult::Loaded {
+        key: SERVER.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: SCALE.into(),
+        value: None,
+    });
+    assert_eq!(runner.app_mut().view, View::Server);
+    let commands = runner.action(action_id("check-again"));
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::Load { key }) if key == SERVER)));
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: SERVER.into(),
+        value: None,
+    });
+    assert!(format!("{:?}", last_screen(&commands)).contains("No server has arrived"));
+    runner.action(action_id("dismiss"));
+
+    runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: SERVER.into(),
+        value: Some(ORIGIN.as_bytes().to_vec()),
+    });
+    assert_eq!(runner.app_mut().server.as_deref(), Some(ORIGIN));
+    assert_eq!(runner.app_mut().view, View::Inbox);
+    let _ = spawned(&commands);
 }

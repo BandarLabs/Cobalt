@@ -60,7 +60,9 @@ mod builder;
 pub mod credentials;
 pub mod entropy;
 pub mod exports;
+pub mod failure;
 pub mod feedback;
+pub mod game;
 pub mod imports;
 /// Common application and builder types.
 pub mod keyboard;

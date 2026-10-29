@@ -27,10 +27,14 @@ def main():
     target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT/'target')).resolve()
     cli = target/'debug/kobo'
     requests = []
-    authentication = {"required": False, "accepted": []}
+    authentication = {"required": False, "accepted": [], "down": False}
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_GET(self):
+            if authentication['down']:
+                # Dropped unanswered, pooled connections included: a library
+                # at home seen from somewhere else.
+                self.close_connection = True; return
             requests.append(self.path)
             if authentication['required']:
                 expected = 'Basic '+base64.b64encode(b'reader:sample').decode()
@@ -70,7 +74,7 @@ def main():
                    KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE='original-calibre-library', KOBO_SIM_SEED='0',
                    KOBO_SIM_CLOCK_MILLIS='1788850860000', KOBO_SIM_UTC_OFFSET_MINUTES='0')
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT, env=env, check=True, capture_output=True, timeout=30)
+        subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'], cwd=ROOT, env=env, check=True, capture_output=True, timeout=30)
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(config/'stream/cert.pem', config/'stream/key.pem')
@@ -119,7 +123,8 @@ def main():
                 capture('02-catalog')
                 drive('tap-id entry-0', 'wait-idle', 'expect Authors', 'expect No books or sections', 'tap Back', 'wait-for-id entry-0')
                 drive('tap-id entry-1', 'wait-idle', 'expect My shelves', 'tap Back', 'wait-for-id entry-0')
-                drive('tap-id page-next', 'tap-id entry-2', 'wait-for-id download-book')
+                # Every entry of the root catalog shares one measured screen.
+                drive('tap-id entry-2', 'wait-for-id download-book')
                 capture('03-book-details')
                 drive('tap-id download-book', 'wait-for-id offline-0', 'wait-idle')
                 assert '/books/river.epub' in requests
@@ -164,10 +169,10 @@ def main():
                 assert (state/'catalog').read_text()==root+'|'
                 capture('13-setup-saved')
                 # The same real HTTP path distinguishes unauthorized and non-catalog responses.
-                for endpoint, expected, name in [('/denied','refused','14-account-refused'),('/invalid','invalid catalog','15-invalid-catalog')]:
+                for endpoint, expected, control, name in [('/denied','did not accept your account','sign-in-again','14-account-refused'),('/invalid','invalid catalog','retry','15-invalid-catalog')]:
                     (state/'catalog').write_text(root.rsplit('/',1)[0]+endpoint+'|')
                     restart()
-                    drive('tap-id library', 'wait-for-id retry', 'expect '+expected, 'wait-idle')
+                    drive('tap-id library', 'wait-for-id '+control, 'expect '+expected, 'wait-idle')
                     capture(name)
                 (state/'catalog').write_bytes(b'future unreadable settings')
                 restart('settings-load')
@@ -181,16 +186,40 @@ def main():
                 restart()
                 drive('tap-id add', 'tap-id kb.layer', 'type '+root.removeprefix('https://').removesuffix('opds'), 'tap-id kb.layer', 'type opds', 'tap Continue')
                 authentication['required'] = True
-                drive('tap-id sign-in', 'tap-id credential.enter', 'type reader', 'tap Next', 'type sample', 'tap Save', 'wait-for-id entry-0', 'wait-idle')
+                drive('tap-id sign-in', 'tap-id credential.enter', 'type reader', 'tap Next', 'type sample',
+                      'expect 6 characters entered', 'tap-id credential.reveal', 'expect sample', 'tap Save', 'wait-for-id entry-0', 'wait-idle')
                 assert (state/'catalog').read_text()==root+'|calibre'
                 capture('18-private-catalog')
-                drive('tap-id entry-0', 'wait-idle', 'expect Authors', 'tap Back', 'tap-id page-next', 'tap-id entry-2', 'tap-id download-book', 'wait-for-id offline-0', 'wait-idle')
+                drive('tap-id entry-0', 'wait-idle', 'expect Authors', 'tap Back', 'tap-id entry-2', 'tap-id download-book', 'wait-for-id offline-0', 'wait-idle')
                 for path in ('/opds','/opds/authors','/books/river.epub'):
                     assert path in authentication['accepted'], (path, authentication)
                 capture('19-private-download')
+                # The same account set up from the computer: checked against the
+                # library, then picked up by the app without typing anything.
+                (state/'catalog').unlink()
+                secrets = private/'cobalt-sim-secrets/apps/calibre-web/servers'
+                (secrets/'calibre').unlink()
+                wrong = subprocess.run([str(cli), 'connect', 'calibre-web', '--sim', '--server', root, '--username', 'reader', '--stdin'],
+                                       cwd=ROOT, env=env, input='wrong', text=True, capture_output=True, timeout=60)
+                assert wrong.returncode != 0 and 'did not accept the username or password' in wrong.stderr, wrong
+                assert not (state/'catalog').exists()
+                done = subprocess.run([str(cli), 'connect', 'calibre-web', '--sim', '--server', root, '--username', 'reader', '--stdin'],
+                                      cwd=ROOT, env=env, input='sample', text=True, capture_output=True, timeout=60)
+                assert done.returncode == 0, done.stderr
+                assert (state/'catalog').read_text()==root+'|calibre'
+                origin = root.rsplit('/', 1)[0]
+                assert (secrets/'calibre').read_text()==f'cobalt-server-account-v1\n{origin}\nreader:sample'
+                restart()
+                drive('tap-id library', 'wait-for-id entry-0', 'wait-idle')
+                capture('20-connected-from-the-computer')
+                # The library at home stops answering: the catalog stays, with
+                # the home-network hint rather than "check the address".
+                authentication['down'] = True
+                drive('tap-id entry-0', 'wait-for home network', 'expect A Walk by the River')
+                capture('21-library-away-from-home')
                 result = dict(status='passed', profile=args.profile, scale=args.scale,
                               basis='actual-sdk-simulator-with-private-https-opds-and-original-epub',
-                              checks=['parsed catalog', 'authors and shelves navigation', 'book details', 'EPUB download', 'verified shelf publication', 'shared reader', 'saved position', 'forced restart and offline reopening', 'position save failure and retry', 'damaged download repair', 'on-screen setup with failed save and retry', 'HTTP authentication refusal', 'malformed catalog response', 'unreadable settings preserved with offline access', 'on-reader server-bound Basic account', 'authenticated catalog navigation and EPUB download'],
+                              checks=['parsed catalog', 'authors and shelves navigation', 'book details', 'EPUB download', 'verified shelf publication', 'shared reader', 'saved position', 'forced restart and offline reopening', 'position save failure and retry', 'damaged download repair', 'on-screen setup with failed save and retry', 'HTTP authentication refusal', 'malformed catalog response', 'unreadable settings preserved with offline access', 'on-reader server-bound Basic account with count and Show', 'authenticated catalog navigation and EPUB download', 'kobo connect refuses a wrong password and sets the library up', 'home-network banner over the kept catalog'],
                               requests=requests, authenticated_paths=authentication['accepted'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
@@ -198,6 +227,7 @@ def main():
                     os.killpg(process.pid,signal.SIGTERM)
                     try: process.wait(timeout=5)
                     except subprocess.TimeoutExpired: os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
-                server.shutdown(); server.server_close()
+                try: server.shutdown(); server.server_close()
+                except OSError: pass
 
 if __name__ == '__main__': main()

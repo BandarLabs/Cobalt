@@ -1,4 +1,5 @@
-//! Reviewed Miniflux routes for an account bound to its owner's server.
+//! Reviewed Miniflux routes, for an account bound to its owner's server and
+//! for an owner-wide token.
 //! No service implementation code is used; request contracts are documented at
 //! <https://miniflux.app/docs/api.html>.
 use kobo_json::Value;
@@ -6,6 +7,112 @@ use kobo_protocol::{Credential, CredentialUse, SecretHeader};
 
 const MAX_BODY: usize = 8192;
 const MAX_EXACT_ID: i64 = 9_007_199_254_740_991;
+
+/// The requests Digest makes with an owner-wide token, and nothing more.
+///
+/// A token set with plain `kobo secret set miniflux` is bound to no server:
+/// the owner types the address into Digest on the reader, so the destination
+/// cannot be pinned the way a bound account's is, and the route has to carry
+/// the whole limit instead. Each route here is one Digest sends, down to its
+/// query keys and their values. The token can fetch the three lists a sync
+/// collects, open an article, file a feed and mark what was read. It cannot
+/// reach the account, its API keys, or any route Digest does not use.
+///
+/// Allowing only the unread list, as this once did, failed every sync: the
+/// starred and read lists are part of each one, and a sync with a refused part
+/// is abandoned whole.
+pub(super) fn allowed_unbound(
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+) -> bool {
+    if url.contains('#')
+        || url.chars().any(char::is_control)
+        || credential.secret != "miniflux"
+        || !matches!(&credential.header, SecretHeader::Named(name) if name.eq_ignore_ascii_case("X-Auth-Token"))
+    {
+        return false;
+    }
+    let Ok(target) = kobo_net::parse(url) else {
+        return false;
+    };
+    // Whatever precedes the API is the base path the owner typed, such as a
+    // Miniflux served under `/reader`. It may not hide a query or a step back.
+    let Some(start) = target.path.find("/v1/") else {
+        return false;
+    };
+    let (base, route) = target.path.split_at(start);
+    if base.contains(['%', '\\', '?'])
+        || base.split('/').any(|part| matches!(part, "." | ".."))
+        || route.contains(['%', '\\', '#'])
+    {
+        return false;
+    }
+    match usage {
+        CredentialUse::Fetch => body.is_none() && content_type.is_none() && digest_read(route),
+        CredentialUse::Put if route == "/v1/entries" => {
+            content_type == Some("application/json") && body.is_some_and(entry_update)
+        }
+        CredentialUse::Post if route == "/v1/feeds" => {
+            content_type == Some("application/json") && body.is_some_and(create_feed)
+        }
+        _ => false,
+    }
+}
+
+/// The reads Digest makes: its lists, one article's full text, and the
+/// categories a new feed can be filed under.
+fn digest_read(route: &str) -> bool {
+    if route == "/v1/categories" {
+        return true;
+    }
+    if let Some(query) = route.strip_prefix("/v1/entries?") {
+        return digest_list(query);
+    }
+    route
+        .strip_prefix("/v1/entries/")
+        .and_then(|entry| entry.strip_suffix("/fetch-content?update_content=false"))
+        .is_some_and(|id| decimal(id, 1, MAX_EXACT_ID).is_some())
+}
+
+/// One of the three lists a sync collects: a depth, exactly one of unread,
+/// starred or read, newest first.
+fn digest_list(query: &str) -> bool {
+    let mut seen = Vec::new();
+    let mut lists = 0;
+    for field in query.split('&') {
+        let Some((name, value)) = field.split_once('=') else {
+            return false;
+        };
+        if seen.contains(&name) {
+            return false;
+        }
+        seen.push(name);
+        let valid = match name {
+            "limit" => decimal(value, 1, 100).is_some(),
+            "status" => {
+                lists += 1;
+                matches!(value, "unread" | "read")
+            }
+            "starred" => {
+                lists += 1;
+                value == "true"
+            }
+            "order" => value == "published_at",
+            "direction" => value == "desc",
+            _ => false,
+        };
+        if !valid {
+            return false;
+        }
+    }
+    lists == 1
+        && ["limit", "order", "direction"]
+            .iter()
+            .all(|key| seen.contains(key))
+}
 
 pub(super) fn allowed(
     credential: &Credential,
@@ -391,14 +498,155 @@ mod tests {
             Some(r#"{"entry_ids":[7],"status":"read"}"#),
             Some("text/plain")
         ));
+        // Without a bound server the same write is held to its body and type.
         assert!(!allowed_request_with_server(
             "rss-miniflux",
             &token,
             &format!("{SERVER}/v1/entries"),
             CredentialUse::Put,
             Some(r#"{"entry_ids":[7],"status":"read"}"#),
+            Some("text/plain"),
+            None
+        ));
+        assert!(!allowed_request_with_server(
+            "rss-miniflux",
+            &token,
+            &format!("{SERVER}/v1/entries"),
+            CredentialUse::Put,
+            Some(r#"{"entry_ids":[7],"status":"read","title":"overwrite"}"#),
             Some("application/json"),
             None
         ));
+    }
+
+    /// The request as Digest sends it with a token set by plain
+    /// `kobo secret set miniflux`, which binds no server.
+    fn unbound(url: &str, usage: CredentialUse, body: Option<&str>) -> bool {
+        allowed_request_with_server(
+            "rss-miniflux",
+            &Credential::in_header("miniflux", "X-Auth-Token"),
+            url,
+            usage,
+            body,
+            body.map(|_| "application/json"),
+            None,
+        )
+    }
+
+    #[test]
+    fn every_request_digest_makes_with_an_owner_wide_token_is_allowed() {
+        // Spelled exactly as `apps/rss-miniflux/src/miniflux.rs` builds them,
+        // against a server at the root and one under a base path.
+        for server in ["https://flux.example", SERVER] {
+            for (depth, list) in [
+                (60, "status=unread"),
+                (20, "starred=true"),
+                (20, "status=read"),
+            ] {
+                let url = format!(
+                    "{server}/v1/entries?limit={depth}&{list}&order=published_at&direction=desc"
+                );
+                assert!(unbound(&url, CredentialUse::Fetch, None), "{url}");
+            }
+            for route in [
+                "/v1/entries/7/fetch-content?update_content=false",
+                "/v1/categories",
+            ] {
+                let url = format!("{server}{route}");
+                assert!(unbound(&url, CredentialUse::Fetch, None), "{url}");
+            }
+            let feeds = format!("{server}/v1/feeds");
+            assert!(unbound(
+                &feeds,
+                CredentialUse::Post,
+                Some(r#"{"feed_url":"https://example.org/feed.xml","category_id":3}"#)
+            ));
+            let entries = format!("{server}/v1/entries");
+            for body in [
+                r#"{"entry_ids":[7],"status":"read"}"#,
+                r#"{"entry_ids":[7],"status":"unread"}"#,
+                r#"{"entry_ids":[7],"status":"removed"}"#,
+                r#"{"entry_ids":[7],"starred":true}"#,
+                r#"{"entry_ids":[7],"starred":false}"#,
+            ] {
+                assert!(unbound(&entries, CredentialUse::Put, Some(body)), "{body}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_owner_wide_token_cannot_reach_any_route_digest_does_not_use() {
+        for route in [
+            "/v1/me",
+            "/v1/version",
+            "/v1/users",
+            "/v1/api-keys",
+            "/v1/feeds",
+            "/v1/entries",
+            "/v1/entries/7",
+            "/v1/entries?status=unread",
+            "/v1/entries?limit=60&status=unread",
+            "/v1/entries?limit=60&order=published_at&direction=desc",
+            "/v1/entries?limit=60&status=unread&starred=true&order=published_at&direction=desc",
+            "/v1/entries?limit=60&status=removed&order=published_at&direction=desc",
+            "/v1/entries?limit=60&starred=false&order=published_at&direction=desc",
+            "/v1/entries?limit=101&status=unread&order=published_at&direction=desc",
+            "/v1/entries?limit=60&status=unread&order=id&direction=desc",
+            "/v1/entries?limit=60&status=unread&order=published_at&direction=asc",
+            "/v1/entries?limit=60&status=unread&order=published_at&direction=desc&offset=60",
+            "/v1/entries?limit=60&limit=1&status=unread&order=published_at&direction=desc",
+            "/v1/entries?limit=60&status=%75nread&order=published_at&direction=desc",
+            "/v1/entries/7/fetch-content?update_content=true",
+            "/v1/entries/7/fetch-content",
+            "/v1/entries/0/fetch-content?update_content=false",
+            "/v1/entries/7/bookmark",
+            "/v1/categories/3/entries",
+        ] {
+            let url = format!("{SERVER}{route}");
+            assert!(!unbound(&url, CredentialUse::Fetch, None), "{url}");
+        }
+        for url in [
+            "https://flux.example/../v1/categories",
+            "https://flux.example/%2e%2e/v1/categories",
+            "https://flux.example/reader?x=/v1/categories",
+            "http://flux.example/v1/categories",
+            "https://flux.example/v1/categories#me",
+        ] {
+            assert!(!unbound(url, CredentialUse::Fetch, None), "{url}");
+        }
+        let entries = format!("{SERVER}/v1/entries");
+        let read = r#"{"entry_ids":[7],"status":"read"}"#;
+        assert!(!unbound(&entries, CredentialUse::Post, Some(read)));
+        assert!(!unbound(&entries, CredentialUse::Patch, Some(read)));
+        assert!(!unbound(
+            &format!("{SERVER}/v1/entries/7/bookmark"),
+            CredentialUse::Put,
+            Some(read)
+        ));
+        assert!(!unbound(
+            &format!("{SERVER}/v1/feeds"),
+            CredentialUse::Post,
+            Some(r#"{"feed_url":"https://example.org/feed","username":"secret"}"#)
+        ));
+        assert!(!unbound(
+            &format!("{SERVER}/v1/me"),
+            CredentialUse::Put,
+            Some(r#"{"entry_ids":[7],"status":"read"}"#)
+        ));
+        // The same routes with any other credential name or header are refused.
+        for credential in [
+            Credential::in_header("other", "X-Auth-Token"),
+            Credential::bearer("miniflux"),
+        ] {
+            assert!(!allowed_request_with_server(
+                "rss-miniflux",
+                &credential,
+                &format!("{SERVER}/v1/categories"),
+                CredentialUse::Fetch,
+                None,
+                None,
+                None
+            ));
+        }
     }
 }

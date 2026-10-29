@@ -117,12 +117,18 @@ pub enum Decision {
 struct Open {
     ask: Ask,
     decision: Option<Decision>,
+    /// Whether a reader has been handed this question. A reader showing a
+    /// question stops polling until it is answered, so a delivered question
+    /// is itself the sign that somebody is looking.
+    delivered: bool,
 }
 
 struct Inner {
     next_id: u32,
     version: u64,
     open: Vec<Open>,
+    /// When a paired reader last asked for questions or sent an answer.
+    reader_seen: Option<Instant>,
 }
 
 pub struct Board {
@@ -141,6 +147,7 @@ impl Board {
                 next_id: random_start(),
                 version: 0,
                 open: Vec::new(),
+                reader_seen: None,
             }),
             asked: Condvar::new(),
             answered: Condvar::new(),
@@ -151,8 +158,30 @@ impl Board {
     /// out. The question is removed on the way out either way, so nothing
     /// lingers for the reader to answer into the void.
     pub fn submit(&self, asking: Asking, patience: Duration) -> Decision {
+        self.submit_watched(asking, patience, None)
+    }
+
+    /// The same, but only while a reader is watching.
+    ///
+    /// With `fresh` given, a question nobody can see is not held: when no
+    /// reader has been in touch within `fresh`, it passes at once, and one
+    /// still waiting for a reader passes as soon as the reader has been gone
+    /// that long. An agent used to sit for five and a half minutes on every
+    /// prompt while the reader was asleep in a drawer; now the question goes
+    /// straight back to the terminal the owner is sitting at.
+    pub fn submit_watched(
+        &self,
+        asking: Asking,
+        patience: Duration,
+        fresh: Option<Duration>,
+    ) -> Decision {
         let deadline = Instant::now() + patience;
         let mut inner = self.lock();
+        if let Some(fresh) = fresh {
+            if !watched(&inner, fresh) {
+                return Decision::Pass;
+            }
+        }
         let id = inner.next_id;
         inner.next_id = inner.next_id.wrapping_add(1);
         inner.open.push(Open {
@@ -167,6 +196,7 @@ impl Board {
                 multi: asking.multi,
             },
             decision: None,
+            delivered: false,
         });
         inner.version = inner.version.wrapping_add(1);
         drop(inner);
@@ -183,13 +213,24 @@ impl Board {
                 return open.decision.unwrap_or(Decision::Pass);
             }
             let now = Instant::now();
-            if now >= deadline {
+            let abandoned = fresh
+                .is_some_and(|fresh| !inner.open[position].delivered && !watched(&inner, fresh));
+            if now >= deadline || abandoned {
                 inner.open.remove(position);
+                inner.version = inner.version.wrapping_add(1);
                 return Decision::Pass;
             }
+            // Wakes when the reader would count as gone, as well as at the
+            // deadline, so a reader that leaves is noticed without a poll.
+            let wake = match (fresh, inner.reader_seen) {
+                (Some(fresh), Some(seen)) if !inner.open[position].delivered => {
+                    deadline.min((seen + fresh).max(now + PRESENCE_TICK))
+                }
+                _ => deadline,
+            };
             let (guard, _) = self
                 .answered
-                .wait_timeout(inner, deadline - now)
+                .wait_timeout(inner, wake.saturating_duration_since(now))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             inner = guard;
         }
@@ -203,7 +244,8 @@ impl Board {
         let deadline = Instant::now() + patience;
         let mut inner = self.lock();
         loop {
-            if let Some(open) = inner.open.iter().find(|open| open.decision.is_none()) {
+            if let Some(open) = inner.open.iter_mut().find(|open| open.decision.is_none()) {
+                open.delivered = true;
                 return Some(open.ask.clone());
             }
 
@@ -224,16 +266,29 @@ impl Board {
     /// questions from two moments.
     #[must_use]
     pub fn snapshot(&self) -> (u64, Vec<Ask>) {
-        let inner = self.lock();
-        (
-            inner.version,
-            inner
-                .open
-                .iter()
-                .filter(|open| open.decision.is_none())
-                .map(|open| open.ask.clone())
-                .collect(),
-        )
+        let mut inner = self.lock();
+        let asks = inner
+            .open
+            .iter_mut()
+            .filter(|open| open.decision.is_none())
+            .map(|open| {
+                open.delivered = true;
+                open.ask.clone()
+            })
+            .collect();
+        (inner.version, asks)
+    }
+
+    /// Notes that a paired reader is in touch. Called for every request that
+    /// carried the right pairing code, and only for those.
+    pub fn reader_seen(&self) {
+        self.lock().reader_seen = Some(Instant::now());
+    }
+
+    /// How long ago a paired reader was last in touch, if one ever was.
+    #[must_use]
+    pub fn reader_quiet_for(&self) -> Option<Duration> {
+        self.lock().reader_seen.map(|seen| seen.elapsed())
     }
 
     /// Records a decision for one question. False when the question is gone
@@ -260,6 +315,20 @@ impl Board {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+/// The shortest sleep between looks at whether a reader has gone, so a
+/// clock that has already passed the cut-off does not spin the loop.
+const PRESENCE_TICK: Duration = Duration::from_millis(250);
+
+/// Whether anybody is looking: a reader in touch within `fresh`, or one
+/// holding a question it was handed and has not answered yet.
+fn watched(inner: &Inner, fresh: Duration) -> bool {
+    inner.reader_seen.is_some_and(|seen| seen.elapsed() < fresh)
+        || inner
+            .open
+            .iter()
+            .any(|open| open.delivered && open.decision.is_none())
 }
 
 impl Default for Board {
@@ -320,6 +389,55 @@ mod tests {
             Duration::from_millis(50),
         );
         assert_eq!(decision, Decision::Pass);
+    }
+
+    #[test]
+    fn a_question_nobody_is_watching_for_goes_straight_back_to_the_terminal() {
+        let board = Board::new();
+        let started = std::time::Instant::now();
+        let decision = board.submit_watched(
+            Asking::new("claude", "Bash", "ls"),
+            Duration::from_secs(30),
+            Some(Duration::from_secs(60)),
+        );
+        assert_eq!(decision, Decision::Pass);
+        assert!(started.elapsed() < Duration::from_secs(1), "it waited");
+        assert!(board.snapshot().1.is_empty(), "the question was posted");
+    }
+
+    #[test]
+    fn a_reader_that_stops_polling_releases_the_question_it_never_saw() {
+        let board = Board::new();
+        board.reader_seen();
+        let started = std::time::Instant::now();
+        let decision = board.submit_watched(
+            Asking::new("claude", "Bash", "ls"),
+            Duration::from_secs(30),
+            Some(Duration::from_millis(300)),
+        );
+        assert_eq!(decision, Decision::Pass);
+        assert!(started.elapsed() < Duration::from_secs(5), "held too long");
+    }
+
+    #[test]
+    fn a_question_on_the_readers_panel_waits_for_its_answer_without_polls() {
+        // A reader showing a question stops polling until it is answered, so
+        // silence after delivery is somebody reading, not somebody gone.
+        let board = Arc::new(Board::new());
+        board.reader_seen();
+        let answering = Arc::clone(&board);
+        let answerer = std::thread::spawn(move || {
+            let ask = answering.next(Duration::from_secs(5)).expect("a question");
+            std::thread::sleep(Duration::from_millis(600));
+            assert!(answering.answer(ask.id, Decision::Allow));
+        });
+        let decision = board.submit_watched(
+            Asking::new("codex", "shell", "make"),
+            Duration::from_secs(5),
+            Some(Duration::from_millis(200)),
+        );
+        assert_eq!(decision, Decision::Allow);
+        answerer.join().expect("answerer finishes");
     }
 
     #[test]

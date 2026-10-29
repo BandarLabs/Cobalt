@@ -17,3 +17,26 @@ expect The Quiet Shelf
 expect-missing Nothing here yet
 clean
 shot audiobook-shelf
+# With no keys on the reader, Create names the exact command for each key,
+# keeps the topic, and checks again rather than throwing the topic away.
+tap Create
+wait-for Your topic
+tap Type any topic
+type the moon
+tap-id kb.enter
+wait-for Add your keys
+expect kobo secret set exa
+expect kobo secret set openai
+expect kobo secret set elevenlabs
+expect Nothing has been spent
+expect-missing Try another topic
+expect-missing Permission needed
+clean
+shot audiobook-keys
+tap Check again
+wait-for Add your keys
+tap Edit topic
+wait-for Your topic
+expect the moon
+clean
+shot audiobook-topic-kept

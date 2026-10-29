@@ -222,29 +222,17 @@ impl Driver {
             "expect-state" => self.expect_state(rest),
             "clean" => self.clean(),
             "lifecycle" => self.post("/lifecycle", rest),
+            "restart" => self.post_and_settle("/restart", rest),
+            "companion" => run_companion(rest),
+            "page" => self.post_and_settle("/input", &format!("page {rest}")),
             "scenario" => self.post("/scenario", rest),
-            "tasks" if rest == "cancel" => {
-                self.post("/tasks", rest)?;
-                self.wait_idle("")
-            }
+            "tasks" if rest == "cancel" => self.post_and_settle("/tasks", rest),
             "session" if rest == "disconnect" => self.post("/session", rest),
-            "input" => {
-                self.post("/input", rest)?;
-                self.wait_idle("")
-            }
+            "input" => self.post_and_settle("/input", rest),
             "panel" => self.post("/panel", rest),
-            "device" => {
-                self.post("/device", rest)?;
-                self.wait_idle("")
-            }
-            "wifi" => {
-                self.post("/wifi", rest)?;
-                self.wait_idle("")
-            }
-            "clock" => {
-                self.post("/clock", rest)?;
-                self.wait_idle("")
-            }
+            "device" => self.post_and_settle("/device", rest),
+            "wifi" => self.post_and_settle("/wifi", rest),
+            "clock" => self.post_and_settle("/clock", rest),
             "wait" => {
                 let milliseconds: u64 = rest
                     .parse()
@@ -411,13 +399,40 @@ impl Driver {
                 ' ' => "Space".to_owned(),
                 character => character.to_string(),
             };
-            let controls = self.layout()?;
-            let key = keyboard_key(&controls, &label).ok_or_else(|| {
-                format!("no key for {label:?}; is the right keyboard layer showing?")
-            })?;
-            self.touch(key.centre.0, key.centre.1)?;
+            self.press_key(&label)?;
         }
         Ok(())
+    }
+
+    /// Presses one key, turning to the keyboard page it is on first.
+    ///
+    /// A pairing code such as `dr2q29` mixes letters and digits, and an owner
+    /// taps the layer key to reach each digit. Refusing every character not on
+    /// the page showing made a script spell that out key by key. The SDK
+    /// keyboard has four pages, letters, symbols and the shifted form of each,
+    /// and the two toggles visit all of them before coming back.
+    fn press_key(&mut self, label: &str) -> Result<(), String> {
+        let layer = parse_action_id("kb.layer").expect("fixed key");
+        let shift = parse_action_id("kb.shift").expect("fixed key");
+        for toggle in [None, Some(layer), Some(shift), Some(layer), Some(shift)] {
+            if let Some(toggle) = toggle {
+                let controls = self.layout()?;
+                let Some(control) = controls
+                    .iter()
+                    .find(|control| control.tappable() && control.action == Some(toggle))
+                else {
+                    break;
+                };
+                let (x, y) = control.centre;
+                self.touch(x, y)?;
+            }
+            let controls = self.layout()?;
+            if let Some(key) = keyboard_key(&controls, label) {
+                let (x, y) = key.centre;
+                return self.touch(x, y);
+            }
+        }
+        Err(format!("no key for {label:?} on any keyboard page"))
     }
 
     /// Asserts that something on the screen says this.
@@ -709,6 +724,14 @@ impl Driver {
 
     fn post(&self, path: &str, body: &str) -> Result<(), String> {
         self.request("POST", path, body).map(|_| ())
+    }
+
+    /// Posts an event the app answers by drawing, then waits for that drawing
+    /// to finish, so the next step reads the screen the event produced rather
+    /// than the one before it.
+    fn post_and_settle(&self, path: &str, body: &str) -> Result<(), String> {
+        self.post(path, body)?;
+        self.wait_idle("")
     }
 
     /// One HTTP request, spoken by hand.
@@ -1334,6 +1357,37 @@ fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[
     Ok((metadata, width, height, frame))
 }
 
+/// Runs a computer-side command between steps, as an owner would while the
+/// app is open: `companion frame push photo.jpg --sim`.
+///
+/// "A push is picked up when the app comes back" could only be checked by a
+/// script that drove the simulator and ran the command itself, because a
+/// route had no way to do the second half. This is the same `kobo` binary,
+/// started without a shell, and it must name `--sim`, so a committed route
+/// can never reach a real reader.
+fn run_companion(arguments: &str) -> Result<(), String> {
+    let arguments = arguments.split_whitespace().collect::<Vec<_>>();
+    if !arguments.contains(&"--sim") {
+        return Err("companion runs only commands that name --sim".to_owned());
+    }
+    let program = std::env::current_exe().map_err(|error| format!("find kobo: {error}"))?;
+    let output = std::process::Command::new(program)
+        .args(&arguments)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("run kobo {}: {error}", arguments.join(" ")))?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "kobo {} failed: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 fn keyboard_key<'a>(controls: &'a [Control], label: &str) -> Option<&'a Control> {
     let mut keys = (0..3)
         .flat_map(|row| (0..10).map(move |column| format!("kb.r{row}c{column}")))
@@ -1533,6 +1587,10 @@ mod tests {
                     }
                     Err(error) => panic!("accept driver: {error}"),
                 };
+                // On macOS an accepted socket inherits the listener's
+                // non-blocking flag, and a read that comes before the request
+                // fails instead of waiting for it.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(2)))
                     .unwrap();

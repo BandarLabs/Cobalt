@@ -15,3 +15,50 @@ expect-missing Opening
 expect-missing Refresh
 clean
 shot grid
+
+# Pairing from the preview. The pairing screen names the one command that
+# pairs the reader for you; it used to list three, including a trust step
+# the companion now takes itself.
+tap-id pair-preview
+wait-for Pair with your computer
+expect If the first cannot reach this reader, enter the address and code it prints.
+expect kobo sidekick init
+expect kobo sidekick run
+expect-missing kobo trust set sidekick
+clean
+shot pairing
+tap-id enter-address
+type 192.168.1.20
+tap-id kb.enter
+wait-for Now the pairing code
+expect The six characters kobo sidekick init printed beside the address.
+clean
+shot code
+# A code that could not be one is refused on its own step, not saved and
+# later reported as a computer that does not answer.
+tap-id enter-code
+type zz
+tap-id kb.enter
+wait-for A pairing code is six letters and digits.
+clean
+shot code-error
+# With no network the deck says so, rather than blaming the helper.
+scenario offline
+tap-id enter-code
+type abc234
+tap-id kb.enter
+wait-for This reader is not on Wi-Fi.
+expect-missing Check that Sidekick is open
+clean
+shot offline
+# Pairing in the top bar is the way out of a pairing gone wrong, and the
+# address it offers has the helper's port filled in.
+tap-id repair
+wait-for Pair with your computer
+tap-id enter-address
+expect 192.168.1.20:9331
+tap-id kb.cancel
+tap back
+wait-for This reader is not on Wi-Fi.
+clean
+shot back-to-deck

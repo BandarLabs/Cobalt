@@ -1,10 +1,10 @@
 expect Backgammon
-tap Roll
-expect White opened
+expect Opening roll
 shot backgammon-opening
-tap 24
-expect Checker selected
+tap Roll
+expect Computer opened with
+shot backgammon-match
+tap Roll
+tap-id point-12
+expect Tap a marked point to move it there.
 shot backgammon-selected
-tap 23
-expect Use the remaining die
-shot backgammon-play

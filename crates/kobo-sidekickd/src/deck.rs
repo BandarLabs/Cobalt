@@ -94,7 +94,11 @@ pub struct Deck {
 pub enum PressOutcome {
     NeedsConfirm,
     Started,
+    /// This key is still running.
     Busy,
+    /// Other keys are using every slot, which the reader has to be told
+    /// apart from this key being busy: the fix is to wait for another one.
+    Full,
     Gone,
     Unavailable,
 }
@@ -105,6 +109,7 @@ impl PressOutcome {
             Self::NeedsConfirm => "needs-confirm",
             Self::Started => "started",
             Self::Busy => "busy",
+            Self::Full => "full",
             Self::Gone => "gone",
             Self::Unavailable => "unavailable",
         }
@@ -187,9 +192,11 @@ impl Deck {
             if key.confirm && !confirmed {
                 return PressOutcome::NeedsConfirm;
             }
-            if matches!(inner.runs.get(id), Some(RunState::Running)) || inner.running >= MAX_RUNNING
-            {
+            if matches!(inner.runs.get(id), Some(RunState::Running)) {
                 return PressOutcome::Busy;
+            }
+            if inner.running >= MAX_RUNNING {
+                return PressOutcome::Full;
             }
             inner.runs.insert(id.to_owned(), RunState::Running);
             inner.running += 1;
@@ -880,6 +887,37 @@ confirm = {confirm}
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("command did not finish within fifteen seconds");
+    }
+
+    #[test]
+    fn a_fifth_key_while_four_run_is_told_the_slots_are_full_not_that_it_is_busy() {
+        let directory = directory();
+        let path = directory.join("deck.toml");
+        let mut source = String::from("[[page]]\nname = \"Build\"\n");
+        for index in 0..5 {
+            source.push_str(&format!(
+                "[[page.key]]\nlabel = \"Wait {index}\"\nrun = \"sleep 1 # {index}\"\n"
+            ));
+        }
+        fs::write(&path, source).unwrap();
+        let deck = Deck::new(path, directory.clone());
+        for index in 0..4 {
+            let id = stable_id(
+                "Build",
+                &format!("Wait {index}"),
+                &format!("sleep 1 # {index}"),
+            );
+            assert_eq!(
+                deck.press(&id, false, Duration::from_secs(5), Duration::ZERO),
+                PressOutcome::Started
+            );
+        }
+        let fifth = stable_id("Build", "Wait 4", "sleep 1 # 4");
+        assert_eq!(
+            deck.press(&fifth, false, Duration::from_secs(5), Duration::ZERO),
+            PressOutcome::Full
+        );
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

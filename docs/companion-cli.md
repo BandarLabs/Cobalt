@@ -3,8 +3,9 @@
 Run `kobo` in a terminal to choose an owner task by number:
 
 1. Set up a reader over USB. Connect the reader and choose **Connect** on its
-   screen. Setup identifies the device and keeps its existing installation
-   review and approval step.
+   screen. Setup identifies the device, says what it will change and asks
+   first. It turns on SSH with this computer's key, waits for the reader to
+   come back on Wi-Fi, and saves it, so the commands below need no address.
 2. Preview photos for Frame. Enter a photo or folder path, then a new output
    folder. Open the generated `index.html` to compare crop and pad. Previewing
    does not transfer photos.
@@ -27,14 +28,40 @@ without prompting. Explicit commands are unchanged. `kobo --help` opens the
 full command reference; `kobo frame --help`, `kobo flashcards --help` and
 `kobo feeds --help` show companion-specific commands.
 
-Named-reader selection, a desktop companion window and resumable operation
-receipts remain under development.
+A desktop companion window remains under development.
+
+## Which reader a command goes to
+
+Every command that acts on a reader goes to the one `kobo setup` saved. You
+do not need an address or a separate pairing step. To go somewhere else, add
+one of:
+
+- `--reader NAME` for another saved reader,
+- `--device IP` for a reader by address, or
+- `--sim` for the simulator on this computer.
+
+`kobo pair NAME` saves a reader that is already on Wi-Fi under a new name, or
+one that was set up from another computer. With no reader saved, a command
+says so and names `kobo setup`. When the saved reader does not answer, the
+command asks you to wake it (press power) and check Wi-Fi in Cobalt Settings,
+and keeps looking for a minute.
+
+## Sending a file
+
+`kobo send FILE` sends a file to the app that opens it and says which app
+received it: photos to Frame, OPML lists to Feeds, CBZ comics to Panels and
+story files to Parser. A PDF could be a score for Music Stand or a pattern for
+Needles, so you are asked which, or you name it with `--to musicstand` or
+`--to needles`. A Markdown note belongs to Vault, which takes a whole notes
+folder with `kobo vault push FOLDER`. Needles keeps one pattern and Panels one
+comic, so a send to either asks before it replaces what is there; `--replace`
+answers yes in a script.
 
 ## Companion commands by app
 
 Apps that need files, accounts or a paired computer have a `kobo` command.
-Run `kobo COMMAND --help` for the full usage. Most take `--device IP` for a
-reader or `--sim` for the simulator.
+Run `kobo COMMAND --help` for the full usage. Each goes to the saved reader
+unless you name another target.
 
 | App | Command | What it does |
 | --- | --- | --- |
@@ -58,15 +85,17 @@ reader or `--sim` for the simulator.
 
 Commands every app can use:
 
-- `kobo secret set NAME --from FILE --device IP` installs an API key or
+- `kobo secret set NAME --from FILE` installs an API key or
   token. The runtime attaches it to the app's requests, and the app never sees
   it. It replaces any value of that name typed into an app on the reader.
-- `kobo trust set NAME --from ROOT.pem --device IP` installs a private
+- `kobo trust set NAME --from ROOT.pem` installs a private
   certificate authority. For Sidekick and Paperterm, `--from` can be left out
   because their `init` commands save the certificate where `trust set` looks.
-- `kobo export --app APP --device IP --out FOLDER` receives a copy an app has
+- `kobo export --app APP --out FOLDER` receives a copy an app has
   prepared with its export or **Save a copy** button.
-- `kobo apps setup APP` shows an app's setup steps.
+- `kobo apps setup APP` shows an app's setup steps. APP can be the name the
+  Store shows (`Music Stand`, `Feeds`), its id, or the command that serves it
+  (`sync`, `stream`).
 
 ### Server-bound accounts
 
@@ -88,7 +117,7 @@ and `remove` do not manage server-bound accounts.
 
 ## Sync folders
 
-`kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP` pairs one
+`kobo sync setup LOCAL_DIR --folder vault|frame|books|out` pairs one
 computer folder with the reader's fixed Sync set through a dedicated, private
 Syncthing peer (its own home, its own identity, API on loopback only).
 `kobo sync plan` shows the mapping, its fixed direction and what the reader
@@ -136,7 +165,8 @@ private-server certificate commands. Help exits successfully without looking
 for local credentials or connecting to a reader. Missing required arguments
 still return an error.
 
-Choose exactly one destination: `--device ADDRESS` for a reader over the
+With no destination these go to the saved reader. To choose one, give
+exactly one of `--reader NAME` or `--device ADDRESS` for a reader over the
 network, or `--volume PATH` for its mounted USB volume. Repeated or mixed
 destinations are refused. Use `--from PATH` once with `set`; it is not accepted
 with `list` or `remove`. Credential values belong in a private file, not in the

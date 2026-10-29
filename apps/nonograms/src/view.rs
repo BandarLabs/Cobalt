@@ -279,9 +279,9 @@ On your computer, run:
 
 kobo nonograms push IMAGE --name NAME --size N
 
-Replace IMAGE with your image file, NAME with what to call the puzzle, and N with a grid size from 5 to 25. Choose the same size in Photo puzzles, then Import.
+Replace IMAGE with your image file, NAME with what to call the puzzle, and N with a grid size from 5 to 25. The puzzle appears under Photos the next time Nonograms opens or the reader wakes.
 
-To send several at once, write imported.txt beside the photos, one line per puzzle: file name, puzzle name and grid size, separated by tabs. The list sets the sizes.
+Each push adds to the photos already here. To send several at once, add --add IMAGE --name NAME --size N for each. To keep only the photos you are sending, add --replace.
 
 Only puzzles solvable by row and column deductions are accepted. Try another photo or size if the clues need guessing.
 

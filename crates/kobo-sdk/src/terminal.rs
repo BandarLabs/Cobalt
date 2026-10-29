@@ -138,7 +138,10 @@ impl ScreenBuilder {
     /// majority of a landscape panel to the terminal instead of spending a
     /// fifth row on a separate strip. `Ctrl` shows its state in its label,
     /// since on a panel with no hover and no colour there is nowhere else to
-    /// put it.
+    /// put it. It sits in the bottom row with the other modifiers rather than
+    /// after the home row: the symbol page's home row is already ten keys, and
+    /// an eleventh pushed `Ctrl` onto a row of its own, grew the keyboard and
+    /// hid the prompt it was meant to type into.
     #[must_use]
     pub fn terminal_keys(self, keys: &TerminalKeys) -> Self {
         let control = if keys.is_control() { "CTRL" } else { "ctrl" };
@@ -162,9 +165,8 @@ impl ScreenBuilder {
         };
         let [top, home, bottom] = keyboard.rows();
         let top = row(0, top);
-        let mut home = row(1, home);
+        let home = row(1, home);
         let bottom = row(2, bottom);
-        home.push((CONTROL.to_string(), control.to_string()));
 
         let mut lower = Vec::with_capacity(bottom.len() + 3);
         lower.push((
@@ -184,10 +186,11 @@ impl ScreenBuilder {
             .grid(u8::try_from(home.len()).unwrap_or(u8::MAX), false, home)
             .grid(u8::try_from(lower.len()).unwrap_or(u8::MAX), false, lower)
             .grid(
-                8,
+                9,
                 false,
                 [
                     ("term.tab".to_string(), "tab".to_string()),
+                    (CONTROL.to_string(), control.to_string()),
                     (
                         LAYER.to_string(),
                         match keys.keyboard().layer() {

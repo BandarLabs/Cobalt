@@ -11,20 +11,30 @@ A news brief that keeps loading while you use other apps.
 
 ## Features
 
-- Draws from one of four Hacker News lists: the front page, best of the week,
-  Ask HN or Show HN. **Source** switches between them.
+- Draws twelve stories from one of four Hacker News lists: the front page,
+  best of the week, Ask HN or Show HN. **Source** switches between them.
+- Fetches a new brief whenever you open it more than six hours after the
+  last. It also asks to wake the reader each morning for one, but a reader
+  does not yet let apps wake it, so for now a morning brief arrives only when
+  you open Brief.
+- Every story behind a headline is saved on the reader with its pictures as
+  the brief arrives, so the whole brief reads without Wi-Fi. The brief says
+  what is ready offline, for example "Ready offline: 12 stories, 2.4 MB".
+  Stories from earlier briefs are removed.
+- Stories open in the document reader cut to the article, without the site's
+  menus and footers. Each reopens where you left it, and a new one opens at the
+  text size you chose last.
+- Shows which list it came from and when it was fetched, in the reader's own
+  time zone.
 - Tap **Refresh** and switch to another app. The brief keeps loading and is
   ready when you come back.
-- Shows which list it came from and when it was fetched.
-- Tap a story to read it in the document reader, with figures and type
-  controls. Read stories are saved and open offline.
 - If a refresh fails, the last brief stays and you can try again.
-- Saved whenever the app goes to the background, so it survives the reader
-  sleeping.
 
 ## Permissions
 
 - `network`: fetches stories and articles.
+- `scheduled-wake`: asks to wake the reader each morning to fetch the brief.
+  Readers refuse this for now, and Brief refreshes when you open it instead.
 
 ## Development
 

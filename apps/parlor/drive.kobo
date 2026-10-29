@@ -1,13 +1,20 @@
-expect Pass-and-play classics
+expect Classic board games
+expect Play the computer, or pass the reader between two players.
 tap Reversi
-expect Set the table
-tap How to play
+expect Computer strength
+expect Black, moves first
+expect-missing How to play
+expect-missing International
+clean
+shot parlor-setup
+tap Rules
 expect Bracketed discs flip
 wait 250
 clean
 shot parlor-help
-tap Set up game
+tap Back
 tap Start game
+expect Your move
 expect Tap a hollow destination
 clean
 shot reversi
@@ -17,7 +24,43 @@ expect Progress is not saved
 clean
 shot parlor-save-refused
 scenario normal
-tap-id undo
+tap-id game-undo
 expect-missing Progress is not saved
+expect Your last move and the computer's reply are taken back.
 clean
 shot parlor-save-kept
+tap-id cell-19
+expect Your move
+expect The computer placed the marked disc and turned one of your discs.
+expect You 0 · Computer 0
+expect-missing house
+clean
+shot reversi-computer-marked
+tap-id game-more
+expect New game
+expect Change game
+clean
+shot parlor-more
+tap New game
+expect Starting replaces the game in progress.
+tap Back
+expect Your move
+tap-id game-more
+tap New game
+tap Pass-and-play
+expect Turns for each player
+tap Start game
+expect Black to move
+tap-id cell-19
+expect White to move · board turned
+expect Pass the reader to White.
+expect Black placed the marked disc and turned one white disc.
+expect-missing South
+expect-missing North
+clean
+shot reversi-pass-and-play
+tap Undo
+expect The other player taps Undo to agree
+tap Undo
+expect The last move is taken back.
+expect Black to move

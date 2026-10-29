@@ -161,45 +161,65 @@ kobo setup            # with the reader connected by USB and showing 'Connected'
 It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
 file back to prove it arrived intact, sets
 `DeveloperSettings/ForceWifiOn` and `PowerOptions/AutoSleepMinutes=90`, adds a
-**Cobalt** entry to the reader's own menu, and ejects. It leaves the firmware's
-root SSH server disabled.
+**Cobalt** entry to the reader's own menu, turns on the firmware's SSH server
+with this computer's key as the only way in, and ejects. Then it waits for the
+reader to come back on Wi-Fi and saves it, so every companion command after
+that needs no `--device` and no separate `kobo pair`.
 
-Developers who need Wi-Fi deployment may opt in explicitly:
+SSH is on by default because every app set up from a computer needs it, and
+leaving it off sent owners back to the cable for a second run. `kobo setup
+--no-ssh` leaves the server off for a reader that will only be used on its
+own; the older `--enable-ssh` is still accepted and changes nothing.
 
-```
-kobo setup --enable-ssh
-```
+How the reader is reached, and who else can reach it:
 
-That enables the firmware's **own root SSH server** and makes the setup
-reproducible. It creates or reuses the dedicated `~/.ssh/kobo_cobalt` key and
-stages only its public half inside Cobalt. After the restart, open Cobalt once
-from the reader menu: its root-owned start script appends the key to
-`/root/.ssh/authorized_keys` exactly once and deletes the staged copy. The
-private key never leaves the computer and no password is created or weakened.
-`kobo setup --undo` disables the server again. A plain `kobo setup` remains the
-recommended owner-facing installation.
+- Setup creates or reuses the dedicated `~/.ssh/kobo_cobalt` key (Ed25519, no
+  passphrase, never used for anything else) and stages only its public half,
+  in the one `KoboRoot.tgz` the firmware extracts at the next restart. It
+  becomes root's `authorized_keys`. The private key never leaves the computer.
+- Every `kobo` command connects with `BatchMode=yes`, `IdentitiesOnly=yes` and
+  that key, so it never offers or asks for a password.
+- The firmware's own server is not key-only. Its `sshd_config` permits root
+  login by password, including an empty one, and some firmware clears root's
+  password at boot. So when setup sees the reader come back, it closes
+  password login for root over a connection that may authenticate by the key
+  and nothing else: it appends a marked `Match User root` /
+  `PasswordAuthentication no` block to `sshd_config`, checks it with `sshd -t`
+  and `sshd -T`, reloads the server, and keeps the change only when a second,
+  fresh key login gets in. If that second login never arrives, the reader puts
+  the old file back by itself after five minutes, so a key that does not work
+  cannot lock anyone out.
+- `--no-key` skips the key and therefore the hardening, because without this
+  computer's key there is no proof a key works. That leaves the firmware's
+  password login as it shipped.
+- The archive also carries the firmware's empty first-login marker,
+  `/.login_pass_set`. Without it some firmware (a Libra Colour on 4.45.23697)
+  runs an interactive `passwd` on the first login, which swallows the script a
+  computer command sends.
 
-With `--enable-ssh`, it then waits. The restart is the one step that has to happen on the reader,
-its SSH server only starts at boot, and nothing on this side can press the
-power button, so the command asks for it and then watches the network for the
-reader to come back. Open Cobalt once after the reboot to install the staged
-public key; the command then prints the address and exact `kobo deploy` line.
-It identifies the reader first by *change*: it records which addresses answer
-on port 22 before the wait, and only ones that were not answering and now are
-candidates. It then authenticates with the new dedicated key and asks the same
-read-only identity script every other device command uses.
+The restart is the one step that has to happen on the reader: its SSH server
+only starts at boot, and nothing on this side can press the power button, so
+the command asks for it and then watches the network. The reader is recognised by the serial the USB volume gave: an address that
+was not answering on port 22 before the wait, and now answers, is asked who it
+is over the same read-only identity script every other command uses, and only
+the serial that was on the cable counts. Another Kobo waking on the same
+network is passed over and named at the end, never saved in its place. An
+address that accepts a connection but cannot answer yet is asked again next
+round, because a booting reader does exactly that.
 
-Change alone was not enough. A laptop waking from sleep mid-wait was reported
-as the reader, and a confident wrong address is worse than none. The obvious
-second test was the SSH banner, and it was wrong: this firmware runs
-**OpenSSH** rather than Dropbear, so a banner check rejected the very device it
-was written to find. What each newcomer gets asked instead is
-who it is, over the same identity script every other command uses. A reader
-says so. Anything else is passed over and named at the end. An address that
-accepts a connection but answers neither way is asked again next round rather
-than written off, because a booting reader does exactly that.
+The reader is saved exactly as `kobo pair` saves one: under the name `kobo`,
+or the first free `kobo-N`, or the name it already had when setup is run again
+to update Cobalt. `kobo pair NAME` renames it, and saves a reader prepared
+from another computer.
 
-`--no-wait` skips that SSH wait and `--no-menu` skips the menu entry.
+Change alone was not enough to recognise the reader. A laptop waking from sleep
+mid-wait was reported as the reader, and a confident wrong address is worse
+than none. The obvious second test was the SSH banner, and it was wrong: this
+firmware runs **OpenSSH** rather than Dropbear, so a banner check rejected the
+very device it was written to find.
+
+`--no-wait` skips the wait (save the reader later with `kobo pair`) and
+`--no-menu` skips the menu entry.
 `kobo setup --undo` removes the managed trees, stable launcher, and exact
 Cobalt NickelMenu entry. It preserves owner folders under
 `.adds/cobalt.recovery.N` and reports any `.adds/cobalt.unusable[.N]`
@@ -214,7 +234,7 @@ uses, and for the same reason: the suspend is requested by nickel itself, so
 nickel's timer is the only thing that can prevent it. It costs battery, and the
 reader's Energy saving screen overrides it at any time.
 
-The optional SSH server is the part worth explaining, because it is not ours. Firmware
+The SSH server is the part worth explaining, because it is not ours. Firmware
 4.42 and later ship one, switched off, gated on the name of a file on the book
 partition: `.kobo/ssh-disabled`. Renaming it to `ssh-enabled` is the firmware's
 documented mechanism, and the file says so in its own text. Renaming it back
@@ -311,9 +331,14 @@ off while it is awake; its address has changed; or nothing is listening on port
 power button.
 
 The last one is worth stating plainly. **Cobalt does not install an SSH server.**
-It enables the one the firmware already ships, and only when you ask it to with
-`kobo setup`. Nothing the platform does on the reader involves SSH; it is only
-how a developer's machine reaches the device.
+It enables the one the firmware already ships, as part of `kobo setup` unless
+`--no-ssh` is given, and closes its password login so only this computer's
+key gets in. Nothing the platform does on the reader involves SSH; it is only
+how a computer reaches the device.
+
+A saved reader that does not answer gets a minute: the command says
+`Wake "kobo" (press power) and check Wi-Fi in Cobalt Settings.`, keeps looking,
+and carries on as soon as the reader is back.
 
 ## Talking to a device
 

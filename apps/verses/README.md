@@ -15,7 +15,10 @@ A public-domain poem each day, set as a reading page.
 
 ## Features
 
-- A new public-domain poem every day.
+- A new public-domain poem every day. With no network, the day's poem comes
+  from 41 bundled poems by Shakespeare, Keats, Rossetti, Whitman and others.
+- Sonnets and short poems sit whole on one page. Longer poems turn the page
+  between stanzas.
 - An offline shelf that keeps each poem's author, first publication year and
   source.
 - Search [PoetryDB](https://poetrydb.org/) by title, poet or line, and keep

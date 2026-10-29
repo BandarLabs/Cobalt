@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Drive Fanshelf against a local TLS fixture posing as AO3: look a work up
 by its numeric ID, parse the work page, download the EPUB the page points to,
-and open it in the reader - through the actual simulator with real taps.
+and open it in the reader - through the actual simulator with real taps. Then
+post a chapter on the fixture and check that one tap both finds it and
+downloads it, and that Update all ends on one sentence.
 
 The fixture serves a synthetic work page and the repository's own synthetic
 EPUB (apps/calibre-web/fixtures/river.epub). No archive traffic leaves the
@@ -40,10 +42,10 @@ WORK_PAGE = """
   <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li><li><a>Whispered Cartographies</a></li></ul></dd>
   <blockquote class="userstuff summary module"><p>A synthetic fixture.</p></blockquote>
   <dt class="updated">Updated:</dt>
-  <dd class="updated">2026-09-01</dd>
+  <dd class="updated">{updated}</dd>
   <dt class="chapters">Chapters:</dt>
-  <dd class="chapters">12/?</dd>
-  <a href="/downloads/4242/The_Lantern_Library.epub?updated_at=1">EPUB</a>
+  <dd class="chapters">{chapters}/?</dd>
+  <a href="/downloads/4242/The_Lantern_Library.epub?updated_at={chapters}">EPUB</a>
   </body></html>
 """
 
@@ -54,6 +56,7 @@ class Archive:
     def __init__(self):
         self.pages = 0
         self.epub_bytes = 0
+        self.chapters = 12
 
 
 def handler_for(archive, epub):
@@ -75,7 +78,10 @@ def handler_for(archive, epub):
             print(f"fixture GET {self.path} range={self.headers.get('Range')}", flush=True)
             if re.fullmatch(r"/works/4242", path):
                 archive.pages += 1
-                self._send(200, WORK_PAGE.encode(), "text/html; charset=utf-8")
+                updated = "2026-09-01" if archive.chapters == 12 else "2026-10-20"
+                page = WORK_PAGE.replace("{chapters}", str(archive.chapters)).replace(
+                    "{updated}", updated)
+                self._send(200, page.encode(), "text/html; charset=utf-8")
                 return
             if re.fullmatch(r"/downloads/4242/The_Lantern_Library\.epub", path):
                 offset = 0
@@ -120,8 +126,11 @@ def main():
         config = private / "config"
         env.update(KOBO_STREAM_CONFIG_DIR=str(config),
                    KOBO_SIM_TRUST_DIR=str(config / "trust"))
-        subprocess.run([str(cli), "stream", "init", "--host", "127.0.0.1"],
-                       cwd=ROOT, env=env, check=True, capture_output=True, timeout=60)
+        # --sim: the trust root goes to KOBO_SIM_TRUST_DIR and nothing looks
+        # for a reader on the network.
+        subprocess.run([str(cli), "stream", "init", "--sim", "--host", "127.0.0.1"],
+                       cwd=ROOT, env=env, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL, timeout=60)
 
         archive = Archive()
         epub = EPUB.read_bytes()
@@ -179,10 +188,10 @@ def main():
                 # An empty shelf offers to add a work; the work number is the
                 # address form a reader copies off the archive.
                 drive("wait-for Add an AO3 work", "wait-idle", timeout=300)
-                drive("tap Add", "wait-for Enter its web address")
+                drive("tap Add", "wait-for Work address or number")
                 drive("tap-id kb.layer", "type 4242", "tap Open work",
                       "wait-for The Lantern Library", "wait-for River Quill",
-                      "wait-idle", timeout=300)
+                      "wait-for A synthetic fixture.", "wait-idle", timeout=300)
                 capture("fanshelf-epub-work")
                 assert archive.pages == 1, "the work page was fetched once"
                 result["checks"].append(dict(
@@ -206,13 +215,45 @@ def main():
                            "page (A Walk by the River, page 1 of 12)"))
 
                 drive("tap Back", "wait-for Read", timeout=300)
-                drive("tap Shelf", "wait-for reading", "wait-idle", timeout=300)
+                drive("tap Shelf", "wait-for reading", "wait-for Ready offline: 1 work",
+                      "wait-idle", timeout=300)
                 capture("fanshelf-epub-shelf")
                 result["checks"].append(dict(
                     name="shelf shows the download", status="passed",
-                    detail="back on the shelf the row carries the reading badge: "
+                    detail="back on the shelf the row carries the reading badge "
+                           "and the home screen says one work is ready offline: "
                            "the downloaded copy persisted and the reading state "
                            "survived leaving the reader"))
+
+                # A chapter is posted. Checking finds it and downloads it in
+                # the same tap; nothing waits on a second screen.
+                archive.chapters = 13
+                drive("tap The Lantern Library", "wait-for Check for new chapters",
+                      "tap Check for new chapters", "clock advance 1500", "wait-idle",
+                      "clock advance 1500", "wait-idle", "clock advance 1500",
+                      "wait-for New chapters downloaded.", "wait-idle",
+                      "expect-missing No new chapters as of", timeout=300)
+                capture("fanshelf-epub-check-downloads")
+                assert archive.epub_bytes == 2 * len(epub), \
+                    "checking downloaded the new chapters exactly once"
+                drive("tap Shelf", "wait-for new chapters", "wait-idle", timeout=300)
+                capture("fanshelf-epub-shelf-new-chapters")
+                result["checks"].append(dict(
+                    name="check and download together", status="passed",
+                    detail="with a thirteenth chapter posted, one tap on Check "
+                           "for new chapters fetched the work page and then the "
+                           "new EPUB, the work screen said the chapters were "
+                           "downloaded, and the shelf marked them as not opened"))
+
+                drive("tap Updates", "wait-for Update all", "tap Update all",
+                      "clock advance 1500", "wait-idle", "clock advance 1500",
+                      "wait-for Checked 1 work. No new chapters.", "wait-idle",
+                      timeout=300)
+                capture("fanshelf-epub-update-all")
+                result["checks"].append(dict(
+                    name="update all", status="passed",
+                    detail="Update all checked the one work in progress and "
+                           "ended on a single sentence saying nothing was new"))
                 result["status"] = "passed"
             finally:
                 stop()

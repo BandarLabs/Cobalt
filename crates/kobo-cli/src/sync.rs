@@ -13,7 +13,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const USAGE: &str = "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP\n\
+const USAGE: &str = concat!(
+    "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out [--device IP | --reader NAME]\n\
                      \x20      kobo sync run [--foreground] [--seconds 1-86400]\n\
                      \x20      kobo sync plan [--json]\n\
                      \x20      kobo sync status [--json]\n\
@@ -24,8 +25,13 @@ const USAGE: &str = "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books
                      \x20      \n\
                      \x20      While the peer runs it uses this computer's network. A sleeping\n\
                      \x20      reader is not kept awake; it syncs during the windows its owner\n\
-                     \x20      opens on the Kobo.";
+                     \x20      opens on the Kobo.\n",
+    crate::targets::saved_reader_note!(),
+);
 const GUI_ADDRESS: &str = "127.0.0.1:8385";
+/// Inside the private Sync home: the packages Syncthing shares for folders
+/// whose app reads a package rather than the owner's files.
+const PACKAGES: &str = "packages";
 const KOBO_KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(60);
 const START_TIMEOUT: Duration = Duration::from_secs(15);
@@ -134,6 +140,9 @@ fn setup(arguments: &[String]) -> Result<(), String> {
         );
     }
     add_mapping(&mut state, folder, &local, &home)?;
+    if folder == "vault" {
+        publish_vault(&local, &package_directory(&home, folder)?)?;
+    }
     if let Err(error) = configure_host(&state, &home) {
         if new_home {
             cleanup_new_home(&home);
@@ -148,9 +157,9 @@ fn setup(arguments: &[String]) -> Result<(), String> {
     }
     pair_kobo(device, &host_id, folder)?;
     println!(
-        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled and wakes only for the windows its owner\nopens; continuous sync does not keep a sleeping reader awake. While the peer runs it\nuses this computer's network. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
+        "Sync is set up.\n\n  computer folder  {}\n  reader folder    sync/{folder}\n  files go         {}\n  reader ID        {kobo_id}\n  computer ID      {host_id}\n  Sync home        {}\n  Syncthing        {}\n\nNext, run 'kobo sync run' here. Then open Sync on the reader and tap Turn on Sync:\nthe first sync starts at once and takes up to five minutes. After that the reader\nsyncs on its schedule while Cobalt is open on Wi-Fi, or when you tap Sync now.",
         local.display(),
-        host_folder_type(folder),
+        direction_words(folder),
         home.display(),
         state.version
     );
@@ -239,12 +248,24 @@ fn run(arguments: &[String]) -> Result<(), String> {
     protect_home(&home)?;
     let _lock = OperationLock::acquire(&home)?;
     let state = optional_state(&home)?.ok_or_else(|| {
-        "Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first"
+        "Sync is not set up on this computer yet. Run 'kobo sync setup LOCAL_DIR --folder vault' first."
             .to_owned()
     })?;
     verify_state(&state)?;
     if running(&state, &home)? {
         return Err("the dedicated Sync peer is already running".to_owned());
+    }
+    // Vault reads a package, not the notes themselves, so it is packed again
+    // here: the owner's last edits are what the next sync should carry. A
+    // failure is reported and the rest still syncs.
+    if let Some(mapping) = state.mappings.get("vault") {
+        if let Err(error) = package_directory(&home, "vault")
+            .and_then(|package| publish_vault(&mapping.path, &package))
+        {
+            eprintln!(
+                "kobo sync: Vault notes were not packed, so Vault keeps its last copy: {error}"
+            );
+        }
     }
     let mut child = start(&state, &home, false)?;
     write_pid(&home, child.id())?;
@@ -254,15 +275,23 @@ fn run(arguments: &[String]) -> Result<(), String> {
         remove_pid(&home);
         return Err(error);
     }
+    // A peer set up before Vault was packed in the Sync home still shares the
+    // owner's notes folder. Applying the layout on every run moves it.
+    if let Err(error) = apply_layout(&state, &home, &mut child) {
+        let _ignored = child.kill();
+        let _ignored = child.wait();
+        remove_pid(&home);
+        return Err(error);
+    }
     if !foreground {
         println!(
-            "Sync peer started in the background (PID {}).\nIt uses this computer's network until stopped; it does not keep a sleeping reader awake.\nRun 'kobo sync status' for folder state, 'kobo sync pause' to pause transfers, or 'kobo sync stop' to quit.",
+            "Sync is running on this computer in the background (PID {}).\nLeave it running, then tap Sync now on the reader. 'kobo sync status' shows each\nfolder, and 'kobo sync stop' stops this computer's side.",
             child.id()
         );
         return Ok(());
     }
     println!(
-        "Sync peer is running for at most {seconds} seconds; it uses this computer's network during that window and does not keep a sleeping reader awake. 'kobo sync stop' can end it sooner."
+        "Sync is running on this computer for at most {seconds} seconds and uses its network until then. 'kobo sync stop' ends it sooner."
     );
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
@@ -366,7 +395,7 @@ fn folder_report(state: &State, active: bool, folder: &str, mapping: &Mapping) -
 fn load_state() -> Result<(PathBuf, State), String> {
     let home = host_home()?;
     let state = optional_state(&home)?.ok_or_else(|| {
-        "Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first"
+        "Sync is not set up on this computer yet. Run 'kobo sync setup LOCAL_DIR --folder vault' first."
             .to_owned()
     })?;
     verify_state(&state)?;
@@ -382,10 +411,12 @@ fn parse_json_flag(arguments: &[String]) -> Result<bool, String> {
 }
 
 /// The fixed ingest contract, named here so plan and status can state which
-/// folders an application consumes after a window completes.
+/// folders an application consumes after a sync completes.
 fn ingest_note(folder: &str) -> &'static str {
     match folder {
-        "vault" => "imports into Vault when a synced.v1 shelf package is present",
+        "vault" => {
+            "packed into the Sync home and imported into Vault; the notes folder is never written"
+        }
         "frame" => "imports into Frame when a manifest.v1 album package is present",
         "books" => "stays plain files for the reader library",
         _ => "collects exports from the reader",
@@ -515,7 +546,7 @@ fn status(arguments: &[String]) -> Result<(), String> {
 }
 
 /// Pausing suspends transfers with the paired Kobo without stopping the
-/// dedicated peer; the reader's own window keeps its independent cadence.
+/// dedicated peer; the reader keeps its own schedule.
 fn set_paused(paused: bool) -> Result<(), String> {
     let (home, state) = load_state()?;
     if !running(&state, &home)? {
@@ -862,7 +893,7 @@ fn configure_host(state: &State, home: &Path) -> Result<(), String> {
         let _ignored = child.wait();
         return Err(error);
     }
-    let result = configure_live(state);
+    let result = configure_live(state, home);
     let _ignored = shutdown(state);
     let stop_result = wait_child(&mut child, STOP_TIMEOUT);
     result.and(stop_result)?;
@@ -872,13 +903,40 @@ fn configure_host(state: &State, home: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn configure_live(state: &State) -> Result<(), String> {
+fn configure_live(state: &State, home: &Path) -> Result<(), String> {
     let config = rest(&state.api_key, "GET", "/rest/config", None)?;
     let folder_template = rest(&state.api_key, "GET", "/rest/config/defaults/folder", None)?;
     let device_template = rest(&state.api_key, "GET", "/rest/config/defaults/device", None)?;
-    let config = configured_json(config, &folder_template, device_template, state);
+    let config = configured_json(config, &folder_template, device_template, state, home);
     rest(&state.api_key, "PUT", "/rest/config", Some(&config))?;
     Ok(())
+}
+
+/// Applies the folder layout to a running peer and confirms it took.
+///
+/// Syncthing restarts its API when a change reaches the API's own settings,
+/// and the request that made the change can lose its answer that way. So a
+/// failed answer is not taken as a failed change: the layout is read back,
+/// and only a layout that is still wrong is an error.
+fn apply_layout(state: &State, home: &Path, child: &mut Child) -> Result<(), String> {
+    let Err(error) = configure_live(state, home) else {
+        return Ok(());
+    };
+    wait_ready(state, child)?;
+    let folders = rest(&state.api_key, "GET", "/rest/config/folders", None)?;
+    let applied = state.mappings.iter().all(|(folder, mapping)| {
+        folders.as_array().is_some_and(|folders| {
+            folders.iter().any(|entry| {
+                entry["id"] == json!(format!("kobo-{folder}"))
+                    && entry["path"] == json!(shared_path(home, folder, mapping))
+            })
+        })
+    });
+    if applied {
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 fn configured_json(
@@ -886,6 +944,7 @@ fn configured_json(
     folder_template: &Value,
     device_template: Value,
     state: &State,
+    home: &Path,
 ) -> Value {
     let folders = state
         .mappings
@@ -894,7 +953,7 @@ fn configured_json(
             let mut entry = folder_template.clone();
             entry["id"] = json!(format!("kobo-{folder}"));
             entry["label"] = json!(format!("Kobo {folder}"));
-            entry["path"] = json!(mapping.path);
+            entry["path"] = json!(shared_path(home, folder, mapping));
             entry["type"] = json!(host_folder_type(folder));
             entry["paused"] = json!(false);
             entry["devices"] = json!([
@@ -922,6 +981,45 @@ fn configured_json(
     config["options"]["natEnabled"] = json!(false);
     config["options"]["listenAddresses"] = json!(["default"]);
     config
+}
+
+/// Where this computer's Syncthing shares a folder from.
+///
+/// Vault is shared from its package inside the private Sync home, never from
+/// the owner's notes. The package is a renamed copy of every note, and written
+/// beside the originals it made Obsidian list each note twice.
+fn shared_path(home: &Path, folder: &str, mapping: &Mapping) -> PathBuf {
+    if folder == "vault" {
+        home.join(PACKAGES).join(folder)
+    } else {
+        mapping.path.clone()
+    }
+}
+
+/// The package folder for one sync folder, made private and marked as a
+/// Syncthing folder so the peer shares it the moment it is configured.
+fn package_directory(home: &Path, folder: &str) -> Result<PathBuf, String> {
+    let packages = home.join(PACKAGES);
+    let package = packages.join(folder);
+    for directory in [&packages, &package] {
+        fs::create_dir_all(directory)
+            .map_err(|error| format!("create {}: {error}", directory.display()))?;
+        reject_symlink_components(directory, "Sync package folder")?;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("protect {}: {error}", directory.display()))?;
+    }
+    fs::create_dir_all(package.join(".stfolder"))
+        .map_err(|error| format!("mark {} for Syncthing: {error}", package.display()))?;
+    Ok(package)
+}
+
+/// Which way a folder's files go, for people rather than for Syncthing.
+fn direction_words(folder: &str) -> &'static str {
+    if folder == "out" {
+        "from the reader to this computer"
+    } else {
+        "from this computer to the reader"
+    }
 }
 
 fn host_folder_type(folder: &str) -> &'static str {
@@ -1490,12 +1588,12 @@ fn publish(arguments: &[String]) -> Result<(), String> {
         [flag, folder] if flag == "--folder" => folder.as_str(),
         _ => return Err(USAGE.to_owned()),
     };
-    let (_home, state) = load_state()?;
+    let (home, state) = load_state()?;
     let mapping = state.mappings.get(folder).ok_or_else(|| {
-        format!("folder {folder} is not mapped; run 'kobo sync setup LOCAL_DIR --folder {folder} --device IP' first")
+        format!("The {folder} folder is not set up. Run 'kobo sync setup LOCAL_DIR --folder {folder}' first.")
     })?;
     match folder {
-        "vault" => publish_vault(&mapping.path),
+        "vault" => publish_vault(&mapping.path, &package_directory(&home, folder)?),
         "frame" => publish_frame(&mapping.path),
         _ => Err(format!(
             "folder {folder} syncs as plain files; no application package is needed"
@@ -1503,23 +1601,29 @@ fn publish(arguments: &[String]) -> Result<(), String> {
     }
 }
 
-/// Repacking is idempotent: the previous package files are excluded from the
-/// walk, planned against, then rewritten only where content moved.
-fn publish_vault(folder: &Path) -> Result<(), String> {
+/// Packs the notes in `source` into `package`, which is what Syncthing
+/// carries to the reader. The owner's folder is only read.
+///
+/// Repacking is idempotent: the previous package is planned against, then
+/// rewritten only where content moved.
+fn publish_vault(source: &Path, package: &Path) -> Result<(), String> {
     use kobo_vault_host::{
         plan_prefixed, Manifest, Push, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
     };
-    let manifest_path = folder.join(SYNCED_MANIFEST);
+    let forgotten = forget_old_copies(source)?;
+    let manifest_path = package.join(SYNCED_MANIFEST);
     let existing = match fs::read(&manifest_path) {
         Ok(bytes) => Manifest::decode(&bytes)
-            .map_err(|error| format!("existing {SYNCED_MANIFEST} in the sync folder: {error}"))?,
+            .map_err(|error| format!("existing {SYNCED_MANIFEST} in the Vault package: {error}"))?,
         Err(_) => Manifest {
             notes: Vec::new(),
             failures: Vec::new(),
         },
     };
+    // Still excluded from the walk, so a copy an older publish left behind
+    // and the owner has since edited is never packed as a second note.
     let excludes = [SYNCED_MANIFEST.to_owned(), SYNCED_PREFIX.to_owned()];
-    let walk = super::vault::walk(folder, &excludes)?;
+    let walk = super::vault::walk(source, &excludes)?;
     let offered = walk.offered.len();
     let push = plan_prefixed(
         &existing,
@@ -1534,13 +1638,28 @@ fn publish_vault(folder: &Path) -> Result<(), String> {
     for prepared in &push.notes {
         let name = Push::note_name(&prepared.note_id);
         atomic_write(
-            &folder.join(&name),
+            &package.join(&name),
             &String::from_utf8_lossy(&prepared.markdown),
             0o600,
         )?;
     }
+    // A package file that has gone missing is written again from the note it
+    // stands for, so a damaged package heals on the next publish.
+    for note in &push.manifest.notes {
+        let path = package.join(Push::note_name(&note.id));
+        if path.is_file() {
+            continue;
+        }
+        if let Some(offer) = walk
+            .offered
+            .iter()
+            .find(|offer| offer.digest == note.digest)
+        {
+            atomic_write(&path, &String::from_utf8_lossy(&offer.body), 0o600)?;
+        }
+    }
     for removed in &push.removed {
-        let _ignored = fs::remove_file(folder.join(Push::note_name(&removed.id)));
+        let _ignored = fs::remove_file(package.join(Push::note_name(&removed.id)));
     }
     let encoded = push.manifest.encode();
     atomic_write(
@@ -1548,10 +1667,66 @@ fn publish_vault(folder: &Path) -> Result<(), String> {
         std::str::from_utf8(&encoded).map_err(|_| "the packed shelf is not UTF-8")?,
         0o600,
     )?;
-    println!(
-        "Packed {offered} note(s) into {SYNCED_MANIFEST}; the next sync window carries the package and Vault imports it."
-    );
+    println!("Packed {offered} note(s) for Vault. The next sync carries them to the reader.");
+    if forgotten > 0 {
+        println!(
+            "Removed {forgotten} duplicate note(s) that an older kobo sync publish wrote into {}.",
+            source.display()
+        );
+    }
     Ok(())
+}
+
+/// Removes the package an older publish wrote into the owner's own folder.
+///
+/// Publishing once wrote a renamed copy of every note beside the original, so
+/// Obsidian listed each note twice. Only copies that older package's manifest
+/// lists, under its own prefix, whose bytes still match the digest it
+/// recorded, are removed: a copy the owner has since edited is theirs now and
+/// stays. The manifest goes last, and only once nothing it lists is left.
+fn forget_old_copies(source: &Path) -> Result<usize, String> {
+    use kobo_vault_host::{digest, Manifest, Push, SYNCED_MANIFEST, SYNCED_PREFIX};
+    let manifest_path = source.join(SYNCED_MANIFEST);
+    if !fs::symlink_metadata(&manifest_path).is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(0);
+    }
+    let Ok(old) = fs::read(&manifest_path)
+        .map_err(|_| ())
+        .and_then(|bytes| Manifest::decode(&bytes).map_err(|_| ()))
+    else {
+        // Not a package this tool wrote, so not this tool's to remove.
+        return Ok(0);
+    };
+    let mut removed = 0;
+    let mut kept = 0;
+    for note in &old.notes {
+        let named_by_us = note.id.starts_with(SYNCED_PREFIX)
+            && note
+                .id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+        let copy = source.join(Push::note_name(&note.id));
+        if !named_by_us {
+            kept += 1;
+            continue;
+        }
+        if !fs::symlink_metadata(&copy).is_ok_and(|metadata| metadata.is_file()) {
+            continue;
+        }
+        let bytes = fs::read(&copy).map_err(|error| format!("read {}: {error}", copy.display()))?;
+        if digest(&bytes) == note.digest {
+            fs::remove_file(&copy)
+                .map_err(|error| format!("remove {}: {error}", copy.display()))?;
+            removed += 1;
+        } else {
+            kept += 1;
+        }
+    }
+    if kept == 0 {
+        fs::remove_file(&manifest_path)
+            .map_err(|error| format!("remove {}: {error}", manifest_path.display()))?;
+    }
+    Ok(removed)
 }
 
 /// Packs the images in the mapped frame folder into a whole `manifest.v1`
@@ -1616,7 +1791,7 @@ fn publish_frame(folder: &Path) -> Result<(), String> {
         let _ignored = fs::remove_file(folder.join(photo.shelf_name()));
     }
     println!(
-        "Packed {} photo(s) into {MANIFEST} for the {}x{} panel; the next sync window carries the album and Frame adopts it.",
+        "Packed {} photo(s) into {MANIFEST} for the {}x{} panel. The next sync carries the album to Frame.",
         push.manifest.photos.len(),
         DEFAULT_PANEL.width,
         DEFAULT_PANEL.height
@@ -1682,7 +1857,7 @@ mod tests {
 
     #[test]
     fn plan_marks_the_ingest_contract_per_folder() {
-        assert!(ingest_note("vault").contains("synced.v1"));
+        assert!(ingest_note("vault").contains("notes folder is never written"));
         assert!(ingest_note("frame").contains("manifest.v1"));
         assert!(!ingest_note("books").contains("import"));
     }
@@ -1729,17 +1904,38 @@ mod tests {
         assert_eq!(host_folder_type("out"), "receiveonly");
     }
 
+    /// Every file name directly in `folder`, sorted, Syncthing's marker aside.
+    fn names(folder: &Path) -> Vec<String> {
+        let mut names = fs::read_dir(folder)
+            .expect("list")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .into_string()
+                    .expect("utf-8")
+            })
+            .filter(|name| name != ".stfolder")
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
     #[test]
     fn publish_vault_packs_raw_notes_and_unpublishes_removed_ones() {
-        let root =
-            std::env::temp_dir().join(format!("cobalt-sync-publish-test-{}", std::process::id()));
-        fs::create_dir_all(&root).expect("root");
-        fs::write(root.join("Alpha.md"), "# Alpha\nsee [[Beta]]").expect("note a");
-        fs::write(root.join("Beta.md"), "Beta body").expect("note b");
-        publish_vault(&root).expect("first publish");
-        let manifest =
-            kobo_vault_host::Manifest::decode(&fs::read(root.join("synced.v1")).expect("manifest"))
-                .expect("decode");
+        let root = test_root("publish-vault");
+        let notes = root.join("notes");
+        fs::create_dir_all(&notes).expect("notes");
+        let package = package_directory(&root.join("home"), "vault").expect("package");
+        fs::write(notes.join("Alpha.md"), "# Alpha\nsee [[Beta]]").expect("note a");
+        fs::write(notes.join("Beta.md"), "Beta body").expect("note b");
+        publish_vault(&notes, &package).expect("first publish");
+        // The owner's folder is only read: Obsidian sees exactly its own notes.
+        assert_eq!(names(&notes), ["Alpha.md", "Beta.md"]);
+        let manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
         assert_eq!(manifest.notes.len(), 2);
         assert!(manifest
             .notes
@@ -1755,13 +1951,14 @@ mod tests {
             vec!["Beta"]
         );
         for note in &manifest.notes {
-            assert!(root.join(format!("{}.md", note.id)).is_file());
+            assert!(package.join(format!("{}.md", note.id)).is_file());
         }
         // A second publish with unchanged inputs changes nothing.
-        publish_vault(&root).expect("idempotent publish");
-        let again =
-            kobo_vault_host::Manifest::decode(&fs::read(root.join("synced.v1")).expect("manifest"))
-                .expect("decode");
+        publish_vault(&notes, &package).expect("idempotent publish");
+        let again = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
         assert_eq!(again.notes, manifest.notes);
         // Removing a raw note drops its package file; every other raw note
         // stays exactly where the owner put it.
@@ -1772,14 +1969,82 @@ mod tests {
             .expect("alpha")
             .id
             .clone();
-        fs::remove_file(root.join("Alpha.md")).expect("remove raw");
-        publish_vault(&root).expect("third publish");
-        let final_manifest =
-            kobo_vault_host::Manifest::decode(&fs::read(root.join("synced.v1")).expect("manifest"))
-                .expect("decode");
+        fs::remove_file(notes.join("Alpha.md")).expect("remove raw");
+        publish_vault(&notes, &package).expect("third publish");
+        let final_manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
         assert_eq!(final_manifest.notes.len(), 1);
-        assert!(!root.join(format!("{dropped}.md")).exists());
-        assert!(root.join("Beta.md").is_file());
+        assert!(!package.join(format!("{dropped}.md")).exists());
+        assert_eq!(names(&notes), ["Beta.md"]);
+        // A package file lost from the Sync home is written again.
+        let kept = &final_manifest.notes[0].id;
+        fs::remove_file(package.join(format!("{kept}.md"))).expect("lose a package file");
+        publish_vault(&notes, &package).expect("healing publish");
+        assert_eq!(
+            fs::read_to_string(package.join(format!("{kept}.md"))).expect("healed"),
+            "Beta body"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn copies_an_older_publish_left_beside_the_notes_are_removed_and_never_packed() {
+        let root = test_root("publish-vault-migration");
+        let notes = root.join("notes");
+        fs::create_dir_all(&notes).expect("notes");
+        for (name, body) in [("One.md", "one"), ("Two.md", "two"), ("Three.md", "three")] {
+            fs::write(notes.join(name), body).expect("note");
+        }
+        // What an older publish did: the package written into the notes
+        // themselves, three notes becoming seven files.
+        let older = root.join("older");
+        fs::create_dir_all(&older).expect("older");
+        publish_vault(&notes, &older).expect("older package");
+        for name in names(&older) {
+            fs::copy(older.join(&name), notes.join(&name)).expect("copy beside the notes");
+        }
+        assert_eq!(names(&notes).len(), 7);
+        let package = package_directory(&root.join("home"), "vault").expect("package");
+        publish_vault(&notes, &package).expect("publish");
+        assert_eq!(names(&notes), ["One.md", "Three.md", "Two.md"]);
+        let manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.notes.len(), 3, "each note is packed once");
+
+        // A copy the owner edited since is theirs: it stays, and so does the
+        // manifest that names it, but neither is packed as a note.
+        for name in names(&older) {
+            fs::copy(older.join(&name), notes.join(&name)).expect("copy again");
+        }
+        let edited = names(&older)
+            .into_iter()
+            .find(|name| name.starts_with("synced-note-"))
+            .expect("a copy");
+        fs::write(notes.join(&edited), "edited on the computer").expect("edit");
+        publish_vault(&notes, &package).expect("publish with an edited copy");
+        assert_eq!(
+            names(&notes),
+            [
+                "One.md".to_owned(),
+                "Three.md".to_owned(),
+                "Two.md".to_owned(),
+                edited,
+                "synced.v1".to_owned()
+            ]
+        );
+        let manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.notes.len(), 3);
+        // Something else that happens to be called synced.v1 is not ours.
+        fs::write(notes.join("synced.v1"), "the owner's own file").expect("unrelated");
+        publish_vault(&notes, &package).expect("publish beside an unrelated file");
+        assert!(notes.join("synced.v1").is_file());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -2020,15 +2285,17 @@ mod tests {
             host_id: host_id.to_owned(),
             kobo_id: kobo_id.to_owned(),
             mappings: BTreeMap::from([
-                ("out".to_owned(), mapping(out)),
+                ("out".to_owned(), mapping(out.clone())),
                 ("vault".to_owned(), mapping(vault)),
             ]),
         };
+        let home = root.join("home");
         let config = configured_json(
             json!({"gui": {}, "options": {}}),
             &json!({"rescanIntervalS": 3600}),
             json!({"compression": "metadata"}),
             &state,
+            &home,
         );
         assert_eq!(config["gui"]["address"], GUI_ADDRESS);
         assert_eq!(config["gui"]["apiKey"], "b".repeat(64));
@@ -2044,6 +2311,10 @@ mod tests {
         assert_eq!(folders[0]["type"], "receiveonly");
         assert_eq!(folders[1]["id"], "kobo-vault");
         assert_eq!(folders[1]["type"], "sendonly");
+        // Out is the owner's own folder; Vault is its package in the Sync
+        // home, so nothing is ever written beside the owner's notes.
+        assert_eq!(folders[0]["path"], json!(out));
+        assert_eq!(folders[1]["path"], json!(home.join("packages/vault")));
         for folder in folders {
             assert_eq!(folder["devices"][0]["deviceID"], host_id);
             assert_eq!(folder["devices"][1]["deviceID"], kobo_id);
