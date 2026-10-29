@@ -276,6 +276,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `top_bar(title)` | The fixed bar at the top. Back is added by the runtime. |
 | `top_bar_action(name, label)` | One trailing control in the top bar. |
 | `top_bar_glyph(name, label, glyph)` | A trailing top-bar control drawn with a built-in glyph. |
+| `accent(accent)` | This screen's colour on a colour reader, one of a closed set. Usually set once with `KoboApp::accent` instead. |
 | `owns_back(bool)` | Ask for Back as an action before it leaves the app. |
 | `nav_bar(selected, [(name, label), ...])` | The pinned bottom bar of *destinations*. At least two. |
 | `action_bar([(name, label), ...])` | The same slot, carrying *verbs* instead. At most three. |
@@ -399,8 +400,8 @@ the actual E Ink renderer and is the quickest visual reference.
 | `text_scale(scale)` / `reading(reading)` / `reading_font(font)` | Reader-only typography configuration; ordinary app UI follows the user's scale. |
 | `build_checked()` | Builds only when screen diagnostics contain no errors. |
 
-There is no free-form drawing, no colour, no font choice and no pixel
-positioning. Every size comes from the panel's *physical* dimensions, so a
+There is no free-form drawing, no colour of your own, no font choice and no
+pixel positioning. Every size comes from the panel's *physical* dimensions, so a
 control that is comfortable under a thumb on a six inch panel is comfortable on
 a ten inch one, and a line of text holds roughly the same number of words on
 both.
@@ -875,6 +876,59 @@ inline and automatically streams large or full-panel images in bounded chunks.
 The runtime publishes a picture to the cache only after the final complete,
 ordered chunk commits, so a partially transferred photograph can never flash
 onto the panel. The application API is the same at either size.
+
+### Colour
+
+The Clara Colour and the Libra Colour have a Kaleido 3 panel: sixteen greys
+under a printed colour filter, 4096 colours, and colour at half the resolution
+of the greys. Everything Cobalt draws was designed in grey first, and on these
+readers a few of its roles are painted in colour on top of exactly the same
+layout. Nothing moves, so a page an application paginated for a Clara BW is the
+same page on a Clara Colour.
+
+An application never names a colour value. It names an **accent**, one of a
+closed set, usually once for the whole application:
+
+```rust
+impl KoboApp for Hn {
+    fn accent(&self) -> Option<Accent> {
+        Some(Accent::Orange)
+    }
+    // ...
+}
+```
+
+The set is `Cobalt`, `Red`, `Orange`, `Amber`, `Green`, `Teal`, `Blue`,
+`Purple` and `Brown`. Each carries two shades chosen against the panel: a
+*tint* that carries ink text and a *strong* shade that carries paper text, both
+at seven to one contrast or better before the filter takes its share, and both
+among the 4096 colours the panel resolves so what is sent is what is shown. On a
+colour reader an accent does one thing with several parts:
+
+- the top bar is filled with the tint, its title and controls still in ink;
+- the primary button is filled with the strong shade, its label in paper;
+- the mark under the current destination, a selected chip or tab, a switch
+  that is on, a ticked box, a chosen option, the filled part of a progress bar
+  and the steps already taken all take the strong shade.
+
+An application with no accent keeps a paper bar and has its controls drawn in
+the platform's own cobalt. Banners take the platform's colours whatever the
+application's accent is, green for success, red for an error and amber for
+attention, and they keep their mark and outline, because colour is never the
+only signal: a reader who cannot tell red from green loses nothing. Text is
+never coloured. Colour on this panel is drawn at half the resolution of the
+greys, so a coloured word is a soft word, and the tone of every run of text is
+decided by what it sits on.
+
+Set an accent for the reasons a phone platform would call a tint: a brand the
+reader already knows (Hacker News is orange), or a subject that has a colour
+of its own. Most utilities are better left with none. A greyscale reader
+ignores the accent entirely and draws what it always drew; the SDK's tests
+hold that the greyscale frame is byte for byte the one drawn before accents
+existed. A screen that should differ from the rest, such as a reading page,
+can name its own with `ScreenBuilder::accent`. Accents travel on protocol 17
+and need Cobalt 0.3.32 or later on the reader; an older runtime draws the
+screen without one.
 
 ---
 
@@ -1640,10 +1694,23 @@ The default simulator profile is the 1072x1448 Clara BW. Set
 ```sh
 KOBO_SIM_PROFILE=libra-2-388 kobo dev
 KOBO_SIM_PROFILE=elipsa-2e-389 kobo dev
+KOBO_SIM_PROFILE=clara-colour-393 kobo dev
 ```
 
 The selected profile controls the framebuffer dimensions, density, touch
 transform and runtime layout metrics together; it is not a browser-only scale.
+
+On a colour profile (`clara-colour-393`, `libra-colour-390`) the simulator
+draws the accents and pictures in colour, and its captures are three bytes a
+pixel. The panel view puts the frame through a model of the Kaleido 3 filter,
+sixteen levels per channel, colour averaged over two by two pixels and
+saturation reduced, on top of the usual residue; `--ideal` gives the renderer's
+own RGB. Each capture's metadata names which it is. Neither is a measured
+panel: the quantisation and the colour resolution are the panel's published
+figures, the saturation is a stated approximation chosen to err towards the
+reader, so a colour that is legible in the simulator is legible on the device.
+An application should be checked on both a grey and a colour profile, because
+the grey one is what most readers have.
 
 ## Driving it, and photographing the result
 
@@ -1790,7 +1857,9 @@ identity, denied child-process creation and runtime brokers. The host simulator
 is a development tool running as the developer's own user; it exercises the
 protocol and policies but is not an operating-system security boundary.
 
-- **You cannot draw.** No pixels, no colour, no fonts, no coordinates.
+- **You cannot draw.** No pixels, no colour values, no fonts, no coordinates.
+  An accent is a name from a closed set, and the runtime decides what it
+  means on the panel in front of it.
 - **You cannot block the panel.** Long work is a task or it does not happen.
 - **You cannot read a stored credential.** You may name one. During attended
   in-app setup you may briefly hold what the owner is typing solely to submit

@@ -18,6 +18,17 @@ To check selected apps:
 python3 scripts/check-apps-sim.py inkling pubquiz --out target/sim-check-games
 ```
 
+The runner passes `KOBO_SIM_PROFILE` through, so the same sweep can be run as
+a colour reader sees it:
+
+```sh
+KOBO_SIM_PROFILE=clara-colour-393 python3 scripts/check-apps-sim.py launcher hn --out target/sim-check-colour
+```
+
+Shots taken under a colour profile are in colour. Layout is identical on
+every profile of the same geometry, so a colour sweep checks how the accents
+and pictures read, not whether anything fits.
+
 `results.json` records the source commit, whether the checkout was dirty, and
 each app's launch and route result. The output directory also contains logs
 and route artifacts. CI runs the complete sweep with `--all-routes` (see

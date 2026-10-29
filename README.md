@@ -213,7 +213,8 @@ kobo dev
 
 `kobo dev` runs the app in the Clara BW simulator in your browser. Set
 `KOBO_SIM_PROFILE=libra-2-388` or `KOBO_SIM_PROFILE=elipsa-2e-389` to try the
-larger screens.
+larger screens, or `KOBO_SIM_PROFILE=clara-colour-393` to see the app as a
+colour reader draws it.
 
 | Area | What the SDK provides |
 |---|---|
