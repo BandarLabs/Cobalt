@@ -2902,16 +2902,21 @@ impl Gutenbird {
     fn took_nav_cover(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
         let (cell_width, cell_height) = context.metrics().tile_body(TileShape::Portrait);
         if let (Ok(width), Ok(height)) = (u32::try_from(cell_width), u32::try_from(cell_height)) {
-            if let Ok(picture) = kobo_image::decode(bytes) {
+            if let Ok(picture) = decode_for_panel(context, bytes) {
                 if let Ok(mut picture) = picture.fit_enlarging(width, height) {
                     picture.dither(kobo_image::PANEL_GREYS);
                     let handle = PictureHandle(NAV_COVER_HANDLE_BASE + self.nav_cover_handle);
                     self.nav_cover_handle =
                         self.nav_cover_handle.wrapping_add(1) % NAV_COVER_HANDLES;
                     let (drawn_width, drawn_height) = (picture.width(), picture.height());
-                    if let Some(reference) =
-                        context.put_picture(handle, drawn_width, drawn_height, picture.into_grey())
-                    {
+                    let colour = picture.colour().map(<[u8]>::to_vec);
+                    if let Some(reference) = context.put_picture_shown(
+                        handle,
+                        drawn_width,
+                        drawn_height,
+                        picture.into_grey(),
+                        colour,
+                    ) {
                         if let Some(entry) = self.stack.last_mut() {
                             if let Some(at) = entry
                                 .feed
@@ -3071,7 +3076,7 @@ impl Gutenbird {
         let Ok(cell_height) = u32::try_from(cell_height) else {
             return false;
         };
-        let Ok(picture) = kobo_image::decode(bytes) else {
+        let Ok(picture) = decode_for_panel(context, bytes) else {
             self.set_a_cover(context, index, cell_width, cell_height);
             return false;
         };
@@ -3085,7 +3090,9 @@ impl Gutenbird {
         picture.dither(kobo_image::PANEL_GREYS);
         let handle = PictureHandle(u32::try_from(index).unwrap_or(0));
         let (width, height) = (picture.width(), picture.height());
-        let Some(reference) = context.put_picture(handle, width, height, picture.into_grey())
+        let colour = picture.colour().map(<[u8]>::to_vec);
+        let Some(reference) =
+            context.put_picture_shown(handle, width, height, picture.into_grey(), colour)
         else {
             return false;
         };
@@ -8865,5 +8872,20 @@ mod device_tests {
         assert_eq!(decoded, vec![tabbed, record("book-00000001", "Emma")]);
         assert!(decode_library(b"book-1\tonly two fields\n").is_empty());
         assert!(decode_library(b"not-a-book\tT\tA\t\t\n").is_empty());
+    }
+}
+
+/// Reads a cover for the panel it will be shown on: in colour where the reader
+/// can show colour, since a cover is the one picture here worth it, and in grey
+/// everywhere else, where a colour read would cost twice the memory to draw
+/// the same thing.
+fn decode_for_panel(
+    context: &Context,
+    bytes: &[u8],
+) -> Result<kobo_image::Picture, kobo_image::ImageError> {
+    if context.panel_shows_colour() {
+        kobo_image::decode_colour(bytes)
+    } else {
+        kobo_image::decode(bytes)
     }
 }

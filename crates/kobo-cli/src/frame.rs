@@ -229,6 +229,7 @@ fn reader_panel(host: &str) -> Result<Panel, String> {
     Ok(Panel {
         width: profile.width,
         height: profile.height,
+        colour: profile.colour_panel,
     })
 }
 
@@ -471,6 +472,7 @@ fn sim_panel() -> Panel {
     Panel {
         width: profile.width,
         height: profile.height,
+        colour: profile.colour_panel,
     }
 }
 

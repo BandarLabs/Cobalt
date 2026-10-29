@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere. Needs an account.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.8",
-  "release_notes": "The server address is typed on Cobalt's own keyboard, Retry saving sits on the message that says what was not saved, and the connect screen keeps every control on the panel at the largest text size.",
+  "version": "0.1.9",
+  "release_notes": "On a Kobo Clara Colour or Libra Colour article pictures are shown in colour. Black-and-white readers look exactly as before.",
   "glyph": "rss",
   "capabilities": [
     "network"
