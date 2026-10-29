@@ -850,6 +850,7 @@ version = "0.3.31"
 dependencies = [
  "kobo-bookview",
  "kobo-doc",
+ "kobo-image",
  "kobo-read",
  "kobo-sdk",
  "kobo-ui",
@@ -1382,6 +1383,7 @@ version = "0.3.31"
 dependencies = [
  "kobo-abi",
  "kobo-dict",
+ "kobo-doc",
  "kobo-json",
  "kobo-net",
  "kobo-protocol",

@@ -832,7 +832,7 @@ impl AppServer {
             kobo_policy::PowerPolicy::DEFAULT,
             kobo_policy::Backends::with(configured_backends()?.iter()),
         )
-        .with_library_roots(vec![simulated_library_root()]);
+        .with_library_roots(simulated_library_roots());
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -4047,6 +4047,17 @@ fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
 #[must_use]
 pub fn simulated_library_root() -> std::path::PathBuf {
     simulated_data_root("library")
+}
+
+/// Every folder the simulator's library is listed from, in the reader's order.
+///
+/// The reader lists its card and then Cobalt's data folder, where each
+/// application keeps its shelf. Listing only the library folder here meant a
+/// book Gutenbird downloaded in the simulator never reached Books, so the one
+/// path an owner takes most often could not be tried without a reader.
+#[must_use]
+pub fn simulated_library_roots() -> Vec<std::path::PathBuf> {
+    vec![simulated_library_root(), simulated_data_root("")]
 }
 
 /// The offset from UTC an application under the simulator should be told.
