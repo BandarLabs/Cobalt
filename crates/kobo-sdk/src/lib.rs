@@ -35,9 +35,9 @@ pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
-    ActionId, BandAlign, BandSlot, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell,
-    Chip, Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle,
-    Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
+    Accent, ActionId, BandAlign, BandSlot, BannerLevel, BarAction, BarStyle, BottomAction, Caret,
+    Cell, Chip, Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold,
+    FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
     Orientation, Overlay, OverlayKind, ParagraphAlignment, ParagraphPresentation, Percent,
     PictureFormat, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState, Screen,
     SlotWidth, Space, TableRow, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
@@ -475,6 +475,7 @@ pub struct ScreenBuilder {
     overlay: Option<Box<Overlay>>,
     reading: bool,
     reading_font: Option<FontHandle>,
+    accent: Option<Accent>,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -2805,6 +2806,18 @@ pub trait KoboApp {
     fn on_start(&mut self, context: &mut Context);
     fn on_action(&mut self, context: &mut Context, action: ActionId);
 
+    /// The application's colour, for readers whose panel can show one.
+    ///
+    /// Applied to every screen this application shows that has not chosen
+    /// one for itself with [`ScreenBuilder::accent`], so an application that
+    /// is orange says so once, here, and every one of its screens agrees. The
+    /// default is none: the bar stays paper and the controls take the
+    /// platform's own colour, which is what most applications should want. A
+    /// greyscale reader draws the same screen whatever this answers.
+    fn accent(&self) -> Option<Accent> {
+        None
+    }
+
     /// Receives a held word in stable application text coordinates.
     /// Applications that have not opted into selection retain the historical
     /// hold action behavior.
@@ -3342,6 +3355,18 @@ impl<A: KoboApp> AppRunner<A> {
             self.retrying.insert(task, work);
         }
         let mut commands = context.take_commands();
+        // The application's colour, for every screen that did not pick one of
+        // its own. Here rather than in the builder because a builder does not
+        // know which application it is building for, and the alternative is
+        // every screen helper in every application repeating the same call.
+        let accent = self.app.accent();
+        for command in &mut commands {
+            if let Command::SetScreen(screen) = command {
+                if screen.accent.is_none() {
+                    screen.accent = accent;
+                }
+            }
+        }
         // An application cancelling a task names it by the identifier it was
         // given, which is not what the runtime is holding once a second
         // attempt is in the air. Left untranslated the cancel would name

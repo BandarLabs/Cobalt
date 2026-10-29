@@ -847,49 +847,69 @@ fn a_choice_offering_no_answers_is_rejected() {
 fn unknown_tags_are_rejected_rather_than_guessed() {
     for (label, bytes) in [
         ("glyph", {
-            let mut screen = Vec::new();
-            let mut count = 0;
-            encode_screen(
-                &mut screen,
-                &Screen::new(
-                    1,
-                    vec![Node::TileGrid {
-                        shape: TileShape::Square,
-                        id: NodeId(1),
-                        tiles: vec![Tile::new(ActionId(1), "x", Glyph::App)],
-                    }],
-                ),
-                0,
-                &mut count,
-                VERSION,
-            )
-            .expect("encode");
-            let last = screen.len() - 1;
-            screen[last] = 200;
+            let encoded = |glyph| {
+                let mut screen = Vec::new();
+                let mut count = 0;
+                encode_screen(
+                    &mut screen,
+                    &Screen::new(
+                        1,
+                        vec![Node::TileGrid {
+                            shape: TileShape::Square,
+                            id: NodeId(1),
+                            tiles: vec![Tile::new(ActionId(1), "x", glyph)],
+                        }],
+                    ),
+                    0,
+                    &mut count,
+                    VERSION,
+                )
+                .expect("encode");
+                screen
+            };
+            // Found by comparison rather than taken from the end: the last
+            // byte of a screen is now its accent, which an older build reads
+            // as grey rather than refusing, by design.
+            let mut screen = encoded(Glyph::App);
+            let position = screen
+                .iter()
+                .zip(encoded(Glyph::Book))
+                .position(|(app, book)| *app != book)
+                .expect("the glyph is encoded");
+            screen[position] = 200;
             screen
         }),
         ("banner level", {
-            let mut screen = Vec::new();
-            let mut count = 0;
-            encode_screen(
-                &mut screen,
-                &Screen::new(
-                    1,
-                    vec![Node::Banner {
-                        id: NodeId(1),
-                        level: BannerLevel::Info,
-                        text: String::new(),
-                        action: None,
-                    }],
-                ),
-                0,
-                &mut count,
-                VERSION,
-            )
-            .expect("encode");
-            // The level byte sits after the screen header, node tag and id,
-            // ahead of the empty text's length and the action flag.
-            let position = screen.len() - 4;
+            let encoded = |level| {
+                let mut screen = Vec::new();
+                let mut count = 0;
+                encode_screen(
+                    &mut screen,
+                    &Screen::new(
+                        1,
+                        vec![Node::Banner {
+                            id: NodeId(1),
+                            level,
+                            text: String::new(),
+                            action: None,
+                        }],
+                    ),
+                    0,
+                    &mut count,
+                    VERSION,
+                )
+                .expect("encode");
+                screen
+            };
+            // Found rather than counted from the end: two banners that differ
+            // only in level differ in exactly the level byte, however many
+            // bytes a later protocol appends after the nodes.
+            let mut screen = encoded(BannerLevel::Info);
+            let position = screen
+                .iter()
+                .zip(encoded(BannerLevel::Attention))
+                .position(|(info, attention)| *info != attention)
+                .expect("the level is encoded");
             screen[position] = 9;
             screen
         }),

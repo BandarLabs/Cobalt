@@ -304,9 +304,9 @@ fn an_unknown_tile_shape_is_refused_rather_than_guessed() {
     };
     let mut bytes = encode(&frame).expect("encode");
     // An empty grid ends with its shape and then its tile count, and a
-    // screen ends with whether it carries an overlay, so the shape is the
-    // third byte from the end.
-    let shape = bytes.len() - 3;
+    // screen ends with whether it carries an overlay and then its accent, so
+    // the shape is the fourth byte from the end.
+    let shape = bytes.len() - 4;
     assert_eq!(bytes[shape], 0, "square");
     bytes[shape] = 9;
     assert!(matches!(

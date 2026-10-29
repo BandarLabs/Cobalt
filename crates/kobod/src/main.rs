@@ -1111,6 +1111,23 @@ fn deliver_outcomes(
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
     kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
+        .with_appearance(simulated_appearance())
+}
+
+/// Colour when the simulated reader's panel has it, so a frame written for a
+/// Clara Colour shows the bar and controls that reader would show, and one
+/// written for a Clara BW shows what it always did.
+fn simulated_appearance() -> kobo_ui::Appearance {
+    let colour = env::var("KOBO_SIM_PROFILE").is_ok_and(|requested| {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .any(|profile| profile.id == requested && profile.colour_panel)
+    });
+    if colour {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
 }
 
 /// Everything the band shows, invented and fixed.

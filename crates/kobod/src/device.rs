@@ -44,7 +44,9 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskOutcome};
-use kobo_ui::{ActionId, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface};
+use kobo_ui::{
+    ActionId, Appearance, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface,
+};
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -470,8 +472,28 @@ impl Reading {
 /// Bluetooth and then had nothing to return to Settings with. The screen had
 /// said `owns_back`, which is an application declaring it has somewhere of its
 /// own to go, so drawing the control is exactly what it asked for.
-fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
-    Chrome::for_screen(screen, at_home, Some(status.get().clone()))
+fn chrome_for(
+    screen: &Screen,
+    at_home: bool,
+    status: &mut StatusSource,
+    appearance: Appearance,
+) -> Chrome {
+    Chrome::for_screen(screen, at_home, Some(status.get().clone())).with_appearance(appearance)
+}
+
+/// What the painter is told about the panel: colour where the session has a
+/// colour filter to drive, grey everywhere else.
+///
+/// Decided from the display session rather than the profile directly, because
+/// the session is what downgrades a colour write on a panel that cannot take
+/// one, and the painter should never be told to spend colour the session will
+/// then throw away.
+fn appearance_of(display: &DisplaySession) -> Appearance {
+    if display.colour().is_some() {
+        Appearance::Colour
+    } else {
+        Appearance::Grey
+    }
 }
 
 /// Assembles one reading of everything the band shows, and the radio state
@@ -1315,7 +1337,10 @@ fn describe(limit: Duration) -> String {
     }
 }
 
-const COBALT_BLUE: [u8; 3] = [0x6e, 0x93, 0xd6];
+/// The blue the splash is painted in on a colour panel: the platform's own
+/// accent, defined once in the UI crate so the first frame a reader sees and
+/// the bar over every platform screen are the same colour.
+const COBALT_BLUE: [u8; 3] = kobo_ui::Accent::Cobalt.shades().tint;
 const LOGO_WIDTH: i32 = 264;
 const LOGO_HEIGHT: i32 = 111;
 
@@ -1505,7 +1530,7 @@ fn announce_reboot(
     kobo_ui::render_oriented(
         &screen,
         &metrics_for(&screen),
-        &Chrome::with_back(false),
+        &Chrome::with_back(false).with_appearance(appearance_of(display)),
         &(),
         &mut surface,
         None,
@@ -1604,7 +1629,7 @@ fn ask_consent(
     notice: &crate::consent::Notice,
 ) -> crate::consent::Decision {
     let screen = consent_screen(notice);
-    let chrome = Chrome::with_back(false);
+    let chrome = Chrome::with_back(false).with_appearance(appearance_of(display));
     let metrics = metrics_for(&screen);
     let mut surface = Surface::new(
         usize::try_from(whole_screen.width).unwrap_or(0),
@@ -2446,7 +2471,12 @@ fn host_applications(
                                         // uses it: laying out with a different
                                         // one resolves the press against a
                                         // screen the reader cannot see.
-                                        let chrome = chrome_for(current, at_home, &mut status);
+                                        let chrome = chrome_for(
+                                            current,
+                                            at_home,
+                                            &mut status,
+                                            appearance_of(display),
+                                        );
                                         let shown =
                                             shown_screen(&apps[index], current.clone(), &chrome);
                                         page_key_message(&shown, &chrome, forward)
@@ -2567,7 +2597,7 @@ fn host_applications(
                     // hit rectangle five millimetres off.
                     let chrome = screen.as_ref().map_or_else(
                         || Chrome::with_back(!at_home),
-                        |screen| chrome_for(screen, at_home, &mut status),
+                        |screen| chrome_for(screen, at_home, &mut status, appearance_of(display)),
                     );
                     // Laid out the way it was drawn. The retained screen is
                     // the one the application drew, so the bar the shell adds
@@ -2821,7 +2851,12 @@ fn host_applications(
                             }
                             redraw_field(&mut apps[index]);
                             let screen = visible(&apps[index]).unwrap_or(screen);
-                            let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
+                            let chrome = chrome_for(
+                                &screen,
+                                apps[index].path == home,
+                                &mut status,
+                                appearance_of(display),
+                            );
                             let screen = shown_screen(&apps[index], screen, &chrome);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
@@ -2868,8 +2903,12 @@ fn host_applications(
                             redraw_field(&mut apps[index]);
                             if id == front {
                                 if let Some(screen) = visible(&apps[index]) {
-                                    let chrome =
-                                        chrome_for(&screen, apps[index].path == home, &mut status);
+                                    let chrome = chrome_for(
+                                        &screen,
+                                        apps[index].path == home,
+                                        &mut status,
+                                        appearance_of(display),
+                                    );
                                     let screen = shown_screen(&apps[index], screen, &chrome);
                                     kobo_ui::render_oriented_with_turn(
                                         &screen,
@@ -3882,7 +3921,12 @@ fn repaint(
     let Some(screen) = visible(&apps[index]) else {
         return Ok(());
     };
-    let chrome = chrome_for(&screen, apps[index].path == home, status);
+    let chrome = chrome_for(
+        &screen,
+        apps[index].path == home,
+        status,
+        appearance_of(display),
+    );
     let screen = shown_screen(&apps[index], screen, &chrome);
     kobo_ui::render_oriented_with_turn(
         &screen,

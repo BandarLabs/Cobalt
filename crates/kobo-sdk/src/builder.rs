@@ -1,9 +1,9 @@
 //! Retained screen construction. Geometry, diagnostics and rendering remain
 //! owned by kobo-ui; the SDK translates app intent into that shared contract.
 use crate::{
-    action_id, stable_id, ActionId, AppMetadata, BandAlign, BandSlot, BannerLevel, BarAction,
-    BottomAction, Caret, Cell, Chip, ControlState, DiagnosticSeverity, DialogAction, Emphasis,
-    Failure, FieldKind, Fold, FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue,
+    action_id, stable_id, Accent, ActionId, AppMetadata, BandAlign, BandSlot, BannerLevel,
+    BarAction, BottomAction, Caret, Cell, Chip, ControlState, DiagnosticSeverity, DialogAction,
+    Emphasis, Failure, FieldKind, Fold, FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue,
     LayoutIssueKind, NavBar, Node, NodeId, OptionRow, Overlay, OverlayKind, ParagraphPresentation,
     Percent, QuoteRole, RichTextSpan, Row, RowLead, RowState, Screen, ScreenBuilder, SlotWidth,
     Space, StandardState, Tile, TilePicture, TileShape, TopBar, TransferFailure, JOIN_WIFI,
@@ -28,6 +28,7 @@ impl ScreenBuilder {
             overlay: None,
             reading: false,
             reading_font: None,
+            accent: None,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -1018,6 +1019,20 @@ impl ScreenBuilder {
     pub fn top_bar(mut self, title: impl Into<String>) -> Self {
         let id = self.next_id();
         self.top_bar = Some(TopBar::new(id, title));
+        self
+    }
+
+    /// Gives this screen the application's colour, on readers that have one.
+    ///
+    /// One of a closed set, never a value: see [`Accent`]. On a colour panel
+    /// the top bar takes the accent's tint and the primary control and every
+    /// selected state its strong shade; on a greyscale panel nothing changes.
+    /// Most applications set it once for every screen with
+    /// [`crate::KoboApp::accent`] rather than here, and use this only for a
+    /// screen that should differ from the rest.
+    #[must_use]
+    pub const fn accent(mut self, accent: Accent) -> Self {
+        self.accent = Some(accent);
         self
     }
 
@@ -2872,6 +2887,7 @@ impl ScreenBuilder {
             // measure against Folio. Only a v11 decoder path marks legacy.
             legacy_typography: false,
             reading_font: self.reading_font,
+            accent: self.accent,
         }
     }
 

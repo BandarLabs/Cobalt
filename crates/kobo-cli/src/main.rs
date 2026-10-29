@@ -7300,17 +7300,25 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         index += 1;
     }
     let mut capture_metadata = None;
-    let (width, height, grey) = if let Some(host) = host {
+    let (width, height, pixels, rgb) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
-        drive::decode_capture(&transcript)?
+        let (width, height, grey) = drive::decode_capture(&transcript)?;
+        (width, height, grey, false)
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
         let capture = driver.capture()?;
         capture_metadata = Some(capture.metadata);
-        (capture.width, capture.height, capture.grey)
+        (capture.width, capture.height, capture.pixels, capture.rgb)
     };
-    let png = kobo_image::encode_png_grey(width, height, &grey)
-        .map_err(|error| format!("encode the panel: {error}"))?;
+    // A simulated colour panel's capture arrives in colour and is kept that
+    // way, so a shot of a Clara Colour shows the bar and controls that reader
+    // would show rather than their luminance.
+    let png = if rgb {
+        kobo_image::encode_png_rgb(width, height, &pixels)
+    } else {
+        kobo_image::encode_png_grey(width, height, &pixels)
+    }
+    .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
     if let Some(metadata) = capture_metadata {
         let sidecar = output.with_extension("json");
@@ -7452,7 +7460,11 @@ fn pull_recording(host: &str) -> Result<Vec<u8>, String> {
 /// One recorded frame: when it appeared, and what was on the panel.
 struct RecordedFrame {
     millis: u32,
-    grey: Vec<u8>,
+    /// Grey, one byte a pixel, or colour at three when `rgb` is set. A
+    /// device recording is always grey; a filmed simulated colour panel is
+    /// not.
+    pixels: Vec<u8>,
+    rgb: bool,
 }
 
 /// Reads the device's recording format.
@@ -7479,7 +7491,8 @@ fn decode_recording(raw: &[u8]) -> Result<(u32, u32, Vec<RecordedFrame>), String
         let millis = u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
         frames.push(RecordedFrame {
             millis,
-            grey: raw[at + 4..at + 4 + pixels].to_vec(),
+            pixels: raw[at + 4..at + 4 + pixels].to_vec(),
+            rgb: false,
         });
         at += 4 + pixels;
     }
@@ -7509,8 +7522,12 @@ fn write_recording(
     fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     for (index, frame) in frames.iter().enumerate() {
-        let png = kobo_image::encode_png_grey(*width, *height, &frame.grey)
-            .map_err(|error| format!("encode frame {index}: {error}"))?;
+        let png = if frame.rgb {
+            kobo_image::encode_png_rgb(*width, *height, &frame.pixels)
+        } else {
+            kobo_image::encode_png_grey(*width, *height, &frame.pixels)
+        }
+        .map_err(|error| format!("encode frame {index}: {error}"))?;
         let path = directory.join(format!("frame-{index:04}.png"));
         fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
     }

@@ -59,11 +59,14 @@ fn an_auto_hidden_top_bar_costs_nothing_for_the_screens_that_never_ask() {
     };
     // The whole point of carrying it in the presence byte: a screen that
     // does not ask encodes the bytes it always did, so nothing published
-    // has to be republished for a flag it never sets.
+    // has to be republished for a flag it never sets. The current protocol
+    // adds only its accent byte at the very end, zero for a screen with none.
+    let current = encode(&frame(plain.clone(), VERSION)).unwrap();
     assert_eq!(
         encode(&frame(plain.clone(), SUSPEND_VERSION)).unwrap()[HEADER_LEN..],
-        encode(&frame(plain.clone(), VERSION)).unwrap()[HEADER_LEN..]
+        current[HEADER_LEN..current.len() - 1]
     );
+    assert_eq!(current.last(), Some(&0));
 
     let decoded = decode(&encode(&frame(asking.clone(), VERSION)).unwrap()).unwrap();
     let Message::SetScreen(screen) = decoded.message else {
