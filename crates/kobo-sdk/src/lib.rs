@@ -51,6 +51,9 @@ pub use kobo_ui::{
     options_pages, options_per_page, FieldKind, OptionRow, RowEdge, MAX_CODE_BYTES, MAX_OPTIONS,
     MAX_OPTIONS_PER_PAGE, MAX_SELECTION_ACTIONS, MAX_STEPS,
 };
+/// Protocol 17's type and spacing, and the way to measure part of a screen
+/// built round a board as that screen will be laid out.
+pub use kobo_ui::{with_room_given_up, Typography};
 pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;

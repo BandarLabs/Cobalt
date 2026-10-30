@@ -2265,10 +2265,13 @@ mod tests {
     fn legacy_screens_select_atkinson_display_metrics_inside_their_scope() {
         let fonts = SystemFonts::discover(CLARA).expect("fonts");
         let atkinson = Typeface::from_bytes(DISPLAY_FONT, "legacy", CLARA).expect("Atkinson");
-        let expected =
-            atkinson.measure_run("Existing app", FontSize::Heading, Face::Text, None, None);
-        let measured = kobo_ui::with_legacy_typography(true, || {
-            fonts.measure("Existing app", FontSize::Heading, Face::Text)
+        // Both inside the scope: the edition chooses the size as well as the
+        // cut, and outside it a heading is the current edition's size.
+        let (expected, measured) = kobo_ui::with_legacy_typography(true, || {
+            (
+                atkinson.measure_run("Existing app", FontSize::Heading, Face::Text, None, None),
+                fonts.measure("Existing app", FontSize::Heading, Face::Text),
+            )
         });
         assert_eq!(measured, expected);
         assert!(!kobo_ui::legacy_typography(), "the v11 selection leaked");

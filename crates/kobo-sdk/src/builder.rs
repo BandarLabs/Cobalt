@@ -1651,9 +1651,10 @@ impl ScreenBuilder {
     /// in backticks, where the line breaker treated every hyphen as a place to
     /// wrap: "--device" arrived as "--" at the end of one line and "device" at
     /// the start of the next, and nobody can type that back. Here the command
-    /// is indented under a rule, the way a book sets a quotation, its hyphens
-    /// are the non-breaking kind and every slash is joined to what follows it,
-    /// so it wraps between words and not inside a flag or a path.
+    /// is set in the fixed-pitch face on a grey panel the width of the column
+    /// ([`QuoteRole::Command`]), and it wraps at its spaces and nowhere else.
+    /// Its hyphens are still sent as the non-breaking kind, which a runtime
+    /// without the command role draws as a quotation and wraps as prose.
     ///
     /// The one word this cannot keep whole is a word wider than the column
     /// itself, which on a six-inch panel at the largest text size is a long
@@ -1665,11 +1666,10 @@ impl ScreenBuilder {
     /// `/Users`) and it never comes up.
     #[must_use]
     pub fn command(self, text: impl AsRef<str>) -> Self {
-        self.quote(
-            1,
-            text.as_ref()
-                .replace('-', "\u{2011}")
-                .replace('/', "/\u{2060}"),
+        self.quote_as(
+            0,
+            QuoteRole::Command,
+            text.as_ref().replace('-', "\u{2011}"),
         )
     }
 
@@ -2897,8 +2897,8 @@ impl ScreenBuilder {
             overlay: self.overlay,
             reading: self.reading,
             // Applications built with this SDK emit the current protocol and
-            // measure against Folio. Only a v11 decoder path marks legacy.
-            legacy_typography: false,
+            // measure in the current edition. Only the decoder chooses another.
+            typography: kobo_ui::Typography::CURRENT,
             reading_font: self.reading_font,
             accent: self.accent,
         }
