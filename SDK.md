@@ -309,6 +309,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `section(title)` / `section_with_value(title, value)` | A labelled group, optionally with a count or total. |
 | `facts([(label, value), ...])` | Labelled values with one shared, measured label column. |
 | `quote(depth, text)` / `byline(depth, text)` | Thread body text and its smaller, muted author line. |
+| `command(text)` | Something the owner types on a computer. Protocol 17 sets it in the fixed-pitch face on a grey panel the width of the column and wraps it only at its spaces; an earlier runtime draws it as a quotation. |
 | `folding_byline(...)` | A tappable byline that represents a collapsed reply subtree. |
 | `table(rows, weights)` | Tabular document content with columns measured across all rows. |
 | `picture(picture, max_height_mm)` | A framed picture fitted to a physical height. |
@@ -487,6 +488,19 @@ not been separated yet. Below it, at most one `primary_button`, the thing the
 reader came here to do, and at most one region of supporting detail. If two
 actions are equally important, neither is primary and both are ordinary
 buttons.
+
+**Space is the runtime's.** There is no margin or padding to set, and a
+`spacer` is for the rare gap the content itself calls for. On protocol 17 the
+runtime leaves three millimetres under the top bar, four above a heading that
+follows other content, and two above the first button after anything that is
+not a button; everything else stays one millimetre apart. A screen that would
+not fit with that room is laid out again without it before a line is lost, and
+a screen built round a board, a grid of squares or a terminal never gets it,
+because a board is sized to every millimetre it is given. Protocol 17 also sets
+headings a step smaller (4.6 mm and 3.8 mm) and a `secondary` line a step
+larger (2.7 mm), so an instruction set in one reads as a sentence rather than a
+footnote. Screens from applications built against an earlier protocol keep the
+type and spacing they were measured in.
 
 **Two secondary actions go side by side, not stacked.** Use `buttons`. Stacked,
 each one takes the full width of the panel to say a single word and the bottom
