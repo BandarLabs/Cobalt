@@ -502,10 +502,16 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
 /// transform too, but on a different digitiser, so it was measured rather
 /// than inherited.
 ///
-/// `write_ready` is false because nothing has yet watched this panel take a
-/// write from Cobalt. The radio fields are unmeasured: this board is said to
-/// be a close sibling of the Libra 2's, whose leftover `wpa_supplicant` had to
-/// be reaped, but that is evidence about another device.
+/// `write_ready` is `true` per maintainer sign-off in BandarLabs/Cobalt#312,
+/// backed by three attended display stages on the owner's N506:
+/// `DISPLAY_ONLY_GC16` (refresh writing no pixel byte),
+/// `REVERSIBLE_PIXELS_GC16` (4096 bytes restored and verified), and
+/// `SCREEN_SNAPSHOT_RESTORE` (the full 6,209,024-byte visible screen
+/// captured, 262,144 bytes changed and verified restored). Cobalt then
+/// launched, ran, and exited cleanly on the device. The radio fields are
+/// unmeasured: this board is said to be a close sibling of the Libra 2's,
+/// whose leftover `wpa_supplicant` had to be reaped, but that is evidence
+/// about another device.
 pub const CLARA_2E_386: DeviceProfile = DeviceProfile {
     id: "clara-2e-386",
     model: "Kobo Clara 2E",
@@ -3233,20 +3239,26 @@ mod tests {
         }
     }
 
-    /// Matched and identified, and held back only by the attended evidence
-    /// nobody has gathered yet.
+    /// Matched, identified, and write-ready: the attended display stages and
+    /// the launch, run, and exit on the owner's N506 were reviewed on
+    /// PR #312 before `write_ready` was set.
     #[test]
     fn clara_2e_doctor_snapshot_matches_its_strict_profile() {
         let snapshot = measured_clara_2e();
         let report = CLARA_2E_386.validate(&snapshot);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.readiness, Readiness::WriteReady);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        assert_eq!(
-            report.write_blockers,
-            vec![WRITE_EVIDENCE_PENDING.to_owned()]
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
         );
         assert!(CLARA_2E_386.write_identity_blockers(&snapshot).is_empty());
         assert_eq!(identify_profile(&snapshot), Some(&CLARA_2E_386));
+        assert_eq!(
+            write_ready_profile(&snapshot).map(|profile| profile.id),
+            Ok("clara-2e-386")
+        );
     }
 
     /// The two readers agree on every framebuffer and device tree field, so
