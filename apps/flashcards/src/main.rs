@@ -782,7 +782,12 @@ impl Flashcards {
             self.media_message = Some("Image unavailable on this Kobo.".to_owned());
             return;
         };
-        let Ok(decoded) = kobo_image::decode(bytes) else {
+        let decoded = if context.panel_shows_colour() {
+            kobo_image::decode_colour(bytes)
+        } else {
+            kobo_image::decode(bytes)
+        };
+        let Ok(decoded) = decoded else {
             self.media_message = Some("Image could not be displayed safely.".to_owned());
             return;
         };
@@ -790,12 +795,10 @@ impl Flashcards {
             self.media_message = Some("Image could not fit the review area.".to_owned());
             return;
         };
-        self.picture = context.put_picture(
-            PICTURE_HANDLE,
-            picture.width(),
-            picture.height(),
-            picture.into_grey(),
-        );
+        let (width, height) = (picture.width(), picture.height());
+        let colour = picture.colour().map(<[u8]>::to_vec);
+        self.picture =
+            context.put_picture_shown(PICTURE_HANDLE, width, height, picture.into_grey(), colour);
         if self.picture.is_none() {
             self.media_message = Some("Image memory is unavailable right now.".to_owned());
         }

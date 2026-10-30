@@ -1468,6 +1468,12 @@ impl ReadingList {
 }
 
 impl KoboApp for ReadingList {
+    /// Zotero's mark is red. The bar takes the same colour so the shelf reads
+    /// as the reader's Zotero library.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Red)
+    }
+
     fn on_foreground(&mut self, context: &mut Context) {
         self.returned(context);
     }

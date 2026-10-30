@@ -1722,6 +1722,12 @@ impl Hn {
 }
 
 impl KoboApp for Hn {
+    /// Hacker News is orange. A reader who has seen the site once knows whose
+    /// bar this is before reading the title.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Orange)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         self.now = unix_now();
         // Asked for before the network is: what has been read is what makes

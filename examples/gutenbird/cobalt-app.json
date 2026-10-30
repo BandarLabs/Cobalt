@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "Search, marginal notes and catalog addresses are typed on Cobalt's own keyboard, searching every catalog is a switch, and the download list marks the edition you will read."
+  "release_notes": "On a Kobo Clara Colour or Libra Colour book covers are shown in colour. Black-and-white readers look exactly as before."
 }

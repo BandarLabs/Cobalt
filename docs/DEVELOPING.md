@@ -54,6 +54,14 @@ reports the line and the reason and screenshots the panel first. Add `--ideal`
 to take screenshots without the panel's e-ink residue, which is what you want
 when a person or a model is going to read them.
 
+Under a colour profile (`KOBO_SIM_PROFILE=clara-colour-393`) screenshots are
+in colour. Without `--ideal` they show the frame as a Kaleido 3 filter would
+render it: sixteen levels per channel, colour at half the grey resolution and
+reduced saturation, which is a model with its parameters in the sidecar
+metadata, not a measured panel. With `--ideal` they show the renderer's own
+RGB. Check an app on `clara-bw-391` as well, because that is what most readers
+have and an accent changes nothing there.
+
 `tap` resolves the label against the layout the renderer produced and then taps
 the coordinate, through the panel's own touch transform and the renderer's own
 hit-testing. Dispatching the action directly would have been simpler and

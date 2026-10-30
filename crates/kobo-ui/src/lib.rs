@@ -810,8 +810,13 @@ pub const MAX_TONES_PER_SCREEN: usize = 4;
 /// The most verbs an action bar will draw. See [`BarStyle::Actions`].
 pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
 
+mod colour;
 mod environment;
 pub mod vector;
+
+pub use colour::{
+    Accent, Appearance, Paint, Palette, ScreenAccent, Shades, LOW_BATTERY_PERCENT, PANEL_LEVEL,
+};
 
 /// Grayscale values used by the built-in monochrome design system.
 ///
@@ -961,6 +966,13 @@ pub struct Chrome {
     /// `None` while reading and on any screen that has claimed the panel, so
     /// a book is a book and not a book with a clock on it.
     pub status: Option<Status>,
+    /// Whether the panel being painted can show colour.
+    ///
+    /// Known to the runtime from the device profile and to nothing else, so it
+    /// lives here with the rest of what an application cannot say about the
+    /// screen it is drawn on. Grey by default: a caller that does not know, or
+    /// is only measuring, gets the frame the grey design has always produced.
+    pub appearance: Appearance,
 }
 
 impl Chrome {
@@ -970,17 +982,29 @@ impl Chrome {
         Self {
             back: !at_home || screen.owns_back,
             status: if screen.reading { None } else { status },
+            appearance: Appearance::Grey,
         }
     }
 
     #[must_use]
     pub const fn with_back(back: bool) -> Self {
-        Self { back, status: None }
+        Self {
+            back,
+            status: None,
+            appearance: Appearance::Grey,
+        }
     }
 
     #[must_use]
     pub fn with_status(mut self, status: Status) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    /// Says which kind of panel this chrome will be painted on.
+    #[must_use]
+    pub const fn with_appearance(mut self, appearance: Appearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -1009,6 +1033,7 @@ impl Chrome {
                 Signal::Strong,
                 true,
             )),
+            appearance: Appearance::Grey,
         }
     }
 }
@@ -1272,6 +1297,12 @@ pub enum CellStyle {
     Board,
     /// A shaded playable square on a conventional draughts board.
     BoardDark,
+    /// A light square on a chess or draughts board, where selection means
+    /// the square in hand and is shown as a tinted field. Kept apart from
+    /// [`Self::Board`] because a plain grid's selection means whatever its
+    /// application says it means, Minesweeper's covered squares among them,
+    /// and a field of colour under fifteen covered squares is not a mark.
+    BoardLight,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
@@ -1710,6 +1741,18 @@ pub struct Screen {
     /// carry two overlays, cannot bury one inside a card, and cannot place one
     /// halfway down the page.
     pub overlay: Option<Box<Overlay>>,
+
+    /// The screen's colour, when it has one. See [`Accent`] and
+    /// [`ScreenAccent`].
+    ///
+    /// Carried by the screen rather than agreed once per session, so the
+    /// runtime can draw a screen it is holding for a background application
+    /// without remembering anything else about it, and so a reading page can
+    /// leave its accent off while the list that opened it keeps one. On a
+    /// greyscale panel it changes nothing at all. A screen made with
+    /// [`Screen::new`] is plain; the SDK's builder leaves the choice to the
+    /// application unless the screen makes one.
+    pub accent: ScreenAccent,
 }
 
 /// What paging means on a laid-out screen right now.
@@ -1848,7 +1891,17 @@ impl Screen {
             text_scale: None,
             hold: None,
             overlay: None,
+            accent: ScreenAccent::Plain,
         }
+    }
+
+    /// Decides this screen's colour: an accent of its own, or none at all.
+    /// See [`Accent`]. Either answer is final, where a screen from the SDK's
+    /// builder that has not made one inherits its application's.
+    #[must_use]
+    pub const fn with_accent(mut self, accent: Option<Accent>) -> Self {
+        self.accent = ScreenAccent::decided(accent);
+        self
     }
 
     /// Sends `action` when a finger is held still on the content area.
@@ -4874,8 +4927,10 @@ pub enum LayoutKind {
     /// A row's overflow mark: a finger-wide target against the right edge,
     /// hit-tested ahead of the row it sits in because it is pushed after it.
     RowMenu(ActionId),
-    /// A text field's border and its tap target.
-    Field(ActionId),
+    /// A text field's border and its tap target, and whether its value was
+    /// refused, which a colour panel shows as a tinted field under the note
+    /// that says why.
+    Field(ActionId, bool),
     /// What is in the field, or its placeholder when it is empty. The bool is
     /// which, because the two are drawn in different tones and the drawing
     /// pass must not have to consult the tree to find out.
@@ -5111,7 +5166,7 @@ impl LayoutKind {
             | Self::NavDestination(action, ..)
             | Self::NavDestinationSelected(action, ..)
             | Self::Tile(action, ControlState::Enabled)
-            | Self::Field(action)
+            | Self::Field(action, _)
             | Self::FieldClear(action)
             | Self::Chip(action, _)
             | Self::Tab(action, _)
@@ -5415,7 +5470,7 @@ impl Layout {
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(..)
                         | LayoutKind::Tile(_, ControlState::Enabled)
-                        | LayoutKind::Field(_)
+                        | LayoutKind::Field(..)
                         | LayoutKind::FieldClear(_)
                         | LayoutKind::Chip(_, _)
                         | LayoutKind::Tab(_, _)
@@ -6719,7 +6774,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Field(*action),
+                kind: LayoutKind::Field(*action, error.is_some()),
                 text_lines: Vec::new(),
             });
             // The cross is a control in its own right and must clear a finger,
@@ -7694,6 +7749,8 @@ fn layout_node(
                     CellStyle::Plain
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
+                } else if draughts_board || chess_board {
+                    CellStyle::BoardLight
                 } else {
                     style
                 };
@@ -11982,6 +12039,48 @@ impl Surface {
         }
     }
 
+    /// [`Self::fill_rect`] in a [`Paint`]: a grey lands in both planes as it
+    /// always has, and a colour brings the colour plane into being and keeps
+    /// the grey plane at the colour's luminance, as [`Self::blend_colour`]
+    /// does for one pixel.
+    pub fn fill_rect_paint(&mut self, rect: Rect, paint: Paint) {
+        match paint {
+            Paint::Grey(value) => self.fill_rect(rect, value),
+            Paint::Colour(colour) => {
+                let bounds = Rect {
+                    x: 0,
+                    y: 0,
+                    width: i32::try_from(self.width).unwrap_or(i32::MAX),
+                    height: i32::try_from(self.height).unwrap_or(i32::MAX),
+                };
+                let Some(clipped) = rect.intersection(bounds) else {
+                    return;
+                };
+                let grey = luma(colour);
+                let width = self.width;
+                let chroma = self.chroma_mut();
+                for y in clipped.y..clipped.y + clipped.height {
+                    let row = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+                    for x in clipped.x..clipped.x + clipped.width {
+                        let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                        if let Some(target) = chroma.get_mut(index * 3..index * 3 + 3) {
+                            target.copy_from_slice(&colour);
+                        }
+                    }
+                }
+                for y in clipped.y..clipped.y + clipped.height {
+                    let row = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+                    for x in clipped.x..clipped.x + clipped.width {
+                        let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                        if let Some(pixel) = self.pixels.get_mut(index) {
+                            *pixel = grey;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn fill_rect(&mut self, rect: Rect, value: u8) {
         let bounds = Rect {
             x: 0,
@@ -13663,7 +13762,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(..)
             | LayoutKind::Tile(..)
-            | LayoutKind::Field(_)
+            | LayoutKind::Field(..)
             | LayoutKind::FieldClear(_)
             | LayoutKind::Chip(_, _)
             | LayoutKind::Tab(_, _)
@@ -14364,6 +14463,7 @@ fn render_all_with_selected_font(
     });
     surface.fill_rect(clip, tone::PAPER);
     let layout = screen.layout_with(metrics, chrome);
+    let palette = Palette::new(chrome.appearance, screen.accent.chosen());
     let prose = layout.prose_face;
     for node in layout.nodes {
         if node.rect.intersection(clip).is_none() {
@@ -14382,13 +14482,18 @@ fn render_all_with_selected_font(
             // The border is the whole control: a field with only a baseline
             // under it reads as an underlined word, and one with a fill reads
             // as a button that has already been pressed.
-            LayoutKind::Field(_) => stroke_clipped(
-                surface,
-                node.rect,
-                tone::RULE,
-                metrics.rule_thickness(),
-                clip,
-            ),
+            LayoutKind::Field(_, error) => {
+                if error {
+                    fill_clipped(surface, node.rect, palette.field_error(), clip);
+                }
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
             LayoutKind::FieldValue(empty) => draw_lines(
                 surface,
                 &node.text_lines,
@@ -14418,7 +14523,7 @@ fn render_all_with_selected_font(
             // not one anybody reads at arm's length on a reflective panel.
             LayoutKind::Chip(_, selected) => {
                 if selected {
-                    fill_clipped(surface, node.rect, tone::INK, clip);
+                    fill_clipped(surface, node.rect, palette.emphasis(), clip);
                 } else {
                     stroke_clipped(
                         surface,
@@ -14459,7 +14564,7 @@ fn render_all_with_selected_font(
                             width: node.rect.width,
                             height: thickness,
                         },
-                        tone::INK,
+                        palette.emphasis(),
                         clip,
                     );
                 }
@@ -14669,7 +14774,7 @@ fn render_all_with_selected_font(
                     surface,
                     node.rect,
                     metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
-                    tone::INK,
+                    palette.emphasis(),
                     clip,
                 );
                 draw_centered(
@@ -14729,7 +14834,7 @@ fn render_all_with_selected_font(
             // looks like a mistake.
             LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
                 if selected {
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
                 }
                 // Two edges rather than four. Crossword squares are drawn
                 // touching, so a box around each one puts two rules along
@@ -14770,6 +14875,27 @@ fn render_all_with_selected_font(
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
             }
+            // The square in hand on a board with light and dark squares takes
+            // the accent's tint. A plain grid's selected cell keeps the quiet
+            // grey, because what selection means there is the application's
+            // business and is not always one cell.
+            LayoutKind::Cell(_, CellStyle::BoardLight, true) => {
+                fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::BoardLight, false) => stroke_clipped(
+                surface,
+                node.rect,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -14788,7 +14914,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                fill_clipped(surface, node.rect, palette.board_dark(), clip);
                 stroke_clipped(
                     surface,
                     node.rect,
@@ -14798,10 +14924,10 @@ fn render_all_with_selected_font(
                 );
             }
             LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
-                draw_backgammon_point(surface, node.rect, true, metrics, clip);
+                draw_backgammon_point(surface, node.rect, true, metrics, palette, clip);
             }
             LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
-                draw_backgammon_point(surface, node.rect, false, metrics, clip);
+                draw_backgammon_point(surface, node.rect, false, metrics, palette, clip);
             }
             LayoutKind::BackgammonStack(glyph, count, from_top) => {
                 draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
@@ -14872,6 +14998,7 @@ fn render_all_with_selected_font(
                         box_mask,
                     },
                     metrics,
+                    palette,
                     clip,
                 );
             }
@@ -14958,7 +15085,7 @@ fn render_all_with_selected_font(
                             / 100,
                         height: max(0, node.rect.height - 4),
                     },
-                    tone::INK,
+                    palette.emphasis(),
                     clip,
                 );
             }
@@ -15148,9 +15275,13 @@ fn render_all_with_selected_font(
             // The bars themselves are only a background. Drawing them as
             // separate nodes is what lets a tab switch repaint the content
             // area and two small bands instead of the entire panel.
-            LayoutKind::TopBar | LayoutKind::NavBar => {
-                fill_clipped(surface, node.rect, tone::PAPER, clip);
-            }
+            // The bar wears the application's colour on a panel that has
+            // one, with its title and controls still in ink on it; the bottom
+            // bar stays paper, because two coloured bands would frame every
+            // screen in the same colour and the content between them would
+            // be the quietest thing on the panel.
+            LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
+            LayoutKind::NavBar => fill_clipped(surface, node.rect, tone::PAPER, clip),
             // Paper, not surface. The band is the quietest thing on the panel
             // and a tinted strip across the top of every screen is a permanent
             // horizontal line the eye has to learn to ignore.
@@ -15166,7 +15297,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::StatusMark(mark) => {
-                draw_status_mark(surface, mark, node.rect, metrics, clip);
+                draw_status_mark(surface, mark, node.rect, metrics, palette, clip);
             }
             LayoutKind::TopBarTitle => draw_lines(
                 surface,
@@ -15248,6 +15379,7 @@ fn render_all_with_selected_font(
                     metrics,
                     false,
                     glyph,
+                    palette,
                     clip,
                 );
             }
@@ -15259,6 +15391,7 @@ fn render_all_with_selected_font(
                     metrics,
                     true,
                     glyph,
+                    palette,
                     clip,
                 );
             }
@@ -15614,7 +15747,7 @@ fn render_all_with_selected_font(
                 // What separates the two levels now is a heavy bar down the
                 // leading edge, the same mark a printed page uses to flag a
                 // paragraph, readable at a glance and cheap to draw.
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                fill_clipped(surface, node.rect, palette.banner(level), clip);
                 let mut text_x = node.rect.x + padding;
                 // A success and an error carry a mark ahead of the words, in a
                 // column the layout set aside for it, so the level can be told
@@ -15652,7 +15785,7 @@ fn render_all_with_selected_font(
                             width: bar,
                             ..node.rect
                         },
-                        tone::INK,
+                        palette.banner_edge(),
                         clip,
                     );
                     text_x = text_x.saturating_add(bar);
@@ -15819,10 +15952,13 @@ fn render_all_with_selected_font(
                     on,
                     state,
                     metrics,
+                    palette,
                     clip,
                 );
             }
-            LayoutKind::RowCheck(state) => draw_check_box(surface, node.rect, state, metrics, clip),
+            LayoutKind::RowCheck(state) => {
+                draw_check_box(surface, node.rect, state, metrics, palette, clip);
+            }
             // An outline the height of a line of type and its air, centred in
             // the finger-high target, so the row keeps one quiet button rather
             // than a slab as tall as the row.
@@ -16002,7 +16138,7 @@ fn render_all_with_selected_font(
                             height: inner,
                         },
                         inner / 2,
-                        tone::INK,
+                        palette.emphasis(),
                         clip,
                     );
                 }
@@ -16045,7 +16181,7 @@ fn render_all_with_selected_font(
                     tone::INK,
                     clip,
                 );
-                draw_step_marks(surface, node.rect, current, total, metrics, clip);
+                draw_step_marks(surface, node.rect, current, total, metrics, palette, clip);
             }
         }
     }
@@ -16064,12 +16200,21 @@ fn draw_toggle_switch(
     on: bool,
     state: ControlState,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let ink = if state.is_enabled() {
         tone::INK
     } else {
         tone::RULE
+    };
+    // Only the filled track takes the accent. Off is drawn in ink whatever
+    // the panel, so the two states differ in colour as well as in shape and
+    // a switch is never a coloured ring with a coloured knob.
+    let on_track = if state.is_enabled() {
+        palette.emphasis()
+    } else {
+        Paint::Grey(tone::RULE)
     };
     let radius = track.height / 2;
     let border = metrics.button_border();
@@ -16087,7 +16232,7 @@ fn draw_toggle_switch(
         height: knob,
     };
     if on {
-        fill_rounded_clipped(surface, track, radius, ink, clip);
+        fill_rounded_clipped(surface, track, radius, on_track, clip);
         fill_rounded_clipped(surface, knob, knob.height / 2, tone::PAPER, clip);
     } else {
         stroke_rounded_clipped(surface, track, radius, ink, border, clip);
@@ -16106,6 +16251,7 @@ fn draw_check_box(
     rect: Rect,
     state: RowState,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let side = min(rect.width, rect.height);
@@ -16119,7 +16265,7 @@ fn draw_check_box(
     let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM).min(side / 4);
     match state {
         RowState::Checked => {
-            fill_rounded_clipped(surface, rect, radius, tone::INK, clip);
+            fill_rounded_clipped(surface, rect, radius, palette.emphasis(), clip);
             // Whole pixels of paper rather than a blended tick, so the box
             // turning over is a two-level change the panel's fast waveform
             // can make.
@@ -16245,12 +16391,14 @@ fn draw_code(surface: &mut Surface, rect: Rect, payload: &str, clip: Rect) {
 
 /// The marks at a step indicator's trailing edge: filled for the steps done,
 /// a heavy ring for the one the reader is on, and a light ring for the rest.
+#[allow(clippy::too_many_arguments)]
 fn draw_step_marks(
     surface: &mut Surface,
     rect: Rect,
     current: u8,
     total: u8,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let (mark, gap) = steps_mark(metrics);
@@ -16265,10 +16413,17 @@ fn draw_step_marks(
         };
         match step.cmp(&current) {
             std::cmp::Ordering::Less => {
-                fill_rounded_clipped(surface, dot, mark / 2, tone::INK, clip);
+                fill_rounded_clipped(surface, dot, mark / 2, palette.emphasis(), clip);
             }
             std::cmp::Ordering::Equal => {
-                stroke_rounded_clipped(surface, dot, mark / 2, tone::INK, max(2, mark / 4), clip);
+                stroke_rounded_clipped(
+                    surface,
+                    dot,
+                    mark / 2,
+                    palette.emphasis(),
+                    max(2, mark / 4),
+                    clip,
+                );
             }
             std::cmp::Ordering::Greater => stroke_rounded_clipped(
                 surface,
@@ -16326,6 +16481,7 @@ fn draw_centered(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_nav_label(
     surface: &mut Surface,
     lines: &[String],
@@ -16333,6 +16489,7 @@ fn draw_nav_label(
     metrics: &DisplayMetrics,
     selected: bool,
     glyph: Option<Glyph>,
+    palette: Palette,
     clip: Rect,
 ) {
     // A mark sits above the word rather than instead of it. This band is a
@@ -16414,7 +16571,7 @@ fn draw_nav_label(
                 width: width.min(rect.width),
                 height: thickness,
             },
-            tone::INK,
+            palette.emphasis(),
             clip,
         );
     }
@@ -16566,6 +16723,7 @@ fn draw_status_mark(
     mark: StatusMark,
     rect: Rect,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let size = rect.height * 7 / 10;
@@ -16577,7 +16735,14 @@ fn draw_status_mark(
     };
     match mark {
         StatusMark::Signal(strength) => {
-            blit_vector_crisp(surface, &vector::wifi(strength), size, square, clip);
+            blit_vector_crisp_in(
+                surface,
+                &vector::wifi(strength),
+                size,
+                square,
+                clip,
+                palette.signal(strength),
+            );
         }
         StatusMark::Bluetooth => {
             blit_vector_crisp(
@@ -16599,7 +16764,14 @@ fn draw_status_mark(
                 ..square
             };
             let shapes = vector::battery(level, charging);
-            blit_vector_crisp(surface, &shapes, glyph.width, glyph, clip);
+            blit_vector_crisp_in(
+                surface,
+                &shapes,
+                glyph.width,
+                glyph,
+                clip,
+                palette.battery(level, charging),
+            );
             // Set against the battery, so a short number leaves its spare room
             // on the side away from the glyph rather than between them.
             let text = format!("{}%", level.get());
@@ -16694,11 +16866,12 @@ fn blit_vector_crisp_in(
     size: i32,
     rect: Rect,
     clip: Rect,
-    tone: u8,
+    paint: impl Into<Paint>,
 ) {
     if size <= 0 {
         return;
     }
+    let paint = paint.into();
     let coverage = vector::render(shapes, size);
     let origin_x = rect.x + (rect.width - size) / 2;
     let origin_y = rect.y + (rect.height - size) / 2;
@@ -16711,7 +16884,10 @@ fn blit_vector_crisp_in(
             if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
                 continue;
             }
-            surface.blend(x, y, tone, 255);
+            match paint {
+                Paint::Grey(tone) => surface.blend(x, y, tone, 255),
+                Paint::Colour(colour) => surface.blend_colour(x, y, colour, 255),
+            }
         }
     }
 }
@@ -16789,9 +16965,9 @@ fn draw_caret(surface: &mut Surface, rect: Rect, side: Side, clip: Rect) {
     }
 }
 
-fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
+fn fill_clipped(surface: &mut Surface, rect: Rect, paint: impl Into<Paint>, clip: Rect) {
     if let Some(rect) = rect.intersection(clip) {
-        surface.fill_rect(rect, tone);
+        surface.fill_rect_paint(rect, paint.into());
     }
 }
 
@@ -16803,7 +16979,14 @@ fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
 /// every ruled box looked washed out while dividers, which have always used
 /// the real rule thickness, looked correct. Both now come from the same
 /// physical measurement.
-fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, clip: Rect) {
+fn stroke_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    paint: impl Into<Paint>,
+    thickness: i32,
+    clip: Rect,
+) {
+    let paint = paint.into();
     // A border cannot be thicker than half the thing it surrounds, or the two
     // opposite edges overlap and the box fills in.
     let thickness = thickness
@@ -16836,7 +17019,7 @@ fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, c
             height: rect.height,
         },
     ] {
-        fill_clipped(surface, edge, tone, clip);
+        fill_clipped(surface, edge, paint, clip);
     }
 }
 
@@ -16887,13 +17070,14 @@ fn draw_backgammon_point(
     rect: Rect,
     from_top: bool,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let paper_point = (rect.x / rect.width.max(1)).rem_euclid(2) == 0;
     let fill = if paper_point {
-        tone::SURFACE
+        palette.board_dark()
     } else {
-        tone::PAPER
+        Paint::Grey(tone::PAPER)
     };
     let height = rect.height.max(1);
     let centre = rect.x + rect.width / 2;
@@ -17035,10 +17219,17 @@ fn rounded_row(rect: Rect, radius: i32, row: i32) -> Option<Rect> {
 }
 
 /// Fills a rectangle whose corners have been taken off.
-fn fill_rounded_clipped(surface: &mut Surface, rect: Rect, radius: i32, tone: u8, clip: Rect) {
+fn fill_rounded_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    radius: i32,
+    paint: impl Into<Paint>,
+    clip: Rect,
+) {
+    let paint = paint.into();
     for row in 0..rect.height {
         if let Some(span) = rounded_row(rect, radius, row) {
-            fill_clipped(surface, span, tone, clip);
+            fill_clipped(surface, span, paint, clip);
         }
     }
 }
@@ -17053,10 +17244,11 @@ fn stroke_rounded_clipped(
     surface: &mut Surface,
     rect: Rect,
     radius: i32,
-    tone: u8,
+    paint: impl Into<Paint>,
     thickness: i32,
     clip: Rect,
 ) {
+    let paint = paint.into();
     let thickness = thickness
         .max(1)
         .min(rect.width.max(1) / 2)
@@ -17079,7 +17271,7 @@ fn stroke_rounded_clipped(
                         width: hole.x - outer.x,
                         ..outer
                     },
-                    tone,
+                    paint,
                     clip,
                 );
                 let right = hole.x.saturating_add(hole.width);
@@ -17090,11 +17282,11 @@ fn stroke_rounded_clipped(
                         width: outer.x + outer.width - right,
                         ..outer
                     },
-                    tone,
+                    paint,
                     clip,
                 );
             }
-            None => fill_clipped(surface, outer, tone, clip),
+            None => fill_clipped(surface, outer, paint, clip),
         }
     }
 }
@@ -17545,3 +17737,6 @@ mod figure_tests;
 #[cfg(test)]
 #[path = "colour_orientation_tests.rs"]
 mod colour_orientation_tests;
+
+#[cfg(test)]
+mod colour_tests;

@@ -431,7 +431,7 @@ fn a_recording_decodes_to_the_frames_that_were_kept() {
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].millis, 0);
     assert_eq!(frames[1].millis, 500);
-    assert_eq!(frames[1].grey, vec![0x40; 6]);
+    assert_eq!(frames[1].pixels, vec![0x40; 6]);
 }
 
 #[test]
@@ -446,7 +446,7 @@ fn every_grey_level_survives_the_round_trip() {
     let ramp: Vec<u8> = (0..=255_u8).step_by(1).take(256).collect();
     raw.extend_from_slice(&ramp);
     let (_, _, frames) = super::decode_recording(&raw).expect("decode");
-    assert_eq!(frames[0].grey, ramp);
+    assert_eq!(frames[0].pixels, ramp);
 }
 
 #[test]

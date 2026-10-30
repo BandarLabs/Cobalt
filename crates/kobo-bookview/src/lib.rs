@@ -859,12 +859,20 @@ impl BookView {
         }
         let mut on_this_page = false;
         if let Some((name, mut picture)) = self.dithering.take() {
-            // The second half: the greys.
+            // The second half: the greys. The colour plane, when the panel
+            // asked for one, is left as it was read and sent beside them.
             picture.dither(kobo_image::PANEL_GREYS);
             let (drawn_width, drawn_height) = (picture.width(), picture.height());
             if let Some(reserved) = self.handed(&name) {
+                let colour = picture.colour().map(<[u8]>::to_vec);
                 if context
-                    .put_picture(reserved, drawn_width, drawn_height, picture.into_grey())
+                    .put_picture_shown(
+                        reserved,
+                        drawn_width,
+                        drawn_height,
+                        picture.into_grey(),
+                        colour,
+                    )
                     .is_some()
                     && showing.contains(&name)
                 {
@@ -881,7 +889,15 @@ impl BookView {
                 if self.handed(&name).is_none() {
                     continue;
                 }
-                let Ok(picture) = kobo_image::decode(&bytes) else {
+                // Read in colour only for a panel that will show it: a colour
+                // read costs twice the memory of a grey one at its peak, and a
+                // greyscale reader draws the same picture either way.
+                let decoded = if context.panel_shows_colour() {
+                    kobo_image::decode_colour(&bytes)
+                } else {
+                    kobo_image::decode(&bytes)
+                };
+                let Ok(picture) = decoded else {
                     continue;
                 };
                 let (box_width, box_height) = if name.starts_with(FORMULA_PICTURE_PREFIX) {

@@ -1564,6 +1564,12 @@ impl Settings {
 }
 
 impl KoboApp for Settings {
+    /// The platform's own blue: this screen is Cobalt itself rather than an
+    /// application running on it, and it wears the colour of the logo.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Cobalt)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         self.address = Self::read_address();
         Self::refresh(context);

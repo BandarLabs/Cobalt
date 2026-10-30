@@ -336,15 +336,23 @@ impl Fieldbook {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.photo_load.take().expect("active photo").take();
-                self.photo = kobo_image::decode(&bytes)
+                let decoded = if context.panel_shows_colour() {
+                    kobo_image::decode_colour(&bytes)
+                } else {
+                    kobo_image::decode(&bytes)
+                };
+                self.photo = decoded
                     .and_then(|decoded| decoded.fit(640, 480))
                     .map(|mut picture| {
                         picture.dither(kobo_image::PANEL_GREYS);
-                        context.put_picture(
+                        let (width, height) = (picture.width(), picture.height());
+                        let colour = picture.colour().map(<[u8]>::to_vec);
+                        context.put_picture_shown(
                             PICTURE_HANDLE,
-                            picture.width(),
-                            picture.height(),
+                            width,
+                            height,
                             picture.into_grey(),
+                            colour,
                         )
                     })
                     .unwrap_or(None);

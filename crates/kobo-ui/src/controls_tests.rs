@@ -458,7 +458,7 @@ fn button_top(layout: &Layout) -> i32 {
 fn a_field_without_label_hint_or_error_is_laid_out_as_it_always_was() {
     for (name, metrics) in PANELS {
         let plain = field(None, None, None, FieldKind::Text).layout_for(&metrics);
-        let border = kinds(&plain, |kind| matches!(kind, LayoutKind::Field(_)))[0].rect;
+        let border = kinds(&plain, |kind| matches!(kind, LayoutKind::Field(..)))[0].rect;
         assert_eq!(
             border.height,
             metrics
@@ -498,7 +498,7 @@ fn an_error_in_place_of_a_hint_moves_nothing_on_the_panel() {
             "{name}"
         );
         let label = kinds(&refused, |kind| matches!(kind, LayoutKind::FieldLabel))[0];
-        let border = kinds(&refused, |kind| matches!(kind, LayoutKind::Field(_)))[0].rect;
+        let border = kinds(&refused, |kind| matches!(kind, LayoutKind::Field(..)))[0].rect;
         assert!(label.rect.y + label.rect.height <= border.y, "{name}");
         assert!(note.rect.y >= border.y + border.height, "{name}");
     }

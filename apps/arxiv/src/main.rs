@@ -2037,6 +2037,12 @@ fn page_total(pages: usize) -> u16 {
 }
 
 impl KoboApp for Arxiv {
+    /// arXiv's wordmark is red. The bar takes the same colour so the reader
+    /// knows which archive this is.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Red)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(LIBRARY_KEY);
         context.store().load(SEARCHES_KEY);

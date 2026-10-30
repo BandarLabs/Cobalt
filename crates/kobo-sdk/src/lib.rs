@@ -35,15 +35,15 @@ pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
-    ActionId, BandAlign, BandSlot, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell,
-    Chip, Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle,
-    Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
+    Accent, ActionId, BandAlign, BandSlot, BannerLevel, BarAction, BarStyle, BottomAction, Caret,
+    Cell, Chip, Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold,
+    FontHandle, Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
     Orientation, Overlay, OverlayKind, ParagraphAlignment, ParagraphPresentation, Percent,
     PictureFormat, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState, Screen,
-    SlotWidth, Space, TableRow, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
-    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
-    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    ScreenAccent, SlotWidth, Space, TableRow, TextHit, TextPresentation, TextSelection, Tile,
+    TilePicture, TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS,
+    MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH,
+    MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 /// The runtime-drawn controls of protocol 16, and the limits that fix their
 /// footprints.
@@ -475,6 +475,9 @@ pub struct ScreenBuilder {
     overlay: Option<Box<Overlay>>,
     reading: bool,
     reading_font: Option<FontHandle>,
+    /// Left to the application unless the screen decides; see
+    /// [`ScreenBuilder::accent`] and [`ScreenBuilder::without_accent`].
+    accent: ScreenAccent,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -541,6 +544,10 @@ pub struct Context {
     next_task: u32,
     in_flight: usize,
     metrics: DisplayMetrics,
+    /// Whether the reader's panel shows colour, as the runtime said when this
+    /// application connected. False under a runner that never connected, so
+    /// an application's own tests see a greyscale reader unless they ask.
+    colour_panel: bool,
     /// Work the runner should try once more if it comes back retryable.
     ///
     /// Collected here and drained by the runner, because a context is built
@@ -568,6 +575,41 @@ impl Context {
     #[must_use]
     pub const fn metrics(&self) -> DisplayMetrics {
         self.metrics
+    }
+
+    /// Whether the reader's panel shows colour.
+    ///
+    /// For the one decision an application makes about colour: whether to
+    /// read a picture in colour and send it that way, which costs three times
+    /// the bytes and buys nothing on a greyscale reader. Everything else that
+    /// is coloured on a colour panel, the accent and the controls, is the
+    /// runtime's doing and needs no asking.
+    #[must_use]
+    pub const fn panel_shows_colour(&self) -> bool {
+        self.colour_panel
+    }
+
+    /// [`Self::put_picture`] or [`Self::put_colour_picture`], whichever the
+    /// panel can show.
+    ///
+    /// The grey plane is always needed, because it is what a greyscale
+    /// reader draws and what the runtime plans refreshes from; the colour
+    /// plane is sent only when it exists and the panel has a filter to show
+    /// it through. One call, so an application that reads with
+    /// `kobo_image::decode_colour` on a colour reader and `decode` elsewhere
+    /// has nothing else to decide.
+    pub fn put_picture_shown(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+        colour: Option<Vec<u8>>,
+    ) -> Option<TilePicture> {
+        match colour {
+            Some(rgb) if self.colour_panel => self.put_colour_picture(handle, width, height, rgb),
+            _ => self.put_picture(handle, width, height, grey),
+        }
     }
 
     /// The same panel, measured at a different text size.
@@ -2805,6 +2847,19 @@ pub trait KoboApp {
     fn on_start(&mut self, context: &mut Context);
     fn on_action(&mut self, context: &mut Context, action: ActionId);
 
+    /// The application's colour, for readers whose panel can show one.
+    ///
+    /// Given, as each screen is sent, to every screen that has not chosen for
+    /// itself with [`ScreenBuilder::accent`] or
+    /// [`ScreenBuilder::without_accent`], so an application that is orange
+    /// says so once, here, and every one of its screens agrees. The default
+    /// is none: the bar stays paper and the controls take the platform's own
+    /// colour, which is what most applications should want. A greyscale
+    /// reader draws the same screen whatever this answers.
+    fn accent(&self) -> Option<Accent> {
+        None
+    }
+
     /// Receives a held word in stable application text coordinates.
     /// Applications that have not opted into selection retain the historical
     /// hold action behavior.
@@ -2941,6 +2996,9 @@ pub const RETRY_DELAY_SECONDS: u32 = 3;
 pub struct AppRunner<A> {
     app: A,
     metrics: DisplayMetrics,
+    /// What the runtime said about the panel at the handshake; see
+    /// [`Context::panel_shows_colour`].
+    colour_panel: bool,
     started: bool,
     pending: VecDeque<DeviceRequest>,
     /// Text fields the runtime is holding open for this application. Kept
@@ -3004,6 +3062,7 @@ impl<A: KoboApp> AppRunner<A> {
         Self {
             app,
             metrics: DisplayMetrics::default(),
+            colour_panel: false,
             started: false,
             pending: VecDeque::new(),
             pending_text: 0,
@@ -3057,8 +3116,17 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: self.next_task,
             in_flight: self.in_flight,
             metrics: self.metrics,
+            colour_panel: self.colour_panel,
             retrying: Vec::new(),
         }
+    }
+
+    /// Tells the runner what the runtime said about the panel, so every
+    /// context it builds can answer [`Context::panel_shows_colour`].
+    #[must_use]
+    pub const fn showing_colour(mut self, colour_panel: bool) -> Self {
+        self.colour_panel = colour_panel;
+        self
     }
 
     pub fn start(&mut self) -> Vec<Command> {
@@ -3320,6 +3388,7 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: self.next_task,
             in_flight: self.in_flight,
             metrics: self.metrics,
+            colour_panel: self.colour_panel,
             retrying: Vec::new(),
         };
         if std::mem::take(&mut self.settled) {
@@ -3480,6 +3549,12 @@ pub struct Client {
     next_request: u32,
     metrics: DisplayMetrics,
     simulator_callbacks: bool,
+    colour_panel: bool,
+    /// The application's accent, given to every screen that left the choice
+    /// to it as the screen goes out. Resolved here rather than in the runner
+    /// so a screen an application's own tests see is the screen it built,
+    /// and comparing it with one built again stays an equality.
+    app_accent: Option<Accent>,
 }
 
 impl Client {
@@ -3517,6 +3592,7 @@ impl Client {
             height,
             pixels_per_inch,
             text_scale,
+            colour_panel,
         } = response.message
         else {
             return Err(ClientError::UnexpectedMessage);
@@ -3531,7 +3607,20 @@ impl Client {
                 pixels_per_inch: i32::from(pixels_per_inch),
                 text_scale,
             },
+            colour_panel,
+            app_accent: None,
         })
+    }
+
+    /// Whether the runtime said its panel shows colour.
+    #[must_use]
+    pub const fn colour_panel(&self) -> bool {
+        self.colour_panel
+    }
+
+    /// The accent to give screens that left the choice to the application.
+    pub fn set_app_accent(&mut self, accent: Option<Accent>) {
+        self.app_accent = accent;
     }
 
     /// The panel this application is running on.
@@ -3597,7 +3686,9 @@ impl Client {
                 other => other,
             };
             let message = match command {
-                Command::SetScreen(screen) => Message::SetScreen(screen),
+                Command::SetScreen(screen) => {
+                    Message::SetScreen(decided_for(self.app_accent, screen))
+                }
                 Command::SetOrientation(orientation) => Message::SetOrientation(orientation),
                 Command::SuspendReady { generation, ready } => {
                     Message::SuspendReady { generation, ready }
@@ -4063,6 +4154,7 @@ mod tests {
             next_task: 1,
             in_flight: 0,
             metrics: DisplayMetrics::default(),
+            colour_panel: false,
             retrying: Vec::new(),
         }
     }
@@ -4709,6 +4801,7 @@ mod tests {
                     version: kobo_protocol::VERSION,
                     request_id: hello.request_id,
                     message: Message::Welcome {
+                        colour_panel: false,
                         width: 1072,
                         height: 1448,
                         pixels_per_inch: 300,
@@ -4741,6 +4834,7 @@ mod tests {
                     version: kobo_protocol::VERSION,
                     request_id: hello.request_id,
                     message: Message::Welcome {
+                        colour_panel: false,
                         width: 1072,
                         height: 1448,
                         pixels_per_inch: 300,
@@ -4808,6 +4902,7 @@ mod tests {
             next_task: 1,
             in_flight: 0,
             metrics: CLARA_BW_METRICS,
+            colour_panel: false,
             retrying: Vec::new(),
         };
         assert!(context
@@ -5302,14 +5397,20 @@ pub fn run<A: KoboApp>(name: &str, app: A) -> Result<(), ClientError> {
 ///
 /// Returns the first transport error.
 pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), ClientError> {
+    // Asked once, before the application is handed to the runner: every
+    // screen that leaves its colour to the application gets this as it is
+    // sent. See [`KoboApp::accent`].
+    let accent = app.accent();
     let mut client = Client::connect(socket, name)?;
+    client.set_app_accent(accent);
     // The same typeface the runtime lays out with, so an application that
     // measures its own text agrees with what will actually be drawn. Failure
     // is not fatal: both sides then fall back to the built-in bitmap, which is
     // still one shared answer rather than two different ones.
     #[cfg(feature = "text")]
     let _ = kobo_text::install(client.metrics());
-    let mut runner = AppRunner::with_metrics(app, client.metrics());
+    let mut runner =
+        AppRunner::with_metrics(app, client.metrics()).showing_colour(client.colour_panel());
     client.send_commands(runner.start())?;
 
     // A test harness needs the application to settle and leave rather than wait
@@ -5385,5 +5486,95 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
         if leaving {
             return Ok(());
         }
+    }
+}
+
+/// The screen as the runtime will see it: a screen that left its colour to
+/// the application takes the application's accent, or none, and a screen that
+/// decided for itself is sent as it was.
+fn decided_for(app_accent: Option<Accent>, mut screen: Screen) -> Screen {
+    if screen.accent == ScreenAccent::Inherit {
+        screen.accent = ScreenAccent::decided(app_accent);
+    }
+    screen
+}
+
+#[cfg(test)]
+mod accent_tests {
+    use super::*;
+
+    /// An orange application that shows three screens at once: one that
+    /// leaves the colour to the application, one with a colour of its own,
+    /// and a reader's page that asked for none.
+    struct Orange;
+
+    impl KoboApp for Orange {
+        fn accent(&self) -> Option<Accent> {
+            Some(Accent::Orange)
+        }
+
+        fn on_start(&mut self, context: &mut Context) {
+            context.set_screen(ScreenBuilder::new("list").top_bar("List").build());
+            context.set_screen(
+                ScreenBuilder::new("teal")
+                    .top_bar("Teal")
+                    .accent(Accent::Teal)
+                    .build(),
+            );
+            context.set_screen(
+                ScreenBuilder::new("page")
+                    .top_bar("Page")
+                    .without_accent()
+                    .build(),
+            );
+        }
+
+        fn on_action(&mut self, _: &mut Context, _: ActionId) {}
+    }
+
+    fn screens_shown() -> Vec<Screen> {
+        AppRunner::new(Orange)
+            .start()
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_runner_leaves_the_choice_as_the_application_made_it() {
+        // An application's own tests compare the screen the runner emitted
+        // with one built again, so the runner must not decide on its behalf.
+        let accents: Vec<ScreenAccent> = screens_shown().iter().map(|s| s.accent).collect();
+        assert_eq!(
+            accents,
+            [
+                ScreenAccent::Inherit,
+                ScreenAccent::Own(Accent::Teal),
+                ScreenAccent::Plain
+            ]
+        );
+    }
+
+    #[test]
+    fn a_screen_inherits_the_apps_accent_as_it_is_sent_unless_it_decided_for_itself() {
+        let sent: Vec<ScreenAccent> = screens_shown()
+            .into_iter()
+            .map(|screen| decided_for(Orange.accent(), screen).accent)
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                ScreenAccent::Own(Accent::Orange),
+                ScreenAccent::Own(Accent::Teal),
+                ScreenAccent::Plain
+            ],
+            "inherit, own colour, explicitly none"
+        );
+        // Without an application accent, inheriting means plain.
+        let plain = decided_for(None, ScreenBuilder::new("list").build());
+        assert_eq!(plain.accent, ScreenAccent::Plain);
     }
 }

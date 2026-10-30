@@ -6,8 +6,8 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, FieldKind,
-    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
+    Accent, ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
+    FieldKind, FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
     PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
     TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
     MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
@@ -66,6 +66,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// bytes after everything tags 11, 14 and 24 already carried; see
 /// [`CONTROLS_VERSION`]. Version 15 remains readable and is written exactly as
 /// it was.
+/// Version 17 adds the screen's accent, one byte after everything a screen
+/// already carried; see [`ACCENT_VERSION`]. Version 16 remains readable and is
+/// written exactly as it was.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -103,7 +106,19 @@ pub const CONTROLS_VERSION: u8 = 16;
 /// either at an earlier protocol is refused rather than misread.
 pub const TEXT_ENTRY_VERSION: u8 = 16;
 
-pub const VERSION: u8 = 16;
+/// The protocol a screen must be encoded at to name its application's colour,
+/// [`kobo_ui::Accent`].
+///
+/// One byte at the very end of the screen, after the overlay, so a version-16
+/// reader stops exactly where it always did and a version-17 reader finds it
+/// where nothing else could be. Zero means no accent, and is what every
+/// screen encoded at an earlier protocol is read as. A value this runtime has
+/// no accent for is also read as none, rather than refused, because grey is
+/// the right rendering of every accent and an application should not fail to
+/// open over the colour of its bar.
+pub const ACCENT_VERSION: u8 = 17;
+
+pub const VERSION: u8 = 17;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -144,14 +159,16 @@ const PRE_FOLIO_VERSIONS: [u8; 2] = [DICTIONARY_VERSION, LEGACY_VERSION];
 /// application can still be speaking it. A test holds it to the release
 /// registry's `tools/protocol-minimums.json`, so removing one is a visible
 /// decision rather than a side effect.
-pub const ACCEPTED_VERSIONS: [u8; 7] = [
+pub const ACCEPTED_VERSIONS: [u8; 8] = [
     DICTIONARY_VERSION,
     LEGACY_VERSION,
     FOLIO_VERSION,
     SELECTED_GRID_VERSION,
     SUSPEND_VERSION,
-    // Fifteen, named by what it added now that it is no longer the newest.
+    // Fifteen and sixteen, each named by what it added now that it is no
+    // longer the newest.
     PICTURE_BLEED_VERSION,
+    CONTROLS_VERSION,
     VERSION,
 ];
 
@@ -721,6 +738,11 @@ pub enum Message {
         /// The reader's accessibility preference. Applications receive this
         /// before laying out or paginating any content.
         text_scale: TextScale,
+        /// Whether the panel can show colour, so an application that has a
+        /// picture in colour knows whether sending it in colour buys anything
+        /// for three times the bytes. Carried from protocol 17; an older
+        /// application never reads it and is told nothing.
+        colour_panel: bool,
     },
     SetScreen(Screen),
     /// Selects the application's logical viewport for subsequent screens.
@@ -2222,11 +2244,17 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             height,
             pixels_per_inch,
             text_scale,
+            colour_panel,
         } => {
             push_u16(&mut payload, *width);
             push_u16(&mut payload, *height);
             push_u16(&mut payload, *pixels_per_inch);
             payload.push(text_scale.wire_value());
+            // After everything a protocol-16 application reads, and only for
+            // one that reads further.
+            if frame.version >= ACCENT_VERSION {
+                payload.push(u8::from(*colour_panel));
+            }
         }
         Message::SetScreen(screen) => {
             let mut count = 0;
@@ -2851,7 +2879,7 @@ fn begin_picture_layout(
 fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
-        Message::Welcome { .. } => Ok((2, 7)),
+        Message::Welcome { .. } => Ok((2, if version >= ACCENT_VERSION { 8 } else { 7 })),
         Message::SetScreen(screen) => {
             let mut count = 0;
             Ok((3, encoded_screen_len(screen, 0, &mut count, version)?))
@@ -4512,6 +4540,10 @@ fn encoded_screen_len(
             add_encoded_len(&mut length, encoded_node_len(node, depth, count, version)?)?;
         }
     }
+    // The accent, on protocols that carry one.
+    if version >= ACCENT_VERSION {
+        add_encoded_len(&mut length, 1)?;
+    }
     Ok(length)
 }
 
@@ -5089,6 +5121,15 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             pixels_per_inch: reader.u16()?,
             text_scale: TextScale::from_wire(reader.u8()?)
                 .ok_or(ProtocolError::InvalidValue("text scale"))?,
+            colour_panel: if version >= ACCENT_VERSION {
+                match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("colour panel flag")),
+                }
+            } else {
+                false
+            },
         },
         3 => {
             let mut count = 0;
@@ -5733,6 +5774,13 @@ fn encode_screen(
                 encode_node(output, node, depth, count, version)?;
             }
         }
+    }
+    // Last of all, and only on a protocol that has a reading for it. An
+    // application built against an earlier protocol never sends one, and a
+    // screen encoded at an earlier protocol on behalf of one is written
+    // exactly as it was, accent or no accent.
+    if version >= ACCENT_VERSION {
+        output.push(screen.accent.chosen().map_or(0, Accent::wire_value));
     }
     Ok(())
 }
@@ -7095,8 +7143,16 @@ fn decode_screen(
         }
         _ => return Err(ProtocolError::InvalidValue("overlay flag")),
     };
+    // Zero, and any value this build has no accent for, both read as none:
+    // see [`ACCENT_VERSION`].
+    let accent = if version >= ACCENT_VERSION {
+        Accent::from_wire(reader.u8()?)
+    } else {
+        None
+    };
     let mut screen = Screen::new(id, nodes);
     screen.overlay = overlay;
+    screen.accent = kobo_ui::ScreenAccent::decided(accent);
     screen.top_bar = top_bar;
     screen.nav_bar = nav_bar;
     // Only when there is no bar. A frame carrying both is a peer that built
@@ -8325,3 +8381,6 @@ mod update_task_tests;
 
 #[cfg(test)]
 mod text_entry_tests;
+
+#[cfg(test)]
+mod accent_wire_tests;

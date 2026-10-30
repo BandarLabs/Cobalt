@@ -1,7 +1,7 @@
 //! Bounded host-side preparation for the Frame application's private shelf.
 
 use image::imageops::{overlay, resize, FilterType};
-use image::{DynamicImage, GrayImage, ImageDecoder, ImageEncoder, ImageReader};
+use image::{DynamicImage, ImageBuffer, ImageDecoder, ImageEncoder, ImageReader};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -12,7 +12,13 @@ use std::time::UNIX_EPOCH;
 pub const DEFAULT_PANEL: Panel = Panel {
     width: 1072,
     height: 1448,
+    colour: false,
 };
+/// The JPEG quality a colour photograph is prepared at. High enough that the
+/// compression is not what a Kaleido panel's own filter and sixteen levels
+/// per channel will hide anyway, low enough to keep a full panel well under
+/// the shelf ceiling.
+pub const COLOUR_JPEG_QUALITY: u8 = 88;
 pub const MAX_PHOTOS: usize = 500;
 pub const MAX_SOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_SOURCE_PIXELS: u64 = 50_000_000;
@@ -30,6 +36,10 @@ pub const DIGEST_MANIFEST: &str = "digests.v1";
 pub struct Panel {
     pub width: u32,
     pub height: u32,
+    /// Whether the reader's panel shows colour, from its profile. A
+    /// photograph for a colour reader keeps its colour; one for a greyscale
+    /// reader is reduced to grey here, on the computer, as it always was.
+    pub colour: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -196,6 +206,9 @@ impl Manifest {
 #[derive(Clone, Debug)]
 pub struct PreparedPhoto {
     pub photo: Photo,
+    /// The bytes of the shelf entry, when this push carries them: a PNG for a
+    /// greyscale reader, a JPEG for a colour one, under the entry's `.png`
+    /// name either way; see `encode`.
     pub png: Option<Vec<u8>>,
     /// Digest of the prepared shelf bytes; `None` when the photo was
     /// already on the shelf and its bytes were not re-prepared.
@@ -523,8 +536,30 @@ fn decode(path: &Path, bytes: &[u8]) -> Result<DynamicImage, String> {
     Ok(image)
 }
 
-fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
-    let source = image.to_luma8();
+/// Fits the photograph to the panel, in colour for a panel that shows it and
+/// in grey for one that does not.
+///
+/// The geometry is the same either way; only the pixel type differs, so the
+/// work is done once, generically, and the caller gets whichever plane the
+/// reader can use. A grey reader never pays for colour it cannot show, and a
+/// colour reader is not handed a photograph with the colour already gone.
+fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> DynamicImage {
+    if panel.colour {
+        fit_buffer(&image.to_rgb8(), fit, panel, image::Rgb([255, 255, 255])).into()
+    } else {
+        fit_buffer(&image.to_luma8(), fit, panel, image::Luma([255])).into()
+    }
+}
+
+fn fit_buffer<P>(
+    source: &ImageBuffer<P, Vec<u8>>,
+    fit: Fit,
+    panel: Panel,
+    paper: P,
+) -> ImageBuffer<P, Vec<u8>>
+where
+    P: image::Pixel<Subpixel = u8> + 'static,
+{
     let (width, height) = source.dimensions();
     match fit {
         Fit::Crop => {
@@ -547,7 +582,7 @@ fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
                     panel.height,
                 )
             };
-            let scaled = resize(&source, target_width, target_height, FilterType::Lanczos3);
+            let scaled = resize(source, target_width, target_height, FilterType::Lanczos3);
             image::imageops::crop_imm(
                 &scaled,
                 (target_width - panel.width) / 2,
@@ -575,8 +610,8 @@ fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
                     panel.height,
                 )
             };
-            let scaled = resize(&source, target_width, target_height, FilterType::Lanczos3);
-            let mut canvas = GrayImage::from_pixel(panel.width, panel.height, image::Luma([255]));
+            let scaled = resize(source, target_width, target_height, FilterType::Lanczos3);
+            let mut canvas = ImageBuffer::from_pixel(panel.width, panel.height, paper);
             overlay(
                 &mut canvas,
                 &scaled,
@@ -588,24 +623,49 @@ fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
     }
 }
 
-fn encode(image: &GrayImage, panel: Panel) -> Result<Vec<u8>, String> {
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(
-            image.as_raw(),
-            panel.width,
-            panel.height,
-            image::ExtendedColorType::L8,
-        )
-        .map_err(|error| format!("encode Frame image: {error}"))?;
-    if png.len() > MAX_FRAME_BYTES {
+/// Writes the fitted photograph as the shelf will hold it.
+///
+/// Grey goes out as a PNG, exactly as it always has. Colour goes out as a
+/// JPEG at a quality a photograph does not show, because a colour PNG of a
+/// full panel runs to several megabytes and would fail the ceiling below for
+/// most photographs, and because the shelf is 150 MB for an album. The entry
+/// keeps the `.png` name whichever it holds: the application asks for the
+/// entry by that name, every build of it ever shipped reads the bytes rather
+/// than the name, and a reader with an older Frame still shows the picture,
+/// in grey.
+fn encode(image: &DynamicImage, panel: Panel) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    match image {
+        DynamicImage::ImageRgb8(colour) => {
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, COLOUR_JPEG_QUALITY)
+                .write_image(
+                    colour.as_raw(),
+                    panel.width,
+                    panel.height,
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|error| format!("encode Frame image: {error}"))?;
+        }
+        other => {
+            let grey = other.to_luma8();
+            image::codecs::png::PngEncoder::new(&mut bytes)
+                .write_image(
+                    grey.as_raw(),
+                    panel.width,
+                    panel.height,
+                    image::ExtendedColorType::L8,
+                )
+                .map_err(|error| format!("encode Frame image: {error}"))?;
+        }
+    }
+    if bytes.len() > MAX_FRAME_BYTES {
         return Err(format!(
             "prepared Frame image is {} MB; the device accepts at most {} MB",
-            png.len() / (1024 * 1024),
+            bytes.len() / (1024 * 1024),
             MAX_FRAME_BYTES / (1024 * 1024)
         ));
     }
-    Ok(png)
+    Ok(bytes)
 }
 
 fn valid_id(id: &str) -> bool {
@@ -737,6 +797,58 @@ mod tests {
     }
 
     #[test]
+    fn a_colour_panel_keeps_the_photographs_colour_and_a_grey_one_does_not() {
+        let root = std::env::temp_dir().join(format!("frame-host-colour-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        let input = root.join("landscape.png");
+        fixture(&input, 400, 200);
+        let colour = Panel {
+            colour: true,
+            ..DEFAULT_PANEL
+        };
+        for fit in [Fit::Crop, Fit::Pad] {
+            let push = prepare_for_panel(&input, fit, &Manifest::default(), false, colour)
+                .expect("prepare");
+            let bytes = push.photos[0].png.as_ref().expect("new image");
+            let decoded = image::load_from_memory(bytes).expect("output");
+            assert_eq!(decoded.dimensions(), (colour.width, colour.height));
+            assert!(bytes.len() <= MAX_FRAME_BYTES);
+            // The gradient fixture is coloured, so a prepared photograph that
+            // kept its colour has pixels whose channels differ.
+            let rgb = decoded.to_rgb8();
+            assert!(
+                rgb.pixels()
+                    .any(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2]),
+                "the colour was lost on the way to a colour panel"
+            );
+            // And it is a JPEG, not a PNG, which is what keeps it under the
+            // ceiling: the entry's name says png and the bytes say otherwise,
+            // deliberately; see `encode`.
+            assert_eq!(&bytes[..2], &[0xFF, 0xD8], "not a JPEG");
+        }
+        let grey = prepare_for_panel(
+            &input,
+            Fit::Crop,
+            &Manifest::default(),
+            false,
+            DEFAULT_PANEL,
+        )
+        .expect("prepare");
+        let bytes = grey.photos[0].png.as_ref().expect("new image");
+        assert_eq!(
+            &bytes[..4],
+            b"\x89PNG",
+            "a grey reader's photograph is still a PNG"
+        );
+        assert_eq!(
+            image::load_from_memory(bytes).expect("output").color(),
+            image::ColorType::L8
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn preparation_uses_the_selected_reader_panel() {
         let root =
             std::env::temp_dir().join(format!("frame-host-other-panel-{}", std::process::id()));
@@ -747,6 +859,7 @@ mod tests {
         let panel = Panel {
             width: 1264,
             height: 1680,
+            colour: false,
         };
         let push =
             prepare_for_panel(&input, Fit::Crop, &Manifest::default(), false, panel).expect("push");
