@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.19",
-  "release_notes": "Your token is typed on Cobalt's own keyboard and saved by the reader, never the app, and a QR code opens the Lichess token page on a phone. Rated or Casual, side and clock are each one row of segments.",
+  "version": "1.0.20",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "grid",
   "capabilities": [
     "network",

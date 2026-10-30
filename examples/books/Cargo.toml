@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 kobo-bookview = { path = "../../crates/kobo-bookview", features = ["raster"] }
 kobo-doc = { path = "../../crates/kobo-doc" }
+kobo-image = { path = "../../crates/kobo-image" }
 kobo-read = { path = "../../crates/kobo-read" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 

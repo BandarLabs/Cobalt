@@ -4,8 +4,8 @@
   "short_label": "Nonograms",
   "summary": "Solve 78 picture and pattern puzzles, or make your own from photos.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.13",
-  "release_notes": "Guided checking and run entry are now switches in Options that show whether each is on, and the empty Photos tab shows the command to add a photo at every text size.",
+  "version": "0.1.14",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "grid",
   "capabilities": [],
   "setup": {

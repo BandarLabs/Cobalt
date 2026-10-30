@@ -5,8 +5,8 @@
   "summary": "Play four familiar logic games offline.",
   "page_description": "Four hundred and twenty offline puzzles across four logic games, graded from Starter to Hard, with the same controls in every game, separate progress and undo.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.10",
-  "release_notes": "Load and save failures show their fix right under the reason, Restart asks the same way as every other game, the mode button says what a tap will do, and the Kakuro pad marks the digit already in the square.",
+  "version": "0.1.11",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "grid",
   "capabilities": []
 }

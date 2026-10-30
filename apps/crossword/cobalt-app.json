@@ -5,8 +5,8 @@
   "summary": "Sixty-one offline crosswords with clue navigation and saved progress.",
   "page_description": "Solve sixty-one original 5 by 5 and 7 by 7 crosswords offline. Tap a square or a clue, type an answer, and check or reveal letters when you want help. Undo is always under the grid, and each puzzle keeps its own progress.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.11",
-  "release_notes": "When progress cannot be read or saved, the reason and its fix, Try again or Retry saving, now sit together in the middle of the screen.",
+  "version": "0.1.12",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "grid",
   "capabilities": []
 }

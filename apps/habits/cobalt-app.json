@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
-  "version": "0.1.12",
-  "release_notes": "Habit names are typed on Cobalt's own keyboard with the length limit in view, and a habit's schedule is picked from a list that marks the current one.",
+  "version": "0.1.13",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "check",
   "capabilities": []
 }

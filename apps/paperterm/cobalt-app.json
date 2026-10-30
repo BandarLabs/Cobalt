@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The pairing address and code fields say what goes in them, a refused entry says why in place of the guidance, and a pairing that could not be saved offers Retry saving on its message.",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "setup": {
     "steps": [
       {

@@ -15059,31 +15059,30 @@ fn render_all_with_selected_font(
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
+            // A grey track with the done part in ink, both a millimetre tall
+            // and centred in the bar's two. It was a black outline the width of
+            // the page with the fill butted against it, which on the panel was
+            // a heavy black box louder than the title it sat under, and at a
+            // few per cent read as an empty box rather than as progress.
             LayoutKind::Progress => {
-                stroke_clipped(
-                    surface,
-                    node.rect,
-                    tone::INK,
-                    metrics.rule_thickness(),
-                    clip,
-                );
                 let value = node
                     .text_lines
                     .first()
                     .and_then(|value| value.parse::<i32>().ok())
                     .unwrap_or(0);
+                let thickness = min(node.rect.height, metrics.tenth_mm(10));
+                let track = Rect {
+                    x: node.rect.x,
+                    y: node.rect.y + (node.rect.height - thickness) / 2,
+                    width: node.rect.width,
+                    height: thickness,
+                };
+                fill_clipped(surface, track, tone::RULE, clip);
                 fill_clipped(
                     surface,
                     Rect {
-                        x: node.rect.x + 2,
-                        y: node.rect.y + 2,
-                        width: node
-                            .rect
-                            .width
-                            .saturating_sub(4)
-                            .saturating_mul(min(100, value))
-                            / 100,
-                        height: max(0, node.rect.height - 4),
+                        width: track.width.saturating_mul(value.clamp(0, 100)) / 100,
+                        ..track
                     },
                     palette.emphasis(),
                     clip,

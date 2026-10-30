@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "glyph": "clock",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "The source list marks the one showing now and keeps every list's description in view."
+  "release_notes": "Rebuilt with the current Cobalt SDK."
 }

@@ -4,8 +4,8 @@
   "short_label": "Post",
   "summary": "Read and reply to letters from Hermes. Needs an account.",
   "page_description": "Read and reply to letters from your own Hermes Agent. The inbox and your drafts stay readable offline, and replies are sent when the gateway is back.",
-  "version": "0.2.8",
-  "release_notes": "The gateway address is typed on Cobalt's own keyboard with a wrong address explained under it, Check again sits right under the computer command, and a sent reply looks different from a refused one.",
+  "version": "0.2.9",
+  "release_notes": "Rebuilt with the current Cobalt SDK.",
   "glyph": "chat",
   "capabilities": [
     "network"
