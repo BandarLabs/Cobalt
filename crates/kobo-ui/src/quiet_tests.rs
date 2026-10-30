@@ -312,3 +312,31 @@ fn a_screen_with_no_room_to_spare_gives_the_room_back_before_it_loses_a_line() {
         assert!(given_back > 0, "{name}: the room was never needed back");
     }
 }
+
+/// A command that fits is drawn exactly as written: two spaces inside quotes
+/// are part of an argument, and a line break the application wrote is kept.
+#[test]
+fn a_command_keeps_its_own_spaces_and_line_breaks() {
+    let (cell, _) = measure_text_in("0", FontSize::Body, Face::Mono);
+    assert_eq!(
+        wrap_command(
+            "printf '%s' 'a  b'\nkobo  sidekick run",
+            cell * 40,
+            FontSize::Body
+        ),
+        ["printf '%s' 'a  b'", "kobo  sidekick run"]
+    );
+    // Only the run of spaces a line breaks at is dropped.
+    assert_eq!(
+        wrap_command("kobo  frame push", cell * 11, FontSize::Body),
+        ["kobo  frame", "push"]
+    );
+    assert_eq!(
+        wrap_command("kobo frame  push\n", cell * 10, FontSize::Body),
+        ["kobo frame", "push"]
+    );
+    assert_eq!(
+        wrap_command("kobo deck init\n\nkobo deck run", cell * 20, FontSize::Body),
+        ["kobo deck init", "", "kobo deck run"]
+    );
+}

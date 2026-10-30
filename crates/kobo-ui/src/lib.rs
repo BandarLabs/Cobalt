@@ -17366,50 +17366,78 @@ fn command_inset(metrics: &DisplayMetrics) -> (i32, i32) {
 /// fixed-pitch face. A word wider than the column is the one exception, and it
 /// is broken between two characters, the way a terminal wraps it, so every
 /// character is still drawn; the words after it start a fresh line.
+///
+/// Everything else is kept as written. The spaces inside a line are the
+/// command's own, and two of them inside quotes are an argument, so only the
+/// run a line breaks at is dropped. A line break the application wrote is a
+/// line break here too.
 fn wrap_command(text: &str, width: i32, size: FontSize) -> Vec<String> {
     let fits = |line: &str| measure_text_in(line, size, Face::Mono).0 <= width;
     let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        let joined = if line.is_empty() {
-            word.to_owned()
-        } else {
-            format!("{line} {word}")
-        };
-        if fits(&joined) {
-            line = joined;
-            continue;
-        }
-        if !line.is_empty() {
-            lines.push(std::mem::take(&mut line));
-        }
-        let mut rest = word;
-        let broken = !fits(rest);
-        while !rest.is_empty() && !fits(rest) {
-            // The longest run of whole characters that fits, and never less
-            // than one, so a column narrower than a letter still ends.
-            let mut end = rest.chars().next().map_or(rest.len(), char::len_utf8);
-            for (index, character) in rest.char_indices().skip(1) {
-                let next = index + character.len_utf8();
-                if !fits(&rest[..next]) {
-                    break;
-                }
-                end = next;
+    for written in text.split('\n') {
+        let mut line = String::new();
+        // Whether this written line has been broken yet. Spaces leading the
+        // line are its indent; spaces a break fell at belong to no line.
+        let mut broken = false;
+        let mut rest = written.trim_end();
+        while !rest.is_empty() {
+            let after_gap = rest.trim_start();
+            let gap = if broken && line.is_empty() {
+                ""
+            } else {
+                &rest[..rest.len() - after_gap.len()]
+            };
+            let word_end = after_gap
+                .find(char::is_whitespace)
+                .unwrap_or(after_gap.len());
+            let word = &after_gap[..word_end];
+            rest = &after_gap[word_end..];
+            let joined = format!("{line}{gap}{word}");
+            if fits(&joined) {
+                line = joined;
+                continue;
             }
-            lines.push(rest[..end].to_owned());
-            rest = &rest[end..];
+            broken = true;
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            if fits(word) {
+                line = word.to_owned();
+                continue;
+            }
+            let mut piece = word;
+            while !piece.is_empty() && !fits(piece) {
+                // The longest run of whole characters that fits, and never
+                // less than one, so a column narrower than a letter still ends.
+                let mut end = piece.chars().next().map_or(piece.len(), char::len_utf8);
+                for (index, character) in piece.char_indices().skip(1) {
+                    let next = index + character.len_utf8();
+                    if !fits(&piece[..next]) {
+                        break;
+                    }
+                    end = next;
+                }
+                lines.push(piece[..end].to_owned());
+                piece = &piece[end..];
+            }
+            // The end of a broken word stands alone, so the words after it
+            // start a line of their own and "-- /bin/sh" is not split from
+            // its "--".
+            if !piece.is_empty() {
+                lines.push(piece.to_owned());
+            }
         }
-        // The end of a broken word stands alone, so the words after it start
-        // a line of their own and "-- /bin/sh" is not split from its "--".
-        if !broken {
-            line = rest.to_owned();
-        } else if !rest.is_empty() {
-            lines.push(rest.to_owned());
+        if !line.is_empty() || written.trim().is_empty() {
+            lines.push(line);
         }
     }
-    if !line.is_empty() {
-        lines.push(line);
+    // A blank line between two commands is the application's; one before the
+    // first or after the last is a stray line break.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
     }
+    let leading = lines.iter().take_while(|line| line.is_empty()).count();
+    lines.drain(..leading);
     lines
 }
 
