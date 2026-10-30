@@ -182,7 +182,11 @@ impl Game {
                 metrics.width > metrics.height,
             )
             .build();
-        let layout = skeleton.layout_with(&metrics, &Chrome::measuring(true));
+        // Measured as the board's screen is laid out, which is without the
+        // room the runtime leaves on a screen with no board in it.
+        let layout = kobo_sdk::with_room_given_up(|| {
+            skeleton.layout_with(&metrics, &Chrome::measuring(true))
+        });
         let height = layout.content.height - layout.flow_height - metrics.space(Space::Medium) * 2;
         let mut view = self.viewport.clone().unwrap_or(probe);
         // Reflow only for the allocated space. Retain a panned window even when

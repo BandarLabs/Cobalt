@@ -230,7 +230,7 @@ impl Flashcards {
                 self.loading_total,
                 self.sample_saving,
             ),
-            View::FirstUse => first_use_screen(self.menu_open),
+            View::FirstUse => first_use_screen(&context.metrics(), self.menu_open),
             View::Decks => self.deck_picker(),
             View::Review => self.review(),
             View::Settings => {
@@ -1385,24 +1385,41 @@ fn loading_screen(
         .unwrap_or_else(|| with(0))
 }
 
-fn first_use_screen(menu_open: bool) -> Screen {
-    ScreenBuilder::new("flashcards-first-use")
-        .top_bar("Flashcards")
-        .top_bar_overflow("more", menu_open, [("notices", "Licences & about")])
-        .heading("No collection yet")
+fn first_use_screen(metrics: &kobo_sdk::DisplayMetrics, menu_open: bool) -> Screen {
+    let build = |heading: bool| {
+        let mut screen = ScreenBuilder::new("flashcards-first-use")
+            .top_bar("Flashcards")
+            .top_bar_overflow("more", menu_open, [("notices", "Licences & about")]);
+        if heading {
+            screen = screen.heading("No collection yet");
+        }
         // No sentence before the button: it said what the button and the
         // section under it already say, and at the largest text size held
         // sideways the two commands had no room left under it.
-        .primary_button("sample", "Start with the sample")
-        // The two commands, each set apart and whole. The sentence these
-        // replace carried a run of spaces in the middle of a filename and left
-        // out where the bundle goes, so typing it as shown failed.
-        .section("Your own Anki deck")
-        .command("kobo flashcards import deck.apkg --merge collection.cobfc")
-        .text("Then send it over Wi-Fi:")
-        .command("kobo flashcards push collection.cobfc")
-        .bottom_action("retry", "Read collection again")
-        .build()
+        screen
+            .primary_button("sample", "Start with the sample")
+            // The two commands, each set apart and whole. The sentence these
+            // replace carried a run of spaces in the middle of a filename and
+            // left out where the bundle goes, so typing it as shown failed.
+            .section("Your own Anki deck")
+            .command("kobo flashcards import deck.apkg --merge collection.cobfc")
+            .text("Then send it over Wi-Fi:")
+            .command("kobo flashcards push collection.cobfc")
+            .bottom_action("retry", "Read collection again")
+            .build()
+    };
+    // Held sideways at the largest text size the panel cannot hold the
+    // heading as well as both commands whole. The commands cannot be
+    // shortened and the bar already names the app, so the heading goes.
+    let full = build(true);
+    if full
+        .diagnostics(metrics, &Chrome::measuring(true))
+        .has_errors()
+    {
+        build(false)
+    } else {
+        full
+    }
 }
 
 fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
@@ -2639,7 +2656,12 @@ mod tests {
     ) -> Vec<(&'static str, Screen, Option<ActionId>, bool)> {
         vec![
             ("empty", empty_app.deck_picker(), None, false),
-            ("first-use", first_use_screen(false), None, false),
+            (
+                "first-use",
+                first_use_screen(&CLARA_BW_METRICS, false),
+                None,
+                false,
+            ),
             (
                 "done",
                 done_screen("日本語", 18, Some(1), false, Some(JAPANESE_FONT_HANDLE)),
@@ -2812,7 +2834,7 @@ mod tests {
                         diagnostics.issues
                     );
                 };
-                let first_use = first_use_screen(false);
+                let first_use = first_use_screen(&metrics, false);
                 assert_fits("first use", &first_use);
                 assert!(screen_text(
                     &first_use,
