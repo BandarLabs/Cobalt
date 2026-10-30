@@ -4,8 +4,8 @@
   "short_label": "Digest",
   "summary": "Read your Miniflux feeds anywhere. Needs an account.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.10",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.11",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "rss",
   "capabilities": [
     "network"

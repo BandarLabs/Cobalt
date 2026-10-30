@@ -221,15 +221,20 @@ mod tests {
         let mut frame = Frame {
             version: SELECTED_GRID_VERSION,
             request_id: 10,
-            message: Message::SetScreen(Screen::new(
-                1,
-                vec![Node::Grid {
-                    id: NodeId(7),
-                    columns: 1,
-                    square: true,
-                    cells: vec![Cell::new(ActionId(9), "7").with_selected(true)],
-                }],
-            )),
+            // Measured in the type its protocol was laid out in, which is
+            // what the decoder will say it was.
+            message: Message::SetScreen(
+                Screen::new(
+                    1,
+                    vec![Node::Grid {
+                        id: NodeId(7),
+                        columns: 1,
+                        square: true,
+                        cells: vec![Cell::new(ActionId(9), "7").with_selected(true)],
+                    }],
+                )
+                .with_typography(kobo_ui::Typography::Folio),
+            ),
         };
         let old = encode(&frame).unwrap();
         assert_eq!(decode(&old).unwrap(), frame);

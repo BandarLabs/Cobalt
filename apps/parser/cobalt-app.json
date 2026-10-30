@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.17",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.18",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "book",
   "capabilities": [],
   "setup": {

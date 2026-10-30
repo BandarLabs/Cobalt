@@ -4,8 +4,8 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.2.5",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.2.6",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "note",
   "capabilities": []
 }

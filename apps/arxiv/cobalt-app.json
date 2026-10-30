@@ -3,11 +3,11 @@
   "display_name": "Preprints",
   "short_label": "Preprints",
   "summary": "Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "glyph": "note",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "page_description": "Browse the newest arXiv preprints in any category, grouped under arXiv's own headings, or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints with their figures for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
 }

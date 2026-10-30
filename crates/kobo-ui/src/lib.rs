@@ -139,6 +139,9 @@ pub fn row_names_the_columns(cells: &[String]) -> bool {
 mod folio_tests;
 
 #[cfg(test)]
+mod quiet_tests;
+
+#[cfg(test)]
 mod responsive_profile_tests;
 
 /// A stacked cell written with the heading its column was under.
@@ -219,6 +222,16 @@ pub enum QuoteRole {
     Body,
     /// Who said it, and when. Smaller, and in the muted tone.
     Byline,
+    /// Something the owner types on a computer, exactly as written.
+    ///
+    /// Setup screens told the owner what to run with a quotation: a rule at
+    /// the left and the words in the interface face, which is how a reply to
+    /// a comment is drawn. A command is not a reply. It is set in the
+    /// fixed-pitch face on a grey panel the width of the column, with no rule
+    /// and no indent, which is how every manual and terminal the owner has
+    /// seen sets one. Protocol 17; an earlier runtime draws it as a
+    /// quotation.
+    Command,
 }
 
 impl QuoteRole {
@@ -229,7 +242,7 @@ impl QuoteRole {
     #[must_use]
     pub const fn size(self) -> FontSize {
         match self {
-            Self::Body => FontSize::Body,
+            Self::Body | Self::Command => FontSize::Body,
             Self::Byline => FontSize::Caption,
         }
     }
@@ -238,8 +251,17 @@ impl QuoteRole {
     #[must_use]
     pub const fn tone(self) -> u8 {
         match self {
-            Self::Body => tone::INK,
+            Self::Body | Self::Command => tone::INK,
             Self::Byline => tone::MUTED,
+        }
+    }
+
+    /// The face it is measured and drawn in, inside a column set in `prose`.
+    #[must_use]
+    pub fn face(self, prose: Face) -> Face {
+        match self {
+            Self::Body | Self::Byline => prose,
+            Self::Command => Face::Mono,
         }
     }
 }
@@ -1698,9 +1720,10 @@ pub struct Screen {
     /// the interface face is chosen so that a label glanced at once cannot be
     /// misread, which is a different job and a different answer.
     pub reading: bool,
-    /// Protocol-11 screens keep the Atkinson display metrics they measured
-    /// against. This is runtime-local compatibility state, never wire data.
-    pub legacy_typography: bool,
+    /// The type and spacing the application measured this screen against.
+    /// Runtime-local compatibility state, decided from the protocol version a
+    /// frame arrived in, never wire data. See [`Typography`].
+    pub typography: Typography,
 
     /// A publisher font already held by the runtime for this application.
     ///
@@ -1886,7 +1909,7 @@ impl Screen {
             page_turns: None,
             owns_back: false,
             reading: false,
-            legacy_typography: false,
+            typography: Typography::CURRENT,
             reading_font: None,
             text_scale: None,
             hold: None,
@@ -1937,7 +1960,18 @@ impl Screen {
     /// Uses the pre-Folio Atkinson display cuts for a decoded legacy frame.
     #[must_use]
     pub const fn with_legacy_typography(mut self, legacy: bool) -> Self {
-        self.legacy_typography = legacy;
+        self.typography = if legacy {
+            Typography::Paperback
+        } else {
+            Typography::CURRENT
+        };
+        self
+    }
+
+    /// Lays the screen out in the type an older application measured with.
+    #[must_use]
+    pub const fn with_typography(mut self, typography: Typography) -> Self {
+        self.typography = typography;
         self
     }
 
@@ -2015,14 +2049,55 @@ impl Screen {
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let _environment = environment::TextEnvironment::enter(self, metrics);
-        with_legacy_typography(self.legacy_typography, || {
+        with_typography(self.typography, || {
             with_reading_font(self.reading_font, || {
                 self.layout_with_selected_font(metrics, chrome)
             })
         })
     }
 
+    /// Lays the screen out, giving back the quiet edition's extra room when
+    /// the screen does not fit with it.
+    ///
+    /// Space is the first thing a full screen gives up. The room protocol 17
+    /// adds under the bar, above a section and above a button is a few
+    /// millimetres, and at the largest text sizes a screen that Folio fitted
+    /// exactly no longer did: the paragraph above two commands lost every
+    /// line. So the screen is laid out once with the room and, only if
+    /// something was cut short, again with Folio's one-millimetre gaps and
+    /// secondary lines at caption size. Both passes run in the application
+    /// and in the runtime alike, so the two still agree on what was drawn.
     fn layout_with_selected_font(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        if typography() != Typography::Quiet {
+            return self.layout_once(metrics, chrome);
+        }
+        if room_given_up() {
+            return self.layout_without_room(metrics, chrome);
+        }
+        // A board is sized to every millimetre it is given, so room above it
+        // is taken out of its squares, and the number in the corner of a
+        // crossword square is the first thing that stops fitting. A screen
+        // built round one keeps Folio's gaps rather than learning that a
+        // square at a time.
+        if self.nodes.iter().any(fills_the_room) {
+            return self.layout_without_room(metrics, chrome);
+        }
+        let outer = CUT_SHORT.with(|cut| cut.replace(false));
+        let spaced = self.layout_once(metrics, chrome);
+        let cut = CUT_SHORT.with(|slot| slot.replace(outer));
+        if !cut {
+            return spaced;
+        }
+        self.layout_without_room(metrics, chrome)
+    }
+
+    fn layout_without_room(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        let mut layout = with_room_given_up(|| self.layout_once(metrics, chrome));
+        layout.room_given_up = true;
+        layout
+    }
+
+    fn layout_once(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
         let prose = if self.reading {
@@ -2047,7 +2122,7 @@ impl Screen {
         cursor = cursor.saturating_add(band);
         if let Some(top_bar) = &self.top_bar {
             cursor = layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
-            cursor = cursor.saturating_add(gap);
+            cursor = cursor.saturating_add(metrics.below_top_bar(prose));
         }
         let content_top = cursor;
 
@@ -2084,7 +2159,7 @@ impl Screen {
         // A rail belongs to the collection it precedes, not to the whole
         // screen. Reserve its gutter from every following flow node so it
         // cannot be painted through by an unrelated card or row.
-        let rail_reserved = if !self.legacy_typography
+        let rail_reserved = if self.typography != Typography::Paperback
             && self
                 .nodes
                 .iter()
@@ -2098,8 +2173,16 @@ impl Screen {
 
         for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
+                if self.nodes[position..]
+                    .iter()
+                    .any(|node| !matches!(node, Node::Flex { .. }))
+                {
+                    note_cut_short();
+                }
                 break;
             }
+            let previous = position.checked_sub(1).map(|before| &self.nodes[before]);
+            cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
             // A splash centres itself in the band it is handed, and the band
             // it is handed is everything that is left. That is right when it
             // is the last thing on the screen and wrong the moment a recovery
@@ -2118,6 +2201,7 @@ impl Screen {
                     metrics,
                     prose,
                     gap,
+                    Some(node),
                 );
                 // Fills share the room between them, so content set between
                 // two of them is centred on the page: a twelve line poem in
@@ -2145,6 +2229,7 @@ impl Screen {
                 metrics,
                 prose,
                 gap,
+                true,
             );
             cursor = with_flow_height_bound(bottom < content_bottom, || {
                 layout_flow_node(
@@ -2160,6 +2245,9 @@ impl Screen {
                 )
             });
             layout.flow_height = cursor.saturating_sub(content_top).max(0);
+            if cursor > content_bottom {
+                note_cut_short();
+            }
             cursor = cursor.saturating_add(gap);
         }
 
@@ -2368,6 +2456,8 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
         }
+        let previous = position.checked_sub(1).map(|before| &overlay.nodes[before]);
+        cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
         let bottom = flow_node_bottom(
             node,
             &overlay.nodes[position + 1..],
@@ -2377,6 +2467,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             metrics,
             prose,
             gap,
+            true,
         );
         cursor = with_flow_height_bound(bottom < overlay_bottom, || {
             layout_flow_node(
@@ -2544,6 +2635,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         node.rect.x += x;
         node.rect.y += y;
         if node.rect.y + node.rect.height > bottom {
+            note_cut_short();
             continue;
         }
         if layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -5226,6 +5318,21 @@ pub struct Layout {
     /// text wrapped in one face and drawn in another does not end where the
     /// wrapping said it would.
     pub prose_face: Face,
+    /// Whether the quiet edition's extra room was given back to fit this
+    /// screen. Painting and checking it have to be done in the same sizes it
+    /// was laid out in, and a secondary line is a step smaller without the
+    /// room; see [`Typography::Quiet`].
+    pub room_given_up: bool,
+}
+
+/// Runs `body` in the sizes a layout was made in, with the quiet edition's
+/// room or without it.
+fn in_room<T>(given_up: bool, body: impl FnOnce() -> T) -> T {
+    if given_up {
+        with_room_given_up(body)
+    } else {
+        body()
+    }
 }
 
 /// How urgently a screen diagnostic should be treated.
@@ -5779,7 +5886,7 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             measure_text(text, FontSize::for_heading_level(*level)).0
         }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
-        Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
+        Node::Secondary { text, .. } => measure_text(text, FontSize::Note).0,
         // The same padding the button lays itself out with, not a smaller one
         // that looks similar. A menu measured with two millimetres a side and
         // drawn with four is two words wide and four millimetres short, which
@@ -6160,10 +6267,11 @@ fn layout_node(
             } else {
                 usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
             };
-            let ranges = wrap_ranges(text, width, FontSize::Body, prose)
-                .into_iter()
-                .take(visible_lines)
-                .collect::<Vec<_>>();
+            let mut ranges = wrap_ranges(text, width, FontSize::Body, prose);
+            if ranges.len() > visible_lines {
+                note_cut_short();
+                ranges.truncate(visible_lines);
+            }
             let lines: Vec<String> = if ranges.is_empty() {
                 if text.is_empty() && visible_lines > 0 {
                     vec![String::new()]
@@ -6256,6 +6364,9 @@ fn layout_node(
                 )
                 .unwrap_or(0)
             };
+            if ranges.len() > visible_lines {
+                note_cut_short();
+            }
             let mut line_y = y.saturating_add(before);
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
                 if layout.nodes.len() >= rich_text_limit {
@@ -6482,8 +6593,8 @@ fn layout_node(
             // in MIN_TEXT_HEIGHT is there so a control is never smaller than a
             // finger; metadata is not touched, and applying it puts a blank
             // line between a caption and the thing it captions.
-            let lines = wrap_text(text, width, FontSize::Caption);
-            let height = lines.len() as i32 * FontSize::Caption.line_height();
+            let lines = wrap_text(text, width, FontSize::Note);
+            let height = lines.len() as i32 * FontSize::Note.line_height();
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -6590,28 +6701,44 @@ fn layout_node(
             text,
             fold,
         } => {
-            let depth = (*depth).min(MAX_QUOTE_DEPTH);
+            // A command answers nothing, so it has no depth to show.
+            let depth = if *role == QuoteRole::Command {
+                0
+            } else {
+                (*depth).min(MAX_QUOTE_DEPTH)
+            };
             let (offset, full_width) = quote_offsets(metrics, width, depth);
             let text_x = x.saturating_add(offset);
             let size = role.size();
+            let face = role.face(prose);
             // Only a byline folds, and only a byline gives up room for the
             // mark. A body that shortened its measure to leave space for a
             // control it does not have would ragged the whole comment.
             let fold = match role {
                 QuoteRole::Byline => *fold,
-                QuoteRole::Body => None,
+                QuoteRole::Body | QuoteRole::Command => None,
             };
             let mark = fold.map_or(0, |_| fold_mark_width(metrics));
-            let text_width = max(1, full_width - mark);
-            let lines = wrap_text_in(text, text_width, size, prose);
+            let inset = if *role == QuoteRole::Command {
+                command_inset(metrics).0
+            } else {
+                0
+            };
+            let text_width = max(1, full_width - mark - 2 * inset);
+            let lines = if *role == QuoteRole::Command {
+                wrap_command(text, text_width, size)
+            } else {
+                wrap_text_in(text, text_width, size, face)
+            };
             // A byline is one short line and is allowed to be shorter than a
             // finger: it is not a control, and forcing it to the minimum text
             // height is what put a comment's author a whole blank line away
             // from the comment.
-            let measured = lines.len() as i32 * size.line_height_in(prose);
+            let measured = lines.len() as i32 * size.line_height_in(face);
             let height = match role {
                 QuoteRole::Body => max(MIN_TEXT_HEIGHT, measured),
                 QuoteRole::Byline => byline_height(measured, metrics),
+                QuoteRole::Command => command_height(measured, metrics),
             };
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -7057,6 +7184,7 @@ fn layout_node(
                     metrics,
                     prose,
                     inner_gap,
+                    false,
                 );
                 cursor = with_flow_height_bound(child_bottom < bottom, || {
                     layout_flow_node(
@@ -7171,6 +7299,7 @@ fn layout_node(
                             metrics,
                             prose,
                             gap,
+                            false,
                         );
                         cursor = with_flow_height_bound(node_bottom < bottom, || {
                             with_band_slot(|| {
@@ -7211,6 +7340,7 @@ fn layout_node(
                             metrics,
                             prose,
                             gap,
+                            false,
                         );
                         end = with_flow_height_bound(node_bottom < bottom, || {
                             with_band_slot(|| {
@@ -7438,6 +7568,7 @@ fn layout_node(
                 // What every node does when it runs out of panel: the facts
                 // that cannot fit whole are dropped, never drawn half-cut.
                 if cursor.saturating_add(height) > bottom {
+                    note_cut_short();
                     break;
                 }
                 layout.nodes.push(LayoutNode {
@@ -7464,7 +7595,15 @@ fn layout_node(
                 });
                 cursor = cursor.saturating_add(height).saturating_add(gap / 2);
             }
-            cursor
+            // The half gap is between two facts, not after the last. Counted
+            // after it too, a list whose last fact fitted ran its node past
+            // the bound it was fitted to by those few pixels, and a band
+            // holding it was clipped at the foot of the panel.
+            if typography() == Typography::Quiet && cursor > y {
+                cursor.saturating_sub(gap / 2)
+            } else {
+                cursor
+            }
         }
         // Nothing is drawn and nothing is reserved. The screen loop has
         // already moved the cursor down; anywhere else -- inside a card, an
@@ -7526,13 +7665,16 @@ fn layout_node(
             } else {
                 usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
             };
-            let lines = items
+            let mut lines = items
                 .iter()
                 .skip(start)
                 .take(per_page)
                 .flat_map(|item| wrap_text(item, width, FontSize::Body))
-                .take(visible_lines)
                 .collect::<Vec<_>>();
+            if lines.len() > visible_lines {
+                note_cut_short();
+                lines.truncate(visible_lines);
+            }
             let natural_height = max(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
             let height = if legacy_typography() && !flow_height_bound() {
                 natural_height
@@ -7808,7 +7950,7 @@ fn layout_node(
                 } else {
                     match cell.glyph {
                         Some(glyph) if style == CellStyle::Pad => {
-                            let inset = metrics.tenth_mm(PAD_BORDER_TENTH_MM);
+                            let inset = metrics.tenth_mm(pad_border_tenth_mm());
                             let mark = min(cell_height, cell_width) * 2 / 5;
                             layout.nodes.push(LayoutNode {
                                 id: *id,
@@ -8330,6 +8472,7 @@ fn layout_node(
                 // fit them. When it cannot, the grid stops rather than drawing
                 // over whatever the band was reserved for.
                 if cell_y.saturating_add(cell_height) > bottom {
+                    note_cut_short();
                     break;
                 }
                 rows = row + 1;
@@ -9345,7 +9488,7 @@ fn options_per_page_at_current_scale(metrics: &DisplayMetrics, summaries: bool) 
             .status_band_height()
             .saturating_add(metrics.top_bar_height())
             .saturating_add(metrics.rule_thickness())
-            .saturating_add(gap)
+            .saturating_add(metrics.below_top_bar(Face::Text))
             .saturating_add(metrics.nav_bar_height());
         let prompt = FontSize::Body
             .line_height()
@@ -9716,6 +9859,11 @@ pub enum FontSize {
     /// Dense monospace terminal text; interface labels retain their usual sizes.
     Terminal,
     Caption,
+    /// A line about the content set beside it: [`Node::Secondary`], which
+    /// applications use for metadata and for the sentence telling the owner
+    /// what to do. The caption's size until protocol 17, and a step above it
+    /// since; see [`FontSize::tenth_mm`].
+    Note,
     Body,
     Title,
     Heading,
@@ -9754,14 +9902,36 @@ impl FontSize {
     /// one did at 6.8 mm, and takes a third less of the panel doing it. The
     /// weight is chosen inside the typesetter from the size, so nothing here
     /// and nothing in an application asks for it.
+    ///
+    /// Protocol 17 took the top of the scale down again and the bottom up. A
+    /// 5.4 mm bold serif under a 3.1 mm bar title gave most screens two titles,
+    /// and the larger one was the page's least important line: "Pair with
+    /// your computer" over the two commands that actually pair it. At 4.6 mm
+    /// it still leads the page and no longer competes with the bar. Caption
+    /// went the other way for a secondary line, from 2.4 to 2.7 mm, because
+    /// applications set their instructions in one ("Tick the sightings to
+    /// remove.") and at caption size in the muted tone those read as
+    /// footnotes. Captions proper stay where they were: a tab, a chip, a
+    /// destination's name and the number in the corner of a crossword square
+    /// are fitted to the room they have, and are read at a glance. Body is
+    /// unchanged: it is the size every line of every list is set in, and it
+    /// was never the problem. A secondary line goes back to caption size on a
+    /// screen that has to give room back (see [`Typography::Quiet`]), which
+    /// is every screen built round a board: there the step was taken out of
+    /// the squares. Screens measured against the earlier sizes keep them; see
+    /// [`Typography`].
     #[must_use]
-    pub const fn tenth_mm(self) -> i32 {
-        match self {
-            Self::Terminal => 18,
-            Self::Caption => 24,
-            Self::Body => 31,
-            Self::Title => 42,
-            Self::Heading => 54,
+    pub fn tenth_mm(self) -> i32 {
+        match (self, typography()) {
+            (Self::Terminal, _) => 18,
+            (Self::Caption, _) => 24,
+            (Self::Note, Typography::Quiet) if !room_given_up() => 27,
+            (Self::Note, _) => 24,
+            (Self::Body, _) => 31,
+            (Self::Title, Typography::Quiet) => 38,
+            (Self::Title, _) => 42,
+            (Self::Heading, Typography::Quiet) => 46,
+            (Self::Heading, _) => 54,
         }
     }
 
@@ -9786,7 +9956,7 @@ impl FontSize {
     #[must_use]
     pub const fn scale(self) -> i32 {
         match self {
-            Self::Terminal | Self::Caption => 2,
+            Self::Terminal | Self::Caption | Self::Note => 2,
             Self::Body => 3,
             Self::Title => 4,
             Self::Heading => 5,
@@ -9843,7 +10013,7 @@ impl FontSize {
 
     const fn unscaled_fallback_line_height(self) -> i32 {
         match self {
-            Self::Terminal | Self::Caption => 18,
+            Self::Terminal | Self::Caption | Self::Note => 18,
             Self::Body => 27,
             Self::Title => 36,
             Self::Heading => 45,
@@ -9982,7 +10152,9 @@ static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>
 
 thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
-    static LEGACY_TYPOGRAPHY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TYPOGRAPHY: std::cell::Cell<Typography> = const { std::cell::Cell::new(Typography::CURRENT) };
+    static CUT_SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ROOM_GIVEN_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FLOW_HEIGHT_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static IN_BAND_SLOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -10030,31 +10202,119 @@ fn flow_height_bound() -> bool {
     FLOW_HEIGHT_BOUND.with(std::cell::Cell::get)
 }
 
-/// Runs layout or painting with pre-Folio interface typography selected.
+/// The generation of interface type and spacing a screen was measured in.
 ///
-/// Only the protocol decoder uses this for version-11 screens. Keeping the
-/// choice scoped to one frame prevents an old app's local text measurements
-/// from drifting when a 0.3.5 runtime also renders Folio screens.
-pub fn with_legacy_typography<T>(legacy: bool, body: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
+/// An application lays its screens out in its own process, with the kobo-ui it
+/// was built against, and the runtime refuses a screen whose text it would
+/// draw past the space the application fitted it to. So the runtime cannot
+/// draw every screen in its newest type: a line an older application measured
+/// at one size would be drawn at another, and its last line would land under
+/// the button below it. Each edition is kept for the applications that
+/// measured against it, and the protocol decoder chooses one from the version
+/// a frame arrived in.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Typography {
+    /// Protocol 11 and older: the Atkinson display cuts, and a scale set
+    /// against a printed paperback.
+    Paperback,
+    /// Protocols 12 to 16: the Folio scale, with every block one millimetre
+    /// from the next.
+    Folio,
+    /// Protocol 17: headings a step quieter, secondary lines large enough to
+    /// carry an instruction, and room under the top bar, above a section and
+    /// above a button. A screen that does not fit with that room is laid out
+    /// again without it, the secondary lines back at caption size, before a
+    /// line of it is lost; a screen built round a board always is. See
+    /// [`FontSize::tenth_mm`] and [`DisplayMetrics::below_top_bar`].
+    Quiet,
+}
+
+impl Typography {
+    /// The edition applications built against this crate measure in.
+    pub const CURRENT: Self = Self::Quiet;
+}
+
+impl Default for Typography {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+/// Runs layout or painting in one edition of the interface type.
+///
+/// The protocol decoder chooses it for a decoded frame. Keeping the choice
+/// scoped to one frame prevents an old app's local text measurements from
+/// drifting when the runtime also renders screens of its own in the current
+/// edition.
+pub fn with_typography<T>(typography: Typography, body: impl FnOnce() -> T) -> T {
+    struct Restore(Typography);
     impl Drop for Restore {
         fn drop(&mut self) {
-            LEGACY_TYPOGRAPHY.with(|slot| slot.set(self.0));
+            TYPOGRAPHY.with(|slot| slot.set(self.0));
         }
     }
-    let previous = LEGACY_TYPOGRAPHY.with(|slot| {
-        let previous = slot.get();
-        slot.set(legacy);
-        previous
-    });
+    let previous = TYPOGRAPHY.with(|slot| slot.replace(typography));
     let _restore = Restore(previous);
     body()
+}
+
+/// The edition the frame being laid out or drawn was measured in.
+#[must_use]
+pub fn typography() -> Typography {
+    TYPOGRAPHY.with(std::cell::Cell::get)
+}
+
+/// Runs layout or painting with pre-Folio interface typography selected, or
+/// with the current edition when `legacy` is false.
+pub fn with_legacy_typography<T>(legacy: bool, body: impl FnOnce() -> T) -> T {
+    with_typography(
+        if legacy {
+            Typography::Paperback
+        } else {
+            Typography::CURRENT
+        },
+        body,
+    )
 }
 
 /// Whether the currently laid-out frame must use protocol-11 type metrics.
 #[must_use]
 pub fn legacy_typography() -> bool {
-    LEGACY_TYPOGRAPHY.with(std::cell::Cell::get)
+    typography() == Typography::Paperback
+}
+
+/// Records that the frame being laid out did not hold everything it was
+/// given: a paragraph lost lines at its bound, or a node found no room.
+fn note_cut_short() {
+    CUT_SHORT.with(|cut| cut.set(true));
+}
+
+/// Whether the quiet edition's extra room has been given back for this frame.
+fn room_given_up() -> bool {
+    ROOM_GIVEN_UP.with(std::cell::Cell::get)
+}
+
+/// Runs `body` with the room the quiet edition adds taken back out: the space
+/// under the top bar, above a section and above a button, and the step a
+/// secondary line is set above caption size.
+///
+/// Layout does this by itself for a screen that does not fit with the room,
+/// and for any screen built round a board. It is public for an application
+/// that measures part of such a screen before it builds the rest: the
+/// controls under a puzzle, laid out without the board to find how much of
+/// the panel the board can have. Measured with the room, they claim more of
+/// the panel than they will take, and the board is fitted smaller than the
+/// screen it is drawn on.
+pub fn with_room_given_up<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ROOM_GIVEN_UP.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = ROOM_GIVEN_UP.with(|slot| slot.replace(true));
+    let _restore = Restore(previous);
+    body()
 }
 
 /// Installs or replaces one bounded publisher face.
@@ -10390,11 +10650,31 @@ impl DisplayMetrics {
     /// text can flow through.
     #[must_use]
     pub fn prose_area(&self, top_bar: bool, nav_bar: bool) -> ProseArea {
+        self.prose_area_in(top_bar, nav_bar, Face::Text)
+    }
+
+    /// The room between the top bar's rule and the first thing under it.
+    ///
+    /// One millimetre until protocol 17, the same gap as between any two
+    /// blocks, which is what made content look jammed under the bar: a
+    /// heading's ascenders sat closer to the rule than to the line under
+    /// them. Three millimetres now, except on a page of a book, where every
+    /// line the bar takes from the page is a line the reader turns for.
+    #[must_use]
+    pub fn below_top_bar(&self, face: Face) -> i32 {
+        if typography() == Typography::Quiet && face != Face::Reading && !room_given_up() {
+            self.tenth_mm(30)
+        } else {
+            self.space(Space::Tight)
+        }
+    }
+
+    fn prose_area_with_face(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
         let margin = self.screen_margin();
         let gap = self.space(Space::Tight);
         let mut top = margin;
         if top_bar {
-            top = self.top_bar_height() + self.rule_thickness() + gap;
+            top = self.top_bar_height() + self.rule_thickness() + self.below_top_bar(face);
         }
         let bottom = if nav_bar {
             self.height - self.nav_bar_height()
@@ -10409,7 +10689,7 @@ impl DisplayMetrics {
             },
             height: max_i32(0, bottom - top),
             gap,
-            face: Face::Text,
+            face,
         }
     }
 
@@ -10438,10 +10718,7 @@ impl DisplayMetrics {
     /// last lines off the bottom.
     #[must_use]
     pub fn prose_area_in(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
-        ProseArea {
-            face,
-            ..self.prose_area(top_bar, nav_bar)
-        }
+        self.prose_area_with_face(top_bar, nav_bar, face)
     }
 }
 
@@ -10571,7 +10848,13 @@ pub fn paginate_tagged_below(
     for (tag, depth, role, paragraph) in paragraphs {
         let tag = *tag;
         let depth = (*depth).min(MAX_QUOTE_DEPTH);
-        let role = *role;
+        // A thread is paginated a line at a time, and a command split across
+        // two pages is two commands. One reaching a thread is set as what was
+        // said, which is all it is there.
+        let role = match *role {
+            QuoteRole::Command => QuoteRole::Body,
+            role => role,
+        };
         let size = role.size();
         let line_height = size.line_height_in(area.face);
         let (_, width) = quote_offsets(metrics, area.width, depth);
@@ -10612,6 +10895,7 @@ pub fn paginate_tagged_below(
                     + match role {
                         QuoteRole::Body => max_i32(MIN_TEXT_HEIGHT, measured),
                         QuoteRole::Byline => byline_height(measured, metrics),
+                        QuoteRole::Command => command_height(measured, metrics),
                     };
                 page.push((tag, depth, role, lines.join(" ")));
                 break;
@@ -11309,6 +11593,59 @@ pub fn paginate_rows_with_edges(
 /// same wrapping and spacing the layout engine uses, so a page that fits here
 /// is a page that will be drawn whole.
 #[must_use]
+/// Whether a node sizes itself to all the room it is handed: a board, a grid
+/// of squares or a terminal, here or in a band beside other things.
+fn fills_the_room(node: &Node) -> bool {
+    match node {
+        Node::Grid { square: true, .. }
+        | Node::Board { .. }
+        | Node::PencilBoard { .. }
+        | Node::Terminal { .. } => true,
+        Node::Band { slots, .. } => slots
+            .iter()
+            .any(|slot| slot.nodes.iter().any(fills_the_room)),
+        _ => false,
+    }
+}
+
+/// Room left above `node` beyond the gap every block gets, given the block
+/// laid out before it.
+///
+/// Folio set every block one millimetre from the next. A heading opening a
+/// second section sat as close to the paragraph above it, which it ends, as to
+/// the one under it, which it introduces, and a button sat on the last line of
+/// the sentence explaining it. Protocol 17 groups by space instead: a heading
+/// that follows anything is set four millimetres below it, and the first
+/// button after anything that is not a button two. A run of buttons stays one
+/// millimetre apart, because a stack of them is one group. A page of a book is
+/// left alone, for the reason [`DisplayMetrics::below_top_bar`] gives.
+fn space_before(
+    previous: Option<&Node>,
+    node: &Node,
+    metrics: &DisplayMetrics,
+    prose: Face,
+) -> i32 {
+    if typography() != Typography::Quiet || prose == Face::Reading || room_given_up() {
+        return 0;
+    }
+    let Some(previous) = previous else {
+        return 0;
+    };
+    // A fill or a spacer has already said how far apart the two should be.
+    if matches!(previous, Node::Flex { .. } | Node::Spacer { .. }) {
+        return 0;
+    }
+    let action = |node: &Node| matches!(node, Node::Button { .. } | Node::Band { .. });
+    let wanted = match node {
+        Node::Heading { .. } if !matches!(previous, Node::Heading { .. }) => Space::Medium,
+        _ if action(node) && !action(previous) => Space::Small,
+        _ => return 0,
+    };
+    metrics
+        .space(wanted)
+        .saturating_sub(metrics.space(Space::Tight))
+}
+
 /// How much room trailing nodes need, so flexible content can leave it.
 ///
 /// Measured by laying them out into a layout that is thrown away, which is the
@@ -11323,6 +11660,7 @@ fn flow_node_bottom(
     metrics: &DisplayMetrics,
     prose: Face,
     gap: i32,
+    rhythm: bool,
 ) -> i32 {
     let flexible = matches!(
         node,
@@ -11336,13 +11674,24 @@ fn flow_node_bottom(
     let protects_interaction = following.iter().any(node_has_enabled_interaction);
     if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {
         bottom.saturating_sub(trailing_height(
-            following, margin, width, bottom, metrics, prose, gap,
+            following,
+            margin,
+            width,
+            bottom,
+            metrics,
+            prose,
+            gap,
+            rhythm.then_some(node),
         ))
     } else {
         bottom
     }
 }
 
+///
+/// `after` is the node the trailing ones follow, in a flow spaced by
+/// [`space_before`], and `None` in one that is not, so this pays for exactly
+/// the space the flow will leave.
 #[allow(clippy::too_many_arguments)]
 fn trailing_height(
     nodes: &[Node],
@@ -11352,15 +11701,24 @@ fn trailing_height(
     metrics: &DisplayMetrics,
     prose: Face,
     gap: i32,
+    after: Option<&Node>,
 ) -> i32 {
     if nodes.is_empty() {
         return 0;
     }
+    // A scratch pass measures; it is not the frame. What it cuts short says
+    // nothing about whether the frame fits.
+    let outer = CUT_SHORT.with(std::cell::Cell::get);
     let mut scratch = Layout::default();
-    let mut cursor = 0;
+    let mut cursor: i32 = 0;
+    let mut previous = after;
     for node in nodes {
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
+        }
+        if after.is_some() {
+            cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
+            previous = Some(node);
         }
         cursor = layout_flow_node(
             node,
@@ -11375,6 +11733,7 @@ fn trailing_height(
         );
         cursor = cursor.saturating_add(gap);
     }
+    CUT_SHORT.with(|cut| cut.set(outer));
     cursor
 }
 
@@ -11857,9 +12216,24 @@ pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
 /// Corner radius of a command-deck pad. Larger than a keyboard key so a
 /// fifteen-key grid reads as recessed hardware rather than a ruled board.
 pub const PAD_RADIUS_TENTH_MM: i32 = 28;
-/// Bezel of a command-deck pad, in tenths of a millimetre. Heavier than a
-/// rule so the key sits in a dark frame the way a Stream Deck key does.
+/// Bezel of a command-deck pad, in tenths of a millimetre, for screens
+/// measured in Folio. Heavier than a rule so the key sits in a dark frame the
+/// way a Stream Deck key does.
 pub const PAD_BORDER_TENTH_MM: i32 = 12;
+
+/// The bezel a pad is drawn with in the edition being laid out.
+///
+/// Half a millimetre from protocol 17. At 1.2 mm two keys on a page were the
+/// heaviest ink on the panel, heavier than the bar and every button, and a
+/// label as long as "Example" ran into the frame. A pad is still a rounded
+/// square in ink, which is what separates it from a ruled board.
+fn pad_border_tenth_mm() -> i32 {
+    if typography() == Typography::Quiet {
+        5
+    } else {
+        PAD_BORDER_TENTH_MM
+    }
+}
 
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
@@ -12718,8 +13092,14 @@ fn diagnose_screen(
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let _environment = environment::TextEnvironment::enter(screen, metrics);
-    with_reading_font(screen.reading_font, || {
-        diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+    // In the type the screen was measured in, as layout and painting are. A
+    // screen from an application built against Folio checked against the
+    // current edition's sizes would be reported as overflowing type it was
+    // never drawn in.
+    with_typography(screen.typography, || {
+        with_reading_font(screen.reading_font, || {
+            diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+        })
     })
 }
 
@@ -12730,6 +13110,17 @@ fn diagnose_screen_with_selected_font(
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let layout = screen.layout_with_selected_font(metrics, chrome);
+    in_room(layout.room_given_up, || {
+        diagnose_layout(screen, layout, metrics, pictures)
+    })
+}
+
+fn diagnose_layout(
+    screen: &Screen,
+    layout: Layout,
+    metrics: &DisplayMetrics,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
     let mut issues = Vec::new();
     let mut nodes = Vec::new();
     collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
@@ -13689,7 +14080,7 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             });
         }
         let style = match node.kind {
-            LayoutKind::Quote(_, role) => Some((role.size(), layout.prose_face)),
+            LayoutKind::Quote(_, role) => Some((role.size(), role.face(layout.prose_face))),
             _ => layout_text_style(node),
         };
         let Some((size, face)) = style else {
@@ -13875,8 +14266,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
             }
         }
         LayoutKind::OverlayTitle => FontSize::Title,
+        LayoutKind::Secondary => FontSize::Note,
         LayoutKind::BoardClue
-        | LayoutKind::Secondary
         | LayoutKind::Section
         | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
@@ -14440,7 +14831,7 @@ pub fn render_all(
     dirty: Option<Rect>,
 ) {
     let _environment = environment::TextEnvironment::enter(screen, metrics);
-    with_legacy_typography(screen.legacy_typography, || {
+    with_typography(screen.typography, || {
         with_reading_font(screen.reading_font, || {
             render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);
         });
@@ -14463,6 +14854,21 @@ fn render_all_with_selected_font(
     });
     surface.fill_rect(clip, tone::PAPER);
     let layout = screen.layout_with(metrics, chrome);
+    in_room(layout.room_given_up, || {
+        paint_layout(screen, layout, metrics, chrome, pictures, surface, clip);
+    });
+}
+
+#[allow(clippy::too_many_lines)]
+fn paint_layout(
+    screen: &Screen,
+    layout: Layout,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    clip: Rect,
+) {
     let palette = Palette::new(chrome.appearance, screen.accent.chosen());
     let prose = layout.prose_face;
     for node in layout.nodes {
@@ -14970,7 +15376,7 @@ fn render_all_with_selected_font(
                     } else {
                         tone::RULE
                     },
-                    metrics.tenth_mm(PAD_BORDER_TENTH_MM),
+                    metrics.tenth_mm(pad_border_tenth_mm()),
                     clip,
                 );
             }
@@ -15130,22 +15536,36 @@ fn render_all_with_selected_font(
                 // The strip runs the width of the column and is inset only by
                 // the padding, so it also draws the left edge of the comment
                 // for the eye to run down.
-                let top = if role == QuoteRole::Byline {
-                    // Exactly the rectangle, because the height already
-                    // includes the air. Painting outside it would run into the
-                    // paragraph underneath.
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                    metrics.space(Space::Tight)
-                } else {
-                    0
+                let (left, top) = match role {
+                    QuoteRole::Byline => {
+                        // Exactly the rectangle, because the height already
+                        // includes the air. Painting outside it would run into
+                        // the paragraph underneath.
+                        fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                        (0, metrics.space(Space::Tight))
+                    }
+                    // The same grey as a key on the keyboard, and the same
+                    // corners as a button, so the panel reads as part of this
+                    // interface rather than as a picture of a terminal.
+                    QuoteRole::Command => {
+                        fill_rounded_clipped(
+                            surface,
+                            node.rect,
+                            metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                            tone::SURFACE,
+                            clip,
+                        );
+                        command_inset(metrics)
+                    }
+                    QuoteRole::Body => (0, 0),
                 };
                 draw_lines_in(
                     surface,
                     &node.text_lines,
-                    node.rect.x,
+                    node.rect.x + left,
                     node.rect.y + top,
                     role.size(),
-                    prose,
+                    role.face(prose),
                     role.tone(),
                     clip,
                 );
@@ -15160,7 +15580,7 @@ fn render_all_with_selected_font(
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
-                FontSize::Caption,
+                FontSize::Note,
                 tone::MUTED,
                 clip,
             ),
@@ -16917,6 +17337,115 @@ fn blit_vector_crisp_in(
 /// keeps a byline shorter than a paragraph, which is the thing being claimed.
 fn byline_height(measured: i32, _metrics: &DisplayMetrics) -> i32 {
     measured + 2 * (measured / 6)
+}
+
+/// The paper between a command's panel and its words: beside them, and
+/// above and below them.
+///
+/// Two millimetres at the sides, the padding of a list row, so a command's
+/// words start where a row's title would and the eye does not have to find a
+/// new margin. One above and below, because a line of type already carries
+/// its own leading and a panel twice that height read as a button. The one
+/// above and below goes with the rest of the room when a screen has to give it
+/// back, and the leading alone keeps the words off the panel's edges.
+fn command_inset(metrics: &DisplayMetrics) -> (i32, i32) {
+    let above = if room_given_up() {
+        0
+    } else {
+        metrics.space(Space::Tight)
+    };
+    (metrics.space(Space::Small), above)
+}
+
+/// Breaks a command into lines at its spaces and nowhere else.
+///
+/// The line breaker is written for prose, and in prose a slash or a hyphen is
+/// a fair place to break. In a command it is not: "~/" at the end of one line
+/// and "Pictures" at the start of the next is a path nobody can type back,
+/// and joining characters to stop it each take a column of their own in a
+/// fixed-pitch face. A word wider than the column is the one exception, and it
+/// is broken between two characters, the way a terminal wraps it, so every
+/// character is still drawn; the words after it start a fresh line.
+///
+/// Everything else is kept as written. The spaces inside a line are the
+/// command's own, and two of them inside quotes are an argument, so only the
+/// run a line breaks at is dropped. A line break the application wrote is a
+/// line break here too.
+fn wrap_command(text: &str, width: i32, size: FontSize) -> Vec<String> {
+    let fits = |line: &str| measure_text_in(line, size, Face::Mono).0 <= width;
+    let mut lines = Vec::new();
+    for written in text.split('\n') {
+        let mut line = String::new();
+        // Whether this written line has been broken yet. Spaces leading the
+        // line are its indent; spaces a break fell at belong to no line.
+        let mut broken = false;
+        let mut rest = written.trim_end();
+        while !rest.is_empty() {
+            let after_gap = rest.trim_start();
+            let gap = if broken && line.is_empty() {
+                ""
+            } else {
+                &rest[..rest.len() - after_gap.len()]
+            };
+            let word_end = after_gap
+                .find(char::is_whitespace)
+                .unwrap_or(after_gap.len());
+            let word = &after_gap[..word_end];
+            rest = &after_gap[word_end..];
+            let joined = format!("{line}{gap}{word}");
+            if fits(&joined) {
+                line = joined;
+                continue;
+            }
+            broken = true;
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            if fits(word) {
+                line = word.to_owned();
+                continue;
+            }
+            let mut piece = word;
+            while !piece.is_empty() && !fits(piece) {
+                // The longest run of whole characters that fits, and never
+                // less than one, so a column narrower than a letter still ends.
+                let mut end = piece.chars().next().map_or(piece.len(), char::len_utf8);
+                for (index, character) in piece.char_indices().skip(1) {
+                    let next = index + character.len_utf8();
+                    if !fits(&piece[..next]) {
+                        break;
+                    }
+                    end = next;
+                }
+                lines.push(piece[..end].to_owned());
+                piece = &piece[end..];
+            }
+            // The end of a broken word stands alone, so the words after it
+            // start a line of their own and "-- /bin/sh" is not split from
+            // its "--".
+            if !piece.is_empty() {
+                lines.push(piece.to_owned());
+            }
+        }
+        if !line.is_empty() || written.trim().is_empty() {
+            lines.push(line);
+        }
+    }
+    // A blank line between two commands is the application's; one before the
+    // first or after the last is a stray line break.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let leading = lines.iter().take_while(|line| line.is_empty()).count();
+    lines.drain(..leading);
+    lines
+}
+
+/// How tall a command's panel is, given its lines: the lines and the inset
+/// above and below them, with the floor a paragraph has.
+fn command_height(measured: i32, metrics: &DisplayMetrics) -> i32 {
+    let (_, above) = command_inset(metrics);
+    max(MIN_TEXT_HEIGHT, measured.saturating_add(2 * above))
 }
 
 fn fold_mark_width(metrics: &DisplayMetrics) -> i32 {

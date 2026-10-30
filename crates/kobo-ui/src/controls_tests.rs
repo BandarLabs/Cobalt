@@ -457,7 +457,9 @@ fn button_top(layout: &Layout) -> i32 {
 #[test]
 fn a_field_without_label_hint_or_error_is_laid_out_as_it_always_was() {
     for (name, metrics) in PANELS {
-        let plain = field(None, None, None, FieldKind::Text).layout_for(&metrics);
+        let plain = field(None, None, None, FieldKind::Text)
+            .with_typography(Typography::Folio)
+            .layout_for(&metrics);
         let border = kinds(&plain, |kind| matches!(kind, LayoutKind::Field(..)))[0].rect;
         assert_eq!(
             border.height,
@@ -469,6 +471,22 @@ fn a_field_without_label_hint_or_error_is_laid_out_as_it_always_was() {
         assert_eq!(
             button_top(&plain),
             border.y + border.height + metrics.space(Space::Tight)
+        );
+    }
+}
+
+/// The button under a field is the field's button, and it is set two
+/// millimetres below it rather than one, so it reads as what the field is for
+/// and not as one more box in a column of them.
+#[test]
+fn a_button_after_a_field_is_set_a_step_below_it() {
+    for (name, metrics) in PANELS {
+        let plain = field(None, None, None, FieldKind::Text).layout_for(&metrics);
+        let border = kinds(&plain, |kind| matches!(kind, LayoutKind::Field(..)))[0].rect;
+        assert_eq!(
+            button_top(&plain),
+            border.y + border.height + metrics.space(Space::Small),
+            "{name}"
         );
     }
 }

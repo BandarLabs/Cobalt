@@ -4,8 +4,8 @@
   "short_label": "Panels",
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Read CBZ comics on your Kobo with zoom, spreads and right-to-left reading. Add comics over USB or download them from your Komga library.",
-  "version": "0.1.8",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.9",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "reader",
   "capabilities": [
     "network"

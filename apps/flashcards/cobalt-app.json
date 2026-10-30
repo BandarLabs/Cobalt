@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
-  "version": "0.2.11",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.2.12",
+  "release_notes": "The commands that import and send a deck are set on grey panels in a fixed-width face, and the first screen fits held sideways at the largest text size.",
   "glyph": "bookmark",
   "capabilities": [],
   "setup": {

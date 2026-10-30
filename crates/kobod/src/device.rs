@@ -1621,12 +1621,20 @@ const CONSENT_PATIENCE: Duration = Duration::from_secs(120);
 /// answers are reachable, which is the property that matters and the one that
 /// cannot be checked by looking at a device.
 fn consent_screen(notice: &crate::consent::Notice) -> Screen {
-    let mut nodes = vec![kobo_ui::Node::Heading {
-        id: kobo_ui::NodeId(1),
-        text: notice.title.clone(),
-        level: 1,
-    }];
-    let mut next = 2;
+    // Centred between two fills. There is no bar on this screen to hang it
+    // from, and set from the top margin the notice filled the upper half of
+    // the panel and left the lower half blank under the buttons.
+    let mut nodes = vec![
+        kobo_ui::Node::Flex {
+            id: kobo_ui::NodeId(1),
+        },
+        kobo_ui::Node::Heading {
+            id: kobo_ui::NodeId(2),
+            text: notice.title.clone(),
+            level: 1,
+        },
+    ];
+    let mut next = 3;
     for line in &notice.body {
         nodes.push(kobo_ui::Node::Text {
             id: kobo_ui::NodeId(next),
@@ -1660,7 +1668,11 @@ fn consent_screen(notice: &crate::consent::Notice) -> Screen {
             id: kobo_ui::NodeId(next),
             text: "If taps do not work, press the power button to close.".to_owned(),
         });
+        next += 1;
     }
+    nodes.push(kobo_ui::Node::Flex {
+        id: kobo_ui::NodeId(next),
+    });
     Screen::new(0, nodes)
 }
 

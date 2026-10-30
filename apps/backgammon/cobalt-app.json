@@ -3,8 +3,8 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.15",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.16",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "circle",
   "capabilities": [],
   "page_description": "Play complete backgammon on one Kobo, solo against a modest computer player or pass-and-play with the board reversed between turns. Full legal-move rules, the doubling cube with the Crawford rule, match play to 7 points, undo, and autosave."

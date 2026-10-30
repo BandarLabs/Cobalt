@@ -1170,7 +1170,7 @@ fn pre_folio_screen_frames_keep_the_legacy_renderer() {
         let Message::SetScreen(decoded) = back.message else {
             panic!("expected screen");
         };
-        assert!(decoded.legacy_typography);
+        assert_eq!(decoded.typography, kobo_ui::Typography::Paperback);
         assert_eq!(decoded.nodes, nodes);
         assert!(decoded
             .layout()
@@ -1306,7 +1306,7 @@ fn version_12_folio_fields_round_trip() {
         panic!("expected screen");
     };
     assert_eq!(decoded, screen);
-    assert!(!decoded.legacy_typography);
+    assert_eq!(decoded.typography, kobo_ui::Typography::Quiet);
 }
 
 #[test]
@@ -1454,4 +1454,71 @@ fn encoder_preflights_payload_limit() {
         }),
         Err(ProtocolError::FrameTooLarge)
     );
+}
+
+fn quoted_command() -> Screen {
+    Screen::new(
+        5,
+        vec![Node::Quote {
+            id: kobo_ui::NodeId(1),
+            depth: 0,
+            role: kobo_ui::QuoteRole::Command,
+            text: "kobo connect hn".to_owned(),
+            fold: None,
+        }],
+    )
+}
+
+fn decoded_at(version: u8, screen: Screen) -> Screen {
+    let frame = Frame {
+        version,
+        request_id: 1,
+        message: Message::SetScreen(screen),
+    };
+    let Message::SetScreen(decoded) = decode(&encode(&frame).expect("encodes"))
+        .expect("decodes")
+        .message
+    else {
+        panic!("expected screen");
+    };
+    decoded
+}
+
+#[test]
+fn a_command_travels_as_a_command_at_protocol_seventeen() {
+    let decoded = decoded_at(QUIET_TYPE_VERSION, quoted_command());
+    assert_eq!(decoded, quoted_command());
+}
+
+/// A runtime without the command role reads an unknown role as prose, so a
+/// command written at an earlier protocol is the quotation that runtime always
+/// drew.
+#[test]
+fn a_command_written_at_protocol_sixteen_is_read_as_a_quotation() {
+    let decoded = decoded_at(QUIET_TYPE_VERSION - 1, quoted_command());
+    let [Node::Quote { role, text, .. }] = decoded.nodes.as_slice() else {
+        panic!("expected one quote");
+    };
+    assert_eq!(*role, kobo_ui::QuoteRole::Body);
+    assert_eq!(text, "kobo connect hn");
+}
+
+/// An application at protocol 16 fitted its text to Folio's sizes and gaps,
+/// so its screens are laid out in them; one at 17 fitted them to the quiet
+/// ones.
+#[test]
+fn each_protocol_is_laid_out_in_the_type_it_measured_with() {
+    let screen = Screen::new(5, Vec::new());
+    for (version, typography) in [
+        (LEGACY_VERSION, kobo_ui::Typography::Paperback),
+        (FOLIO_VERSION, kobo_ui::Typography::Folio),
+        (QUIET_TYPE_VERSION - 1, kobo_ui::Typography::Folio),
+        (QUIET_TYPE_VERSION, kobo_ui::Typography::Quiet),
+    ] {
+        assert_eq!(
+            decoded_at(version, screen.clone()).typography,
+            typography,
+            "protocol {version}"
+        );
+    }
 }

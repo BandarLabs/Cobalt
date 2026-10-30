@@ -68,7 +68,8 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// it was.
 /// Version 17 adds the screen's accent, one byte after everything a screen
 /// already carried; see [`ACCENT_VERSION`]. Version 16 remains readable and is
-/// written exactly as it was.
+/// written exactly as it was. Version 17 is also the quiet type and spacing,
+/// and the command role of a quoted paragraph; see [`QUIET_TYPE_VERSION`].
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -117,6 +118,17 @@ pub const TEXT_ENTRY_VERSION: u8 = 16;
 /// the right rendering of every accent and an application should not fail to
 /// open over the colour of its bar.
 pub const ACCENT_VERSION: u8 = 17;
+
+/// The protocol whose screens are laid out in [`kobo_ui::Typography::Quiet`],
+/// and may set a quoted paragraph as a command for the owner to type.
+///
+/// Not a byte on the wire but a promise about measurement: an application at
+/// this version fitted its text to the quiet sizes and spacing, and one at an
+/// earlier version fitted it to Folio's. The runtime lays each frame out in
+/// the edition its version names, so neither is drawn in type it was not
+/// measured in. A command role sent at an earlier version is read as a plain
+/// quotation, which is how those runtimes drew it.
+pub const QUIET_TYPE_VERSION: u8 = 17;
 
 pub const VERSION: u8 = 17;
 /// Version introducing server-bound account records.
@@ -6025,8 +6037,11 @@ fn encode_node(
             push_u32(output, id.0);
             output.push((*depth).min(kobo_ui::MAX_QUOTE_DEPTH));
             output.push(match role {
-                kobo_ui::QuoteRole::Body => 0,
                 kobo_ui::QuoteRole::Byline => 1,
+                kobo_ui::QuoteRole::Command if version >= QUIET_TYPE_VERSION => 2,
+                // A command at an earlier protocol is sent as a quotation,
+                // which is what a runtime without the role drew it as.
+                kobo_ui::QuoteRole::Body | kobo_ui::QuoteRole::Command => 0,
             });
             // A flag rather than a reserved action id, because zero is a
             // perfectly ordinary action and there is no value to spare.
@@ -7168,7 +7183,13 @@ fn decode_screen(
     screen.reading = reading;
     screen.auto_hide_top_bar = auto_hide_top_bar;
     screen.reading_font = reading_font;
-    screen.legacy_typography = version < FOLIO_VERSION;
+    screen.typography = if version < FOLIO_VERSION {
+        kobo_ui::Typography::Paperback
+    } else if version < QUIET_TYPE_VERSION {
+        kobo_ui::Typography::Folio
+    } else {
+        kobo_ui::Typography::Quiet
+    };
     Ok(screen)
 }
 
@@ -7345,6 +7366,7 @@ fn decode_node(
                 // readable, and the thing it certainly is not is a byline.
                 role: match role {
                     1 => kobo_ui::QuoteRole::Byline,
+                    2 if version >= QUIET_TYPE_VERSION => kobo_ui::QuoteRole::Command,
                     _ => kobo_ui::QuoteRole::Body,
                 },
                 fold,

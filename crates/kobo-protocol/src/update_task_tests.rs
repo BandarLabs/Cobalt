@@ -126,7 +126,8 @@ fn an_application_published_before_this_protocol_still_speaks_to_it() {
         }],
     )
     .with_top_bar(TopBar::new(NodeId(2), "Books"))
-    .with_reading(true);
+    .with_reading(true)
+    .with_typography(kobo_ui::Typography::Folio);
     let frame = Frame {
         version: SUSPEND_VERSION,
         request_id: 5,

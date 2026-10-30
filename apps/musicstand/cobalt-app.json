@@ -4,8 +4,8 @@
   "short_label": "Music",
   "summary": "Read music scores with setlists and half-page turns. Needs your computer.",
   "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
-  "version": "0.1.11",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.12",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "note",
   "capabilities": [
     "keep-awake"

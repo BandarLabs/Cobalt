@@ -4,8 +4,8 @@
   "short_label": "Vault",
   "summary": "Browse your notes by folder, tag, link, and backlink. Needs your computer.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
-  "version": "0.1.9",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.10",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "note",
   "capabilities": [],
   "setup": {
